@@ -14,6 +14,7 @@ import (
 // месте, а подсистемы dhcp и dns лишь дёргают его.
 type Manager struct {
 	Dnsmasq  *Dnsmasq
+	Unbound  *Unbound
 	Packages *system.Packages
 	Systemd  *system.Systemd
 }
@@ -21,6 +22,7 @@ type Manager struct {
 func NewManager(r system.Runner) *Manager {
 	return &Manager{
 		Dnsmasq:  NewDnsmasq(r),
+		Unbound:  NewUnbound(r),
 		Packages: system.NewPackages(r),
 		Systemd:  system.NewSystemd(r),
 	}
@@ -47,6 +49,16 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 			need["dnsmasq"] = true
 		case "unbound":
 			need["unbound"] = true
+			if cfg.DNS.DNSSEC {
+				// Якорь доверия создаёт unbound-anchor, а он в Debian
+				// поставляется отдельным пакетом.
+				need["unbound-anchor"] = true
+			}
+			// Локальную зону обслуживает dnsmasq, поэтому он нужен и тогда,
+			// когда сам резолвером не работает.
+			if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" {
+				need["dnsmasq"] = true
+			}
 		case "adguardhome":
 			// Ставится не из apt, а отдельным установщиком — обрабатывается
 			// подсистемой adguardhome.
@@ -72,11 +84,11 @@ func (m *Manager) stopUnused(ctx context.Context, cfg *config.Config) {
 	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "kea" {
 		_ = m.Systemd.Disable(ctx, "kea-dhcp4-server.service")
 	}
-	if !cfg.DNS.Enabled || cfg.DNS.Provider != "unbound" {
-		_ = m.Systemd.Disable(ctx, "unbound.service")
-	}
-	// Штатный юнит dnsmasq всегда выключен: netOS запускает свой.
+	// Штатные юниты dnsmasq и unbound всегда выключены: netOS запускает свои,
+	// с генерируемыми конфигами. Собственный юнет резолвера гасит его же
+	// подсистема, когда провайдер сменился.
 	_ = m.Systemd.Disable(ctx, "dnsmasq.service")
+	_ = m.Systemd.Disable(ctx, "unbound.service")
 }
 
 // ---------------------------------------------------------------------------
@@ -125,16 +137,16 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	s.M.stopUnused(ctx, cfg)
 
 	switch {
-	case !cfg.DHCP.Enabled && !cfg.DNS.Enabled:
-		return s.M.Dnsmasq.Apply(ctx, cfg)
-	case cfg.DHCP.Provider == "dnsmasq" || cfg.DNS.Provider == "dnsmasq":
-		return s.M.Dnsmasq.Apply(ctx, cfg)
 	case cfg.DHCP.Enabled && cfg.DHCP.Provider == "isc-dhcp-server":
 		return fmt.Errorf("провайдер isc-dhcp-server появится в следующей фазе")
 	case cfg.DHCP.Enabled && cfg.DHCP.Provider == "kea":
 		return fmt.Errorf("провайдер kea появится в следующей фазе")
 	}
-	return nil
+	// Во всех остальных случаях решение принимает сам dnsmasq: он знает, нужен
+	// ли хотя бы одной из ролей, и гасит собственный юнит, когда не нужен. Без
+	// этого связка «DHCP выключен, резолвер unbound» оставила бы старый dnsmasq
+	// работать и драться за порт 53.
+	return s.M.Dnsmasq.Apply(ctx, cfg)
 }
 
 func (s *DHCP) Health(ctx context.Context, cfg *config.Config) error {
@@ -174,8 +186,13 @@ func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
 			Disruptive: true,
 		}}, nil
 	}
-	if new.DNS.Provider == "dnsmasq" {
+	switch new.DNS.Provider {
+	case "dnsmasq":
 		if s.M.Dnsmasq.Render(old) != s.M.Dnsmasq.Render(new) {
+			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
+		}
+	case "unbound":
+		if s.M.Unbound.Render(old) != s.M.Unbound.Render(new) {
 			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
 		}
 	}
@@ -186,6 +203,14 @@ func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
 // уже применила подсистема dhcp, а повторный вызов идемпотентен и просто
 // увидит, что файл не изменился.
 func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
+	// Резолвер, переставший быть выбранным, надо погасить прежде всего: иначе
+	// он продолжит держать порт 53 и новый не поднимется. Apply провайдера сам
+	// выключает свой юнит, когда провайдер не нужен.
+	if !s.M.Unbound.Needed(cfg) {
+		if err := s.M.Unbound.Apply(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	if !cfg.DNS.Enabled {
 		return nil
 	}
@@ -193,7 +218,7 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 	case "dnsmasq":
 		return s.M.Dnsmasq.Apply(ctx, cfg)
 	case "unbound":
-		return fmt.Errorf("провайдер unbound появится в следующей фазе")
+		return s.M.Unbound.Apply(ctx, cfg)
 	case "dnsproxy":
 		return fmt.Errorf("провайдер dnsproxy появится в следующей фазе")
 	case "adguardhome":
@@ -208,6 +233,9 @@ func (s *DNS) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	if cfg.DNS.Provider == "dnsmasq" {
 		return s.M.Dnsmasq.Health(ctx, cfg)
+	}
+	if cfg.DNS.Provider == "unbound" {
+		return s.M.Unbound.Health(ctx, cfg)
 	}
 	return nil
 }

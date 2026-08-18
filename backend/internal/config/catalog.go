@@ -63,8 +63,10 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "unbound", Title: "Unbound", Group: "DNS",
 		Description: "Полноценный рекурсивный резолвер с проверкой DNSSEC и поддержкой DNS over TLS.",
-		Packages:    []string{"unbound"},
-		Units:       []string{"unbound.service"},
+		// unbound-anchor — отдельный пакет в Debian, без него не создать
+		// якорь DNSSEC, и резолвер не поднимется с включённой проверкой.
+		Packages: []string{"unbound", "unbound-anchor"},
+		Units:    []string{"unbound.service"},
 		Provides:    []string{"dns", "dot"},
 		SizeHint:    "около 5 МБ",
 	},

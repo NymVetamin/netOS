@@ -780,6 +780,14 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			"для шифрованного DNS нужен обычный резолвер, чтобы разрешить имя самого сервера")
 	}
 
+	// unbound не умеет вырезать AAAA из ответов. Молчать об этом нельзя:
+	// администратор видит в настройках включённый фильтр и считает, что он
+	// работает, — выбрав unbound, он получит AAAA в ответах.
+	if c.DNS.Enabled && c.DNS.Provider == "unbound" && c.IPv6.FilterAAAA {
+		r.warnf("ipv6.filter_aaaa",
+			"unbound не фильтрует AAAA — записи дойдут до клиентов; вырезать их умеют dnsmasq, dnsproxy и AdGuard Home")
+	}
+
 	for i, rule := range c.DNS.SplitRules {
 		path := fmt.Sprintf("dns.split_rules[%d]", i)
 		if len(rule.Domains) == 0 {

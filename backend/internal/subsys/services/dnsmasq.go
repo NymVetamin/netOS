@@ -24,7 +24,19 @@ const (
 	dnsmasqConfPath  = "/var/lib/netos/generated/dnsmasq.conf"
 	dnsmasqLeasePath = "/var/lib/netos/dnsmasq.leases"
 	dnsmasqUnit      = "netos-dnsmasq.service"
+	// dnsmasqLocalPort — порт на loopback, куда dnsmasq уходит, когда порт 53
+	// занял другой резолвер. Имена клиентов знает только тот, кто раздал им
+	// адреса, поэтому dnsmasq продолжает отвечать за локальную зону, а
+	// выбранный резолвер направляет её сюда. 5353 не берём: его занимает mDNS.
+	dnsmasqLocalPort = 5354
 )
+
+// localDNSNeeded сообщает, работает ли dnsmasq подчинённым резолвером
+// локальной зоны — то есть DHCP раздаёт он, а порт 53 держит кто-то другой.
+func localDNSNeeded(cfg *config.Config) bool {
+	return cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" &&
+		cfg.DNS.Enabled && cfg.DNS.Provider != "dnsmasq"
+}
 
 // Dnsmasq владеет процессом dnsmasq.
 type Dnsmasq struct {
@@ -69,9 +81,16 @@ func (d *Dnsmasq) Render(cfg *config.Config) string {
 		ifaceByID[i.ID] = i.Name
 	}
 
-	if serveDNS {
+	switch {
+	case serveDNS:
 		d.renderDNS(&b, cfg)
-	} else {
+	case localDNSNeeded(cfg):
+		// Порт 53 держит другой резолвер, но имена клиентов знает dnsmasq:
+		// он раздал адреса и единственный видит, какое имя за кем закреплено.
+		// Поэтому он отвечает за локальную зону на loopback-порту, а
+		// вышестоящий резолвер направляет эту зону сюда.
+		d.renderLocalDNS(&b, cfg)
+	default:
 		// dnsmasq поднят только ради DHCP — DNS-часть надо явно отключить,
 		// иначе он займёт порт 53 и подерётся с выбранным резолвером.
 		w("port=0")
@@ -165,6 +184,33 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		case "MX":
 			w("mx-host=%s,%s", rec.Name, rec.Value)
 		}
+	}
+	w("")
+}
+
+// renderLocalDNS настраивает dnsmasq подчинённым резолвером локальной зоны.
+// Наружу он не ходит вовсе: всё, чего нет среди аренд и локальных записей,
+// вышестоящий резолвер разрешает сам, и второй путь в интернет ему не нужен.
+func (d *Dnsmasq) renderLocalDNS(b *strings.Builder, cfg *config.Config) {
+	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
+
+	w("# --- локальная зона (порт 53 держит %s) ---", cfg.DNS.Provider)
+	w("port=%d", dnsmasqLocalPort)
+	w("interface=lo")
+	w("listen-address=127.0.0.1")
+	w("bind-interfaces")
+	w("no-resolv")
+	w("no-poll")
+	// Пустой список апстримов: на неизвестное имя честно отвечаем отказом,
+	// а не идём в интернет в обход выбранного резолвера и его шифрования.
+	w("no-hosts")
+	if cfg.DNS.LocalDomain != "" {
+		w("local=/%s/", cfg.DNS.LocalDomain)
+		w("domain=%s", cfg.DNS.LocalDomain)
+		w("expand-hosts")
+	}
+	if cfg.IPv6.FilterAAAA {
+		w("filter-AAAA")
 	}
 	w("")
 }
