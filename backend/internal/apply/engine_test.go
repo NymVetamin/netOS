@@ -153,3 +153,25 @@ func TestFailedApplyRollsBackWithLiveContext(t *testing.T) {
 		t.Fatal("откат унаследовал отменённый контекст применения")
 	}
 }
+
+func TestLivePanelPortChangeIsRejectedBeforeApply(t *testing.T) {
+	calls := 0
+	sub := &testSubsystem{apply: func(context.Context, *config.Config) error {
+		calls++
+		return nil
+	}}
+	e := newTestEngine(t, sub)
+	initial := validConfig("initial")
+	if _, err := e.Apply(context.Background(), initial, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	calls = 0
+	changed := validConfig("initial")
+	changed.System.Panel.Port++
+	if _, err := e.Apply(context.Background(), changed, 2, true); err == nil {
+		t.Fatal("смена порта работающей панели прошла без ошибки")
+	}
+	if calls != 0 {
+		t.Fatalf("до отказа успело выполниться применений: %d", calls)
+	}
+}

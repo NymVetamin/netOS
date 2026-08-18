@@ -127,12 +127,12 @@ export function SystemPage({
         <div className="form-grid">
           <Field
             label="Порт"
-            hint="После применения панель откроется по новому адресу. Правило файрволла обновится автоматически."
+            hint="Изменение порта работающей панели пока не поддерживается"
           >
             <input
               type="number"
               value={config.system?.panel?.port}
-              onChange={(e) => patch((d) => (d.system.panel.port = Number(e.target.value)))}
+              disabled
             />
           </Field>
           <Field

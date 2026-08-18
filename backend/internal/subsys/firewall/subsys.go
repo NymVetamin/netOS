@@ -14,8 +14,8 @@ import (
 
 // Subsystem применяет правила файрволла.
 type Subsystem struct {
-	Runner    system.Runner
-	StateDir  string // куда складывать сгенерированные ruleset'ы
+	Runner   system.Runner
+	StateDir string // куда складывать сгенерированные ruleset'ы
 	// Legacy заставляет использовать iptables-legacy вместо стандартного
 	// iptables-nft. На системах, где часть правил ставит кто-то ещё через
 	// nft, смешивать бэкенды нельзя, и выбор остаётся за администратором.
@@ -71,13 +71,11 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 		})
 	}
 	if oldRS.IPv6 != newRS.IPv6 {
-		kind := "update"
 		detail := "обновление блокировки IPv6"
-		if newRS.IPv6 == "" {
-			kind = "delete"
+		if new.IPv6.Mode != "off" {
 			detail = "снятие блокировки IPv6"
 		}
-		actions = append(actions, apply.Action{Kind: kind, Target: "ip6tables", Detail: detail})
+		actions = append(actions, apply.Action{Kind: "update", Target: "ip6tables", Detail: detail})
 	}
 	return actions, nil
 }
@@ -99,16 +97,14 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("применение правил iptables: %w", err)
 	}
 
-	if rs.IPv6 != "" {
-		path6 := filepath.Join(s.StateDir, "ip6tables.rules")
-		if err := system.WriteFileAtomic(path6, []byte(rs.IPv6), 0o600); err != nil {
-			return fmt.Errorf("сохранение ruleset IPv6: %w", err)
-		}
-		if _, err := s.Runner.RunInput(ctx, rs.IPv6, s.restore6Cmd()); err != nil {
-			// Ядро может быть собрано без IPv6 вовсе — тогда блокировать нечего.
-			if !strings.Contains(err.Error(), "does not exist") {
-				return fmt.Errorf("применение правил ip6tables: %w", err)
-			}
+	path6 := filepath.Join(s.StateDir, "ip6tables.rules")
+	if err := system.WriteFileAtomic(path6, []byte(rs.IPv6), 0o600); err != nil {
+		return fmt.Errorf("сохранение ruleset IPv6: %w", err)
+	}
+	if _, err := s.Runner.RunInput(ctx, rs.IPv6, s.restore6Cmd()); err != nil {
+		// Ядро может быть собрано без IPv6 вовсе — тогда блокировать нечего.
+		if !strings.Contains(err.Error(), "does not exist") {
+			return fmt.Errorf("применение правил ip6tables: %w", err)
 		}
 	}
 

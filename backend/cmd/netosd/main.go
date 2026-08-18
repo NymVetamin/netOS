@@ -22,6 +22,7 @@ import (
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
+	"github.com/netos-router/netos/internal/subsys/hostsettings"
 	"github.com/netos-router/netos/internal/subsys/netiface"
 	"github.com/netos-router/netos/internal/subsys/routing"
 	"github.com/netos-router/netos/internal/subsys/services"
@@ -30,14 +31,14 @@ import (
 )
 
 const (
-	stateDir  = "/var/lib/netos/generated"
+	stateDir = "/var/lib/netos/generated"
 	// credentialsPath — файл с учётными данными первого запуска. Установщик
 	// читает его вместо разбора журнала: журнал хранит записи прошлых
 	// установок, и вытащить из него именно текущий пароль надёжно нельзя.
 	// Файл удаляется, как только администратор сменит пароль.
 	credentialsPath = "/var/lib/netos/initial-credentials"
-	tlsDir    = "/etc/netos/tls"
-	leasePath = "/var/lib/netos/dnsmasq.leases"
+	tlsDir          = "/etc/netos/tls"
+	leasePath       = "/var/lib/netos/dnsmasq.leases"
 )
 
 func main() {
@@ -310,6 +311,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 
 	subsystems := []apply.Subsystem{
 		components.New(runner, logger),
+		hostsettings.New(runner),
 		sysctl.NewCore(runner),
 		sysctl.NewIPv6(runner),
 		netiface.NewInterfaces(runner),
@@ -399,4 +401,3 @@ type stdLogger struct{}
 func (l *stdLogger) Infof(format string, args ...any)  { log.Printf("[инфо] "+format, args...) }
 func (l *stdLogger) Warnf(format string, args ...any)  { log.Printf("[пред] "+format, args...) }
 func (l *stdLogger) Errorf(format string, args ...any) { log.Printf("[ошиб] "+format, args...) }
-

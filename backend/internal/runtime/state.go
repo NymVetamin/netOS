@@ -303,8 +303,6 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 					switch r.Origin {
 					case fmt.Sprint(config.RouteProto):
 						r.Origin = config.RouteProtoName
-					case fmt.Sprint(config.StaticRouteProto):
-						r.Origin = config.StaticRouteProtoName
 					}
 				}
 			}

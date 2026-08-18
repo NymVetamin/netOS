@@ -504,11 +504,17 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 // ---------------------------------------------------------------------------
 
 func buildIPv6(cfg *config.Config) string {
-	if cfg.IPv6.Mode != "off" {
-		return ""
-	}
 	var b builder
 	b.line("*filter")
+	if cfg.IPv6.Mode != "off" {
+		// Даже разрешающий ruleset нужно применить: ip6tables-restore тем самым
+		// снимает DROP, оставшийся от предыдущего режима off.
+		b.line(":INPUT ACCEPT [0:0]")
+		b.line(":FORWARD ACCEPT [0:0]")
+		b.line(":OUTPUT ACCEPT [0:0]")
+		b.line("COMMIT")
+		return b.String()
+	}
 	b.line(":INPUT DROP [0:0]")
 	b.line(":FORWARD DROP [0:0]")
 	b.line(":OUTPUT DROP [0:0]")

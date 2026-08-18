@@ -45,8 +45,8 @@ func (c *Core) values(cfg *config.Config) map[string]string {
 		"net.ipv4.conf.default.send_redirects":   "0",
 		"net.ipv4.conf.all.accept_source_route":  "0",
 
-		"net.ipv4.tcp_syncookies":       "1",
-		"net.ipv4.icmp_echo_ignore_broadcasts": "1",
+		"net.ipv4.tcp_syncookies":                    "1",
+		"net.ipv4.icmp_echo_ignore_broadcasts":       "1",
 		"net.ipv4.icmp_ignore_bogus_error_responses": "1",
 
 		// Таблица conntrack по умолчанию мала для роутера с десятками клиентов.
@@ -114,6 +114,11 @@ func (s *IPv6) values(cfg *config.Config) map[string]string {
 		return map[string]string{
 			"net.ipv6.conf.all.disable_ipv6":     "0",
 			"net.ipv6.conf.default.disable_ipv6": "0",
+			"net.ipv6.conf.all.accept_ra":        "1",
+			"net.ipv6.conf.default.accept_ra":    "1",
+			"net.ipv6.conf.all.autoconf":         "1",
+			"net.ipv6.conf.default.autoconf":     "1",
+			"net.ipv6.conf.all.forwarding":       "0",
 		}
 	}
 	return map[string]string{
@@ -153,12 +158,8 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	if cfg.IPv6.Mode != "off" {
-		return nil
-	}
-
 	// Параметры all/default действуют на интерфейсы, созданные позже, но уже
-	// поднятые интерфейсы их не подхватывают — проходим по ним отдельно.
+	// поднятые интерфейсы их не всегда подхватывают — проходим по ним отдельно.
 	names, err := interfaceNames()
 	if err != nil {
 		return err
@@ -167,24 +168,31 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 		if name == "lo" {
 			continue
 		}
-		key := fmt.Sprintf("net.ipv6.conf.%s.disable_ipv6=1", name)
-		// Ошибку игнорируем: интерфейс мог исчезнуть между чтением и записью.
-		_, _ = s.Runner.Run(ctx, "sysctl", "-q", "-w", key)
+		values := map[string]string{"disable_ipv6": "1"}
+		if cfg.IPv6.Mode != "off" {
+			values = map[string]string{"disable_ipv6": "0", "accept_ra": "1", "autoconf": "1"}
+		}
+		for key, value := range values {
+			setting := fmt.Sprintf("net.ipv6.conf.%s.%s=%s", name, key, value)
+			// Ошибку игнорируем: интерфейс мог исчезнуть между чтением и записью.
+			_, _ = s.Runner.Run(ctx, "sysctl", "-q", "-w", setting)
+		}
 	}
 	return nil
 }
 
 func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
-	if cfg.IPv6.Mode != "off" {
-		return nil
-	}
 	out, err := s.Runner.Run(ctx, "sysctl", "-n", "net.ipv6.conf.all.disable_ipv6")
 	if err != nil {
 		// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
 		return nil
 	}
-	if strings.TrimSpace(out) != "1" {
-		return fmt.Errorf("IPv6 не отключён")
+	want := "1"
+	if cfg.IPv6.Mode != "off" {
+		want = "0"
+	}
+	if strings.TrimSpace(out) != want {
+		return fmt.Errorf("режим IPv6 не применён")
 	}
 	return nil
 }

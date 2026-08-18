@@ -27,6 +27,9 @@ type ComponentInfo struct {
 	// External означает, что компонент ставится не из репозиториев Debian, а
 	// собственным установщиком.
 	External bool `json:"external,omitempty"`
+	// Essential запрещает удалять пакет вместе с выключением функции: пакет
+	// входит в базовую систему и используется самим netOS.
+	Essential bool `json:"essential,omitempty"`
 }
 
 // Catalog — полный список того, что netOS умеет устанавливать.
@@ -165,6 +168,7 @@ var Catalog = []ComponentInfo{
 		Packages:    []string{"iproute2"},
 		Provides:    []string{"qos"},
 		SizeHint:    "уже установлено",
+		Essential:   true,
 	},
 }
 

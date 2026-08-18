@@ -143,6 +143,11 @@ func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentIn
 }
 
 func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error {
+	if info.Essential {
+		// Отключается функция, а не базовый инструмент, которым пользуется сам
+		// netOS. В частности, iproute2 нельзя удалять вместе с QoS.
+		return nil
+	}
 	for _, unit := range info.Units {
 		_ = s.Systemd.Disable(ctx, unit)
 	}

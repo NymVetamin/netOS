@@ -66,13 +66,13 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 // stopUnused гасит демонов, которые перестали быть выбранными провайдерами.
 // Без этого старый демон продолжит держать порт 53 или отвечать на DHCP.
 func (m *Manager) stopUnused(ctx context.Context, cfg *config.Config) {
-	if cfg.DHCP.Provider != "isc-dhcp-server" {
+	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "isc-dhcp-server" {
 		_ = m.Systemd.Disable(ctx, "isc-dhcp-server.service")
 	}
-	if cfg.DHCP.Provider != "kea" {
+	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "kea" {
 		_ = m.Systemd.Disable(ctx, "kea-dhcp4-server.service")
 	}
-	if cfg.DNS.Provider != "unbound" {
+	if !cfg.DNS.Enabled || cfg.DNS.Provider != "unbound" {
 		_ = m.Systemd.Disable(ctx, "unbound.service")
 	}
 	// Штатный юнит dnsmasq всегда выключен: netOS запускает свой.
@@ -129,9 +129,9 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) error {
 		return s.M.Dnsmasq.Apply(ctx, cfg)
 	case cfg.DHCP.Provider == "dnsmasq" || cfg.DNS.Provider == "dnsmasq":
 		return s.M.Dnsmasq.Apply(ctx, cfg)
-	case cfg.DHCP.Provider == "isc-dhcp-server":
+	case cfg.DHCP.Enabled && cfg.DHCP.Provider == "isc-dhcp-server":
 		return fmt.Errorf("провайдер isc-dhcp-server появится в следующей фазе")
-	case cfg.DHCP.Provider == "kea":
+	case cfg.DHCP.Enabled && cfg.DHCP.Provider == "kea":
 		return fmt.Errorf("провайдер kea появится в следующей фазе")
 	}
 	return nil
@@ -186,6 +186,9 @@ func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
 // уже применила подсистема dhcp, а повторный вызов идемпотентен и просто
 // увидит, что файл не изменился.
 func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
+	if !cfg.DNS.Enabled {
+		return nil
+	}
 	switch cfg.DNS.Provider {
 	case "dnsmasq":
 		return s.M.Dnsmasq.Apply(ctx, cfg)

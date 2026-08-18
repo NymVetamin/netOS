@@ -49,6 +49,7 @@ var Order = []string{
 	// Компоненты идут первыми: без установленных пакетов остальным подсистемам
 	// нечего запускать.
 	"components",
+	"system",
 	"sysctl",
 	"ipv6",
 	"interfaces",
@@ -165,6 +166,9 @@ func (e *Engine) Plan(new *config.Config) ([]Action, error) {
 	e.mu.Lock()
 	old := e.current
 	e.mu.Unlock()
+	if err := validateLiveTransition(old, new); err != nil {
+		return nil, err
+	}
 
 	var actions []Action
 	for _, name := range Order {
@@ -182,6 +186,19 @@ func (e *Engine) Plan(new *config.Config) ([]Action, error) {
 		actions = append(actions, sub...)
 	}
 	return actions, nil
+}
+
+func validateLiveTransition(old, new *config.Config) error {
+	if old == nil || new == nil {
+		return nil
+	}
+	if old.System.Panel.Port != new.System.Panel.Port {
+		return fmt.Errorf("порт панели нельзя менять без перезапуска netosd")
+	}
+	if old.System.Panel.TLS != new.System.Panel.TLS {
+		return fmt.Errorf("параметры TLS панели нельзя менять без перезапуска netosd")
+	}
+	return nil
 }
 
 // Result описывает исход применения.

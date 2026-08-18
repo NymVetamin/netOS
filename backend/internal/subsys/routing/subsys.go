@@ -106,14 +106,13 @@ func (s *Subsystem) writeProtos() error {
 	var b strings.Builder
 	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
 	fmt.Fprintf(&b, "%d\t%s\n", config.RouteProto, config.RouteProtoName)
-	fmt.Fprintf(&b, "%d\t%s\n", config.StaticRouteProto, config.StaticRouteProtoName)
 	return system.WriteFileAtomic(rtProtosPath, []byte(b.String()), 0o644)
 }
 
 // applyRoutes приводит статические маршруты к описанному виду.
 //
-// Маршруты netOS помечаются собственным протоколом netos-static, поэтому их
-// можно отличить от ручных, созданных ядром или клиентом DHCP.
+// netOS владеет полным набором статических маршрутов. Маршруты ядра, DHCP и
+// других динамических протоколов не затрагиваются.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	wanted := map[string]bool{}
 	for _, r := range enabledRoutes(cfg) {
@@ -122,7 +121,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 
 	// table all находит хвосты даже в таблицах, уже удалённых из конфигурации.
 	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", "all",
-		"proto", fmt.Sprint(config.StaticRouteProto))
+		"proto", "static")
 	if err != nil {
 		return fmt.Errorf("чтение статических маршрутов netOS: %w", err)
 	}
@@ -158,7 +157,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 		if r.Table != "" {
 			args = append(args, "table", r.Table)
 		}
-		args = append(args, "proto", fmt.Sprint(config.StaticRouteProto))
+		args = append(args, "proto", "static")
 
 		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 			return fmt.Errorf("маршрут %s: %w", r.Destination, err)
