@@ -51,13 +51,29 @@ func (s *Systemd) Enable(ctx context.Context, unit string) error {
 // на 53 порту и мешать новому.
 func (s *Systemd) Disable(ctx context.Context, unit string) error {
 	if err := s.systemctl(ctx, "disable", "--now", unit); err != nil {
-		// Отсутствующий юнит — не ошибка: пакет мог быть не установлен.
-		if strings.Contains(err.Error(), "not loaded") || strings.Contains(err.Error(), "No such file") {
+		if unitMissing(err) {
 			return nil
 		}
 		return err
 	}
 	return nil
+}
+
+// unitMissing распознаёт отказ из-за отсутствующего юнита.
+//
+// Для Disable это не ошибка, а уже достигнутая цель: юнита нет — значит, демон
+// точно не работает. Формулировки systemd различаются по версиям и по глаголу
+// («does not exist» на disable, «not loaded» на stop), поэтому сверяемся со
+// всеми: одна пропущенная фраза роняет применение целиком и не даёт netosd
+// запуститься вовсе.
+func unitMissing(err error) bool {
+	msg := err.Error()
+	for _, phrase := range []string{"does not exist", "not loaded", "No such file", "not found"} {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Systemd) IsActive(ctx context.Context, unit string) bool {

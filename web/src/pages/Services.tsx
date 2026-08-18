@@ -5,12 +5,21 @@ type Patch = (mutate: (draft: any) => void) => void;
 // Возможности резолверов. Панель обязана честно показывать, что умеет
 // выбранный демон: узнать, что dnsmasq не поддерживает шифрованный DNS, лучше
 // здесь, а не после неудачного применения.
-const DNS_CAPS: Record<string, { dot: boolean; doh: boolean }> = {
-  dnsmasq: { dot: false, doh: false },
-  unbound: { dot: true, doh: false },
-  dnsproxy: { dot: true, doh: true },
-  adguardhome: { dot: true, doh: true },
+const DNS_CAPS: Record<
+  string,
+  { dot: boolean; doh: boolean; doq: boolean; filterAAAA: boolean }
+> = {
+  dnsmasq: { dot: false, doh: false, doq: false, filterAAAA: true },
+  // unbound умеет только DoT и не вырезает AAAA вовсе — об этом лучше узнать
+  // здесь, чем обнаружить, что включённый в настройках фильтр не работает.
+  unbound: { dot: true, doh: false, doq: false, filterAAAA: false },
+  dnsproxy: { dot: true, doh: true, doq: true, filterAAAA: true },
+  adguardhome: { dot: true, doh: true, doq: true, filterAAAA: true },
 };
+
+// Порт, на который уходит dnsmasq, когда 53 занимает другой резолвер.
+// Должен совпадать с dnsmasqLocalPort в backend/internal/subsys/services.
+const DNSMASQ_LOCAL_PORT = 5354;
 
 export function ServicesPage({ config, patch }: { config: any; patch: Patch }) {
   const dnsProviders = installedProviders(config, ["dnsmasq", "unbound", "dnsproxy", "adguardhome"]);
@@ -139,6 +148,7 @@ function DNSSection({
     (u: any) => u.enabled && u.type !== "plain",
   );
   const cantEncrypt = encrypted.length > 0 && caps && !caps.dot;
+  const cantFilterAAAA = config.dns?.enabled && caps && !caps.filterAAAA && config.ipv6?.filter_aaaa;
 
   if (providers.length === 0) {
     return (
@@ -188,12 +198,18 @@ function DNSSection({
         )}
 
         {caps && (
-          <div className="row" style={{ gap: "0.5rem", marginTop: "0.5rem" }}>
+          <div className="row wrap" style={{ gap: "0.5rem", marginTop: "0.5rem" }}>
             <Badge tone={caps.dot ? "ok" : "neutral"}>
               DoT {caps.dot ? "поддерживается" : "не поддерживается"}
             </Badge>
             <Badge tone={caps.doh ? "ok" : "neutral"}>
               DoH {caps.doh ? "поддерживается" : "не поддерживается"}
+            </Badge>
+            <Badge tone={caps.doq ? "ok" : "neutral"}>
+              DoQ {caps.doq ? "поддерживается" : "не поддерживается"}
+            </Badge>
+            <Badge tone={caps.filterAAAA ? "ok" : "neutral"}>
+              Фильтр AAAA {caps.filterAAAA ? "поддерживается" : "не поддерживается"}
             </Badge>
           </div>
         )}
@@ -203,6 +219,16 @@ function DNSSection({
             <Notice tone="warn" title="Выбранный резолвер не умеет шифровать запросы">
               Настроено шифрованных апстримов: {encrypted.length}. Установите dnsproxy или
               AdGuard Home, либо оставьте только обычные.
+            </Notice>
+          </div>
+        )}
+
+        {cantFilterAAAA && (
+          <div style={{ marginTop: "1rem" }}>
+            <Notice tone="warn" title="Выбранный резолвер не фильтрует AAAA">
+              В настройках IPv6 фильтр AAAA включён, но unbound вырезать эти записи не
+              умеет — клиенты будут их получать. Вырезать AAAA умеют dnsmasq, dnsproxy и
+              AdGuard Home.
             </Notice>
           </div>
         )}
@@ -243,6 +269,8 @@ function DNSSection({
             onChange={(v) => patch((d) => (d.dns.query_log = v))}
           />
         </div>
+
+        <ResolutionChain config={config} />
       </Card>
 
       <Card
@@ -351,4 +379,63 @@ function installedProviders(config: any, candidates: string[]): string[] {
     (config.components || []).filter((c: any) => c.installed).map((c: any) => c.id),
   );
   return candidates.filter((c) => installed.has(c));
+}
+
+// ResolutionChain показывает получившийся путь запроса явной схемой.
+//
+// Схема собирается из той же конфигурации, что и конфиги демонов, поэтому она
+// не «картинка про то, как обычно бывает», а описание того, что реально
+// применится. Главное, что она объясняет: почему при выборе unbound или
+// dnsproxy рядом остаётся dnsmasq — имена клиентов знает только тот, кто
+// раздал им адреса.
+function ResolutionChain({ config }: { config: any }) {
+  const provider = config.dns?.provider || "";
+  if (!config.dns?.enabled || !provider) return null;
+
+  const localDNS =
+    config.dhcp?.enabled && config.dhcp?.provider === "dnsmasq" && provider !== "dnsmasq";
+  const upstreams = (config.dns?.upstreams || []).filter((u: any) => u.enabled);
+  const localDomain = config.dns?.local_domain || "";
+
+  const step = (title: string, detail: string) => (
+    <div key={title} className="chain-step">
+      <strong>{title}</strong>
+      <span className="faint">{detail}</span>
+    </div>
+  );
+
+  const steps = [step("Клиенты сети", `запрос на ${provider}, порт ${config.dns?.port}`)];
+  if (localDNS) {
+    steps.push(
+      step(
+        "dnsmasq",
+        `локальные имена${localDomain ? ` в зоне .${localDomain}` : ""} и обратные зоны, 127.0.0.1:${DNSMASQ_LOCAL_PORT}`,
+      ),
+    );
+  }
+  steps.push(
+    step(
+      "Вышестоящие резолверы",
+      upstreams.length === 0
+        ? provider === "unbound"
+          ? "не заданы — unbound рекурсивно опрашивает корневые серверы"
+          : "не заданы"
+        : upstreams.map((u: any) => `${u.address} (${u.type})`).join(", "),
+    ),
+  );
+
+  return (
+    <div style={{ marginTop: "1.25rem" }}>
+      <div className="faint" style={{ marginBottom: "0.5rem" }}>
+        Путь запроса
+      </div>
+      <div className="chain">{steps}</div>
+      {localDNS && (
+        <div className="faint" style={{ marginTop: "0.5rem", fontSize: "0.85em" }}>
+          dnsmasq остаётся поднятым ради DHCP и локальной зоны: имена устройств знает
+          только тот, кто раздал им адреса. Наружу он не ходит.
+        </div>
+      )}
+    </div>
+  );
 }

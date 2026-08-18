@@ -953,3 +953,42 @@ tr.disabled-row:hover {
   width: auto;
   padding: 0.3rem 0.5rem;
 }
+
+/* Схема пути DNS-запроса: шаги идут цепочкой со стрелками между ними. */
+.chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.chain-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.chain-step span {
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+/* Стрелка рисуется псевдоэлементом, чтобы не плодить пустые узлы в разметке
+   и чтобы при переносе на новую строку она не оставалась висеть в конце. */
+.chain-step + .chain-step::before {
+  content: "↓";
+  color: var(--text-faint);
+  font-size: 0.9em;
+}
+
+@media (min-width: 720px) {
+  .chain-step + .chain-step::before {
+    content: "→";
+  }
+}
