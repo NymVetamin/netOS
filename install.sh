@@ -97,6 +97,9 @@ EOF
 # панель. DHCP-сервер, резолверы, VPN и точка доступа — это компоненты,
 # которые администратор выбирает в панели уже после установки.
 PACKAGES="iptables iproute2 ca-certificates curl busybox"
+if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
+    PACKAGES="$PACKAGES git nodejs npm"
+fi
 
 apt-get update -qq 2>/dev/null || warn "не удалось обновить списки пакетов, пробую продолжить"
 if apt-get install -y -qq $PACKAGES >/dev/null 2>&1; then
@@ -109,23 +112,41 @@ fi
 
 step "Разворачиваю netOS"
 
-install -d -m 0755 "$STATE_DIR" "$STATE_DIR/generated" "$CONF_DIR" "$CONF_DIR/tls" "$LOG_DIR"
+install -d -m 0700 "$STATE_DIR"
+install -d -m 0755 "$STATE_DIR/generated" "$CONF_DIR" "$LOG_DIR"
+install -d -m 0700 "$CONF_DIR/tls"
 
 if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     info "сборка из исходников"
-    command -v go >/dev/null 2>&1 || die "для сборки из исходников нужен Go"
     command -v git >/dev/null 2>&1 || die "для сборки из исходников нужен git"
 
     SRC=$(mktemp -d)
     trap 'rm -rf "$SRC"' EXIT
+    GO_VERSION="1.25.0"
+    GO_ARCHIVE="$SRC/go.tar.gz"
+    GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz"
+    info "загружаю Go $GO_VERSION"
+    curl -4 -fsSL --retry 3 -o "$GO_ARCHIVE" "$GO_URL" \
+        || die "не удалось загрузить Go $GO_VERSION"
+    curl -4 -fsSL --retry 3 -o "$GO_ARCHIVE.sha256" "$GO_URL.sha256" \
+        || die "не удалось загрузить контрольную сумму Go $GO_VERSION"
+    EXPECTED=$(tr -d '[:space:]' < "$GO_ARCHIVE.sha256")
+    ACTUAL=$(sha256sum "$GO_ARCHIVE" | awk '{print $1}')
+    [ "$EXPECTED" = "$ACTUAL" ] || die "контрольная сумма Go не совпадает"
+    tar -C "$SRC" -xzf "$GO_ARCHIVE" || die "не удалось распаковать Go"
+
     git clone --depth 1 "https://github.com/$REPO.git" "$SRC/netos" >/dev/null 2>&1 \
         || die "не удалось получить исходники"
     (
         cd "$SRC/netos/backend"
         # Основное зеркало модулей Go доступно не из всех сетей, поэтому
         # заранее указываем запасное.
+        cd ../web
+        npm ci
+        npm run build
+        cd ../backend
         GOPROXY="https://proxy.golang.org,https://goproxy.io,direct" \
-            go build -trimpath -ldflags "-s -w" -o "$BIN_PATH" ./cmd/netosd
+            "$SRC/go/bin/go" build -trimpath -ldflags "-s -w" -o "$BIN_PATH" ./cmd/netosd
     ) || die "сборка не удалась"
     ok "собрано из исходников"
 else

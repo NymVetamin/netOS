@@ -492,7 +492,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
 function originBadge(origin: string) {
   switch (origin) {
     case "netos":
-      return <Badge tone="accent">поставлен netOS</Badge>;
+      return <Badge tone="accent">аплинк netOS</Badge>;
+    case "netos-static":
+      return <Badge tone="accent">задан в netOS</Badge>;
     case "static":
       return <Badge tone="accent">задан вручную</Badge>;
     case "dhcp":

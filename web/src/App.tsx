@@ -184,6 +184,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
   const saveTimer = useRef<number | undefined>(undefined);
   const pendingCfg = useRef<any>(null);
+  // PUT-запросы выполняются строго по очереди: более старый ответ не должен
+  // перезаписать на сервере конфигурацию, отправленную позже.
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
 
   const applyServerState = useCallback((res: ConfigResponse) => {
     setCfg(res.config);
@@ -218,24 +221,30 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     const next = pendingCfg.current;
     if (!next) return;
     pendingCfg.current = null;
-    try {
-      const res = await api.saveConfig(next);
-      setProblems(res.problems || []);
-      setDirty(true);
-      setSaveError("");
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setProblems(err.problems || []);
-        setSaveError(err.problems?.length ? "" : err.message);
+
+    const job = saveChain.current.then(async () => {
+      try {
+        const res = await api.saveConfig(next);
+        setProblems(res.problems || []);
         setDirty(true);
+        setSaveError("");
+      } catch (err) {
+        if (err instanceof ApiError) {
+          setProblems(err.problems || []);
+          setSaveError(err.problems?.length ? "" : err.message);
+          setDirty(true);
+        }
       }
-    }
+    });
+    saveChain.current = job.catch(() => {});
+    await job;
   }, []);
 
   // patch — единственный способ изменить конфигурацию. Мутатор получает копию
   // текущего дерева, изменения сразу видны в интерфейсе.
   const patch = useCallback(
     (mutate: (draft: any) => void) => {
+      if (session.role !== "admin" || session.must_change) return;
       setCfg((current: any) => {
         if (!current) return current;
         const next = structuredClone(current);
@@ -246,13 +255,18 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         return next;
       });
     },
-    [flush],
+    [flush, session.must_change, session.role],
   );
 
   // Перед применением сбрасываем то, что ещё не ушло на сервер.
   const flushNow = useCallback(async () => {
     window.clearTimeout(saveTimer.current);
-    await flush();
+    // Пока ожидали предыдущую запись, пользователь мог успеть внести ещё одну
+    // правку. Перед Apply выгребаем очередь полностью.
+    do {
+      await flush();
+    } while (pendingCfg.current);
+    await saveChain.current;
   }, [flush]);
 
   const errors = problems.filter((p) => p.severity === "error");
@@ -323,6 +337,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             </Notice>
           )}
 
+          {session.role !== "admin" && (
+            <Notice tone="info" title="Режим просмотра">
+              Изменение конфигурации для этой учётной записи запрещено.
+            </Notice>
+          )}
+
           {rollback && (
             <Notice
               tone="danger"
@@ -366,13 +386,15 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         </div>
       </main>
 
-      <ApplyBar
-        dirty={dirty}
-        pending={pending}
-        errorCount={errors.length}
-        onFlush={flushNow}
-        onReload={reload}
-      />
+      {session.role === "admin" && !session.must_change && (
+        <ApplyBar
+          dirty={dirty}
+          pending={pending}
+          errorCount={errors.length}
+          onFlush={flushNow}
+          onReload={reload}
+        />
+      )}
     </div>
   );
 }

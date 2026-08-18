@@ -106,35 +106,34 @@ func (s *Subsystem) writeProtos() error {
 	var b strings.Builder
 	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
 	fmt.Fprintf(&b, "%d\t%s\n", config.RouteProto, config.RouteProtoName)
+	fmt.Fprintf(&b, "%d\t%s\n", config.StaticRouteProto, config.StaticRouteProtoName)
 	return system.WriteFileAtomic(rtProtosPath, []byte(b.String()), 0o644)
 }
 
 // applyRoutes приводит статические маршруты к описанному виду.
 //
-// Маршруты netOS помечаются протоколом static, поэтому их можно отличить от
-// тех, что поставило ядро или клиент DHCP, и безопасно удалить лишние.
+// Маршруты netOS помечаются собственным протоколом netos-static, поэтому их
+// можно отличить от ручных, созданных ядром или клиентом DHCP.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
-	wanted := map[string]config.StaticRoute{}
+	wanted := map[string]bool{}
 	for _, r := range enabledRoutes(cfg) {
-		wanted[routeKey(r)] = r
+		wanted[staticRouteKey(r)] = true
 	}
 
-	// Сначала убираем то, чего больше нет в конфигурации.
-	for _, table := range s.tablesInUse(cfg) {
-		current, err := s.currentRoutes(ctx, table)
-		if err != nil {
+	// table all находит хвосты даже в таблицах, уже удалённых из конфигурации.
+	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", "all",
+		"proto", fmt.Sprint(config.StaticRouteProto))
+	if err != nil {
+		return fmt.Errorf("чтение статических маршрутов netOS: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || wanted[routeLineKey(line)] {
 			continue
 		}
-		for _, line := range current {
-			key := table + "|" + firstField(line)
-			if _, ok := wanted[key]; ok {
-				continue
-			}
-			args := append([]string{"-4", "route", "del"}, strings.Fields(line)...)
-			if table != "" {
-				args = append(args, "table", table)
-			}
-			_, _ = s.Runner.Run(ctx, "ip", args...)
+		args := append([]string{"-4", "route", "del"}, strings.Fields(line)...)
+		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
+			return fmt.Errorf("удаление старого маршрута %q: %w", line, err)
 		}
 	}
 
@@ -159,13 +158,54 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 		if r.Table != "" {
 			args = append(args, "table", r.Table)
 		}
-		args = append(args, "proto", "static")
+		args = append(args, "proto", fmt.Sprint(config.StaticRouteProto))
 
 		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 			return fmt.Errorf("маршрут %s: %w", r.Destination, err)
 		}
 	}
 	return nil
+}
+
+func routeKey(table, destination, routeType, gateway, iface string, metric int) string {
+	if table == "main" {
+		table = ""
+	}
+	if routeType == "" {
+		routeType = "unicast"
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d", table, destination, routeType, gateway, iface, metric)
+}
+
+func staticRouteKey(r config.StaticRoute) string {
+	return routeKey(r.Table, r.Destination, r.Type, r.Gateway, r.Interface, r.Metric)
+}
+
+func routeLineKey(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+	destination := fields[0]
+	routeType := "unicast"
+	if (destination == "blackhole" || destination == "unreachable" || destination == "prohibit") && len(fields) > 1 {
+		routeType = destination
+		destination = fields[1]
+	}
+	table, gateway, iface, metric := "", "", "", 0
+	for i := 0; i+1 < len(fields); i++ {
+		switch fields[i] {
+		case "table":
+			table = fields[i+1]
+		case "via":
+			gateway = fields[i+1]
+		case "dev":
+			iface = fields[i+1]
+		case "metric":
+			_, _ = fmt.Sscan(fields[i+1], &metric)
+		}
+	}
+	return routeKey(table, destination, routeType, gateway, iface, metric)
 }
 
 // applyRules пересобирает правила выбора таблиц.
@@ -251,48 +291,6 @@ func enabledRules(cfg *config.Config) []config.RouteRule {
 		}
 	}
 	return out
-}
-
-func routeKey(r config.StaticRoute) string { return r.Table + "|" + r.Destination }
-
-// currentRoutes возвращает маршруты, поставленные netOS: только они помечены
-// протоколом static, остальные принадлежат ядру или клиенту DHCP.
-func (s *Subsystem) currentRoutes(ctx context.Context, table string) ([]string, error) {
-	args := []string{"-4", "route", "show", "proto", "static"}
-	if table != "" {
-		args = append(args, "table", table)
-	}
-	out, err := s.Runner.Run(ctx, "ip", args...)
-	if err != nil {
-		return nil, err
-	}
-	var lines []string
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) != "" {
-			lines = append(lines, strings.TrimSpace(line))
-		}
-	}
-	return lines, nil
-}
-
-func (s *Subsystem) tablesInUse(cfg *config.Config) []string {
-	seen := map[string]bool{"": true}
-	tables := []string{""}
-	for _, r := range cfg.Routing.Static {
-		if r.Table != "" && !seen[r.Table] {
-			seen[r.Table] = true
-			tables = append(tables, r.Table)
-		}
-	}
-	return tables
-}
-
-func firstField(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
 }
 
 // leadingPriority вытаскивает приоритет из строки вида "20100: from all ...".

@@ -78,6 +78,10 @@ type RollbackInfo struct {
 
 // Engine оркестрирует применение конфигурации.
 type Engine struct {
+	// opMu сериализует все операции, меняющие живую систему. Обычный mu
+	// защищает только состояние движка и не может удерживаться во время
+	// медленных внешних команд.
+	opMu       sync.Mutex
 	mu         sync.Mutex
 	subsystems map[string]Subsystem
 	current    *config.Config
@@ -91,9 +95,9 @@ type Engine struct {
 
 	// pending хранит состояние незавершённой транзакции: если админ не
 	// подтвердит применение, движок вернёт previous.
-	pending  *pendingCommit
-	log      Logger
-	dryRun   bool
+	pending *pendingCommit
+	log     Logger
+	dryRun  bool
 }
 
 type pendingCommit struct {
@@ -194,6 +198,9 @@ type Result struct {
 // cfg.System.Panel.CommitTimeout. Первое применение при загрузке системы
 // подтверждения не требует: подтверждать некому.
 func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, needConfirm bool) (*Result, error) {
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
+
 	if res := cfg.Validate(); res.HasErrors() {
 		return nil, fmt.Errorf("конфигурация не прошла проверку: %d ошибок", len(res.Problems))
 	}
@@ -218,7 +225,9 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 		// немедленно возвращаемся к предыдущему конфигу.
 		e.log.Errorf("применение не удалось: %v", err)
 		if previous != nil {
-			if rbErr := e.run(ctx, previous); rbErr != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if rbErr := e.run(rollbackCtx, previous); rbErr != nil {
 				return nil, fmt.Errorf("применение не удалось (%w) и откат тоже не удался: %v", err, rbErr)
 			}
 			e.log.Warnf("выполнен откат к предыдущей конфигурации")
@@ -229,7 +238,9 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	if err := e.health(ctx, cfg); err != nil {
 		e.log.Errorf("проверка после применения не прошла: %v", err)
 		if previous != nil {
-			if rbErr := e.run(ctx, previous); rbErr != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if rbErr := e.run(rollbackCtx, previous); rbErr != nil {
 				return nil, fmt.Errorf("проверка не прошла (%w) и откат не удался: %v", err, rbErr)
 			}
 		}
@@ -262,17 +273,26 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 }
 
 // Confirm подтверждает, что админ по-прежнему имеет доступ, и отменяет откат.
-func (e *Engine) Confirm() error {
+func (e *Engine) Confirm(commit func(int64) error) (int64, error) {
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.pending == nil {
-		return fmt.Errorf("нет применения, ожидающего подтверждения")
+		return 0, fmt.Errorf("нет применения, ожидающего подтверждения")
+	}
+	revision := e.pending.revision
+	if commit != nil {
+		if err := commit(revision); err != nil {
+			return 0, fmt.Errorf("фиксация ревизии %d: %w", revision, err)
+		}
 	}
 	e.pending.timer.Stop()
 	e.pending.cancelled = true
 	e.pending = nil
 	e.log.Infof("применение подтверждено")
-	return nil
+	return revision, nil
 }
 
 // Pending сообщает, ожидается ли подтверждение и до какого момента.
@@ -314,6 +334,16 @@ func (e *Engine) rollbackExpired(p *pendingCommit) {
 }
 
 func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, details string) error {
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
+
+	e.mu.Lock()
+	if e.pending != p || p.cancelled {
+		e.mu.Unlock()
+		return fmt.Errorf("откат уже завершён или отменён")
+	}
+	e.mu.Unlock()
+
 	if err := e.run(ctx, p.previous); err != nil {
 		return err
 	}

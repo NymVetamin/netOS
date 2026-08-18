@@ -290,6 +290,20 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 	// Собираем желаемые адреса по интерфейсам, чтобы за один проход снять
 	// лишние и добавить недостающие.
 	wanted := map[string]map[string]bool{}
+	wanIfaces := map[string]bool{}
+	for _, w := range cfg.WANs {
+		if w.Enabled {
+			wanIfaces[w.Interface] = true
+		}
+	}
+	// Пустой желаемый набор тоже значим: если с интерфейса удалили последний
+	// LAN-сегмент, старый адрес должен быть снят. Аплинки обработает WAN ниже.
+	for _, iface := range cfg.Interfaces {
+		if !iface.Enabled || wanIfaces[iface.ID] || !linkExists(iface.Name) {
+			continue
+		}
+		wanted[iface.Name] = map[string]bool{}
+	}
 	for _, n := range cfg.Networks {
 		if !n.Enabled {
 			continue
@@ -399,6 +413,16 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	for _, i := range cfg.Interfaces {
 		ifaceName[i.ID] = i.Name
 	}
+	dhcpWanted := map[string]bool{}
+	for _, w := range cfg.WANs {
+		if w.Enabled && w.Proto == "dhcp" && ifaceName[w.Interface] != "" {
+			dhcpWanted[ifaceName[w.Interface]] = true
+		}
+	}
+	if err := s.cleanupDHCPClients(ctx, dhcpWanted); err != nil {
+		return err
+	}
+	staticWanted := map[string]bool{}
 
 	for _, w := range cfg.WANs {
 		name := ifaceName[w.Interface]
@@ -424,6 +448,9 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			if err := s.applyStatic(ctx, w, name); err != nil {
 				return err
 			}
+			if w.Gateway != "" {
+				staticWanted[wanRouteKey(w.Gateway, name, w.Metric)] = true
+			}
 		case "dhcp":
 			// Клиент DHCP поднимается отдельным юнитом на интерфейс, чтобы
 			// перезапуск netosd не ронял аренду.
@@ -435,7 +462,45 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("PPPoE пока не поддерживается")
 		}
 	}
+	return s.cleanupStaticRoutes(ctx, staticWanted)
+}
+
+func (s *WAN) cleanupStaticRoutes(ctx context.Context, wanted map[string]bool) error {
+	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", "main",
+		"proto", fmt.Sprint(config.RouteProto))
+	if err != nil {
+		return fmt.Errorf("чтение маршрутов аплинков netOS: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		gateway, iface, metric := "", "", 0
+		for i := 0; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "via":
+				gateway = fields[i+1]
+			case "dev":
+				iface = fields[i+1]
+			case "metric":
+				_, _ = fmt.Sscan(fields[i+1], &metric)
+			}
+		}
+		if wanted[wanRouteKey(gateway, iface, metric)] {
+			continue
+		}
+		args := append([]string{"-4", "route", "del"}, fields...)
+		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
+			return fmt.Errorf("удаление старого маршрута аплинка %q: %w", line, err)
+		}
+	}
 	return nil
+}
+
+func wanRouteKey(gateway, iface string, metric int) string {
+	return fmt.Sprintf("%s|%s|%d", gateway, iface, metric)
 }
 
 func (s *WAN) applyStatic(ctx context.Context, w config.WAN, iface string) error {

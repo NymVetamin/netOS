@@ -25,8 +25,10 @@ const Version = 2
 // В командах используется число, а не имя: имя становится известно системе
 // только после записи файла протоколов, а маршруты назначаются раньше.
 const (
-	RouteProto     = 201
-	RouteProtoName = "netos"
+	RouteProto           = 201
+	RouteProtoName       = "netos"
+	StaticRouteProto     = 202
+	StaticRouteProtoName = "netos-static"
 )
 
 // Config — корень дерева конфигурации.

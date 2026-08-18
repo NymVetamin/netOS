@@ -52,7 +52,7 @@ export type RouteEntry = {
   interface: string;
   source: string;
   metric: number;
-  // origin: kernel | dhcp | static | boot | ra
+  // origin: netos | netos-static | kernel | dhcp | static | boot | ra
   origin: string;
   table: string;
   raw: string;

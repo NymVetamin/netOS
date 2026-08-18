@@ -26,12 +26,15 @@ type Runner interface {
 type Exec struct {
 	// Timeout по умолчанию для одной команды.
 	Timeout time.Duration
+	// PackageTimeout применяется к apt/dpkg: установка пакетов на слабом
+	// устройстве закономерно занимает заметно больше сетевых команд.
+	PackageTimeout time.Duration
 	// OnCommand вызывается перед каждым запуском — используется для журнала.
 	OnCommand func(name string, args []string)
 }
 
 func NewExec() *Exec {
-	return &Exec{Timeout: 30 * time.Second}
+	return &Exec{Timeout: 30 * time.Second, PackageTimeout: 15 * time.Minute}
 }
 
 func (e *Exec) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -43,6 +46,9 @@ func (e *Exec) RunInput(ctx context.Context, input string, name string, args ...
 		e.OnCommand(name, args)
 	}
 	timeout := e.Timeout
+	if name == "apt-get" || name == "apt" || name == "dpkg" {
+		timeout = e.PackageTimeout
+	}
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}

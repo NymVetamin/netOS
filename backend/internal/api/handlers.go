@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,7 +19,10 @@ import (
 
 type ctxKey string
 
-const ctxUser ctxKey = "user"
+const (
+	ctxUser ctxKey = "user"
+	ctxRole ctxKey = "role"
+)
 
 // requireAuth проверяет сессию и, для изменяющих запросов, CSRF-токен.
 func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
@@ -31,6 +35,20 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 		username, err := s.Store.SessionUser(cookie.Value)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "сессия истекла")
+			return
+		}
+		user, err := s.Store.UserByName(username)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "пользователь не найден")
+			return
+		}
+		if user.MustChange && r.Method != http.MethodGet && r.Method != http.MethodHead &&
+			r.URL.Path != "/api/password" && r.URL.Path != "/api/logout" {
+			writeError(w, http.StatusForbidden, "сначала смените временный пароль")
+			return
+		}
+		if user.Role != "admin" && (user.Role != "viewer" || !viewerAllowed(r)) {
+			writeError(w, http.StatusForbidden, "недостаточно прав")
 			return
 		}
 
@@ -47,12 +65,38 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 			}
 		}
 
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxUser, username)))
+		ctx := context.WithValue(r.Context(), ctxUser, username)
+		ctx = context.WithValue(ctx, ctxRole, user.Role)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func viewerAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/logout" || r.URL.Path == "/api/password" {
+		return true
+	}
+	if r.Method != http.MethodGet {
+		return false
+	}
+	switch r.URL.Path {
+	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/clients",
+		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes", "/api/audit",
+		"/api/revisions":
+		return true
+	default:
+		return false
+	}
 }
 
 func userOf(r *http.Request) string {
 	if v, ok := r.Context().Value(ctxUser).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func roleOf(r *http.Request) string {
+	if v, ok := r.Context().Value(ctxRole).(string); ok {
 		return v
 	}
 	return ""
@@ -309,8 +353,12 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	s.draftMu.RUnlock()
 
 	pending, deadline := s.Engine.Pending()
+	visibleCfg := cfg
+	if roleOf(r) != "admin" {
+		visibleCfg = redactConfig(cfg)
+	}
 	resp := configResponse{
-		Config:   cfg,
+		Config:   visibleCfg,
 		Dirty:    dirty,
 		Problems: cfg.Validate().Problems,
 		Pending:  pending,
@@ -320,6 +368,26 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		resp.Deadline = &deadline
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func redactConfig(cfg *config.Config) *config.Config {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return nil
+	}
+	var out config.Config
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	for i := range out.WANs {
+		out.WANs[i].Password = ""
+	}
+	for i := range out.WiFi {
+		for j := range out.WiFi[i].SSIDs {
+			out.WiFi[i].SSIDs[j].Password = ""
+		}
+	}
+	return &out
 }
 
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:
@@ -409,7 +477,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 
 	// Подтверждение требуется всегда, когда есть куда откатываться: именно оно
 	// спасает администратора, закрывшего себе доступ правилом файрволла.
-	result, err := s.Engine.Apply(r.Context(), cfg, revID, true)
+	// Изменение сети может оборвать именно тот HTTP-запрос, который его
+	// запустил. Системная транзакция обязана дожить до постановки таймера
+	// подтверждения или собственного отката независимо от соединения браузера.
+	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	result, err := s.Engine.Apply(applyCtx, cfg, revID, true)
 	if err != nil {
 		_ = s.Store.SetRevisionState(revID, store.StateRolledBack)
 		_ = s.Store.Audit(store.AuditEntry{
@@ -437,24 +510,19 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
-	if err := s.Engine.Confirm(); err != nil {
+	revision, err := s.Engine.Confirm(s.Store.MarkActive)
+	if err != nil {
 		writeError(w, http.StatusConflict, "%v", err)
 		return
 	}
-
-	// Подтверждённая конфигурация становится активной, черновик больше не нужен.
-	cfg := s.Engine.Current()
-	if latest, err := s.Store.LatestRevision(); err == nil && latest.Config != nil {
-		_ = s.Store.MarkActive(latest.ID)
-	}
-	_ = cfg
 
 	s.draftMu.Lock()
 	s.draft = nil
 	s.draftMu.Unlock()
 
 	_ = s.Store.Audit(store.AuditEntry{
-		User: userOf(r), Action: "confirm", SourceIP: clientIP(r), Success: true,
+		User: userOf(r), Action: "confirm", Target: strconv.FormatInt(revision, 10),
+		SourceIP: clientIP(r), Success: true,
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -552,13 +620,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	pending, deadline := s.Engine.Pending()
 	resp := map[string]any{
-		"hostname":         "",
-		"uptime_seconds":   uptimeSeconds(),
-		"interfaces":       stats,
-		"clients_total":    len(clients),
-		"clients_online":   online,
-		"conntrack_count":  s.Collector.ConntrackCount(),
-		"pending_confirm":  pending,
+		"hostname":        "",
+		"uptime_seconds":  uptimeSeconds(),
+		"interfaces":      stats,
+		"clients_total":   len(clients),
+		"clients_online":  online,
+		"conntrack_count": s.Collector.ConntrackCount(),
+		"pending_confirm": pending,
 	}
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname

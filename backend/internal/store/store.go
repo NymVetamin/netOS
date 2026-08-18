@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
@@ -68,6 +70,11 @@ type AuditEntry struct {
 }
 
 func Open(path string) (*Store, error) {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("создание каталога БД: %w", err)
+		}
+	}
 	// busy_timeout спасает от «database is locked», когда фоновые задачи
 	// (сбор метрик, аренды DHCP) пишут одновременно с админом.
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
@@ -82,6 +89,14 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("миграция БД: %w", err)
+	}
+	// Ревизии содержат пароли WAN/Wi-Fi, а sessions — действующие bearer
+	// tokens. Они не должны быть читаемы локальными пользователями.
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(name, 0o600); err != nil && !os.IsNotExist(err) {
+			db.Close()
+			return nil, fmt.Errorf("права на %s: %w", name, err)
+		}
 	}
 	return s, nil
 }
@@ -222,7 +237,7 @@ func (s *Store) Revision(id int64) (*Revision, error) {
 // LatestRevision возвращает самую свежую ревизию независимо от состояния —
 // это то, что админ редактирует в панели.
 func (s *Store) LatestRevision() (*Revision, error) {
-	return s.revisionWhere(`1 = 1 ORDER BY id DESC`, )
+	return s.revisionWhere(`1 = 1 ORDER BY id DESC`)
 }
 
 func (s *Store) revisionWhere(where string, args ...any) (*Revision, error) {

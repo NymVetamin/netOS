@@ -229,7 +229,6 @@ func (c *Collector) Clients(ctx context.Context) ([]Client, error) {
 	return out, nil
 }
 
-
 // Route — разобранная запись таблицы маршрутизации.
 type Route struct {
 	Destination string `json:"destination"`
@@ -301,8 +300,11 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 				if i+1 < len(fields) {
 					r.Origin = fields[i+1]
 					// Пока файл протоколов не записан, ядро отдаёт номер.
-					if r.Origin == fmt.Sprint(config.RouteProto) {
+					switch r.Origin {
+					case fmt.Sprint(config.RouteProto):
 						r.Origin = config.RouteProtoName
+					case fmt.Sprint(config.StaticRouteProto):
+						r.Origin = config.StaticRouteProtoName
 					}
 				}
 			}

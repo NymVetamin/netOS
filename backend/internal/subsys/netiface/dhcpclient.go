@@ -3,6 +3,7 @@ package netiface
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -121,4 +122,36 @@ func (s *WAN) ensureDHCPClientFiles(ctx context.Context, w config.WAN, iface str
 		}
 	}
 	return unitName, nil
+}
+
+// cleanupDHCPClients останавливает и удаляет сгенерированные units для
+// аплинков, которых больше нет в конфигурации.
+func (s *WAN) cleanupDHCPClients(ctx context.Context, wanted map[string]bool) error {
+	units, err := filepath.Glob("/etc/systemd/system/netos-dhcp-*.service")
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, unitPath := range units {
+		base := filepath.Base(unitPath)
+		iface := strings.TrimSuffix(strings.TrimPrefix(base, "netos-dhcp-"), ".service")
+		if wanted[iface] {
+			continue
+		}
+		s.stopDHCPClient(ctx, iface)
+		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление %s: %w", unitPath, err)
+		}
+		scriptPath := filepath.Join(dhcpScriptDir, "udhcpc-"+iface+".sh")
+		if err := os.Remove(scriptPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление %s: %w", scriptPath, err)
+		}
+		changed = true
+	}
+	if changed {
+		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
