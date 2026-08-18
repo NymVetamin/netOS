@@ -188,10 +188,49 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                   </div>
                 )}
 
+                {w.proto === "l2tp" && (
+                  <div className="form-grid">
+                    <Field
+                      label="Адрес в сети провайдера"
+                      hint="Туннель поднимается поверх него. Обычно провайдер выдаёт его по DHCP."
+                    >
+                      <select
+                        value={w.underlay || "dhcp"}
+                        onChange={(e) => patch((d) => (d.wans[idx].underlay = e.target.value))}
+                      >
+                        <option value="dhcp">Получать по DHCP</option>
+                        <option value="static">Задать вручную</option>
+                      </select>
+                    </Field>
+                    {w.underlay === "static" && (
+                      <>
+                        <Field label="Адрес с маской">
+                          <input
+                            type="text"
+                            className="mono"
+                            placeholder="10.0.0.5/24"
+                            value={w.address || ""}
+                            onChange={(e) => patch((d) => (d.wans[idx].address = e.target.value))}
+                          />
+                        </Field>
+                        <Field label="Шлюз сети провайдера">
+                          <input
+                            type="text"
+                            className="mono"
+                            placeholder="10.0.0.1"
+                            value={w.gateway || ""}
+                            onChange={(e) => patch((d) => (d.wans[idx].gateway = e.target.value))}
+                          />
+                        </Field>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {(w.proto === "pppoe" || w.proto === "l2tp") && (
                   <div className="form-grid">
                     {w.proto === "l2tp" && (
-                      <Field label="Адрес сервера">
+                      <Field label="Адрес концентратора">
                         <input
                           type="text"
                           className="mono"

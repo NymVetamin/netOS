@@ -174,6 +174,13 @@ type WAN struct {
 	Password string `json:"password,omitempty"`
 	// Server — адрес концентратора L2TP.
 	Server string `json:"server,omitempty"`
+	// Underlay — как получает адрес интерфейс, по которому идёт туннель L2TP.
+	//
+	// Провайдер сначала выдаёт адрес в своей локальной сети, и только поверх
+	// него поднимается туннель до концентратора. Обычно адрес приходит по
+	// DHCP — это и есть значение по умолчанию; при static берутся Address
+	// и Gateway.
+	Underlay string `json:"underlay,omitempty"` // dhcp | static
 	// Service и AC — необязательные параметры PPPoE.
 	Service string `json:"service,omitempty"`
 	AC      string `json:"ac,omitempty"`

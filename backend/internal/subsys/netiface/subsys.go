@@ -425,6 +425,7 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	dhcpWanted := map[string]bool{}
 	pppoeWanted := map[string]bool{}
+	l2tpWanted := map[string]bool{}
 	for _, w := range cfg.WANs {
 		if !w.Enabled || ifaceName[w.Interface] == "" {
 			continue
@@ -434,13 +435,25 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			dhcpWanted[ifaceName[w.Interface]] = true
 		case "pppoe":
 			pppoeWanted[w.ID] = true
+		case "l2tp":
+			l2tpWanted[w.ID] = true
+			// Туннель идёт поверх адреса в сети провайдера. Если тот приходит
+			// по DHCP, клиент на этом интерфейсе нужен так же, как и обычному
+			// аплинку.
+			if w.Underlay != "static" {
+				dhcpWanted[ifaceName[w.Interface]] = true
+			}
 		}
 	}
 	if err := s.cleanupDHCPClients(ctx, dhcpWanted); err != nil {
 		return err
 	}
 	s.readPPPoEConfs(cfg)
+	s.readL2TPConfs(cfg)
 	if err := s.cleanupPPPoE(ctx, pppoeWanted); err != nil {
+		return err
+	}
+	if err := s.cleanupL2TP(ctx, l2tpWanted); err != nil {
 		return err
 	}
 	staticWanted := map[string]bool{}
@@ -486,10 +499,22 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 				return err
 			}
 		case "l2tp":
-			// Появится вместе с остальными типами VPN в третьей фазе.
-			// Промолчать нельзя: аплинк остался бы ненастроенным, а
-			// применение отчиталось бы об успехе.
-			return fmt.Errorf("аплинк %s: L2TP пока не поддерживается", w.Name)
+			// Сначала адрес в сети провайдера, и только поверх него туннель:
+			// без адреса не найти ни концентратор, ни маршрут до него.
+			if w.Underlay == "static" {
+				s.stopDHCPClient(ctx, name)
+				if err := s.applyStatic(ctx, underlayWAN(w), name); err != nil {
+					return err
+				}
+				if w.Gateway != "" {
+					staticWanted[wanRouteKey(w.Gateway, name, underlayMetric(w))] = true
+				}
+			} else if err := s.ensureDHCPClient(ctx, underlayWAN(w), name); err != nil {
+				return err
+			}
+			if err := s.ensureL2TP(ctx, w, name); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("аплинк %s: неизвестный тип подключения %q", w.Name, w.Proto)
 		}

@@ -50,11 +50,20 @@ func (s *Systemd) Enable(ctx context.Context, unit string) error {
 // переключил провайдера DHCP или DNS: старый демон не должен остаться висеть
 // на 53 порту и мешать новому.
 func (s *Systemd) Disable(ctx context.Context, unit string) error {
-	if err := s.systemctl(ctx, "disable", "--now", unit); err != nil {
-		if unitMissing(err) {
-			return nil
-		}
+	// disable и stop разделены намеренно. Для служб, унаследованных от SysV,
+	// systemctl перенаправляет disable в update-rc.d и останавливать демона не
+	// идёт: --now в этом случае молча ничего не делает. Так ведёт себя xl2tpd
+	// в Debian, и без отдельного stop чужой демон остался бы висеть на порту,
+	// который нужен netOS.
+	if err := s.systemctl(ctx, "disable", unit); err != nil && !unitMissing(err) {
 		return err
+	}
+	if err := s.systemctl(ctx, "stop", unit); err != nil && !unitMissing(err) {
+		return err
+	}
+	// Проверяем результат, а не коды возврата: цель — чтобы демон не работал.
+	if s.IsActive(ctx, unit) {
+		return fmt.Errorf("служба %s продолжает работать после остановки", unit)
 	}
 	return nil
 }

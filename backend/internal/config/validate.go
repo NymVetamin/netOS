@@ -288,6 +288,20 @@ func (c *Config) validatePool(r *ValidationResult, path string, n Network, prefi
 func (c *Config) validateWANs(r *ValidationResult) {
 	ifaceIDs := c.interfaceIDs()
 	enabled := 0
+	// Метрика — единственное, чем аплинки упорядочены между собой: она решает,
+	// какой из них основной. Две одинаковые означают, что выбор остаётся за
+	// ядром, а переключение при отказе становится непредсказуемым.
+	metricOwner := map[int]string{}
+	claimMetric := func(path string, metric int, owner string) {
+		if previous, taken := metricOwner[metric]; taken {
+			r.errf(path+".metric",
+				"приоритет %d уже занят (%s): по нему выбирается основной аплинк, и он должен быть уникальным",
+				metric, previous)
+			return
+		}
+		metricOwner[metric] = owner
+	}
+
 	for i, w := range c.WANs {
 		path := fmt.Sprintf("wans[%d]", i)
 		if !ifaceIDs[w.Interface] {
@@ -295,6 +309,17 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		}
 		if w.Enabled {
 			enabled++
+			if w.Metric <= 0 {
+				r.errf(path+".metric", "приоритет должен быть положительным числом")
+			} else {
+				claimMetric(path, w.Metric, w.Name)
+				if w.Proto == "l2tp" {
+					// Сеть провайдера под туннелем получает свой маршрут по
+					// умолчанию с худшей метрикой, и он тоже участвует в общем
+					// порядке.
+					claimMetric(path, w.Metric+10, w.Name+" (сеть провайдера)")
+				}
+			}
 		}
 		switch w.Proto {
 		case "dhcp":
@@ -323,6 +348,27 @@ func (c *Config) validateWANs(r *ValidationResult) {
 			}
 			if w.Username == "" {
 				r.errf(path+".username", "для L2TP нужен логин")
+			}
+			switch w.Underlay {
+			case "", "dhcp":
+			case "static":
+				// Туннель поднимается поверх адреса в сети провайдера. Без него
+				// не найти ни концентратор, ни маршрут до него.
+				if _, err := netip.ParsePrefix(w.Address); err != nil {
+					r.errf(path+".address",
+						"для статического адреса под туннелем нужен адрес с маской, например 10.0.0.5/24")
+				}
+				if _, err := netip.ParseAddr(w.Gateway); err != nil {
+					r.errf(path+".gateway", "укажите шлюз сети провайдера")
+				}
+			default:
+				r.errf(path+".underlay", "неизвестный способ получения адреса %q", w.Underlay)
+			}
+			// Интерфейс сессии называется ppp-<id>, как и у PPPoE.
+			if n := len("ppp-" + w.ID); n > maxInterfaceName {
+				r.errf(path+".id",
+					"идентификатор слишком длинный: имя интерфейса ppp-%s не помещается в %d символов",
+					w.ID, maxInterfaceName)
 			}
 		default:
 			r.errf(path+".proto", "неизвестный тип подключения %q", w.Proto)

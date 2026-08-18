@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -39,4 +40,79 @@ func TestDisableReportsRealFailure(t *testing.T) {
 	if err := s.Disable(context.Background(), "x.service"); err == nil {
 		t.Fatal("настоящая ошибка отключения потеряна")
 	}
+}
+
+// scriptedRunner отвечает по командам, чтобы можно было изобразить службу,
+// которая переживает disable.
+type scriptedRunner struct {
+	commands []string
+	active   bool
+}
+
+func (r *scriptedRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	command := name + " " + strings.Join(args, " ")
+	r.commands = append(r.commands, command)
+	switch {
+	case strings.HasPrefix(command, "systemctl is-active"):
+		if r.active {
+			return "active\n", nil
+		}
+		return "inactive\n", nil
+	case strings.HasPrefix(command, "systemctl stop"):
+		// Только stop действительно останавливает: так ведут себя службы,
+		// унаследованные от SysV.
+		r.active = false
+	}
+	return "", nil
+}
+
+func (r *scriptedRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+// systemctl disable для службы, унаследованной от SysV, перенаправляется в
+// update-rc.d и демона не останавливает — даже с --now. Без отдельного stop
+// чужой демон остался бы висеть на порту, который нужен netOS.
+func TestDisableAlsoStopsSysVService(t *testing.T) {
+	r := &scriptedRunner{active: true}
+	if err := NewSystemd(r).Disable(context.Background(), "xl2tpd.service"); err != nil {
+		t.Fatal(err)
+	}
+	var stopped bool
+	for _, c := range r.commands {
+		if strings.HasPrefix(c, "systemctl stop xl2tpd.service") {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Fatalf("остановка не выполнялась: %v", r.commands)
+	}
+	if r.active {
+		t.Fatal("служба осталась работать")
+	}
+}
+
+// Если после всего служба всё ещё работает, молчать нельзя: она держит порт.
+func TestDisableReportsServiceThatSurvives(t *testing.T) {
+	r := &scriptedRunner{active: true}
+	// Изображаем службу, которую не берёт даже stop.
+	stubborn := &stubbornRunner{scriptedRunner: r}
+	if err := NewSystemd(stubborn).Disable(context.Background(), "x.service"); err == nil {
+		t.Fatal("выжившая служба принята за остановленную")
+	}
+}
+
+type stubbornRunner struct{ *scriptedRunner }
+
+func (r *stubbornRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	command := name + " " + strings.Join(args, " ")
+	if strings.HasPrefix(command, "systemctl is-active") {
+		return "active\n", nil
+	}
+	r.commands = append(r.commands, command)
+	return "", nil
+}
+
+func (r *stubbornRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
 }

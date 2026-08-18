@@ -38,8 +38,11 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "dnsmasq", Title: "dnsmasq", Group: "Базовые службы",
 		Description: "Лёгкий сервер DHCP и кэширующий DNS в одном процессе. Обычный выбор для домашнего роутера.",
-		Packages:    []string{"dnsmasq"},
-		Provides:    []string{"dhcp", "dns"},
+		Packages: []string{"dnsmasq"},
+		// netOS запускает собственный экземпляр с генерируемым конфигом,
+		// поэтому штатный юнит гасится сразу после установки пакета.
+		Units:    []string{"dnsmasq.service"},
+		Provides: []string{"dhcp", "dns"},
 		SizeHint:    "около 1 МБ",
 	},
 	{
@@ -116,10 +119,14 @@ var Catalog = []ComponentInfo{
 		SizeHint:    "около 15 МБ",
 	},
 	{
-		ID: "l2tp", Title: "L2TP", Group: "VPN",
-		Description: "Туннель L2TP поверх IPsec. Нужен, когда провайдер или удалённая сеть не предлагают ничего современнее.",
-		Packages:    []string{"xl2tpd", "ppp"},
-		Provides:    []string{"vpn-client", "wan"},
+		ID: "l2tp", Title: "L2TP", Group: "Подключение к провайдеру",
+		Description: "Нужен, если провайдер даёт интернет через туннель до своего концентратора по логину и паролю.",
+		Packages: []string{"xl2tpd", "ppp"},
+		// Штатный юнит обязательно перечислен: без этого установка пакета
+		// поднимает xl2tpd со своим конфигом, и он занимает порт 1701, на
+		// котором должен работать туннель netOS.
+		Units:    []string{"xl2tpd.service"},
+		Provides: []string{"vpn-client", "wan"},
 		SizeHint:    "около 2 МБ",
 	},
 	{
