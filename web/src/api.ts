@@ -45,6 +45,19 @@ export type ComponentInfo = {
   external?: boolean;
 };
 
+// RouteEntry — разобранная запись таблицы маршрутизации.
+export type RouteEntry = {
+  destination: string;
+  gateway: string;
+  interface: string;
+  source: string;
+  metric: number;
+  // origin: kernel | dhcp | static | boot | ra
+  origin: string;
+  table: string;
+  raw: string;
+};
+
 export type Session = {
   username: string;
   role: string;
@@ -132,7 +145,8 @@ export const api = {
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
   leases: () => request<{ leases: any[] }>("GET", "/api/leases"),
   arp: () => request<{ arp: any[] }>("GET", "/api/arp"),
-  routes: () => request<{ routes: string; rules: string }>("GET", "/api/routes"),
+  routes: () =>
+    request<{ routes: string; rules: string; parsed: RouteEntry[] }>("GET", "/api/routes"),
   audit: (limit = 100) => request<{ entries: any[] }>("GET", `/api/audit?limit=${limit}`),
   revisions: (limit = 50) => request<{ revisions: any[] }>("GET", `/api/revisions?limit=${limit}`),
   restoreRevision: (id: number) =>

@@ -458,8 +458,14 @@ func (s *WAN) applyStatic(ctx context.Context, w config.WAN, iface string) error
 		metric := fmt.Sprint(w.Metric)
 		// Маршрут по умолчанию заменяем, а не добавляем: иначе при повторном
 		// применении накопится несколько шлюзов с одной метрикой.
-		_, _ = s.Runner.Run(ctx, "ip", "route", "replace", "default",
-			"via", w.Gateway, "dev", iface, "metric", metric)
+		// Метка владельца ставится числом: имя протокола появляется в системе
+		// только после того, как подсистема маршрутизации запишет файл, а она
+		// выполняется позже — команда с именем просто не прошла бы.
+		if _, err := s.Runner.Run(ctx, "ip", "route", "replace", "default",
+			"via", w.Gateway, "dev", iface, "metric", metric,
+			"proto", fmt.Sprint(config.RouteProto)); err != nil {
+			return fmt.Errorf("маршрут по умолчанию через %s: %w", w.Gateway, err)
+		}
 	}
 	return nil
 }

@@ -22,6 +22,14 @@ import (
 // ip route show table netos-vpn читается без сверки с документацией.
 const rtTablesPath = "/etc/iproute2/rt_tables.d/netos.conf"
 
+// Собственный протокол маршрутов. Благодаря ему в выводе ip route видно, что
+// маршрут поставил netOS, а не ядро и не клиент DHCP, — и его же используем,
+// чтобы отличать свои маршруты от чужих при уборке.
+//
+// Пользовательские статические маршруты помечаются штатным proto static,
+// маршруты аплинков — netos: так подсистемы не удаляют работу друг друга.
+const rtProtosPath = "/etc/iproute2/rt_protos.d/netos.conf"
+
 // Приоритеты правил netOS занимают отдельный диапазон, чтобы не спорить с
 // правилами системы (0, 32766, 32767) и оставить место для ручных.
 const (
@@ -69,6 +77,9 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
+	if err := s.writeProtos(); err != nil {
+		return err
+	}
 	if err := s.writeTables(cfg); err != nil {
 		return err
 	}
@@ -87,6 +98,15 @@ func (s *Subsystem) writeTables(cfg *config.Config) error {
 		fmt.Fprintf(&b, "%d\t%s\n", t.Number, t.Name)
 	}
 	return system.WriteFileAtomic(rtTablesPath, []byte(b.String()), 0o644)
+}
+
+// writeProtos регистрирует имя протокола, чтобы ip route показывал proto netos
+// вместо голого номера.
+func (s *Subsystem) writeProtos() error {
+	var b strings.Builder
+	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
+	fmt.Fprintf(&b, "%d\t%s\n", config.RouteProto, config.RouteProtoName)
+	return system.WriteFileAtomic(rtProtosPath, []byte(b.String()), 0o644)
 }
 
 // applyRoutes приводит статические маршруты к описанному виду.

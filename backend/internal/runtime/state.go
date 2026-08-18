@@ -9,11 +9,13 @@ package runtime
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -275,7 +277,7 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 		if len(fields) == 0 {
 			continue
 		}
-		r := Route{Destination: fields[0], Table: table, Raw: line, Origin: "kernel"}
+		r := Route{Destination: fields[0], Table: table, Raw: line, Origin: "boot"}
 
 		for i := 1; i < len(fields); i++ {
 			switch fields[i] {
@@ -298,6 +300,10 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 			case "proto":
 				if i+1 < len(fields) {
 					r.Origin = fields[i+1]
+					// Пока файл протоколов не записан, ядро отдаёт номер.
+					if r.Origin == fmt.Sprint(config.RouteProto) {
+						r.Origin = config.RouteProtoName
+					}
 				}
 			}
 		}

@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
-import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { api, RouteEntry } from "../api";
+import { Badge, Card, Empty, Notice, Switch, TableWrap } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
+
+type RoutesResponse = { routes: string; rules: string; parsed: RouteEntry[] };
 
 // Маршрутизация: куда роутер отправляет пакеты и по какому признаку выбирает
 // таблицу. На этом же механизме позже будет построен выбор VPN-канала для
 // каждого клиента, поэтому таблицы и правила показаны явно, а не спрятаны.
 export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
-  const [live, setLive] = useState<{ routes: string; rules: string; parsed: any[] } | null>(
-    null,
-  );
+  const [live, setLive] = useState<RoutesResponse | null>(null);
 
   useEffect(() => {
     const load = () => api.routes().then(setLive).catch(() => {});
@@ -450,7 +450,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 </tr>
               </thead>
               <tbody>
-                {(live.parsed || []).map((r: any, i: number) => (
+                {(live.parsed || []).map((r, i) => (
                   <tr key={i}>
                     <td className="mono">{r.destination}</td>
                     <td className="mono">{r.gateway || <span className="faint">напрямую</span>}</td>
@@ -484,4 +484,26 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
       )}
     </>
   );
+}
+
+// originBadge объясняет, откуда взялся маршрут. Это первое, что нужно знать,
+// прежде чем пытаться его исправить: маршрут от провайдера или созданный ядром
+// живёт сам по себе, и править его в панели бессмысленно.
+function originBadge(origin: string) {
+  switch (origin) {
+    case "netos":
+      return <Badge tone="accent">поставлен netOS</Badge>;
+    case "static":
+      return <Badge tone="accent">задан вручную</Badge>;
+    case "dhcp":
+      return <Badge tone="ok">получен от провайдера</Badge>;
+    case "kernel":
+      return <Badge tone="neutral">создан ядром</Badge>;
+    case "boot":
+      return <Badge tone="neutral">задан при загрузке</Badge>;
+    case "ra":
+      return <Badge tone="neutral">анонс маршрутизатора</Badge>;
+    default:
+      return <Badge tone="neutral">{origin || "неизвестно"}</Badge>;
+  }
 }

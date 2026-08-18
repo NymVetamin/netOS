@@ -50,7 +50,7 @@ func renderDHCPScript(metric int) string {
 	w("")
 	w("        if [ -n \"$router\" ]; then")
 	w("            for gw in $router; do")
-	w("                ip -4 route replace default via \"$gw\" dev \"$interface\" metric \"$METRIC\"")
+	w("                ip -4 route replace default via \"$gw\" dev \"$interface\" metric \"$METRIC\" proto dhcp")
 	w("                break")
 	w("            done")
 	w("        fi")
