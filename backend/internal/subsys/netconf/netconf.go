@@ -249,3 +249,18 @@ func removeNetworkdFiles() error {
 	}
 	return nil
 }
+
+// RenderFor печатает персистентную конфигурацию для выбранного механизма.
+// Используется командой netos render: администратор должен видеть, что именно
+// ляжет на машину, не дожидаясь применения.
+func RenderFor(cfg *config.Config) (string, error) {
+	switch cfg.System.NetworkBackend {
+	case "ifupdown":
+		return "# " + ifupdownPath + "\n" + renderIfupdown(cfg), nil
+	case "networkd":
+		return render(cfg), nil
+	case "netos", "":
+		return "# Интерфейсами управляет netOS напрямую, файлы не генерируются.\n", nil
+	}
+	return "", fmt.Errorf("неизвестный способ настройки сети %q", cfg.System.NetworkBackend)
+}

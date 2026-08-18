@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,5 +207,39 @@ func TestLogsRequireRoot(t *testing.T) {
 	m.EUID = func() int { return 1000 }
 	if err := m.Execute(context.Background(), []string{"logs"}); err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("logs без root вернул %v", err)
+	}
+}
+
+// Удаление обязано возвращать машину в исходное состояние. Оставленное
+// описание сегментов пережило бы netOS: система продолжала бы создавать
+// бриджи и адреса, которых больше никто не обслуживает.
+func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	m.Run = func(context.Context, command) error { return nil }
+
+	ifupdown := filepath.Join(m.Root, "etc/network/interfaces.d/netos.conf")
+	networkd := filepath.Join(m.Root, "etc/systemd/network/05-netos-br-lan.network")
+	foreign := filepath.Join(m.Root, "etc/systemd/network/10-all.network")
+	for _, path := range []string{ifupdown, networkd, foreign} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{ifupdown, networkd} {
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("после удаления остался %s", path)
+		}
+	}
+	// Чужие файлы не наши, и трогать их нельзя.
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("удалён чужой файл конфигурации сети: %v", err)
 	}
 }

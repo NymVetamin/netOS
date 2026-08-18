@@ -17,6 +17,11 @@ import (
 
 const installerURL = "https://raw.githubusercontent.com/netos-router/netos/main/install.sh"
 
+// renderableArtifacts перечисляет то, что умеет печатать netosd -render.
+// Список продублирован здесь намеренно: CLI обязан отказать до запуска демона,
+// а не показывать пользователю его внутреннюю ошибку.
+var renderableArtifacts = []string{"iptables", "dnsmasq", "unbound", "dnsproxy", "network", "config"}
+
 type command struct {
 	name  string
 	args  []string
@@ -121,8 +126,8 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
-		if len(args) != 2 || !contains([]string{"iptables", "dnsmasq", "config"}, args[1]) {
-			return fmt.Errorf("использование: netos render iptables|dnsmasq|config")
+		if len(args) != 2 || !contains(renderableArtifacts, args[1]) {
+			return fmt.Errorf("использование: netos render %s", strings.Join(renderableArtifacts, "|"))
 		}
 		return m.run(ctx, m.Binary, "-render", args[1])
 	case "backup":
@@ -182,7 +187,9 @@ func (m *Manager) help() {
   netos backup                 создать резервную копию
   netos start|stop|restart     управление службой
   netos plan                   показать план активной конфигурации
-  netos render <артефакт>      вывести iptables, dnsmasq или config
+  netos render <артефакт>      вывести сгенерированный конфиг:
+                               iptables, dnsmasq, unbound, dnsproxy,
+                               network, config
   netos version                версия netOS
 
 update и reinstall сохраняют конфигурацию, пользователей и сертификаты.`)
@@ -322,7 +329,14 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		m.sys("/etc/sysctl.d/99-netos.conf"), m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
 		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),
+		// Персистентная конфигурация сети: без неё удаление netOS оставило бы
+		// машину с описанием сегментов, которых больше никто не создаёт.
+		m.sys("/etc/network/interfaces.d/netos.conf"),
 	} {
+		_ = os.Remove(path)
+	}
+	networkd, _ := filepath.Glob(m.sys("/etc/systemd/network/05-netos-*"))
+	for _, path := range networkd {
 		_ = os.Remove(path)
 	}
 	if !keepData {
