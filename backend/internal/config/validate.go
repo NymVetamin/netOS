@@ -309,6 +309,14 @@ func (c *Config) validateWANs(r *ValidationResult) {
 			if w.Username == "" {
 				r.errf(path+".username", "для PPPoE нужен логин")
 			}
+			// Интерфейс сессии называется ppp-<id>, и на него ссылаются зоны
+			// файрволла. Ядро обрежет слишком длинное имя, и правила уйдут в
+			// пустоту — ловим это до применения.
+			if n := len("ppp-" + w.ID); n > maxInterfaceName {
+				r.errf(path+".id",
+					"идентификатор слишком длинный: имя интерфейса ppp-%s не помещается в %d символов",
+					w.ID, maxInterfaceName)
+			}
 		case "l2tp":
 			if w.Server == "" {
 				r.errf(path+".server", "укажите адрес сервера L2TP")

@@ -283,11 +283,17 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	}
 
 	m.bestEffort(ctx, "systemctl", "disable", "netosd")
-	m.bestEffort(ctx, "systemctl", "disable", "--now", "netos-dnsmasq.service")
-	units, _ := filepath.Glob(m.sys("/etc/systemd/system/netos-dhcp-*.service"))
-	for _, unit := range units {
-		m.bestEffort(ctx, "systemctl", "disable", "--now", filepath.Base(unit))
-		_ = os.Remove(unit)
+	for _, unit := range []string{"netos-dnsmasq.service", "netos-unbound.service", "netos-dnsproxy.service"} {
+		m.bestEffort(ctx, "systemctl", "disable", "--now", unit)
+	}
+	// Юниты, которых по одному на интерфейс или аплинк, ищем по маске: их
+	// имена зависят от конфигурации, и списком их не перечислить.
+	for _, pattern := range []string{"netos-dhcp-*.service", "netos-pppoe-*.service"} {
+		units, _ := filepath.Glob(m.sys("/etc/systemd/system/" + pattern))
+		for _, unit := range units {
+			m.bestEffort(ctx, "systemctl", "disable", "--now", filepath.Base(unit))
+			_ = os.Remove(unit)
+		}
 	}
 
 	// netOS владеет полными таблицами firewall, поэтому при удалении оставляет

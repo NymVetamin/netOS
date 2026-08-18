@@ -13,6 +13,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
@@ -375,6 +376,15 @@ func (s *Networks) Health(ctx context.Context, cfg *config.Config) error {
 
 type WAN struct {
 	Runner system.Runner
+	// pppoePrevious хранит конфигурации PPPoE, какими они были до применения:
+	// по ним видно, менялись ли параметры, и живую сессию не приходится рвать
+	// на каждом применении.
+	pppoePrevious map[string]string
+	// PPPoETimeout ограничивает ожидание сессии после применения, PPPoePoll —
+	// как часто проверять. Значения по умолчанию подставляются на месте;
+	// поля существуют, чтобы тесты не ждали десятки секунд.
+	PPPoETimeout time.Duration
+	PPPoePoll    time.Duration
 }
 
 func NewWAN(r system.Runner) *WAN { return &WAN{Runner: r} }
@@ -414,12 +424,23 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 		ifaceName[i.ID] = i.Name
 	}
 	dhcpWanted := map[string]bool{}
+	pppoeWanted := map[string]bool{}
 	for _, w := range cfg.WANs {
-		if w.Enabled && w.Proto == "dhcp" && ifaceName[w.Interface] != "" {
+		if !w.Enabled || ifaceName[w.Interface] == "" {
+			continue
+		}
+		switch w.Proto {
+		case "dhcp":
 			dhcpWanted[ifaceName[w.Interface]] = true
+		case "pppoe":
+			pppoeWanted[w.ID] = true
 		}
 	}
 	if err := s.cleanupDHCPClients(ctx, dhcpWanted); err != nil {
+		return err
+	}
+	s.readPPPoEConfs(cfg)
+	if err := s.cleanupPPPoE(ctx, pppoeWanted); err != nil {
 		return err
 	}
 	staticWanted := map[string]bool{}
@@ -458,8 +479,12 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 				return err
 			}
 		case "pppoe":
-			// Реализуется в фазе, где появляется поддержка PPP.
-			return fmt.Errorf("PPPoE пока не поддерживается")
+			// Соединение держит pppd: адрес и маршрут по умолчанию приходят
+			// от провайдера, поэтому назначать здесь нечего.
+			s.stopDHCPClient(ctx, name)
+			if err := s.ensurePPPoE(ctx, w, name); err != nil {
+				return err
+			}
 		}
 	}
 	return s.cleanupStaticRoutes(ctx, staticWanted)
@@ -570,6 +595,17 @@ func (s *WAN) Health(ctx context.Context, cfg *config.Config) error {
 	if !enabled {
 		return nil
 	}
+	// Сессии PPPoE проверяем поимённо: маршрут по умолчанию мог остаться от
+	// другого аплинка, и тогда неподнявшийся PPPoE прошёл бы незамеченным.
+	for _, w := range cfg.WANs {
+		if !w.Enabled || w.Proto != "pppoe" {
+			continue
+		}
+		if err := s.waitPPPoE(ctx, w); err != nil {
+			return err
+		}
+	}
+
 	out, err := s.Runner.Run(ctx, "ip", "route", "show", "default")
 	if err != nil {
 		return err

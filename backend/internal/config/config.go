@@ -29,6 +29,11 @@ const (
 	RouteProtoName = "netos"
 )
 
+// maxInterfaceName — предел ядра на имя сетевого интерфейса (IFNAMSIZ - 1).
+// Имена, которые netOS строит сам (ppp-<id> и подобные), обязаны в него
+// помещаться, иначе правила файрволла сошлются на несуществующий интерфейс.
+const maxInterfaceName = 15
+
 // Config — корень дерева конфигурации.
 type Config struct {
 	Version    int         `json:"version"`
