@@ -24,6 +24,7 @@ export type ConfigResponse = {
   pending_confirmation: boolean;
   confirm_deadline?: string;
   rollback?: RollbackInfo;
+  draft_version: number;
 };
 
 export type PlanAction = {
@@ -63,9 +64,11 @@ export type Session = {
   role: string;
   must_change: boolean;
   last_login?: string;
+  csrf_token: string;
 };
 
 let csrfToken: string | null = null;
+let draftVersion: number | null = null;
 
 export class ApiError extends Error {
   status: number;
@@ -78,8 +81,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
+  const headers: Record<string, string> = { ...(extraHeaders || {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (csrfToken && method !== "GET") headers["X-NetOS-CSRF"] = csrfToken;
 
@@ -121,21 +129,45 @@ export const api = {
     }
   },
 
-  session: () => request<Session>("GET", "/api/session"),
+  async session() {
+    const res = await request<Session>("GET", "/api/session");
+    csrfToken = res.csrf_token;
+    return res;
+  },
 
   changePassword: (current: string, next: string) =>
     request<{ ok: boolean }>("POST", "/api/password", { current, new: next }),
 
-  getConfig: () => request<ConfigResponse>("GET", "/api/config"),
-  saveConfig: (config: any) => request<ConfigResponse>("PUT", "/api/config", config),
-  discardDraft: () => request<{ ok: boolean }>("POST", "/api/config/discard"),
+  async getConfig() {
+    const res = await request<ConfigResponse>("GET", "/api/config");
+    draftVersion = res.draft_version;
+    return res;
+  },
+  async saveConfig(config: any) {
+    if (draftVersion === null) throw new ApiError(409, "Сначала обновите конфигурацию");
+    const res = await request<ConfigResponse>("PUT", "/api/config", config, {
+      "If-Match": String(draftVersion),
+    });
+    draftVersion = res.draft_version;
+    return res;
+  },
+  async discardDraft() {
+    if (draftVersion === null) throw new ApiError(409, "Сначала обновите конфигурацию");
+    const res = await request<{ ok: boolean; draft_version: number }>(
+      "POST", "/api/config/discard", undefined, { "If-Match": String(draftVersion) },
+    );
+    draftVersion = res.draft_version;
+    return res;
+  },
   plan: () => request<{ actions: PlanAction[] | null }>("POST", "/api/config/plan"),
-  apply: (comment: string) =>
-    request<{ needs_confirm: boolean; deadline?: string; revision: number }>(
+  apply: (comment: string) => {
+    if (draftVersion === null) return Promise.reject(new ApiError(409, "Сначала обновите конфигурацию"));
+    return request<{ needs_confirm: boolean; deadline?: string; revision: number }>(
       "POST",
       "/api/config/apply",
-      { comment },
-    ),
+      { comment, draft_version: draftVersion },
+    );
+  },
   confirm: () => request<{ ok: boolean }>("POST", "/api/config/confirm"),
   rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
 
@@ -149,10 +181,16 @@ export const api = {
     request<{ routes: string; rules: string; parsed: RouteEntry[] }>("GET", "/api/routes"),
   audit: (limit = 100) => request<{ entries: any[] }>("GET", `/api/audit?limit=${limit}`),
   revisions: (limit = 50) => request<{ revisions: any[] }>("GET", `/api/revisions?limit=${limit}`),
-  restoreRevision: (id: number) =>
-    request<ConfigResponse>("POST", `/api/revisions/${id}/restore`),
+  async restoreRevision(id: number) {
+    if (draftVersion === null) throw new ApiError(409, "Сначала обновите конфигурацию");
+    const res = await request<ConfigResponse>("POST", `/api/revisions/${id}/restore`, undefined, {
+      "If-Match": String(draftVersion),
+    });
+    draftVersion = res.draft_version;
+    return res;
+  },
 
-  async render(kind: "iptables" | "dnsmasq"): Promise<string> {
+  async render(kind: "iptables" | "dnsmasq" | "isc-dhcp" | "kea-dhcp4"): Promise<string> {
     const res = await fetch(`/api/render/${kind}`, { credentials: "same-origin" });
     if (!res.ok) throw new ApiError(res.status, `Ошибка ${res.status}`);
     return res.text();

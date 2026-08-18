@@ -152,7 +152,17 @@ func main() {
 
 	// Применение при старте подтверждения не требует: подтверждать некому.
 	logger.Infof("применяю конфигурацию (ревизия %d)", revID)
+	transitioned := false
+	if rev, err := st.Revision(revID); err == nil && rev.State != store.StateActive {
+		if err := st.SetRevisionState(revID, store.StateApplying); err != nil {
+			log.Fatalf("не удалось пометить ревизию применяемой: %v", err)
+		}
+		transitioned = true
+	}
 	if _, err := engine.Apply(ctx, cfg, revID, false); err != nil {
+		if transitioned {
+			_ = st.SetRevisionState(revID, store.StateRolledBack)
+		}
 		log.Fatalf("применение не удалось: %v", err)
 	}
 	if err := st.MarkActive(revID); err != nil {
@@ -172,6 +182,12 @@ func main() {
 	}
 
 	collector := runtime.NewCollector(runner, leasePath)
+	collector.LeaseProvider = func() string {
+		if current := engine.Current(); current != nil {
+			return current.DHCP.Provider
+		}
+		return "dnsmasq"
+	}
 	panel := api.New(st, engine, collector, logger)
 
 	sig := make(chan os.Signal, 1)
@@ -354,7 +370,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 
 // renderableArtifacts — что умеет печатать netosd -render. Список общий с
 // командой netos render, чтобы справка не разошлась с действительностью.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "unbound", "dnsproxy", "network", "config"}
+var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "config"}
 
 func renderArtifact(kind string, cfg *config.Config) error {
 	switch kind {
@@ -370,6 +386,10 @@ func renderArtifact(kind string, cfg *config.Config) error {
 		}
 	case "dnsmasq":
 		fmt.Print(services.NewDnsmasq(nil).Render(cfg))
+	case "isc-dhcp":
+		fmt.Print(services.NewISCDHCP(nil).Render(cfg))
+	case "kea-dhcp4":
+		fmt.Print(services.NewKeaDHCP(nil).Render(cfg))
 	case "unbound":
 		fmt.Print(services.NewUnbound(nil).Render(cfg))
 	case "dnsproxy":

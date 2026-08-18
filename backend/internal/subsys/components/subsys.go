@@ -97,11 +97,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		if err := s.remove(ctx, info); err != nil {
 			s.Logger.Warnf("удаление компонента %s: %v", info.Title, err)
+			failures = append(failures, "удалить "+info.Title)
 		}
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("не удалось установить: %s", strings.Join(failures, ", "))
+		return fmt.Errorf("не удалось изменить компоненты: %s", strings.Join(failures, ", "))
 	}
 	return nil
 }

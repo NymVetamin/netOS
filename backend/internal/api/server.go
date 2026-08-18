@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -39,6 +40,10 @@ type Server struct {
 	// применил.
 	draftMu sync.RWMutex
 	draft   *config.Config
+	// draftVersion реализует optimistic locking для вкладок и нескольких
+	// администраторов. Любая смена черновика увеличивает номер.
+	draftVersion  uint64
+	draftApplying bool
 
 	// csrfTokens связывает сессию с её токеном защиты от подделки запросов.
 	csrfMu     sync.RWMutex
@@ -64,12 +69,13 @@ type Logger interface {
 
 func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, logger Logger) *Server {
 	return &Server{
-		Store:      st,
-		Engine:     engine,
-		Collector:  collector,
-		Logger:     logger,
-		csrfTokens: map[string]string{},
-		loginFails: map[string]*failCounter{},
+		Store:        st,
+		Engine:       engine,
+		Collector:    collector,
+		Logger:       logger,
+		csrfTokens:   map[string]string{},
+		loginFails:   map[string]*failCounter{},
+		draftVersion: 1,
 	}
 }
 
@@ -251,7 +257,17 @@ func writeError(w http.ResponseWriter, status int, format string, args ...any) {
 func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8<<20))
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("в теле запроса больше одного JSON-значения")
+		}
+		return err
+	}
+	return nil
 }
 
 // clientIP определяет адрес источника. Заголовкам вроде X-Forwarded-For

@@ -234,6 +234,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           setSaveError(err.problems?.length ? "" : err.message);
           setDirty(true);
         }
+        if (!pendingCfg.current) pendingCfg.current = next;
+        throw err;
       }
     });
     saveChain.current = job.catch(() => {});
@@ -251,7 +253,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         mutate(next);
         pendingCfg.current = next;
         window.clearTimeout(saveTimer.current);
-        saveTimer.current = window.setTimeout(flush, SAVE_DELAY_MS);
+        saveTimer.current = window.setTimeout(() => {
+          void flush().catch(() => {});
+        }, SAVE_DELAY_MS);
         return next;
       });
     },

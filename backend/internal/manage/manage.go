@@ -188,7 +188,7 @@ func (m *Manager) help() {
   netos start|stop|restart     управление службой
   netos plan                   показать план активной конфигурации
   netos render <артефакт>      вывести сгенерированный конфиг:
-                               iptables, dnsmasq, unbound, dnsproxy,
+                               iptables, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
                                network, config
   netos version                версия netOS
 
@@ -290,7 +290,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	}
 
 	m.bestEffort(ctx, "systemctl", "disable", "netosd")
-	for _, unit := range []string{"netos-dnsmasq.service", "netos-unbound.service", "netos-dnsproxy.service"} {
+	for _, unit := range []string{"netos-dnsmasq.service", "netos-isc-dhcp.service", "netos-kea-dhcp4.service", "netos-unbound.service", "netos-dnsproxy.service"} {
 		m.bestEffort(ctx, "systemctl", "disable", "--now", unit)
 	}
 	// Юниты, которых по одному на интерфейс или аплинк, ищем по маске: их
@@ -326,6 +326,8 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	for _, path := range []string{
 		m.Unit,
 		m.sys("/etc/systemd/system/netos-dnsmasq.service"),
+		m.sys("/etc/systemd/system/netos-isc-dhcp.service"),
+		m.sys("/etc/systemd/system/netos-kea-dhcp4.service"),
 		m.sys("/etc/sysctl.d/99-netos.conf"), m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
 		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),

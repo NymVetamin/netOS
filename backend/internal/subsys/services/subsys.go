@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
@@ -14,6 +15,8 @@ import (
 // месте, а подсистемы dhcp и dns лишь дёргают его.
 type Manager struct {
 	Dnsmasq  *Dnsmasq
+	ISC      *ISCDHCP
+	Kea      *KeaDHCP
 	Unbound  *Unbound
 	Dnsproxy *Dnsproxy
 	Packages *system.Packages
@@ -23,6 +26,8 @@ type Manager struct {
 func NewManager(r system.Runner) *Manager {
 	return &Manager{
 		Dnsmasq:  NewDnsmasq(r),
+		ISC:      NewISCDHCP(r),
+		Kea:      NewKeaDHCP(r),
 		Unbound:  NewUnbound(r),
 		Dnsproxy: NewDnsproxy(r),
 		Packages: system.NewPackages(r),
@@ -85,18 +90,32 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 
 // stopUnused гасит демонов, которые перестали быть выбранными провайдерами.
 // Без этого старый демон продолжит держать порт 53 или отвечать на DHCP.
-func (m *Manager) stopUnused(ctx context.Context, cfg *config.Config) {
+func (m *Manager) stopUnused(ctx context.Context, cfg *config.Config) error {
+	var failures []string
+	disable := func(unit string) {
+		if err := m.Systemd.Disable(ctx, unit); err != nil {
+			failures = append(failures, unit+": "+err.Error())
+		}
+	}
+	// Пакетные юниты всегда чужие: netOS запускает демоны только собственными
+	// юнитами с конфигами из /var/lib/netos/generated.
+	disable("isc-dhcp-server.service")
+	disable("kea-dhcp4-server.service")
 	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "isc-dhcp-server" {
-		_ = m.Systemd.Disable(ctx, "isc-dhcp-server.service")
+		disable(iscUnit)
 	}
 	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "kea" {
-		_ = m.Systemd.Disable(ctx, "kea-dhcp4-server.service")
+		disable(keaUnit)
 	}
 	// Штатные юниты dnsmasq и unbound всегда выключены: netOS запускает свои,
 	// с генерируемыми конфигами. Собственный юнет резолвера гасит его же
 	// подсистема, когда провайдер сменился.
-	_ = m.Systemd.Disable(ctx, "dnsmasq.service")
-	_ = m.Systemd.Disable(ctx, "unbound.service")
+	disable("dnsmasq.service")
+	disable("unbound.service")
+	if len(failures) > 0 {
+		return fmt.Errorf("не удалось остановить неиспользуемые службы: %s", strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -130,10 +149,17 @@ func (s *DHCP) Plan(old, new *config.Config) ([]apply.Action, error) {
 	}
 
 	// Провайдер тот же — сравниваем то, что реально попадёт в конфиг.
-	if new.DHCP.Provider == "dnsmasq" {
-		if s.M.Dnsmasq.Render(old) != s.M.Dnsmasq.Render(new) {
-			return []apply.Action{{Kind: "reload", Target: "DHCP-сервер", Detail: "конфигурация обновлена"}}, nil
-		}
+	sameRender := true
+	switch new.DHCP.Provider {
+	case "dnsmasq":
+		sameRender = s.M.Dnsmasq.Render(old) == s.M.Dnsmasq.Render(new)
+	case "isc-dhcp-server":
+		sameRender = s.M.ISC.Render(old) == s.M.ISC.Render(new)
+	case "kea":
+		sameRender = s.M.Kea.Render(old) == s.M.Kea.Render(new)
+	}
+	if !sameRender {
+		return []apply.Action{{Kind: "reload", Target: "DHCP-сервер", Detail: "конфигурация обновлена"}}, nil
 	}
 	return nil, nil
 }
@@ -142,13 +168,22 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := s.M.ensurePackages(ctx, cfg); err != nil {
 		return err
 	}
-	s.M.stopUnused(ctx, cfg)
+	if err := s.M.stopUnused(ctx, cfg); err != nil {
+		return err
+	}
+	if cfg.DHCP.Provider != "dnsmasq" {
+		// При переключении dnsmasq сначала убираем из него DHCP-роль (оставляя
+		// DNS, если он выбран резолвером), и только затем запускаем новый сервер.
+		if err := s.M.Dnsmasq.Apply(ctx, cfg); err != nil {
+			return err
+		}
+	}
 
-	switch {
-	case cfg.DHCP.Enabled && cfg.DHCP.Provider == "isc-dhcp-server":
-		return fmt.Errorf("провайдер isc-dhcp-server появится в следующей фазе")
-	case cfg.DHCP.Enabled && cfg.DHCP.Provider == "kea":
-		return fmt.Errorf("провайдер kea появится в следующей фазе")
+	switch cfg.DHCP.Provider {
+	case "isc-dhcp-server":
+		return s.M.ISC.Apply(ctx, cfg)
+	case "kea":
+		return s.M.Kea.Apply(ctx, cfg)
 	}
 	// Во всех остальных случаях решение принимает сам dnsmasq: он знает, нужен
 	// ли хотя бы одной из ролей, и гасит собственный юнит, когда не нужен. Без
@@ -163,6 +198,12 @@ func (s *DHCP) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	if cfg.DHCP.Provider == "dnsmasq" {
 		return s.M.Dnsmasq.Health(ctx, cfg)
+	}
+	if cfg.DHCP.Provider == "isc-dhcp-server" {
+		return s.M.ISC.Health(ctx, cfg)
+	}
+	if cfg.DHCP.Provider == "kea" {
+		return s.M.Kea.Health(ctx, cfg)
 	}
 	return nil
 }

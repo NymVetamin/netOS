@@ -2,10 +2,33 @@ package components
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+type testLogger struct{}
+
+func (testLogger) Infof(string, ...any)  {}
+func (testLogger) Warnf(string, ...any)  {}
+func (testLogger) Errorf(string, ...any) {}
+
+type removalFailureRunner struct{}
+
+func (r *removalFailureRunner) Run(_ context.Context, name string, _ ...string) (string, error) {
+	if name == "dpkg-query" {
+		return "install ok installed", nil
+	}
+	if name == "apt-get" {
+		return "", errors.New("purge failed")
+	}
+	return "", nil
+}
+func (r *removalFailureRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
 
 type componentRunner struct{ calls int }
 
@@ -29,6 +52,15 @@ func TestRemoveDoesNotPurgeEssentialPackage(t *testing.T) {
 	}
 	if runner.calls != 0 {
 		t.Fatalf("для базового пакета выполнено %d внешних команд", runner.calls)
+	}
+}
+
+func TestApplyReportsRemovalFailure(t *testing.T) {
+	s := New(&removalFailureRunner{}, testLogger{})
+	cfg := &config.Config{Components: []config.Component{{ID: "dnsmasq", Installed: false}}}
+	err := s.Apply(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "удалить dnsmasq") {
+		t.Fatalf("ошибка удаления потеряна: %v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -218,9 +219,28 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "пользователь не найден")
 		return
 	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "сессия не найдена")
+		return
+	}
+	s.csrfMu.Lock()
+	csrf := s.csrfTokens[cookie.Value]
+	if csrf == "" {
+		csrf, err = GenerateToken()
+		if err == nil {
+			s.csrfTokens[cookie.Value] = csrf
+		}
+	}
+	s.csrfMu.Unlock()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось обновить защиту сессии")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username":    user.Username,
 		"role":        user.Role,
+		"csrf_token":  csrf,
 		"must_change": user.MustChange,
 		"last_login":  user.LastLogin,
 	})
@@ -318,15 +338,18 @@ func (s *Server) clearLoginFailures(ip string) {
 
 // currentDraft возвращает редактируемую конфигурацию: черновик, если он есть,
 // иначе копию применённой.
-func (s *Server) currentDraft() *config.Config {
+func (s *Server) draftSnapshot() (*config.Config, bool, uint64) {
 	s.draftMu.RLock()
+	defer s.draftMu.RUnlock()
 	if s.draft != nil {
-		d := s.draft
-		s.draftMu.RUnlock()
-		return d
+		return s.draft, true, s.draftVersion
 	}
-	s.draftMu.RUnlock()
-	return s.Engine.Current()
+	return s.Engine.Current(), false, s.draftVersion
+}
+
+func (s *Server) currentDraft() *config.Config {
+	cfg, _, _ := s.draftSnapshot()
+	return cfg
 }
 
 type configResponse struct {
@@ -338,19 +361,16 @@ type configResponse struct {
 	// Rollback заполняется, если последнее применение было откачено. Панель
 	// обязана показать это явно: иначе администратор увидит вернувшиеся
 	// старые настройки и не поймёт, почему его изменения исчезли.
-	Rollback *apply.RollbackInfo `json:"rollback,omitempty"`
+	Rollback     *apply.RollbackInfo `json:"rollback,omitempty"`
+	DraftVersion uint64              `json:"draft_version"`
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := s.currentDraft()
+	cfg, dirty, version := s.draftSnapshot()
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация ещё не загружена")
 		return
 	}
-
-	s.draftMu.RLock()
-	dirty := s.draft != nil
-	s.draftMu.RUnlock()
 
 	pending, deadline := s.Engine.Pending()
 	visibleCfg := cfg
@@ -365,11 +385,12 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		visibleCfg = redacted
 	}
 	resp := configResponse{
-		Config:   visibleCfg,
-		Dirty:    dirty,
-		Problems: cfg.Validate().Problems,
-		Pending:  pending,
-		Rollback: s.Engine.LastRollback(),
+		Config:       visibleCfg,
+		Dirty:        dirty,
+		Problems:     cfg.Validate().Problems,
+		Pending:      pending,
+		Rollback:     s.Engine.LastRollback(),
+		DraftVersion: version,
 	}
 	if pending {
 		resp.Deadline = &deadline
@@ -419,22 +440,59 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expected, ok := draftPrecondition(w, r)
+	if !ok {
+		return
+	}
+	if pending, _ := s.Engine.Pending(); pending {
+		writeError(w, http.StatusConflict, "нельзя менять черновик до подтверждения или отката")
+		return
+	}
 	s.draftMu.Lock()
+	if s.draftApplying {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "черновик сейчас применяется")
+		return
+	}
+	if expected != s.draftVersion {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "черновик уже изменён в другой вкладке; обновите страницу")
+		return
+	}
 	s.draft = &cfg
+	s.draftVersion++
+	version := s.draftVersion
 	s.draftMu.Unlock()
 
 	writeJSON(w, http.StatusOK, configResponse{
-		Config:   &cfg,
-		Dirty:    true,
-		Problems: result.Problems,
+		Config:       &cfg,
+		Dirty:        true,
+		Problems:     result.Problems,
+		DraftVersion: version,
 	})
 }
 
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
+	expected, ok := draftPrecondition(w, r)
+	if !ok {
+		return
+	}
 	s.draftMu.Lock()
+	if s.draftApplying {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "черновик сейчас применяется")
+		return
+	}
+	if expected != s.draftVersion {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "черновик уже изменён в другой вкладке; обновите страницу")
+		return
+	}
 	s.draft = nil
+	s.draftVersion++
+	version := s.draftVersion
 	s.draftMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "draft_version": version})
 }
 
 func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
@@ -462,14 +520,33 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 }
 
 type applyRequest struct {
-	Comment string `json:"comment"`
+	Comment      string `json:"comment"`
+	DraftVersion uint64 `json:"draft_version"`
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	var req applyRequest
-	_ = readJSON(r, &req)
-
-	cfg := s.currentDraft()
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "некорректный запрос: %v", err)
+		return
+	}
+	s.draftMu.Lock()
+	if req.DraftVersion != s.draftVersion {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "черновик уже изменён в другой вкладке; обновите страницу")
+		return
+	}
+	cfg := s.draft
+	if cfg == nil {
+		cfg = s.Engine.Current()
+	}
+	s.draftApplying = true
+	s.draftMu.Unlock()
+	defer func() {
+		s.draftMu.Lock()
+		s.draftApplying = false
+		s.draftMu.Unlock()
+	}()
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
 		return
@@ -482,6 +559,10 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	revID, err := s.Store.CreateRevision(cfg, username, req.Comment)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "не удалось сохранить ревизию: %v", err)
+		return
+	}
+	if err := s.Store.SetRevisionState(revID, store.StateApplying); err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось начать применение ревизии: %v", err)
 		return
 	}
 
@@ -509,6 +590,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 		s.draftMu.Lock()
 		s.draft = nil
+		s.draftVersion++
 		s.draftMu.Unlock()
 	}
 
@@ -528,6 +610,7 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 
 	s.draftMu.Lock()
 	s.draft = nil
+	s.draftVersion++
 	s.draftMu.Unlock()
 
 	_ = s.Store.Audit(store.AuditEntry{
@@ -583,6 +666,10 @@ func (s *Server) handleRevision(w http.ResponseWriter, r *http.Request) {
 // handleRestoreRevision загружает старую ревизию в черновик. Применяет её
 // администратор отдельно — так у него остаётся возможность посмотреть план.
 func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
+	expected, ok := draftPrecondition(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный идентификатор")
@@ -595,14 +682,36 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.draftMu.Lock()
+	if s.draftApplying || expected != s.draftVersion {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "черновик уже изменён или применяется; обновите страницу")
+		return
+	}
 	s.draft = rev.Config
+	s.draftVersion++
+	version := s.draftVersion
 	s.draftMu.Unlock()
 
 	writeJSON(w, http.StatusOK, configResponse{
-		Config:   rev.Config,
-		Dirty:    true,
-		Problems: rev.Config.Validate().Problems,
+		Config:       rev.Config,
+		Dirty:        true,
+		Problems:     rev.Config.Validate().Problems,
+		DraftVersion: version,
 	})
+}
+
+func draftPrecondition(w http.ResponseWriter, r *http.Request) (uint64, bool) {
+	raw := strings.Trim(r.Header.Get("If-Match"), "\" ")
+	if raw == "" {
+		writeError(w, http.StatusPreconditionRequired, "для изменения черновика нужен If-Match")
+		return 0, false
+	}
+	v, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "некорректный If-Match")
+		return 0, false
+	}
+	return v, true
 }
 
 // ---------------------------------------------------------------------------
@@ -772,6 +881,10 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 		}
 	case "dnsmasq":
 		content = services.NewDnsmasq(nil).Render(cfg)
+	case "isc-dhcp":
+		content = services.NewISCDHCP(nil).Render(cfg)
+	case "kea-dhcp4":
+		content = services.NewKeaDHCP(nil).Render(cfg)
 	default:
 		writeError(w, http.StatusNotFound, "неизвестный артефакт")
 		return

@@ -9,6 +9,7 @@ package runtime
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"strconv"
@@ -62,8 +63,9 @@ type Client struct {
 
 // Collector читает состояние системы.
 type Collector struct {
-	Runner    system.Runner
-	LeasePath string
+	Runner        system.Runner
+	LeasePath     string
+	LeaseProvider func() string
 }
 
 func NewCollector(r system.Runner, leasePath string) *Collector {
@@ -73,7 +75,18 @@ func NewCollector(r system.Runner, leasePath string) *Collector {
 // Leases читает файл аренд dnsmasq. Формат строки:
 // <срок в unix> <mac> <ip> <имя> <client-id>
 func (c *Collector) Leases() ([]Lease, error) {
-	f, err := os.Open(c.LeasePath)
+	provider := "dnsmasq"
+	if c.LeaseProvider != nil {
+		provider = c.LeaseProvider()
+	}
+	path := c.LeasePath
+	switch provider {
+	case "isc-dhcp-server":
+		path = "/var/lib/netos/dhcpd.leases"
+	case "kea":
+		path = "/var/lib/netos/kea-leases4.csv"
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // сервер ещё никому не выдавал адрес
@@ -82,6 +95,16 @@ func (c *Collector) Leases() ([]Lease, error) {
 	}
 	defer f.Close()
 
+	if provider == "isc-dhcp-server" {
+		return parseISCLeases(f)
+	}
+	if provider == "kea" {
+		return parseKeaLeases(f)
+	}
+	return parseDnsmasqLeases(f)
+}
+
+func parseDnsmasqLeases(f *os.File) ([]Lease, error) {
 	var out []Lease
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -105,6 +128,84 @@ func (c *Collector) Leases() ([]Lease, error) {
 		})
 	}
 	return out, scanner.Err()
+}
+
+func parseISCLeases(f *os.File) ([]Lease, error) {
+	latest := map[string]Lease{}
+	var current Lease
+	active := false
+	inLease := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "lease ") && strings.HasSuffix(line, " {") {
+			current = Lease{IP: strings.TrimSuffix(strings.TrimPrefix(line, "lease "), " {")}
+			active, inLease = false, true
+			continue
+		}
+		if !inLease {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "hardware ethernet "):
+			current.MAC = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(line, "hardware ethernet "), ";"))
+		case strings.HasPrefix(line, "client-hostname "):
+			current.Hostname = strings.Trim(strings.TrimSuffix(strings.TrimPrefix(line, "client-hostname "), ";"), "\"")
+		case strings.HasPrefix(line, "ends "):
+			value := strings.TrimSuffix(strings.TrimPrefix(line, "ends "), ";")
+			parts := strings.Fields(value)
+			if len(parts) == 3 {
+				if tm, err := time.ParseInLocation("2006/01/02 15:04:05", parts[1]+" "+parts[2], time.UTC); err == nil {
+					current.Expires = tm
+				}
+			}
+		case line == "binding state active;":
+			active = true
+		case line == "}":
+			delete(latest, current.IP)
+			if active && current.IP != "" && current.MAC != "" {
+				latest[current.IP] = current
+			}
+			inLease = false
+		}
+	}
+	var out []Lease
+	for _, lease := range latest {
+		out = append(out, lease)
+	}
+	return out, scanner.Err()
+}
+
+func parseKeaLeases(f *os.File) ([]Lease, error) {
+	r := csv.NewReader(f)
+	rows, err := r.ReadAll()
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	index := map[string]int{}
+	for i, name := range rows[0] {
+		index[name] = i
+	}
+	field := func(row []string, name string) string {
+		i, ok := index[name]
+		if !ok || i >= len(row) {
+			return ""
+		}
+		return row[i]
+	}
+	var out []Lease
+	for _, row := range rows[1:] {
+		ip, mac := field(row, "address"), strings.ToLower(field(row, "hwaddr"))
+		if ip == "" || mac == "" {
+			continue
+		}
+		if state := field(row, "state"); state != "" && state != "0" {
+			continue
+		}
+		expires, _ := strconv.ParseInt(field(row, "expire"), 10, 64)
+		out = append(out, Lease{IP: ip, MAC: mac, Hostname: field(row, "hostname"), Expires: time.Unix(expires, 0)})
+	}
+	return out, nil
 }
 
 // ARP читает таблицу соседей через ip neigh.
