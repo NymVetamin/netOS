@@ -1,0 +1,42 @@
+#!/bin/bash
+# Разработческий цикл: залить исходники на тестовую машину, собрать, вернуть
+# обновлённые go.mod и go.sum обратно в репозиторий.
+#
+# Возврат файлов модулей обязателен: зависимости добавляются командой go get на
+# машине сборки, и без обратной синхронизации следующая заливка затрёт их
+# старой версией из репозитория.
+set -e
+
+HOST="${NETOS_HOST:-netos}"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "$REPO"
+
+echo "→ заливаю исходники на $HOST"
+tar czf - --exclude='.git' --exclude='node_modules' --exclude='web/dist' . \
+    | ssh "$HOST" 'mkdir -p /opt/netos && tar xzf - -C /opt/netos'
+
+echo "→ разрешаю зависимости"
+ssh "$HOST" 'cd /opt/netos/backend && go mod tidy 2>&1 | grep -v "^go: downloading" || true'
+
+echo "→ возвращаю go.mod и go.sum"
+ssh "$HOST" 'cat /opt/netos/backend/go.mod' > backend/go.mod
+ssh "$HOST" 'cat /opt/netos/backend/go.sum' > backend/go.sum
+
+echo "→ сборка"
+if ssh "$HOST" 'cd /opt/netos/backend && go build -o /usr/local/bin/netosd ./cmd/netosd'; then
+    ssh "$HOST" 'echo "   собран netosd: $(ls -lh /usr/local/bin/netosd | awk "{print \$5}")"'
+else
+    echo "   СБОРКА НЕ УДАЛАСЬ"
+    exit 1
+fi
+
+if [ "$1" = "--restart" ] || [ "$2" = "--restart" ]; then
+    echo "→ перезапуск netosd"
+    ssh "$HOST" 'systemctl restart netosd && sleep 3 && systemctl is-active netosd'
+fi
+
+if [ "$1" = "--vet" ]; then
+    echo "→ go vet"
+    ssh "$HOST" 'cd /opt/netos/backend && go vet ./...' && echo "   чисто"
+fi

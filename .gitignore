@@ -1,0 +1,31 @@
+# Сборка фронтенда — встраивается в бинарник, в репозитории не нужна
+/backend/internal/api/webdist/*
+!/backend/internal/api/webdist/.gitkeep
+
+# Go
+/backend/netosd
+*.exe
+*.test
+*.out
+
+# Node
+/web/node_modules/
+/web/dist/
+npm-debug.log*
+.npm/
+
+# Локальные и временные файлы
+*.swp
+*.tmp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Ничего, что содержит секреты, в репозиторий попадать не должно
+*.key
+*.crt
+*.pem
+initial-credentials
+netos.db
+netos.db-*
