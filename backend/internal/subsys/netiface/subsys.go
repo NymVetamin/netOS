@@ -540,10 +540,13 @@ func (s *WAN) applyStatic(ctx context.Context, w config.WAN, iface string) error
 	if err != nil {
 		return err
 	}
-	if !current[w.Address] {
-		if _, err := s.Runner.Run(ctx, "ip", "addr", "add", w.Address, "dev", iface); err != nil {
-			return fmt.Errorf("назначение адреса аплинка %s: %w", w.Address, err)
-		}
+	// replace, а не add: адрес с тем же значением мог быть выдан чужим клиентом
+	// DHCP и жить с ограниченным сроком. Тогда add молча ничего не делал бы, а
+	// netOS считал бы адрес своим статическим — до истечения аренды, после
+	// которой аплинк тихо остался бы без адреса. replace делает адрес
+	// постоянным и не разрывает установленные соединения.
+	if _, err := s.Runner.Run(ctx, "ip", "addr", "replace", w.Address, "dev", iface); err != nil {
+		return fmt.Errorf("назначение адреса аплинка %s: %w", w.Address, err)
 	}
 	for addr := range current {
 		if addr != w.Address {

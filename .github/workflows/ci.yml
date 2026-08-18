@@ -2,9 +2,7 @@ name: ci
 
 on:
   push:
-    # Обе основные ветки: репозиторий сейчас на master, а ссылки в install.sh
-    # ведут на main — пока это не сведено, CI должен работать в любом случае.
-    branches: [master, main]
+    branches: [master]
   pull_request:
 
 permissions:

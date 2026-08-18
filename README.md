@@ -5,7 +5,7 @@
 в браузере. Изменения применяются сразу, без перезагрузок.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/netos-router/netos/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh | sudo bash
 ```
 
 Скрипт сам определит интерфейсы, поднимет рабочую конфигурацию и напечатает

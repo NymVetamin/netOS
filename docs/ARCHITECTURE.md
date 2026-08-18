@@ -380,7 +380,7 @@ Split-DNS: для каждого канала можно задать свой u
 ## 12. Установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/netos/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh | sudo bash
 ```
 
 Скрипт:

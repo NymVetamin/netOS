@@ -3,6 +3,7 @@
 package netconf
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 // Проверка сгенерированных файлов настоящими ifupdown и systemd-networkd.
@@ -251,4 +253,77 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Передача управления от systemd-networkd к netOS.
+//
+// Проверка ровно того, что делает netconf в режиме прямого управления, и того
+// последствия, из-за которого пришлось менять порядок подсистем: сделав
+// интерфейс неуправляемым, networkd снимает выданный им адрес. Значит, netOS
+// обязан назначить свой сразу следом — иначе на аплинке возник бы провал, а на
+// удалённой машине это потеря доступа.
+func TestIntegrationNetOSTakesOverFromNetworkd(t *testing.T) {
+	requireIntegration(t)
+	if _, err := exec.LookPath("networkctl"); err != nil {
+		t.Skip("нет networkctl")
+	}
+	if !unitActive("systemd-networkd.service") {
+		t.Skip("systemd-networkd не запущен")
+	}
+
+	const iface = "nctest-take"
+	const address = "10.99.66.1/24"
+
+	_ = exec.Command("ip", "link", "del", iface).Run()
+	if out, err := exec.Command("ip", "link", "add", iface, "type", "dummy").CombinedOutput(); err != nil {
+		t.Fatalf("не удалось создать %s: %v\n%s", iface, err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("ip", "link", "del", iface).Run() })
+
+	// Сначала пусть интерфейсом управляет networkd и выдаст адрес.
+	managed := filepath.Join(networkdDir, networkdPrefix+iface+".network")
+	body := "[Match]\nName=" + iface + "\n\n[Network]\nAddress=" + address + "\n"
+	if err := os.WriteFile(managed, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(managed)
+		_ = exec.Command("networkctl", "reload").Run()
+	})
+	if out, err := exec.Command("networkctl", "reload").CombinedOutput(); err != nil {
+		t.Fatalf("networkctl reload: %v\n%s", err, out)
+	}
+	if !waitFor(t, 15*time.Second, func() bool { return hasAddress(iface, address) }) {
+		t.Fatal("networkd не назначил адрес — проверять нечего")
+	}
+
+	// Теперь netOS забирает интерфейс себе — тем же кодом, что и в бою.
+	cfg := config.Default()
+	cfg.System.NetworkBackend = "netos"
+	cfg.Interfaces = []config.Interface{{ID: "if-x", Name: iface, Type: "physical"}}
+	s := New(system.NewExec(), nil)
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatalf("передача управления не удалась: %v", err)
+	}
+
+	if !waitFor(t, 15*time.Second, func() bool { return !hasAddress(iface, address) }) {
+		t.Fatal("networkd продолжает держать адрес после отказа от управления")
+	}
+	state, _ := exec.Command("networkctl", "status", iface).Output()
+	if !strings.Contains(string(state), "unmanaged") {
+		t.Fatalf("интерфейс не помечен неуправляемым:\n%s", state)
+	}
+
+	// И это именно тот провал, который закрывают подсистемы адресации: команда
+	// netOS возвращает адрес, причём постоянным, а не с чужой арендой.
+	if out, err := exec.Command("ip", "addr", "replace", address, "dev", iface).CombinedOutput(); err != nil {
+		t.Fatalf("netOS не смог вернуть адрес: %v\n%s", err, out)
+	}
+	if !hasAddress(iface, address) {
+		t.Fatal("адрес не вернулся")
+	}
+	shown, _ := exec.Command("ip", "-4", "addr", "show", "dev", iface).Output()
+	if strings.Contains(string(shown), "dynamic") {
+		t.Fatalf("адрес остался чужой арендой, а не собственным:\n%s", shown)
+	}
 }

@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const installerURL = "https://raw.githubusercontent.com/netos-router/netos/main/install.sh"
+const installerURL = "https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh"
 
 // renderableArtifacts перечисляет то, что умеет печатать netosd -render.
 // Список продублирован здесь намеренно: CLI обязан отказать до запуска демона,
@@ -221,9 +221,9 @@ func (m *Manager) install(ctx context.Context, version string) error {
 
 func releaseURL(version string) string {
 	if version == "" || version == "latest" {
-		return fmt.Sprintf("https://github.com/netos-router/netos/releases/latest/download/netosd-linux-%s", runtime.GOARCH)
+		return fmt.Sprintf("https://github.com/NymVetamin/netOS/releases/latest/download/netosd-linux-%s", runtime.GOARCH)
 	}
-	return fmt.Sprintf("https://github.com/netos-router/netos/releases/download/%s/netosd-linux-%s", version, runtime.GOARCH)
+	return fmt.Sprintf("https://github.com/NymVetamin/netOS/releases/download/%s/netosd-linux-%s", version, runtime.GOARCH)
 }
 
 func (m *Manager) reset(ctx context.Context, yes bool) error {

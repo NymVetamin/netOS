@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 )
 
@@ -155,11 +156,50 @@ func TestNetworkdSuppressesIPv6(t *testing.T) {
 	}
 }
 
-func TestBackendNetosGeneratesNothing(t *testing.T) {
+// Выбор «netOS напрямую» обязан что-то значить. На машине, где сетью уже
+// управляет systemd-networkd, он продолжит выдавать адрес по DHCP, netOS будет
+// считать тот же адрес своим статическим, и до истечения аренды никто не
+// заметит, что панель говорит одно, а машиной правит другое.
+func TestBackendNetosTakesInterfacesAwayFromNetworkd(t *testing.T) {
 	cfg := routerConfig()
 	cfg.System.NetworkBackend = "netos"
-	if render(cfg) != "" {
-		t.Fatal("при прямом управлении в систему что-то пишется")
+	out := render(cfg)
+
+	for _, name := range []string{"eth0", "eth1", "eth2", "br-lan", "vl-guest"} {
+		if !strings.Contains(out, "Name="+name) {
+			t.Fatalf("интерфейс %s не отобран у networkd:\n%s", name, out)
+		}
+	}
+	if got := strings.Count(out, "Unmanaged=yes"); got != 5 {
+		t.Fatalf("отобрано интерфейсов: %d, ожидалось 5:\n%s", got, out)
+	}
+	// Ничего, кроме отказа от управления, в этом режиме писаться не должно:
+	// адреса назначает netOS.
+	if strings.Contains(out, "Address=") || strings.Contains(out, "Bridge=") {
+		t.Fatalf("в режиме прямого управления networkd получил настройки:\n%s", out)
+	}
+	// Чужие интерфейсы не наши: машина может обслуживать и другие сети.
+	if strings.Contains(out, "Name=eth9") {
+		t.Fatalf("отобран интерфейс, которого нет в конфигурации:\n%s", out)
+	}
+}
+
+// Объявление интерфейса в чужом файле ifupdown надо замечать, но не путать с
+// похожим именем: eth0 не должен находиться внутри eth0.100.
+func TestIfupdownDeclarationIsMatchedExactly(t *testing.T) {
+	vlan := "auto eth0.100\niface eth0.100 inet dhcp\n"
+	if mentionsInterface(vlan, "eth0") {
+		t.Fatal("eth0 нашёлся внутри eth0.100")
+	}
+	if !mentionsInterface(vlan, "eth0.100") {
+		t.Fatal("объявление eth0.100 не найдено")
+	}
+	if !mentionsInterface("allow-hotplug eth1\n", "eth1") {
+		t.Fatal("allow-hotplug не распознан как объявление")
+	}
+	// Упоминание в комментарии объявлением не является.
+	if mentionsInterface("# тут был eth2\n", "eth2") {
+		t.Fatal("комментарий принят за объявление")
 	}
 }
 
@@ -202,20 +242,56 @@ func TestNetworkdKeepsConfigurationMadeByNetOS(t *testing.T) {
 	}
 }
 
-// Переключение механизма не должно оставлять на машине два описания одной
-// сети: какое из них отработает при загрузке, зависело бы от порядка служб.
-func TestSwitchingBackendLeavesNoStaleDescription(t *testing.T) {
+// У каждого режима свой результат, и он не пустой ни в одном из них: даже
+// прямое управление требует сказать systemd-networkd не трогать интерфейсы.
+func TestEachBackendProducesItsOwnDescription(t *testing.T) {
 	cfg := routerConfig()
+
 	cfg.System.NetworkBackend = "netos"
-	if got := render(cfg); got != "" {
-		t.Fatalf("прямое управление всё равно что-то генерирует:\n%s", got)
+	direct := render(cfg)
+	if !strings.Contains(direct, "Unmanaged=yes") {
+		t.Fatalf("прямое управление не отбирает интерфейсы:\n%s", direct)
 	}
+
 	cfg.System.NetworkBackend = "ifupdown"
-	if !strings.Contains(render(cfg), "iface br-lan inet static") {
+	ifupdown := render(cfg)
+	if !strings.Contains(ifupdown, "iface br-lan inet static") {
 		t.Fatal("ifupdown ничего не сгенерировал")
 	}
+
 	cfg.System.NetworkBackend = "networkd"
-	if !strings.Contains(render(cfg), "Kind=bridge") {
+	networkd := render(cfg)
+	if !strings.Contains(networkd, "Kind=bridge") {
 		t.Fatal("networkd ничего не сгенерировал")
+	}
+
+	// Описания обязаны различаться: одинаковый результат означал бы, что
+	// выбор в панели ни на что не влияет.
+	if direct == ifupdown || direct == networkd || ifupdown == networkd {
+		t.Fatal("режимы дают одинаковый результат — выбор в панели ничего не значит")
+	}
+	// И режим прямого управления не должен настраивать сеть чужими руками.
+	if strings.Contains(direct, "Address=") || strings.Contains(direct, "Kind=") {
+		t.Fatalf("прямое управление настраивает сеть через networkd:\n%s", direct)
+	}
+}
+
+// Порядок применения — часть механизма передачи управления, а не деталь.
+// systemd-networkd снимает выданные им адреса, когда интерфейс становится
+// неуправляемым, поэтому netconf обязан отработать до подсистем, которые
+// назначают адреса: разрыв закрывается тем, что они идут сразу следом.
+func TestNetconfRunsBeforeAddressingSubsystems(t *testing.T) {
+	position := map[string]int{}
+	for i, name := range apply.Order {
+		position[name] = i
+	}
+	netconf, ok := position["netconf"]
+	if !ok {
+		t.Fatal("подсистема netconf отсутствует в порядке применения")
+	}
+	for _, later := range []string{"interfaces", "networks", "wan"} {
+		if position[later] < netconf {
+			t.Fatalf("%s применяется раньше netconf: адрес, снятый networkd, некому вернуть", later)
+		}
 	}
 }

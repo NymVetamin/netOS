@@ -2,7 +2,7 @@
 #
 # Установщик netOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/netos-router/netos/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh | sudo bash
 #
 # Скрипт ставит зависимости, разворачивает демон, определяет сетевые
 # интерфейсы и печатает адрес панели с учётными данными.
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-REPO="netos-router/netos"
+REPO="NymVetamin/netOS"
 VERSION="${NETOS_VERSION:-latest}"
 PORT="${NETOS_PORT:-8443}"
 
