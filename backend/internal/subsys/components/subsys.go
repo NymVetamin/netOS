@@ -10,6 +10,7 @@ package components
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -135,8 +136,11 @@ func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo) erro
 // в отдельный путь: она требует сети наружу и проверки подписи или суммы, а
 // не просто apt-get install.
 func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentInfo) error {
+	if rel, ok := externalReleases[info.ID]; ok {
+		return s.installRelease(ctx, info.ID, rel)
+	}
 	switch info.ID {
-	case "xray", "dnsproxy", "adguardhome":
+	case "xray", "adguardhome":
 		return fmt.Errorf("установка компонента %s появится вместе с поддержкой самого компонента", info.Title)
 	}
 	return fmt.Errorf("неизвестный внешний компонент %s", info.ID)
@@ -151,7 +155,18 @@ func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error
 	for _, unit := range info.Units {
 		_ = s.Systemd.Disable(ctx, unit)
 	}
-	if len(info.Packages) == 0 || info.External {
+	if info.External {
+		// Внешний компонент — это один файл, который мы же и положили;
+		// удаляем его, иначе выключённый компонент останется на диске.
+		if rel, ok := externalReleases[info.ID]; ok {
+			if err := os.Remove(rel.Target); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			s.Logger.Infof("удалён компонент %s", info.Title)
+		}
+		return nil
+	}
+	if len(info.Packages) == 0 {
 		return nil
 	}
 
@@ -184,6 +199,10 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error { retu
 func (s *Subsystem) Status(ctx context.Context) map[string]bool {
 	out := map[string]bool{}
 	for _, info := range config.Catalog {
+		if info.External {
+			out[info.ID] = externalInstalled(info.ID)
+			continue
+		}
 		if len(info.Packages) == 0 {
 			continue
 		}

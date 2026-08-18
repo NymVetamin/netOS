@@ -15,6 +15,7 @@ import (
 type Manager struct {
 	Dnsmasq  *Dnsmasq
 	Unbound  *Unbound
+	Dnsproxy *Dnsproxy
 	Packages *system.Packages
 	Systemd  *system.Systemd
 }
@@ -23,6 +24,7 @@ func NewManager(r system.Runner) *Manager {
 	return &Manager{
 		Dnsmasq:  NewDnsmasq(r),
 		Unbound:  NewUnbound(r),
+		Dnsproxy: NewDnsproxy(r),
 		Packages: system.NewPackages(r),
 		Systemd:  system.NewSystemd(r),
 	}
@@ -56,6 +58,12 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 			}
 			// Локальную зону обслуживает dnsmasq, поэтому он нужен и тогда,
 			// когда сам резолвером не работает.
+			if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" {
+				need["dnsmasq"] = true
+			}
+		case "dnsproxy":
+			// Сам dnsproxy ставится не из apt, а подсистемой компонентов.
+			// Здесь нужен только dnsmasq — ради локальной зоны.
 			if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" {
 				need["dnsmasq"] = true
 			}
@@ -195,6 +203,10 @@ func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
 		if s.M.Unbound.Render(old) != s.M.Unbound.Render(new) {
 			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
 		}
+	case "dnsproxy":
+		if s.M.Dnsproxy.Render(old) != s.M.Dnsproxy.Render(new) {
+			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
+		}
 	}
 	return nil, nil
 }
@@ -211,6 +223,11 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 	}
+	if !s.M.Dnsproxy.Needed(cfg) {
+		if err := s.M.Dnsproxy.Apply(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	if !cfg.DNS.Enabled {
 		return nil
 	}
@@ -220,7 +237,7 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 	case "unbound":
 		return s.M.Unbound.Apply(ctx, cfg)
 	case "dnsproxy":
-		return fmt.Errorf("провайдер dnsproxy появится в следующей фазе")
+		return s.M.Dnsproxy.Apply(ctx, cfg)
 	case "adguardhome":
 		return fmt.Errorf("провайдер AdGuard Home появится в следующей фазе")
 	}
@@ -236,6 +253,9 @@ func (s *DNS) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	if cfg.DNS.Provider == "unbound" {
 		return s.M.Unbound.Health(ctx, cfg)
+	}
+	if cfg.DNS.Provider == "dnsproxy" {
+		return s.M.Dnsproxy.Health(ctx, cfg)
 	}
 	return nil
 }
