@@ -12,6 +12,9 @@
 #   NETOS_BINARY_URL   прямая ссылка на бинарник вместо GitHub Releases
 #   NETOS_FROM_SOURCE  1 — собрать из исходников вместо загрузки релиза
 #   NETOS_PORT         порт веб-панели (по умолчанию 8443)
+#
+# Повторный запуск обновляет netOS и сохраняет конфигурацию. После первой
+# установки для этого используется публичная команда: sudo netos update.
 
 set -euo pipefail
 
@@ -20,9 +23,14 @@ VERSION="${NETOS_VERSION:-latest}"
 PORT="${NETOS_PORT:-8443}"
 
 BIN_PATH="/usr/local/bin/netosd"
+CLI_PATH="/usr/local/bin/netos"
 STATE_DIR="/var/lib/netos"
 CONF_DIR="/etc/netos"
 LOG_DIR="/var/log/netos"
+
+case "$VERSION" in
+    *[!A-Za-z0-9._+-]*) echo "Некорректная версия: $VERSION" >&2; exit 1 ;;
+esac
 
 # --- вывод -------------------------------------------------------------------
 
@@ -72,8 +80,8 @@ if [ "$NIC_COUNT" -lt 2 ]; then
     warn "меньше двух сетевых карт: локальный сегмент будет создан на виртуальном интерфейсе"
 fi
 
-if systemctl is-active --quiet netosd 2>/dev/null; then
-    warn "netOS уже запущен — будет обновлён, конфигурация сохранится"
+if [ -x "$BIN_PATH" ] || [ -s "$STATE_DIR/netos.db" ]; then
+    warn "netOS уже установлен — будет обновлён, конфигурация сохранится"
     UPGRADE=1
 else
     UPGRADE=0
@@ -135,8 +143,18 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     [ "$EXPECTED" = "$ACTUAL" ] || die "контрольная сумма Go не совпадает"
     tar -C "$SRC" -xzf "$GO_ARCHIVE" || die "не удалось распаковать Go"
 
-    git clone --depth 1 "https://github.com/$REPO.git" "$SRC/netos" >/dev/null 2>&1 \
-        || die "не удалось получить исходники"
+    if [ "$VERSION" = "latest" ]; then
+        git clone --depth 1 "https://github.com/$REPO.git" "$SRC/netos" >/dev/null 2>&1 \
+            || die "не удалось получить исходники"
+    else
+        git clone --depth 1 --branch "$VERSION" "https://github.com/$REPO.git" "$SRC/netos" >/dev/null 2>&1 \
+            || die "не удалось получить исходники версии $VERSION"
+    fi
+    BUILD_VERSION="$VERSION"
+    if [ "$BUILD_VERSION" = "latest" ]; then
+        BUILD_VERSION=$(git -C "$SRC/netos" describe --tags --always --dirty 2>/dev/null || echo dev)
+    fi
+    CANDIDATE="$SRC/netosd"
     (
         cd "$SRC/netos/backend"
         # Основное зеркало модулей Go доступно не из всех сетей, поэтому
@@ -146,7 +164,7 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
         npm run build
         cd ../backend
         GOPROXY="https://proxy.golang.org,https://goproxy.io,direct" \
-            "$SRC/go/bin/go" build -trimpath -ldflags "-s -w" -o "$BIN_PATH" ./cmd/netosd
+            "$SRC/go/bin/go" build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o "$CANDIDATE" ./cmd/netosd
     ) || die "сборка не удалась"
     ok "собрано из исходников"
 else
@@ -176,9 +194,18 @@ else
         warn "контрольная сумма недоступна, пропускаю проверку"
     fi
 
-    install -m 0755 "$TMP" "$BIN_PATH"
-    ok "бинарник установлен"
+    CANDIDATE="$TMP"
 fi
+
+# Нельзя перезаписывать исполняемый файл на месте: при обновлении ядро может
+# вернуть ETXTBSY. Новый файл кладётся рядом и атомарно переименовывается.
+if [ "$UPGRADE" = "1" ] && [ -x "$BIN_PATH" ]; then
+    cp -p "$BIN_PATH" "$STATE_DIR/netosd.previous"
+fi
+install -m 0755 "$CANDIDATE" "$BIN_PATH.new"
+mv -f "$BIN_PATH.new" "$BIN_PATH"
+ln -sfn "$BIN_PATH" "$CLI_PATH"
+ok "бинарник и команда netos установлены"
 
 # --- служба ------------------------------------------------------------------
 
@@ -215,18 +242,37 @@ ok "служба netosd зарегистрирована"
 
 step "Запускаю netOS"
 
-systemctl restart netosd
+START_OK=1
+if ! systemctl restart netosd; then
+    START_OK=0
+fi
 
+STABLE=0
 for _ in $(seq 1 30); do
-    if systemctl is-active --quiet netosd; then break; fi
+    if systemctl is-active --quiet netosd; then
+        STABLE=$((STABLE + 1))
+        [ "$STABLE" -ge 5 ] && break
+    else
+        STABLE=0
+    fi
     sleep 1
 done
 
-systemctl is-active --quiet netosd || {
+if ! systemctl is-active --quiet netosd || [ "$STABLE" -lt 5 ]; then
+    START_OK=0
+fi
+if [ "$START_OK" = "0" ]; then
     echo
     journalctl -u netosd --no-pager -n 30
+    if [ -x "$STATE_DIR/netosd.previous" ]; then
+        warn "новая версия не запустилась — возвращаю предыдущий бинарник"
+        install -m 0755 "$STATE_DIR/netosd.previous" "$BIN_PATH.new"
+        mv -f "$BIN_PATH.new" "$BIN_PATH"
+        systemctl restart netosd || true
+    fi
     die "служба не запустилась, журнал выше"
-}
+fi
+rm -f "$STATE_DIR/netosd.previous"
 ok "служба работает"
 
 # --- итог --------------------------------------------------------------------
@@ -271,7 +317,8 @@ else
 fi
 echo "${B}============================================================${R}"
 echo
-info "Журнал:      journalctl -u netosd -f"
-info "Состояние:   systemctl status netosd"
-info "Диагностика: netosd -plan"
+info "Управление:   netos help"
+info "Обновление:   sudo netos update"
+info "Состояние:    netos status"
+info "Журнал:       netos logs -f"
 echo

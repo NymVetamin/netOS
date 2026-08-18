@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/bootstrap"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/manage"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
@@ -29,6 +31,9 @@ import (
 	"github.com/netos-router/netos/internal/subsys/sysctl"
 	"github.com/netos-router/netos/internal/system"
 )
+
+// version задаётся релизной сборкой через -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
 
 const (
 	stateDir = "/var/lib/netos/generated"
@@ -42,16 +47,31 @@ const (
 )
 
 func main() {
+	// /usr/local/bin/netos — ссылка на тот же бинарник. По публичному имени он
+	// работает как управляющая команда; netosd остаётся только демоном.
+	if strings.TrimSuffix(filepath.Base(os.Args[0]), filepath.Ext(os.Args[0])) == "netos" {
+		if err := manage.New(version).Execute(context.Background(), os.Args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "Ошибка:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var (
-		dbPath   = flag.String("db", "/var/lib/netos/netos.db", "путь к базе данных")
-		dryRun   = flag.Bool("dry-run", false, "показать действия, ничего не применяя")
-		verbose  = flag.Bool("v", false, "подробный журнал выполняемых команд")
-		showPlan = flag.Bool("plan", false, "показать план применения и выйти")
-		render   = flag.String("render", "", "напечатать сгенерированный артефакт (iptables|dnsmasq|config) и выйти")
-		initOnly = flag.Bool("init", false, "создать стартовую конфигурацию и выйти")
-		applyNow = flag.Bool("apply", false, "применить активную конфигурацию и выйти")
+		dbPath      = flag.String("db", "/var/lib/netos/netos.db", "путь к базе данных")
+		dryRun      = flag.Bool("dry-run", false, "показать действия, ничего не применяя")
+		verbose     = flag.Bool("v", false, "подробный журнал выполняемых команд")
+		showPlan    = flag.Bool("plan", false, "показать план применения и выйти")
+		render      = flag.String("render", "", "напечатать сгенерированный артефакт (iptables|dnsmasq|config) и выйти")
+		initOnly    = flag.Bool("init", false, "создать стартовую конфигурацию и выйти")
+		applyNow    = flag.Bool("apply", false, "применить активную конфигурацию и выйти")
+		showVersion = flag.Bool("version", false, "показать версию и выйти")
 	)
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("netOS %s\n", version)
+		return
+	}
 
 	logger := &stdLogger{}
 	runner := system.NewExec()
