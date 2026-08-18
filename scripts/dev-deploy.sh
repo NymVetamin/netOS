@@ -12,6 +12,14 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 cd "$REPO"
 
+# Фронтенд собирается до заливки: vite кладёт результат в backend/internal/api/webdist,
+# откуда его встраивает go:embed. Без этого шага на машину уезжает
+# панель от прошлой сборки, а правки в web/src молча теряются.
+if [ "${NETOS_SKIP_WEB:-0}" != "1" ]; then
+    echo "→ собираю фронтенд"
+    ( cd web && npm run build >/dev/null ) || { echo "   СБОРКА ФРОНТЕНДА НЕ УДАЛАСЬ"; exit 1; }
+fi
+
 echo "→ заливаю исходники на $HOST"
 tar czf - --exclude='.git' --exclude='node_modules' --exclude='web/dist' . \
     | ssh "$HOST" 'mkdir -p /opt/netos && tar xzf - -C /opt/netos'
