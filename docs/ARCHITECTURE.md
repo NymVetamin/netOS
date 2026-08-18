@@ -79,7 +79,7 @@ Config
 ├── IPv6Policy    режим подавления IPv6
 ├── Interfaces[]  физические, bridge, vlan, bond
 ├── Networks[]    L3-сегменты (LAN1, GUEST, DMZ...): подсеть, шлюз, VLAN, DHCP
-├── WAN[]         аплинки: dhcp/static/pppoe, метрика, health-check
+├── WAN[]         аплинки: dhcp/static/pppoe/l2tp, метрика, health-check
 ├── MultiWAN      режим (failover / балансировка), веса, пробы
 ├── Firewall      зоны, политики, правила, port-forward, NAT, SNAT
 ├── DHCP          провайдер + общие опции + пулы + статические привязки
@@ -136,13 +136,18 @@ POST /api/config/confirm  подтвердить (админ жив)   → activ
 Порядок применения подсистем:
 
 ```
-sysctl → ipv6-suppress → interfaces → networks → wan → routing-tables
-      → vpn-channels → vpn-servers → policy-routing → firewall
-      → dhcp → dns → wifi → monitoring
+components → system → sysctl → ipv6 → netconf → interfaces → networks
+      → wan → routing → channels → vpn-servers → policy → firewall
+      → dhcp → dns → wifi
 ```
 
-Порядок важен: правила файрволла и политики ссылаются на интерфейсы, которых
-до шага `vpn-channels` может не существовать.
+Порядок важен и в двух местах критичен. Правила файрволла и политики ссылаются
+на интерфейсы, которых до шага `channels` может не существовать. А `netconf`
+идёт перед подсистемами, назначающими адреса: в режиме прямого управления он
+отбирает интерфейсы у systemd-networkd, и тот снимает выданные им адреса —
+разрыв закрывают `interfaces`, `networks` и `wan`, идущие сразу следом.
+
+Источник правды по порядку — `apply.Order` в коде; этот список повторяет его.
 
 ### 4.1. Интерфейс подсистемы
 
