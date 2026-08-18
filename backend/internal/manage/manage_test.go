@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,6 +18,22 @@ func testManager() (*Manager, *bytes.Buffer) {
 	m.Run = func(context.Context, command) error { return nil }
 	m.Output = func(context.Context, string, ...string) (string, error) { return "", nil }
 	return m, out
+}
+
+// sandbox уводит все пути менеджера во временный каталог. Тесты удаления и
+// сброса выполняют настоящие os.Remove, и без этого прогон под root на машине
+// разработки снёс бы установленный там netOS.
+func sandbox(t *testing.T, m *Manager) {
+	t.Helper()
+	root := t.TempDir()
+	m.Root = root
+	m.StateDir = filepath.Join(root, "var/lib/netos")
+	m.ConfigDir = filepath.Join(root, "etc/netos")
+	m.LogDir = filepath.Join(root, "var/log/netos")
+	m.BackupDir = filepath.Join(root, "var/backups/netos")
+	m.Binary = filepath.Join(root, "usr/local/bin/netosd")
+	m.CLI = filepath.Join(root, "usr/local/bin/netos")
+	m.Unit = filepath.Join(root, "etc/systemd/system/netosd.service")
 }
 
 func TestHelpUsesPublicNetosCommands(t *testing.T) {
@@ -83,9 +100,26 @@ func TestUpdatePassesRequestedVersionToInstaller(t *testing.T) {
 	if len(commands) != 2 || commands[1].name != "bash" {
 		t.Fatalf("неожиданные команды: %#v", commands)
 	}
-	if !contains(commands[1].env, "NETOS_VERSION=v1.2.4") ||
-		!contains(commands[1].env, "NETOS_ACTION=upgrade") {
+	if !contains(commands[1].env, "NETOS_VERSION=v1.2.4") {
 		t.Fatalf("версия не передана установщику: %#v", commands[1].env)
+	}
+}
+
+// reinstall — синоним update, и это должно оставаться проверяемым фактом,
+// а не обещанием в тексте справки.
+func TestReinstallBehavesLikeUpdate(t *testing.T) {
+	m, _ := testManager()
+	var commands []command
+	m.Run = func(_ context.Context, spec command) error {
+		commands = append(commands, spec)
+		return nil
+	}
+	if err := m.Execute(context.Background(), []string{"reinstall", "v1.2.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 2 || commands[1].name != "bash" ||
+		!contains(commands[1].env, "NETOS_VERSION=v1.2.4") {
+		t.Fatalf("reinstall расходится с update: %#v", commands)
 	}
 }
 
@@ -122,5 +156,55 @@ func TestRemovePolicyRulesOnlyTouchesNetOSRange(t *testing.T) {
 	m.removePolicyRules(context.Background())
 	if len(commands) != 1 || !contains(commands[0].args, "20100") {
 		t.Fatalf("удалены неверные правила: %#v", commands)
+	}
+}
+
+// systemctl stop отдаёт код 5 на незагруженный юнит. Если считать это ошибкой,
+// удаление после однажды прерванной попытки уже никогда не доработает.
+func TestUninstallProceedsWhenUnitIsNotLoaded(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	var commands []command
+	m.Run = func(_ context.Context, spec command) error {
+		commands = append(commands, spec)
+		if spec.name == "systemctl" && len(spec.args) > 0 && spec.args[0] == "stop" {
+			return errors.New("Unit netosd.service not loaded")
+		}
+		return nil
+	}
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			return "unknown\n", errors.New("exit status 4")
+		}
+		return "", nil
+	}
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatalf("удаление прервалось на незагруженном юните: %v", err)
+	}
+	var cleared bool
+	for _, c := range commands {
+		if c.name == "iptables-restore" {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("удаление не дошло до очистки правил: %#v", commands)
+	}
+}
+
+func TestStopDaemonReportsRealFailure(t *testing.T) {
+	m, _ := testManager()
+	m.Run = func(context.Context, command) error { return errors.New("job failed") }
+	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
+	if err := m.stopDaemon(context.Background()); err == nil {
+		t.Fatal("остановка работающей службы провалилась, но ошибка потеряна")
+	}
+}
+
+func TestLogsRequireRoot(t *testing.T) {
+	m, _ := testManager()
+	m.EUID = func() int { return 1000 }
+	if err := m.Execute(context.Background(), []string{"logs"}); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("logs без root вернул %v", err)
 	}
 }

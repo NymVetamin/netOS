@@ -18,17 +18,19 @@ curl -fsSL https://raw.githubusercontent.com/netos-router/netos/main/install.sh 
 
 ```bash
 netos status                 # состояние
-netos logs -f                # журнал
+sudo netos logs -f           # журнал
 sudo netos update            # обновление до последнего релиза
 sudo netos update v1.2.3     # обновление до конкретной версии
-sudo netos reinstall         # повторная установка с сохранением данных
+sudo netos reinstall         # синоним update
 sudo netos backup            # ручная резервная копия
 sudo netos reset             # заводской сброс с резервной копией
 sudo netos uninstall         # полное удаление с резервной копией
 netos help                   # все команды
 ```
 
-`update` и `reinstall` сохраняют конфигурацию, пользователей и TLS-сертификаты.
+`update` разворачивает версию заново, сохраняя конфигурацию, пользователей и
+TLS-сертификаты; `reinstall` — его синоним, оставленный для случая, когда
+установка развалилась и хочется «поставить заново».
 Перед `reset` и полным `uninstall` данные архивируются в `/var/backups/netos`.
 Для автоматизации подтверждение передаётся флагом `--yes`; команда
 `uninstall --keep-data` оставляет каталоги данных на месте.

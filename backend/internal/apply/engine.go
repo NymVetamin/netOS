@@ -8,6 +8,7 @@ package apply
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -334,6 +335,11 @@ func (e *Engine) Rollback(ctx context.Context) error {
 	return e.doRollback(ctx, p, "manual", "откат по команде администратора")
 }
 
+// errRollbackObsolete означает, что откатывать уже нечего: администратор успел
+// подтвердить применение, пока таймер ждал opMu. Это штатная гонка, а не сбой,
+// и в журнал она попадать не должна.
+var errRollbackObsolete = errors.New("откат уже завершён или отменён")
+
 func (e *Engine) rollbackExpired(p *pendingCommit) {
 	e.mu.Lock()
 	if p.cancelled || e.pending != p {
@@ -345,7 +351,11 @@ func (e *Engine) rollbackExpired(p *pendingCommit) {
 	e.log.Warnf("подтверждение не получено, откат к предыдущей конфигурации")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := e.doRollback(ctx, p, "timeout", "подтверждение не получено в отведённое время"); err != nil {
+	err := e.doRollback(ctx, p, "timeout", "подтверждение не получено в отведённое время")
+	switch {
+	case errors.Is(err, errRollbackObsolete):
+		e.log.Infof("откат отменён: применение подтверждено вовремя")
+	case err != nil:
 		e.log.Errorf("автоматический откат не удался: %v", err)
 	}
 }
@@ -357,7 +367,7 @@ func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, detai
 	e.mu.Lock()
 	if e.pending != p || p.cancelled {
 		e.mu.Unlock()
-		return fmt.Errorf("откат уже завершён или отменён")
+		return errRollbackObsolete
 	}
 	e.mu.Unlock()
 

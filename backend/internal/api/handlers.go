@@ -355,7 +355,14 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	pending, deadline := s.Engine.Pending()
 	visibleCfg := cfg
 	if roleOf(r) != "admin" {
-		visibleCfg = redactConfig(cfg)
+		redacted, err := redactConfig(cfg)
+		if err != nil {
+			// Молча отдать null нельзя: панель показала бы пустую
+			// конфигурацию вместо скрытых секретов и ввела бы в заблуждение.
+			writeError(w, http.StatusInternalServerError, "не удалось скрыть секреты: %v", err)
+			return
+		}
+		visibleCfg = redacted
 	}
 	resp := configResponse{
 		Config:   visibleCfg,
@@ -370,14 +377,17 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func redactConfig(cfg *config.Config) *config.Config {
+func redactConfig(cfg *config.Config) (*config.Config, error) {
+	if cfg == nil {
+		return nil, nil
+	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out config.Config
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil
+		return nil, err
 	}
 	for i := range out.WANs {
 		out.WANs[i].Password = ""
@@ -387,7 +397,7 @@ func redactConfig(cfg *config.Config) *config.Config {
 			out.WiFi[i].SSIDs[j].Password = ""
 		}
 	}
-	return &out
+	return &out, nil
 }
 
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:

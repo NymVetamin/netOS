@@ -34,6 +34,10 @@ type Manager struct {
 	Run     func(context.Context, command) error
 	Output  func(context.Context, string, ...string) (string, error)
 
+	// Root подставляется перед всеми системными путями. В работе он пуст, а в
+	// тестах указывает на временный каталог: иначе прогон тестов удаления под
+	// root снёс бы установленный netOS на самой машине сборки.
+	Root      string
 	StateDir  string
 	ConfigDir string
 	LogDir    string
@@ -41,6 +45,14 @@ type Manager struct {
 	Binary    string
 	CLI       string
 	Unit      string
+}
+
+// sys возвращает системный путь с учётом Root.
+func (m *Manager) sys(path string) string {
+	if m.Root == "" {
+		return path
+	}
+	return filepath.Join(m.Root, path)
 }
 
 func New(version string) *Manager {
@@ -77,6 +89,11 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		return m.run(ctx, "systemctl", "status", "--no-pager", "netosd")
 	case "logs":
 		if err := onlyFlags(args[1:], "--follow", "-f"); err != nil {
+			return err
+		}
+		// Журнал netosd доступен только root: без этой проверки обычный
+		// пользователь получил бы пустой вывод и решил, что записей нет.
+		if err := m.requireRoot(); err != nil {
 			return err
 		}
 		logArgs := []string{"-u", "netosd", "--no-pager", "-n", "100"}
@@ -116,16 +133,10 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 			return err
 		}
 		return m.backupNow(ctx)
-	case "update":
-		if err := m.requireRoot(); err != nil {
-			return err
-		}
-		version, err := positionalVersion(args[1:])
-		if err != nil {
-			return err
-		}
-		return m.install(ctx, version)
-	case "reinstall":
+	// reinstall — синоним update: установщик и так разворачивает версию заново,
+	// сохраняя данные, и отдельного поведения у переустановки нет. Имя оставлено
+	// потому, что за ним приходят, когда установка развалилась.
+	case "update", "reinstall":
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
@@ -164,7 +175,7 @@ func (m *Manager) help() {
   netos status                 состояние службы
   netos logs [-f|--follow]     последние записи журнала
   netos update [версия]        обновить до latest или указанной версии
-  netos reinstall [версия]     заново установить latest или указанную версию
+  netos reinstall [версия]     то же, что update
   netos reset [-y|--yes]       сбросить настройки и пользователей к заводским
   netos uninstall [--keep-data] [-y|--yes]
                                удалить netOS (по умолчанию с резервной копией)
@@ -190,7 +201,7 @@ func (m *Manager) install(ctx context.Context, version string) error {
 	if err := m.run(ctx, "curl", "-4", "-fsSL", "--retry", "3", "-o", path, installerURL); err != nil {
 		return fmt.Errorf("загрузка установщика: %w", err)
 	}
-	env := []string{"NETOS_ACTION=upgrade"}
+	var env []string
 	if version != "" {
 		env = append(env, "NETOS_VERSION="+version)
 	}
@@ -213,7 +224,7 @@ func (m *Manager) reset(ctx context.Context, yes bool) error {
 		fmt.Fprintln(m.Out, "Отменено.")
 		return nil
 	}
-	if err := m.run(ctx, "systemctl", "stop", "netosd"); err != nil {
+	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
 	backup, err := m.backup(ctx, "reset")
@@ -259,7 +270,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		fmt.Fprintln(m.Out, "Отменено.")
 		return nil
 	}
-	if err := m.run(ctx, "systemctl", "stop", "netosd"); err != nil {
+	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
 	if !keepData {
@@ -273,7 +284,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 
 	m.bestEffort(ctx, "systemctl", "disable", "netosd")
 	m.bestEffort(ctx, "systemctl", "disable", "--now", "netos-dnsmasq.service")
-	units, _ := filepath.Glob("/etc/systemd/system/netos-dhcp-*.service")
+	units, _ := filepath.Glob(m.sys("/etc/systemd/system/netos-dhcp-*.service"))
 	for _, unit := range units {
 		m.bestEffort(ctx, "systemctl", "disable", "--now", filepath.Base(unit))
 		_ = os.Remove(unit)
@@ -300,10 +311,11 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.default.autoconf=1")
 
 	for _, path := range []string{
-		m.Unit, "/etc/systemd/system/netos-dnsmasq.service",
-		"/etc/sysctl.d/99-netos.conf", "/etc/sysctl.d/99-netos-ipv6.conf",
-		"/etc/iproute2/rt_tables.d/netos.conf", "/etc/iproute2/rt_protos.d/netos.conf",
-		"/etc/apt/apt.conf.d/99netos",
+		m.Unit,
+		m.sys("/etc/systemd/system/netos-dnsmasq.service"),
+		m.sys("/etc/sysctl.d/99-netos.conf"), m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
+		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
+		m.sys("/etc/apt/apt.conf.d/99netos"),
 	} {
 		_ = os.Remove(path)
 	}
@@ -343,7 +355,7 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 }
 
 func (m *Manager) backupNow(ctx context.Context) error {
-	if err := m.run(ctx, "systemctl", "stop", "netosd"); err != nil {
+	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
 	path, err := m.backup(ctx, "backup")
@@ -380,7 +392,7 @@ func (m *Manager) removePolicyRules(ctx context.Context) {
 }
 
 func (m *Manager) removeVirtualInterfaces(ctx context.Context) {
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(m.sys("/sys/class/net"))
 	if err != nil {
 		fmt.Fprintf(m.Err, "Предупреждение: чтение интерфейсов: %v\n", err)
 		return
@@ -405,6 +417,23 @@ func (m *Manager) confirm(question string) bool {
 	default:
 		return false
 	}
+}
+
+// stopDaemon останавливает службу. Отсутствующий или уже остановленный юнит —
+// не ошибка: удаление и сброс должны доводиться до конца и на машине, где
+// предыдущая попытка оборвалась на середине (systemctl stop отдаёт код 5 на
+// незагруженный юнит, и без этой проверки uninstall падал на первом же шаге).
+func (m *Manager) stopDaemon(ctx context.Context) error {
+	stopErr := m.run(ctx, "systemctl", "stop", "netosd")
+	if stopErr == nil {
+		return nil
+	}
+	state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
+	switch strings.TrimSpace(state) {
+	case "inactive", "failed", "unknown", "":
+		return nil
+	}
+	return stopErr
 }
 
 func (m *Manager) requireRoot() error {

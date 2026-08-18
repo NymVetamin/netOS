@@ -17,9 +17,9 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 	cfg.WANs = []config.WAN{{Password: "wan-secret"}}
 	cfg.WiFi = []config.WiFiRadio{{SSIDs: []config.WiFiSSID{{Password: "wifi-secret"}}}}
 
-	redacted := redactConfig(cfg)
-	if redacted == nil {
-		t.Fatal("не удалось скопировать конфигурацию")
+	redacted, err := redactConfig(cfg)
+	if err != nil {
+		t.Fatalf("не удалось скопировать конфигурацию: %v", err)
 	}
 	if redacted.WANs[0].Password != "" || redacted.WiFi[0].SSIDs[0].Password != "" {
 		t.Fatal("viewer получил пароль из конфигурации")
