@@ -8,7 +8,9 @@ type Patch = (mutate: (draft: any) => void) => void;
 // таблицу. На этом же механизме позже будет построен выбор VPN-канала для
 // каждого клиента, поэтому таблицы и правила показаны явно, а не спрятаны.
 export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
-  const [live, setLive] = useState<{ routes: string; rules: string } | null>(null);
+  const [live, setLive] = useState<{ routes: string; rules: string; parsed: any[] } | null>(
+    null,
+  );
 
   useEffect(() => {
     const load = () => api.routes().then(setLive).catch(() => {});
@@ -426,25 +428,52 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         </div>
       </Card>
 
-      <Card title="Что сейчас в ядре" subtitle="Фактическое состояние, обновляется каждые 10 секунд">
+      <Card
+        title="Действующие маршруты"
+        subtitle="Всё, что сейчас в таблице маршрутизации, включая полученные автоматически"
+        tight
+      >
         {!live ? (
           <Empty>Загрузка…</Empty>
+        ) : (live.parsed || []).length === 0 ? (
+          <Empty>Таблица пуста</Empty>
         ) : (
-          <>
-            <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
-              Таблица маршрутов
-            </div>
-            <pre className="output" style={{ borderRadius: "var(--radius-sm)", maxHeight: 200 }}>
-              {live.routes || "пусто"}
-            </pre>
-            <div className="faint" style={{ fontSize: 12, margin: "0.8rem 0 4px" }}>
-              Правила выбора таблиц
-            </div>
-            <pre className="output" style={{ borderRadius: "var(--radius-sm)", maxHeight: 200 }}>
-              {live.rules || "пусто"}
-            </pre>
-          </>
+          <TableWrap>
+            <table>
+              <thead>
+                <tr>
+                  <th>Куда</th>
+                  <th>Через шлюз</th>
+                  <th>Интерфейс</th>
+                  <th>Метрика</th>
+                  <th>Откуда взялся</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(live.parsed || []).map((r: any, i: number) => (
+                  <tr key={i}>
+                    <td className="mono">{r.destination}</td>
+                    <td className="mono">{r.gateway || <span className="faint">напрямую</span>}</td>
+                    <td className="mono">{r.interface}</td>
+                    <td className="mono">{r.metric || <span className="faint">—</span>}</td>
+                    <td>{originBadge(r.origin)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
         )}
+        <div style={{ padding: "0.8rem 1.1rem", borderTop: "1px solid var(--border)" }}>
+          <span className="faint" style={{ fontSize: 12.5 }}>
+            Маршруты, полученные от провайдера по DHCP, и созданные ядром при назначении
+            адреса менять здесь нельзя — они появляются и исчезают сами. Управлять можно
+            теми, что заведены выше вручную.
+          </span>
+        </div>
+      </Card>
+
+      <Card title="Правила выбора таблиц в ядре" tight>
+        <pre className="output">{live?.rules || "загрузка…"}</pre>
       </Card>
 
       {(config.channels || []).filter((c: any) => c.type !== "direct").length === 0 && (

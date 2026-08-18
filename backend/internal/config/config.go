@@ -274,10 +274,10 @@ type Firewall struct {
 	OutputPolicy string `json:"output_policy"`
 	// Rules — единый упорядоченный список правил.
 	Rules []FirewallRule `json:"rules"`
-	// NAT — трансляция адресов, задаётся явными правилами.
+	// NAT — трансляция адресов: и подмена источника на выходе, и проброс
+	// портов внутрь. Это две стороны одного механизма, и держать их в разных
+	// разделах панели было ошибкой.
 	NAT []NATRule `json:"nat"`
-	// PortForwards — проброс портов снаружи внутрь.
-	PortForwards []PortForward `json:"port_forwards"`
 }
 
 // Zone — группа интерфейсов с общей политикой.
@@ -304,11 +304,14 @@ type FirewallRule struct {
 	// Flow — направление трафика, теми же словами, что и цепочки ядра:
 	//   in      — вход: пакет адресован самому роутеру (INPUT);
 	//   out     — выход: пакет отправлен самим роутером (OUTPUT);
-	//   forward — форвард: пакет идёт сквозь роутер (FORWARD);
-	//   any     — во всех направлениях сразу.
+	//   forward — форвард: пакет идёт сквозь роутер (FORWARD).
 	//
-	// Zone при этом означает зону того интерфейса, который у направления
-	// единственный: входящего для in и forward, исходящего для out.
+	// Направления «во все сразу» намеренно нет: одно правило — одна цепочка.
+	// Иначе правило расползается по цепочкам, где оно не нужно, и заметить это
+	// можно только вычитывая вывод iptables-save.
+	//
+	// Zone означает зону того интерфейса, который у направления единственный:
+	// входящего для in и forward, исходящего для out.
 	Flow string `json:"flow"`
 	// DstZone задаёт зону выходного интерфейса и осмысленна только для
 	// форварда: у входа и выхода второй зоны просто нет.
@@ -335,34 +338,43 @@ type Schedule struct {
 }
 
 // NATRule — правило трансляции адресов.
+//
+// Направление source подменяет адрес отправителя на выходе из роутера: это
+// то, благодаря чему клиенты локальной сети видны в интернете как сам роутер.
+// Направление destination подменяет адрес получателя на входе: обращение
+// снаружи на порт роутера уезжает на устройство внутри сети.
 type NATRule struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
 	System  bool   `json:"system"`
-	// Type: masquerade | snat
-	Type string `json:"type"`
-	// OutZone — зона, на выходе в которую применяется трансляция.
-	OutZone string `json:"out_zone,omitempty"`
-	// OutInterface сужает правило до конкретного интерфейса.
-	OutInterface string `json:"out_interface,omitempty"`
-	SrcIP        string `json:"src_ip,omitempty"`
-	// ToSource — адрес для snat.
-	ToSource string `json:"to_source,omitempty"`
-	Comment  string `json:"comment,omitempty"`
-}
+	// Direction: source (подмена отправителя) | destination (проброс внутрь).
+	Direction string `json:"direction"`
 
-type PortForward struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Enabled     bool   `json:"enabled"`
-	WAN         string `json:"wan,omitempty"`
-	Protocol    string `json:"protocol"`
-	ExtPort     string `json:"ext_port"`
-	DestIP      string `json:"dest_ip"`
-	DestPort    string `json:"dest_port"`
-	SrcRestrict string `json:"src_restrict,omitempty"`
-	Comment     string `json:"comment,omitempty"`
+	// --- подмена отправителя ---
+	//
+	// Interface — через какой интерфейс уходит трафик. Задаётся именно
+	// интерфейс, а не зона: в ядре правило всё равно привязано к интерфейсу,
+	// и лишний слой абстракции только мешает понять, что произойдёт.
+	Interface string `json:"interface,omitempty"`
+	// Source ограничивает правило отправителями из этой подсети.
+	Source string `json:"source,omitempty"`
+	// ToSource — адрес, на который подменять. Пусто означает маскарад:
+	// подставится текущий адрес интерфейса, что и нужно на динамическом
+	// подключении, где адрес меняется.
+	ToSource string `json:"to_source,omitempty"`
+
+	// --- проброс внутрь ---
+	Protocol string `json:"protocol,omitempty"`
+	// ExtPort — порт, на который обращаются снаружи.
+	ExtPort string `json:"ext_port,omitempty"`
+	// DestIP и DestPort — куда перенаправить.
+	DestIP   string `json:"dest_ip,omitempty"`
+	DestPort string `json:"dest_port,omitempty"`
+	// AllowFrom ограничивает, с каких адресов принимать обращения.
+	AllowFrom string `json:"allow_from,omitempty"`
+
+	Comment string `json:"comment,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

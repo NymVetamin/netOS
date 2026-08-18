@@ -432,7 +432,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 			r.errf(path+".action", "недопустимое действие %q", rule.Action)
 		}
 		switch rule.Flow {
-		case "in", "out", "forward", "any":
+		case "in", "out", "forward":
 		default:
 			r.errf(path+".flow", "недопустимое направление %q", rule.Flow)
 		}
@@ -464,37 +464,59 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 
 	c.validateAccessRules(r)
 
+	ifaceNames := map[string]bool{}
+	for _, i := range c.Interfaces {
+		ifaceNames[i.Name] = true
+	}
+
 	for i, n := range c.Firewall.NAT {
 		path := fmt.Sprintf("firewall.nat[%d]", i)
-		switch n.Type {
-		case "masquerade":
-		case "snat":
-			if n.ToSource == "" {
-				r.errf(path+".to_source", "для SNAT нужен адрес подмены")
+		switch n.Direction {
+		case "source":
+			if n.Interface == "" {
+				r.errf(path+".interface", "не выбран интерфейс, на выходе через который подменять адрес")
+			} else if !ifaceNames[n.Interface] {
+				r.warnf(path+".interface", "интерфейс %q не описан в конфигурации", n.Interface)
+			}
+			validateCIDR(r, path+".source", n.Source)
+			if n.ToSource != "" {
+				if _, err := netip.ParseAddr(n.ToSource); err != nil {
+					r.errf(path+".to_source", "некорректный адрес подмены")
+				}
+			}
+		case "destination":
+			if n.Protocol != "tcp" && n.Protocol != "udp" && n.Protocol != "tcpudp" {
+				r.errf(path+".protocol", "протокол должен быть tcp, udp или tcpudp")
+			}
+			validatePortSpec(r, path+".ext_port", n.ExtPort)
+			validatePortSpec(r, path+".dest_port", n.DestPort)
+			if _, err := netip.ParseAddr(n.DestIP); err != nil {
+				r.errf(path+".dest_ip", "некорректный адрес назначения")
+			}
+			validateCIDR(r, path+".allow_from", n.AllowFrom)
+			if n.Enabled && n.ExtPort == fmt.Sprint(c.System.Panel.Port) {
+				r.warnf(path, "внешний порт совпадает с портом веб-панели: панель станет недоступна")
+			}
+			if n.Enabled && n.ExtPort == "22" {
+				r.warnf(path, "внешний порт 22 занят SSH: доступ по SSH перестанет работать")
 			}
 		default:
-			r.errf(path+".type", "неизвестный тип трансляции %q", n.Type)
-		}
-		if n.OutZone != "" && !zones[n.OutZone] {
-			r.errf(path+".out_zone", "неизвестная зона %q", n.OutZone)
-		}
-		if n.OutZone == "" && n.OutInterface == "" {
-			r.errf(path, "укажите зону или интерфейс, на выходе в который применять трансляцию")
+			r.errf(path+".direction", "неизвестное направление трансляции %q", n.Direction)
 		}
 	}
 
-	for i, pf := range c.Firewall.PortForwards {
-		path := fmt.Sprintf("firewall.port_forwards[%d]", i)
-		validatePortSpec(r, path+".ext_port", pf.ExtPort)
-		validatePortSpec(r, path+".dest_port", pf.DestPort)
-		if _, err := netip.ParseAddr(pf.DestIP); err != nil {
-			r.errf(path+".dest_ip", "некорректный адрес назначения")
+	// Клиенты не выйдут в интернет без подмены адреса, и это стоит сказать
+	// заранее, а не оставлять администратора гадать.
+	if c.Firewall.Enabled && len(c.Networks) > 0 {
+		hasSNAT := false
+		for _, n := range c.Firewall.NAT {
+			if n.Enabled && n.Direction == "source" {
+				hasSNAT = true
+			}
 		}
-		if pf.Protocol != "tcp" && pf.Protocol != "udp" && pf.Protocol != "tcpudp" {
-			r.errf(path+".protocol", "протокол должен быть tcp, udp или tcpudp")
-		}
-		if pf.Enabled && pf.ExtPort == fmt.Sprint(c.System.Panel.Port) {
-			r.warnf(path, "внешний порт совпадает с портом веб-панели")
+		if !hasSNAT {
+			r.warnf("firewall.nat",
+				"нет ни одного правила подмены адреса: клиенты локальной сети не смогут выйти в интернет")
 		}
 	}
 }
@@ -533,7 +555,7 @@ func (c *Config) ruleGrantsManagement(r FirewallRule) bool {
 	if !r.Enabled || r.Action != "accept" {
 		return false
 	}
-	if r.Flow != "in" && r.Flow != "any" {
+	if r.Flow != "in" {
 		return false
 	}
 	// Ответы на уже установленные соединения новых подключений не пропускают.
@@ -659,7 +681,7 @@ func (c *Config) validateAccessRules(r *ValidationResult) {
 		r.warnf("firewall.rules",
 			"правило доступа к веб-панели выключено: после применения панель перестанет открываться")
 	}
-	if rule, ok := byID[RuleEstablished]; ok && !rule.Enabled {
+	if rule, ok := byID[RuleEstablishedIn]; ok && !rule.Enabled {
 		r.errf("firewall.rules",
 			"правило про установленные соединения выключено: ответы на исходящие запросы перестанут приходить, роутер потеряет связь")
 	}

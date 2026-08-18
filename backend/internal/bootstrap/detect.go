@@ -117,6 +117,20 @@ func BuildInitial(d *Detected) *config.Config {
 			wan.Gateway = d.WANGateway
 		}
 		cfg.WANs = append(cfg.WANs, wan)
+
+		// Маскарад привязываем к конкретному интерфейсу, а не к зоне: в ядре
+		// правило всё равно живёт на интерфейсе, и лишний слой абстракции
+		// только мешает понять, что произойдёт.
+		cfg.Firewall.NAT = append(cfg.Firewall.NAT, config.NATRule{
+			ID:        "nat-wan",
+			Name:      "Подменять адреса клиентов на адрес роутера",
+			Enabled:   true,
+			System:    true,
+			Direction: "source",
+			Interface: d.WANInterface,
+			Comment: "Без этого клиенты локальной сети не выйдут в интернет: " +
+				"их адреса там не маршрутизируются.",
+		})
 	}
 
 	// --- локальная сеть ---

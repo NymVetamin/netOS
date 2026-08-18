@@ -227,14 +227,91 @@ func (c *Collector) Clients(ctx context.Context) ([]Client, error) {
 	return out, nil
 }
 
-// Routes отдаёт таблицу маршрутизации в сыром виде — панель показывает её
-// как есть, потому что администраторы читают её именно в этом формате.
+
+// Route — разобранная запись таблицы маршрутизации.
+type Route struct {
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway"`
+	Interface   string `json:"interface"`
+	Source      string `json:"source"`
+	Metric      int    `json:"metric"`
+	// Origin — откуда маршрут взялся: kernel, dhcp, static, boot, ra.
+	// Именно это отличает маршрут, полученный от провайдера, от прописанного
+	// администратором вручную, и именно этого не видно в сыром выводе без
+	// привычки его читать.
+	Origin string `json:"origin"`
+	Table  string `json:"table"`
+	Raw    string `json:"raw"`
+}
+
+// Routes отдаёт таблицу маршрутизации в сыром виде.
 func (c *Collector) Routes(ctx context.Context, table string) (string, error) {
 	args := []string{"-4", "route", "show"}
 	if table != "" {
 		args = append(args, "table", table)
 	}
 	return c.Runner.Run(ctx, "ip", args...)
+}
+
+// ParsedRoutes разбирает таблицу маршрутизации по полям.
+func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, error) {
+	raw, err := c.Routes(ctx, table)
+	if err != nil {
+		return nil, err
+	}
+	if table == "" {
+		table = "main"
+	}
+
+	var out []Route
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		r := Route{Destination: fields[0], Table: table, Raw: line, Origin: "kernel"}
+
+		for i := 1; i < len(fields); i++ {
+			switch fields[i] {
+			case "via":
+				if i+1 < len(fields) {
+					r.Gateway = fields[i+1]
+				}
+			case "dev":
+				if i+1 < len(fields) {
+					r.Interface = fields[i+1]
+				}
+			case "src":
+				if i+1 < len(fields) {
+					r.Source = fields[i+1]
+				}
+			case "metric":
+				if i+1 < len(fields) {
+					r.Metric = atoi(fields[i+1])
+				}
+			case "proto":
+				if i+1 < len(fields) {
+					r.Origin = fields[i+1]
+				}
+			}
+		}
+		out = append(out, r)
+	}
+	return out, scanner.Err()
+}
+
+func atoi(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Rules отдаёт правила выбора таблиц маршрутизации — основу движка каналов.

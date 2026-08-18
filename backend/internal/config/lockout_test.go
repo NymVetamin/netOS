@@ -24,7 +24,7 @@ func TestDefaultConfigIsReachable(t *testing.T) {
 
 func TestDefaultConfigHasSystemRules(t *testing.T) {
 	cfg := Default()
-	want := []string{RuleLoopback, RuleEstablished, RuleSSH, RulePanel}
+	want := []string{RuleLoopback, RuleEstablishedIn, RuleSSH, RulePanel}
 	for _, id := range want {
 		found := false
 		for _, r := range cfg.Firewall.Rules {
@@ -84,7 +84,7 @@ func TestEstablishedAndLoopbackDoNotCount(t *testing.T) {
 	}
 	cfg.Firewall.Rules = []FirewallRule{
 		{
-			ID: RuleEstablished, Enabled: true, Zone: "global", Flow: "any",
+			ID: RuleEstablishedIn, Enabled: true, Zone: "global", Flow: "any",
 			Action: "accept", ConnState: "established,related",
 		},
 		{

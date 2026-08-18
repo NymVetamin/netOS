@@ -59,7 +59,6 @@ func defaultConfig() *Config {
 			Zones:        DefaultZones(),
 			Rules:        []FirewallRule{},
 			NAT:          []NATRule{},
-			PortForwards: []PortForward{},
 		},
 		DHCP: DHCP{
 			Provider:     "",
@@ -135,9 +134,11 @@ func DefaultDHCPPool(start, end string) DHCPPool {
 // остальными: администратор должен понимать, что именно защищает его доступ.
 // Удалить их нельзя, выключить — можно, но панель предупредит о последствиях.
 const (
-	RuleLoopback    = "sys-loopback"
-	RuleEstablished = "sys-established"
-	RuleInvalid     = "sys-invalid"
+	RuleLoopback       = "sys-loopback"
+	RuleEstablishedIn  = "sys-established-in"
+	RuleEstablishedFwd = "sys-established-fwd"
+	RuleInvalidIn      = "sys-invalid-in"
+	RuleInvalidFwd     = "sys-invalid-fwd"
 	RuleSSH         = "sys-ssh"
 	RulePanel       = "sys-panel"
 	RuleICMP        = "sys-icmp"
@@ -145,7 +146,6 @@ const (
 	RuleDNSUDP      = "sys-dns-udp"
 	RuleDNSTCP      = "sys-dns-tcp"
 	RuleLANOut      = "sys-lan-out"
-	NATWan          = "sys-nat-wan"
 )
 
 // systemRules возвращает эталонный набор в том порядке, в каком он должен
@@ -158,13 +158,23 @@ func systemRules(panelPort int) []FirewallRule {
 			Comment: "Обращения роутера к самому себе.",
 		},
 		{
-			ID: RuleEstablished, Name: "Ответы на установленные соединения", System: true, Enabled: true,
-			Zone: "global", Flow: "any", Action: "accept", ConnState: "established,related",
-			Comment: "Без этого правила ответы на исходящие запросы не вернутся.",
+			ID: RuleEstablishedIn, Name: "Ответы на запросы самого роутера", System: true, Enabled: true,
+			Zone: "global", Flow: "in", Action: "accept", ConnState: "established,related",
+			Comment: "Без этого правила ответы на исходящие запросы роутера не вернутся.",
 		},
 		{
-			ID: RuleInvalid, Name: "Отбрасывать некорректные пакеты", System: true, Enabled: true,
-			Zone: "global", Flow: "any", Action: "drop", ConnState: "invalid",
+			ID: RuleEstablishedFwd, Name: "Ответы на запросы клиентов", System: true, Enabled: true,
+			Zone: "global", Flow: "forward", Action: "accept", ConnState: "established,related",
+			Comment: "Без этого правила ответы из интернета не дойдут до клиентов.",
+		},
+		{
+			ID: RuleInvalidIn, Name: "Отбрасывать некорректные пакеты к роутеру", System: true, Enabled: true,
+			Zone: "global", Flow: "in", Action: "drop", ConnState: "invalid",
+			Comment: "Пакеты, не относящиеся ни к одному известному соединению.",
+		},
+		{
+			ID: RuleInvalidFwd, Name: "Отбрасывать некорректные транзитные пакеты", System: true, Enabled: true,
+			Zone: "global", Flow: "forward", Action: "drop", ConnState: "invalid",
 			Comment: "Пакеты, не относящиеся ни к одному известному соединению.",
 		},
 		{
@@ -206,16 +216,6 @@ func systemRules(panelPort int) []FirewallRule {
 	}
 }
 
-func systemNAT() []NATRule {
-	return []NATRule{
-		{
-			ID: NATWan, Name: "Подменять адреса клиентов на адрес роутера", System: true, Enabled: true,
-			Type: "masquerade", OutZone: "wan",
-			Comment: "Подмена адреса источника на выходе в интернет. Разрешение пропускать пакеты выдаёт отдельное правило файрволла — это разные вещи, и нужны обе.",
-		},
-	}
-}
-
 // EnsureSystemRules достраивает недостающие системные правила и держит в
 // актуальном состоянии те их поля, которыми владеет netOS.
 //
@@ -253,17 +253,6 @@ func (c *Config) EnsureSystemRules() {
 		c.Firewall.Rules = append(missing, c.Firewall.Rules...)
 	}
 
-	natExists := map[string]bool{}
-	for _, n := range c.Firewall.NAT {
-		if n.System {
-			natExists[n.ID] = true
-		}
-	}
-	for _, want := range systemNAT() {
-		if !natExists[want.ID] {
-			c.Firewall.NAT = append([]NATRule{want}, c.Firewall.NAT...)
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -344,8 +333,9 @@ func (c *Config) Normalize() {
 		if c.Firewall.Rules[i].Flow == "router" {
 			c.Firewall.Rules[i].Flow = "in"
 		}
-		if c.Firewall.Rules[i].Flow == "" {
-			c.Firewall.Rules[i].Flow = "any"
+		// Направления «во все сразу» больше нет: старые правила приводим к входу.
+		if c.Firewall.Rules[i].Flow == "any" || c.Firewall.Rules[i].Flow == "" {
+			c.Firewall.Rules[i].Flow = "in"
 		}
 		if c.Firewall.Rules[i].Zone == "" {
 			c.Firewall.Rules[i].Zone = "global"
@@ -353,6 +343,12 @@ func (c *Config) Normalize() {
 		// Зона назначения осмысленна только для форварда.
 		if c.Firewall.Rules[i].Flow != "forward" {
 			c.Firewall.Rules[i].DstZone = ""
+		}
+	}
+
+	for i := range c.Firewall.NAT {
+		if c.Firewall.NAT[i].Direction == "" {
+			c.Firewall.NAT[i].Direction = "source"
 		}
 	}
 

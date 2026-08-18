@@ -250,7 +250,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			if !r.Enabled || r.Zone != c.zone.Name {
 				continue
 			}
-			if r.Flow != c.hook.flow && r.Flow != "any" {
+			if r.Flow != c.hook.flow {
 				continue
 			}
 			// Зона назначения разворачивается в выходные интерфейсы, поэтому
@@ -292,18 +292,22 @@ func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
 	b.line("-A %s%s -j %s", chain, sel, target(r.Action))
 }
 
+// portForwardAccept разрешает транзит уже перенаправленных пакетов.
+//
+// Без этого трансляция сработает, а пакет всё равно не дойдёт: классическая
+// ловушка ручной настройки, на которой спотыкаются все.
 func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
-	for _, pf := range cfg.Firewall.PortForwards {
-		if !pf.Enabled {
+	for _, n := range cfg.Firewall.NAT {
+		if !n.Enabled || n.Direction != "destination" {
 			continue
 		}
-		for _, proto := range protocols(pf.Protocol) {
-			port := pf.DestPort
+		for _, proto := range protocols(n.Protocol) {
+			port := n.DestPort
 			if port == "" {
-				port = pf.ExtPort
+				port = n.ExtPort
 			}
 			b.line("-A %s -d %s -p %s --dport %s -m conntrack --ctstate DNAT -m comment --comment %q -j ACCEPT",
-				chain, pf.DestIP, proto, port, "проброс: "+pf.Name)
+				chain, n.DestIP, proto, port, "проброс: "+n.Name)
 		}
 	}
 }
@@ -412,60 +416,62 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		}
 	}
 
-	for _, pf := range cfg.Firewall.PortForwards {
-		if !pf.Enabled {
-			continue
-		}
-		inIfaces := zones["wan"]
-		if pf.WAN != "" {
-			if iface := wanInterface(cfg, pf.WAN); iface != "" {
-				inIfaces = []string{iface}
-			}
-		}
-		for _, iface := range inIfaces {
-			for _, proto := range protocols(pf.Protocol) {
-				var sel strings.Builder
-				fmt.Fprintf(&sel, " -i %s", iface)
-				if pf.SrcRestrict != "" {
-					fmt.Fprintf(&sel, " -s %s", pf.SrcRestrict)
-				}
-				dest := pf.DestIP
-				if pf.DestPort != "" {
-					dest = pf.DestIP + ":" + pf.DestPort
-				}
-				b.line("-A PREROUTING%s -p %s --dport %s -m comment --comment %q -j DNAT --to-destination %s",
-					sel.String(), proto, pf.ExtPort, "проброс: "+pf.Name, dest)
-			}
-		}
-	}
-
 	for _, n := range cfg.Firewall.NAT {
 		if !n.Enabled {
 			continue
 		}
-		outIfaces := []string{}
-		if n.OutInterface != "" {
-			outIfaces = []string{n.OutInterface}
-		} else if n.OutZone != "" {
-			outIfaces = append(outIfaces, zones[n.OutZone]...)
+		if n.Direction == "destination" {
+			b.natDestination(n)
+			continue
 		}
-		for _, iface := range outIfaces {
-			var sel strings.Builder
-			fmt.Fprintf(&sel, " -o %s", iface)
-			if n.SrcIP != "" {
-				fmt.Fprintf(&sel, " -s %s", n.SrcIP)
-			}
-			fmt.Fprintf(&sel, " -m comment --comment %q", truncate(n.Name, 240))
-
-			if n.Type == "snat" && n.ToSource != "" {
-				b.line("-A POSTROUTING%s -j SNAT --to-source %s", sel.String(), n.ToSource)
-			} else {
-				b.line("-A POSTROUTING%s -j MASQUERADE", sel.String())
-			}
-		}
+		b.natSource(n)
 	}
 
 	b.line("COMMIT")
+	_ = zones
+}
+
+// natSource — подмена адреса отправителя на выходе.
+func (b *builder) natSource(n config.NATRule) {
+	if n.Interface == "" {
+		return
+	}
+	var sel strings.Builder
+	fmt.Fprintf(&sel, " -o %s", n.Interface)
+	if n.Source != "" {
+		fmt.Fprintf(&sel, " -s %s", n.Source)
+	}
+	fmt.Fprintf(&sel, " -m comment --comment %q", truncate(n.Name, 240))
+
+	if n.ToSource != "" {
+		b.line("-A POSTROUTING%s -j SNAT --to-source %s", sel.String(), n.ToSource)
+		return
+	}
+	// Без указанного адреса подставится текущий адрес интерфейса — то, что
+	// нужно на подключении с меняющимся адресом.
+	b.line("-A POSTROUTING%s -j MASQUERADE", sel.String())
+}
+
+// natDestination — проброс обращения снаружи внутрь сети.
+func (b *builder) natDestination(n config.NATRule) {
+	if n.DestIP == "" || n.ExtPort == "" {
+		return
+	}
+	for _, proto := range protocols(n.Protocol) {
+		var sel strings.Builder
+		if n.Interface != "" {
+			fmt.Fprintf(&sel, " -i %s", n.Interface)
+		}
+		if n.AllowFrom != "" {
+			fmt.Fprintf(&sel, " -s %s", n.AllowFrom)
+		}
+		dest := n.DestIP
+		if n.DestPort != "" {
+			dest = n.DestIP + ":" + n.DestPort
+		}
+		b.line("-A PREROUTING%s -p %s --dport %s -m comment --comment %q -j DNAT --to-destination %s",
+			sel.String(), proto, n.ExtPort, truncate(n.Name, 240), dest)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -533,23 +539,6 @@ func protocols(spec string) []string {
 		return []string{"tcp", "udp"}
 	}
 	return []string{spec}
-}
-
-func wanInterface(cfg *config.Config, wanID string) string {
-	for _, w := range cfg.WANs {
-		if w.ID != wanID {
-			continue
-		}
-		if w.Proto == "pppoe" || w.Proto == "l2tp" {
-			return "ppp-" + w.ID
-		}
-		for _, i := range cfg.Interfaces {
-			if i.ID == w.Interface {
-				return i.Name
-			}
-		}
-	}
-	return ""
 }
 
 func addressOf(cidr string) string {

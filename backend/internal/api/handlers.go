@@ -654,7 +654,10 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rules, _ := s.Collector.Rules(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"routes": routes, "rules": rules})
+	parsed, _ := s.Collector.ParsedRoutes(r.Context(), table)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"routes": routes, "rules": rules, "parsed": parsed,
+	})
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
