@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    # Обе основные ветки: репозиторий сейчас на master, а ссылки в install.sh
+    # ведут на main — пока это не сведено, CI должен работать в любом случае.
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Версия берётся из go.mod, чтобы не разъезжаться с ней при обновлении.
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # Сборка проходит и без собранного фронтенда: в webdist лежит .gitkeep,
+      # которого достаточно для go:embed. Проверяем именно код.
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: go test
+        working-directory: backend
+        run: go test ./...
+
+      # Кросс-сборка под обе архитектуры релиза: пусть несобираемость под arm64
+      # выясняется здесь, а не в момент выпуска версии.
+      - name: сборка под все архитектуры
+        working-directory: backend
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          for arch in amd64 arm64; do
+            GOARCH=$arch go build -trimpath -o /dev/null ./cmd/netosd
+          done
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: установка зависимостей
+        working-directory: web
+        run: npm ci
+
+      # npm run build сам начинается с tsc --noEmit, так что проверка типов
+      # и сборка происходят одной командой.
+      - name: сборка
+        working-directory: web
+        run: npm run build
+
+      # Сборка фронтенда кладёт файлы в backend/internal/api/webdist. Если она
+      # оставила репозиторий грязным сверх ожидаемого, значит что-то пишется не
+      # туда, куда думает .gitignore.
+      - name: репозиторий не загрязнён сборкой
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "сборка изменила отслеживаемые файлы:"
+            git status --porcelain
+            exit 1
+          fi
+
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Установщик запускается под root на чужой машине: синтаксическая ошибка
+      # в нём дороже любой другой.
+      - name: проверка install.sh
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          bash -n install.sh
+          bash -n scripts/dev-deploy.sh
+          shellcheck --severity=warning install.sh scripts/dev-deploy.sh

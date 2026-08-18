@@ -485,6 +485,13 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			if err := s.ensurePPPoE(ctx, w, name); err != nil {
 				return err
 			}
+		case "l2tp":
+			// Появится вместе с остальными типами VPN в третьей фазе.
+			// Промолчать нельзя: аплинк остался бы ненастроенным, а
+			// применение отчиталось бы об успехе.
+			return fmt.Errorf("аплинк %s: L2TP пока не поддерживается", w.Name)
+		default:
+			return fmt.Errorf("аплинк %s: неизвестный тип подключения %q", w.Name, w.Proto)
 		}
 	}
 	return s.cleanupStaticRoutes(ctx, staticWanted)

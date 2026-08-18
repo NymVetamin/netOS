@@ -1,0 +1,41 @@
+# Интеграционные тесты: они поднимают настоящий концентратор PPPoE и настоящий
+# systemd-networkd, поэтому требуют root, сетевых namespace и установленных
+# пакетов ppp, pppoe и ifupdown.
+#
+# Запускаются отдельно от ci.yml и не блокируют выпуск релиза намеренно: их
+# поведение проверено на машине разработки, а не на раннере GitHub, и делать
+# выпуск версии заложником непроверенного окружения неправильно. Если они
+# окажутся здесь стабильными, ничто не мешает перенести их в ci.yml.
+name: integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Раз в неделю: этого достаточно, чтобы заметить, что обновление pppd или
+    # systemd в дистрибутиве сломало наши сгенерированные конфигурации.
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: зависимости стенда
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2
+
+      - name: интеграционные тесты
+        working-directory: backend
+        run: |
+          sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
+            "$(command -v go)" test ./internal/subsys/... -run "PPPoE|Integration" -v

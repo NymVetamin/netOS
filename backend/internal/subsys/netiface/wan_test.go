@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/netos-router/netos/internal/config"
 )
 
 type wanRunner struct {
@@ -36,5 +38,29 @@ func TestCleanupStaticRoutesKeepsWantedAndDeletesStale(t *testing.T) {
 	}
 	if !strings.Contains(runner.commands[1], "route del default via 198.51.100.1 dev eth1") {
 		t.Fatalf("удалён не тот маршрут: %s", runner.commands[1])
+	}
+}
+
+// Нереализованный тип подключения обязан приводить к ошибке. Молчаливый успех
+// оставил бы аплинк ненастроенным, а панель отчиталась бы о применении —
+// администратор узнал бы о неработающем канале от пользователей.
+func TestUnsupportedUplinkProtoFailsLoudly(t *testing.T) {
+	cases := map[string]string{
+		"l2tp":    "L2TP пока не поддерживается",
+		"выдумка": "неизвестный тип подключения",
+	}
+	for proto, want := range cases {
+		cfg := config.Default()
+		cfg.Interfaces = []config.Interface{{ID: "if-wan", Name: "lo", Type: "physical"}}
+		cfg.WANs = []config.WAN{{
+			ID: "wan1", Name: "Провайдер", Interface: "if-wan",
+			Enabled: true, Proto: proto, Metric: 100,
+		}}
+
+		s := NewWAN(&wanRunner{})
+		err := s.Apply(context.Background(), cfg)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("proto %q: получено %v, ожидалось упоминание %q", proto, err, want)
+		}
 	}
 }

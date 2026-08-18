@@ -1,0 +1,110 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # Ручной запуск нужен, когда тег уже существует, а релиз пришлось пересобрать.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег для сборки, например v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: определить версию
+        id: version
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Порядок обязателен: vite кладёт файлы в backend/internal/api/webdist,
+      # откуда их забирает go:embed. Сборка бэкенда до фронтенда дала бы
+      # бинарник с панелью от прошлого раза или вовсе без неё.
+      - name: сборка фронтенда
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: панель действительно попала в сборку
+        run: |
+          test -s backend/internal/api/webdist/app.js
+          test -s backend/internal/api/webdist/index.html
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # CGO выключен намеренно: sqlite взят в чистой реализации на Go, поэтому
+      # бинарник получается статическим и не зависит от версии libc на машине,
+      # куда его поставят.
+      - name: сборка бинарников
+        working-directory: backend
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          mkdir -p ../dist
+          for arch in amd64 arm64; do
+            GOARCH=$arch go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${{ steps.version.outputs.tag }}" \
+              -o "../dist/netosd-linux-$arch" ./cmd/netosd
+          done
+
+      # Имена файлов и формат суммы должны совпадать с тем, что ждёт
+      # install.sh: он берёт netosd-linux-<arch> и рядом лежащий файл .sha256,
+      # из которого читает первое поле.
+      - name: контрольные суммы
+        working-directory: dist
+        run: |
+          for f in netosd-linux-*; do
+            sha256sum "$f" > "$f.sha256"
+          done
+          ls -l
+
+      - name: проверка собранного
+        working-directory: dist
+        run: |
+          chmod +x netosd-linux-amd64
+          # Версия обязана совпасть с тегом: иначе netos update не поймёт,
+          # что машина уже обновлена.
+          got=$(./netosd-linux-amd64 -version)
+          echo "$got"
+          test "$got" = "netOS ${{ steps.version.outputs.tag }}"
+          # Суммы должны сходиться ровно так, как их будет считать установщик.
+          sha256sum -c netosd-linux-amd64.sha256
+          sha256sum -c netosd-linux-arm64.sha256
+
+      - name: публикация релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          notes="Установка и обновление:
+
+          \`\`\`
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sudo bash
+          \`\`\`
+
+          На уже установленной машине: \`sudo netos update\`."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "netOS $TAG" --notes "$notes"
+          fi
