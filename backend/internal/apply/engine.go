@@ -56,6 +56,9 @@ var Order = []string{
 	"interfaces",
 	"networks",
 	"wan",
+	// netconf идёт после аплинков: он описывает уже сложившуюся картину сети
+	// для механизма системы и должен видеть, какие интерфейсы заняты под WAN.
+	"netconf",
 	"routing",
 	"channels",
 	"vpn-servers",

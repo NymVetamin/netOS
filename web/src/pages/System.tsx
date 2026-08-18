@@ -15,12 +15,12 @@ const BACKENDS = [
   {
     id: "ifupdown",
     title: "networking (ifupdown)",
-    hint: "netOS генерирует /etc/network/interfaces, настройку применяет служба networking. Привычно для Debian.",
+    hint: "Дополнительно к прямому управлению netOS пишет /etc/network/interfaces.d/netos.conf, и сегменты существуют уже с загрузки. Привычно для Debian.",
   },
   {
     id: "networkd",
     title: "systemd-networkd",
-    hint: "netOS генерирует файлы .network и .netdev, настройку применяет systemd-networkd.",
+    hint: "То же самое файлами .network и .netdev в /etc/systemd/network.",
   },
 ];
 
@@ -86,10 +86,12 @@ export function SystemPage({
         </div>
         {config.system?.network_backend !== "netos" && (
           <div style={{ marginTop: "0.9rem" }}>
-            <Notice tone="warn" title="Поддержка этого способа ещё не реализована">
-              Сейчас netOS умеет настраивать интерфейсы только напрямую. Генерация
-              конфигураций для networking и systemd-networkd появится позже — до тех пор
-              выбор здесь ни на что не влияет.
+            <Notice tone="info" title="Что попадёт в сгенерированный файл">
+              Бриджи, VLAN, агрегаты и адреса сегментов — они статичны и будут подняты
+              системой ещё до старта netOS. Аплинки только поднимаются: их адресами,
+              маршрутами и метриками управляет netOS, и второй клиент DHCP на том же
+              интерфейсе сломал бы переключение между каналами. Изменения по-прежнему
+              применяются сразу, а не после перезагрузки.
             </Notice>
           </div>
         )}
