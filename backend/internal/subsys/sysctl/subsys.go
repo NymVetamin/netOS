@@ -36,43 +36,121 @@ func NewCore(r system.Runner) *Core { return &Core{Runner: r} }
 
 func (c *Core) Name() string { return "sysctl" }
 
-// values собирает нужные параметры. Держим их в одном месте, чтобы Plan и
-// Apply не разъезжались.
+// setting — один параметр ядра с объяснением, зачем он такой.
+//
+// Пояснения попадают в сгенерированный файл. Администратор рано или поздно
+// заглядывает в /etc/sysctl.d, и «откуда здесь это значение» — первый вопрос,
+// который у него возникает; отвечать на него в документации, лежащей в другом
+// месте, поздно.
+type setting struct {
+	key     string
+	value   string
+	comment string
+}
+
+// group — раздел сгенерированного файла.
+type group struct {
+	title    string
+	settings []setting
+}
+
+// coreGroups перечисляет параметры ядра в том виде, в каком они попадут в файл.
+//
+// Порядок и группировка заданы явно, а не сортировкой: список читают глазами, и
+// форвардинг рядом с размерами буферов TCP только мешает. Plan, Apply и
+// netos render sysctl берут его отсюда, поэтому разъехаться им негде.
+func coreGroups(cfg *config.Config) []group {
+	return []group{
+		{
+			title: "Маршрутизация",
+			settings: []setting{
+				{"net.ipv4.ip_forward", "1", "без этого роутер не роутер"},
+				{"net.ipv4.conf.all.rp_filter", "2",
+					"нестрогая проверка обратного пути: строгая ломает policy-routing —\n" +
+						"ответный пакет, пришедший через другой канал, отбрасывался бы как подделка"},
+				{"net.ipv4.conf.default.rp_filter", "2", ""},
+			},
+		},
+		{
+			title: "Защита",
+			settings: []setting{
+				{"net.ipv4.conf.all.accept_redirects", "0", "перенаправления ICMP роутеру не нужны и опасны"},
+				{"net.ipv4.conf.default.accept_redirects", "0", ""},
+				{"net.ipv4.conf.all.send_redirects", "0", ""},
+				{"net.ipv4.conf.default.send_redirects", "0", ""},
+				{"net.ipv4.conf.all.accept_source_route", "0", ""},
+				{"net.ipv4.tcp_syncookies", "1", ""},
+				{"net.ipv4.icmp_echo_ignore_broadcasts", "1", ""},
+				{"net.ipv4.icmp_ignore_bogus_error_responses", "1", ""},
+			},
+		},
+		{
+			title: "Таблица соединений",
+			settings: []setting{
+				{"net.netfilter.nf_conntrack_max", "131072",
+					"значение по умолчанию мало для роутера с десятками клиентов"},
+			},
+		},
+		{
+			title: "Управление перегрузкой",
+			settings: []setting{
+				{"net.core.default_qdisc", "fq_codel",
+					"именно fq_codel, а не fq: на аплинке роутера главная беда — раздутые\n" +
+						"очереди у провайдера, и codel борется с ними, а fq только распределяет"},
+				{"net.ipv4.tcp_congestion_control", "bbr",
+					"на канале с большим RTT и потерями заметно лучше cubic"},
+				{"net.ipv4.tcp_slow_start_after_idle", "0",
+					"иначе после паузы соединение каждый раз разгоняется заново"},
+				{"net.ipv4.tcp_mtu_probing", "1",
+					"под PPPoE и туннелями MTU меньше 1500, а ICMP по дороге часто режут"},
+				{"net.ipv4.tcp_fastopen", "3", ""},
+			},
+		},
+		{
+			title: "Буферы и очереди",
+			settings: []setting{
+				{"net.core.rmem_max", "16777216",
+					"буферы влияют на соединения самого роутера — панель, DNS, туннели, —\n" +
+						"а не на транзитный трафик: тот через сокеты не проходит"},
+				{"net.core.wmem_max", "16777216", ""},
+				{"net.ipv4.tcp_rmem", "4096 262144 16777216", ""},
+				{"net.ipv4.tcp_wmem", "4096 262144 16777216", ""},
+				{"net.core.netdev_max_backlog", "16384",
+					"очередь пакетов, принятых картой, но ещё не разобранных ядром"},
+				{"net.core.somaxconn", "4096", ""},
+				{"net.ipv4.tcp_max_syn_backlog", "8192", ""},
+			},
+		},
+		{
+			title: "Таймауты и порты",
+			settings: []setting{
+				{"net.ipv4.tcp_keepalive_time", "1200", ""},
+				{"net.ipv4.tcp_keepalive_probes", "5", ""},
+				{"net.ipv4.tcp_keepalive_intvl", "30", ""},
+				{"net.ipv4.tcp_fin_timeout", "30", ""},
+				{"net.ipv4.tcp_tw_reuse", "1", ""},
+				{"net.ipv4.ip_local_port_range", "10240 60999",
+					"диапазон расширен, но начинается не с 1024: из него же netfilter берёт\n" +
+						"порт при маскараде, и заход на 1024 столкнул бы NAT с портом панели"},
+			},
+		},
+	}
+}
+
+// values собирает параметры для применения. Держим их в одном месте, чтобы
+// Plan и Apply не разъезжались.
 func (c *Core) values(cfg *config.Config) map[string]string {
-	v := map[string]string{
-		// Без этого роутер не роутер.
-		"net.ipv4.ip_forward": "1",
-
-		// rp_filter в строгом режиме ломает policy-routing: ответный пакет,
-		// пришедший через другой канал, будет отброшен как подделка. Ставим
-		// нестрогий режим (2) — защита от очевидного спуфинга остаётся.
-		"net.ipv4.conf.all.rp_filter":     "2",
-		"net.ipv4.conf.default.rp_filter": "2",
-
-		// Перенаправления ICMP на роутере не нужны и опасны.
-		"net.ipv4.conf.all.accept_redirects":     "0",
-		"net.ipv4.conf.default.accept_redirects": "0",
-		"net.ipv4.conf.all.send_redirects":       "0",
-		"net.ipv4.conf.default.send_redirects":   "0",
-		"net.ipv4.conf.all.accept_source_route":  "0",
-
-		"net.ipv4.tcp_syncookies":                    "1",
-		"net.ipv4.icmp_echo_ignore_broadcasts":       "1",
-		"net.ipv4.icmp_ignore_bogus_error_responses": "1",
-
-		// Таблица conntrack по умолчанию мала для роутера с десятками клиентов.
-		"net.netfilter.nf_conntrack_max": "131072",
-
-		// Очередь для fq_codel и BBR: заметно лучше ведут себя на загруженном
-		// аплинке, чем стандартный pfifo_fast с cubic.
-		"net.core.default_qdisc":          "fq_codel",
-		"net.ipv4.tcp_congestion_control": "bbr",
+	v := map[string]string{}
+	for _, g := range coreGroups(cfg) {
+		for _, s := range g.settings {
+			v[s.key] = s.value
+		}
 	}
 	return v
 }
 
 func (c *Core) Plan(old, new *config.Config) ([]apply.Action, error) {
-	desired := renderSysctl(c.values(new))
+	desired := renderGroups(coreGroups(new))
 	current, _ := os.ReadFile(confPath)
 	if string(current) == desired {
 		return nil, nil
@@ -94,7 +172,7 @@ func (c *Core) Apply(ctx context.Context, cfg *config.Config) error {
 	// месте.
 	_, _ = c.Runner.Run(ctx, "modprobe", "nf_conntrack")
 
-	data := renderSysctl(c.values(cfg))
+	data := renderGroups(coreGroups(cfg))
 	if err := system.WriteFileAtomic(confPath, []byte(data), 0o644); err != nil {
 		return err
 	}
@@ -223,6 +301,48 @@ func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
 }
 
 // ---------------------------------------------------------------------------
+
+// Render печатает все параметры ядра, которыми управляет netOS, вместе с тем,
+// в какой файл каждый из них попадает.
+//
+// Отдельная команда нужна потому, что параметры разложены по двум файлам в
+// /etc/sysctl.d, а вопрос у администратора один: что netOS сделал с ядром.
+// Править /etc/sysctl.conf netOS не станет — это файл чужого пакета, и уборка
+// за собой при удалении из него была бы ненадёжной, — но показать всё сразу
+// обязан.
+func Render(cfg *config.Config) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n", confPath)
+	b.WriteString(renderGroups(coreGroups(cfg)))
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "# %s\n", ipv6ConfPath)
+	b.WriteString(renderSysctl((&IPv6{}).values(cfg)))
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "# %s\n", modulesPath)
+	b.WriteString(modulesData)
+	return b.String()
+}
+
+// renderGroups собирает файл из разделов с пояснениями.
+func renderGroups(groups []group) string {
+	var b strings.Builder
+	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Это полный список параметров ядра, которыми управляет netOS.\n")
+	b.WriteString("# Показать его целиком, вместе с параметрами IPv6: netos render sysctl\n")
+	for _, g := range groups {
+		fmt.Fprintf(&b, "\n# ===== %s =====\n", g.title)
+		for _, st := range g.settings {
+			if st.comment != "" {
+				for _, line := range strings.Split(st.comment, "\n") {
+					fmt.Fprintf(&b, "# %s\n", line)
+				}
+			}
+			fmt.Fprintf(&b, "%s = %s\n", st.key, st.value)
+		}
+	}
+	return b.String()
+}
 
 func renderSysctl(values map[string]string) string {
 	keys := make([]string, 0, len(values))
