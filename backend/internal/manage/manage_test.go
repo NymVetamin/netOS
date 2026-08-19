@@ -128,7 +128,37 @@ func TestReinstallBehavesLikeUpdate(t *testing.T) {
 	}
 }
 
-func TestUpdateFallsBackToSourceWhenReleaseIsMissing(t *testing.T) {
+// Сборка из исходников тянет Go и компилирует встроенный SQLite: на роутере
+// это десятки минут и уход в своп. Обновление не имеет права свернуть туда
+// само — администратор просил обновиться, а не запускать сборку на работающем
+// роутере.
+func TestUpdateRefusesMissingReleaseInsteadOfBuildingFromSource(t *testing.T) {
+	m, _ := testManager()
+	m.Output = func(context.Context, string, ...string) (string, error) {
+		return "", errors.New("not found")
+	}
+	var started bool
+	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "bash" {
+			started = true
+		}
+		return nil
+	}
+	err := m.Execute(context.Background(), []string{"update", "v9.9.9"})
+	if err == nil {
+		t.Fatal("обновление на несуществующий релиз прошло молча")
+	}
+	if !strings.Contains(err.Error(), "NETOS_FROM_SOURCE=1") {
+		t.Fatalf("отказ не объясняет, как собрать из исходников: %v", err)
+	}
+	if started {
+		t.Fatal("установщик запущен, хотя релиза нет")
+	}
+}
+
+// Явно запрошенная сборка из исходников должна доходить до установщика.
+func TestUpdateBuildsFromSourceWhenAskedExplicitly(t *testing.T) {
+	t.Setenv("NETOS_FROM_SOURCE", "1")
 	m, _ := testManager()
 	m.Output = func(context.Context, string, ...string) (string, error) {
 		return "", errors.New("not found")
@@ -145,6 +175,26 @@ func TestUpdateFallsBackToSourceWhenReleaseIsMissing(t *testing.T) {
 	}
 	if !contains(installer.env, "NETOS_FROM_SOURCE=1") {
 		t.Fatalf("сборка из исходников не включена: %#v", installer.env)
+	}
+}
+
+// Установщик берётся из того же тега, что и бинарник: иначе указанная версия
+// ставилась бы сегодняшним скриптом с master.
+func TestUpdateTakesInstallerFromRequestedTag(t *testing.T) {
+	m, _ := testManager()
+	var fetched []string
+	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "curl" {
+			fetched = append(fetched, spec.args[len(spec.args)-1])
+		}
+		return nil
+	}
+	if err := m.Execute(context.Background(), []string{"update", "v0.05"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "https://raw.githubusercontent.com/NymVetamin/netOS/v0.05/install.sh"
+	if !contains(fetched, want) {
+		t.Fatalf("установщик взят не из тега: %v", fetched)
 	}
 }
 

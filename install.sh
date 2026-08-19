@@ -133,6 +133,17 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     info "сборка из исходников"
     command -v git >/dev/null 2>&1 || die "для сборки из исходников нужен git"
 
+    # Сборка компилирует встроенный SQLite — самую тяжёлую зависимость
+    # проекта. На роутере с гигабайтом памяти и без подкачки машина уходит в
+    # OOM и перестаёт отвечать даже по SSH: со стороны это выглядит зависанием,
+    # а не отказом сборки. Считаем память вместе с подкачкой и отказываемся
+    # заранее, объяснив, что делать.
+    MEM_KB=$(awk '/^MemTotal:/ {m=$2} /^SwapTotal:/ {s=$2} END {print m + s}' /proc/meminfo)
+    if [ "${MEM_KB:-0}" -lt 2000000 ]; then
+        die "для сборки из исходников нужно около 2 ГБ памяти вместе с подкачкой, доступно $((MEM_KB / 1024)) МБ.
+    Добавьте файл подкачки или поставьте готовый релиз, убрав NETOS_FROM_SOURCE."
+    fi
+
     SRC=$(mktemp -d)
     trap 'rm -rf "$SRC"' EXIT
     GO_VERSION="1.25.0"
@@ -161,14 +172,21 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     fi
     CANDIDATE="$SRC/netosd"
     (
-        cd "$SRC/netos/backend"
-        # Основное зеркало модулей Go доступно не из всех сетей, поэтому
-        # заранее указываем запасное.
-        cd ../web
+        cd "$SRC/netos/web"
         npm ci
         npm run build
         cd ../backend
-        GOPROXY="https://proxy.golang.org,https://goproxy.io,direct" \
+        # Пакеты собираются по одному: параллельная сборка встроенного
+        # SQLite съедает память кратно числу ядер и на роутере валит
+        # машину раньше, чем успевает закончиться.
+        #
+        # Запасное зеркало модулей — отдельной попыткой, а не списком через
+        # запятую: по списку Go идёт дальше только на 404 и 410, а
+        # заблокированное зеркало отвечает 403 — и сборка падала бы, имея
+        # рабочий запасной адрес.
+        GOFLAGS="-p=1" GOMAXPROCS=1 GOPROXY="https://proxy.golang.org,direct" \
+            "$SRC/go/bin/go" build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o "$CANDIDATE" ./cmd/netosd \
+        || GOFLAGS="-p=1" GOMAXPROCS=1 GOPROXY="https://goproxy.io,direct" \
             "$SRC/go/bin/go" build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o "$CANDIDATE" ./cmd/netosd
     ) || die "сборка не удалась"
     ok "собрано из исходников"

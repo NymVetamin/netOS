@@ -15,12 +15,26 @@ import (
 	"time"
 )
 
-const installerURL = "https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh"
+const installerRepo = "NymVetamin/netOS"
+
+// installerURL возвращает ссылку на установщик для запрошенной версии.
+//
+// Скрипт берётся из того же тега, что и бинарник: установщик и релиз
+// развиваются вместе, и «netos update v0.05» с сегодняшним скриптом с master
+// поставил бы прошлую версию сегодняшним способом. Для latest тега нет, там
+// остаётся master.
+func installerURL(version string) string {
+	ref := "master"
+	if version != "" && version != "latest" {
+		ref = version
+	}
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/install.sh", installerRepo, ref)
+}
 
 // renderableArtifacts перечисляет то, что умеет печатать netosd -render.
 // Список продублирован здесь намеренно: CLI обязан отказать до запуска демона,
 // а не показывать пользователю его внутреннюю ошибку.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "unbound", "dnsproxy", "network", "config"}
+var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "config"}
 
 type command struct {
 	name  string
@@ -187,7 +201,7 @@ func (m *Manager) help() {
                                удалить netOS (по умолчанию с резервной копией)
   netos backup                 создать резервную копию
   netos start|stop|restart     управление службой
-  netos plan                   показать план активной конфигурации
+  netos plan                   чем живая система расходится с конфигурацией
   netos render <артефакт>      вывести сгенерированный конфиг:
                                iptables, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
                                network, config
@@ -197,6 +211,30 @@ update и reinstall сохраняют конфигурацию, пользов�
 }
 
 func (m *Manager) install(ctx context.Context, version string) error {
+	name := version
+	if name == "" {
+		name = "latest"
+	}
+
+	// Наличие релиза проверяется до всего остального. Иначе первым, что видит
+	// администратор, оказывается отказ curl на скачивании установщика с
+	// несуществующего тега — код возврата вместо внятной причины.
+	//
+	// Сборка из исходников тянет весь Go и компилирует встроенный SQLite. На
+	// роутере это десятки минут, а при гигабайте памяти — уход в своп до
+	// полной неотзывчивости машины. Уводить туда обновление самовольно нельзя:
+	// администратор просил обновиться, а не запускать сборочный конвейер на
+	// работающем роутере. Поэтому отсутствие релиза — отказ с объяснением, а
+	// сборка включается явно.
+	fromSource := os.Getenv("NETOS_FROM_SOURCE") == "1"
+	if _, err := m.Output(ctx, "curl", "-4", "-fsSIL", "--retry", "2", releaseURL(version)); err != nil {
+		if !fromSource {
+			return fmt.Errorf("готового релиза %s нет. Укажите существующую версию "+
+				"или соберите из исходников явно: NETOS_FROM_SOURCE=1 netos update", name)
+		}
+		fmt.Fprintln(m.Out, "Готового релиза для этой версии нет — собираю из исходников.")
+	}
+
 	tmp, err := os.CreateTemp("", "netos-install-*.sh")
 	if err != nil {
 		return err
@@ -206,15 +244,15 @@ func (m *Manager) install(ctx context.Context, version string) error {
 	defer os.Remove(path)
 
 	fmt.Fprintln(m.Out, "Загружаю установщик netOS…")
-	if err := m.run(ctx, "curl", "-4", "-fsSL", "--retry", "3", "-o", path, installerURL); err != nil {
-		return fmt.Errorf("загрузка установщика: %w", err)
+	if err := m.run(ctx, "curl", "-4", "-fsSL", "--retry", "3", "-o", path, installerURL(version)); err != nil {
+		return fmt.Errorf("не удалось загрузить установщик версии %s: %w", name, err)
 	}
+
 	var env []string
 	if version != "" {
 		env = append(env, "NETOS_VERSION="+version)
 	}
-	if _, err := m.Output(ctx, "curl", "-4", "-fsSIL", "--retry", "2", releaseURL(version)); err != nil {
-		fmt.Fprintln(m.Out, "Готового релиза для этой версии нет — собираю из исходников.")
+	if fromSource {
 		env = append(env, "NETOS_FROM_SOURCE=1")
 	}
 	return m.runEnv(ctx, env, "bash", path)
@@ -347,6 +385,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		m.sys("/etc/systemd/system/netos-isc-dhcp.service"),
 		m.sys("/etc/systemd/system/netos-kea-dhcp4.service"),
 		m.sys("/etc/sysctl.d/99-netos.conf"), m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
+		m.sys("/etc/modules-load.d/netos.conf"),
 		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы

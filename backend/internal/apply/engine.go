@@ -172,6 +172,16 @@ func (e *Engine) Plan(new *config.Config) ([]Action, error) {
 	e.mu.Lock()
 	old := e.current
 	e.mu.Unlock()
+	return e.PlanFrom(old, new)
+}
+
+// PlanFrom строит план перехода между двумя заданными конфигурациями.
+//
+// Нужен там, где применённое состояние известно не движку, а вызывающему:
+// команда netos plan работает отдельным процессом, своей истории применений у
+// неё нет, и без явного old она сравнивала бы конфигурацию с пустотой — то
+// есть всегда печатала бы план первой установки.
+func (e *Engine) PlanFrom(old, new *config.Config) ([]Action, error) {
 	if err := validateLiveTransition(old, new); err != nil {
 		return nil, err
 	}

@@ -16,6 +16,17 @@ import (
 
 const confPath = "/etc/sysctl.d/99-netos.conf"
 
+// modulesPath заставляет ядро загрузить conntrack на загрузке.
+//
+// Без него systemd-sysctl на раннем этапе не находит
+// net/netfilter/nf_conntrack_max: модуль подтягивается только вместе с первым
+// правилом iptables, а это уже сильно позже. В журнале каждой загрузки
+// оставалась ошибка, а размер таблицы до применения конфигурации netOS
+// оставался стандартным — для роутера с десятками клиентов он мал.
+const modulesPath = "/etc/modules-load.d/netos.conf"
+
+const modulesData = "# Сгенерировано netOS. Правки будут перезаписаны.\nnf_conntrack\n"
+
 // Core — базовые параметры ядра: форвардинг, conntrack, защита от спуфинга.
 type Core struct {
 	Runner system.Runner
@@ -74,6 +85,15 @@ func (c *Core) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (c *Core) Apply(ctx context.Context, cfg *config.Config) error {
+	if err := system.WriteFileAtomic(modulesPath, []byte(modulesData), 0o644); err != nil {
+		return err
+	}
+	// Модуль нужен прямо сейчас: nf_conntrack_max появляется в /proc только
+	// вместе с ним, а иначе значение из файла молча не применится. Отказ не
+	// критичен — conntrack может быть собран в ядро, и тогда параметр уже на
+	// месте.
+	_, _ = c.Runner.Run(ctx, "modprobe", "nf_conntrack")
+
 	data := renderSysctl(c.values(cfg))
 	if err := system.WriteFileAtomic(confPath, []byte(data), 0o644); err != nil {
 		return err
@@ -168,7 +188,13 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 		if name == "lo" {
 			continue
 		}
-		values := map[string]string{"disable_ipv6": "1"}
+		// accept_ra и autoconf гасятся вместе с disable_ipv6, а не полагаются
+		// на него. Значения all/default подхватываются только новыми
+		// интерфейсами, и на уже поднятом линке их переписывает кто угодно:
+		// на облачных образах это делает tuned, о чём systemd-networkd честно
+		// сообщает в журнал. Пока IPv6 выключен, это безвредно, но стоит
+		// включить его режим — и роутер получил бы маршруты из чужих RA.
+		values := map[string]string{"disable_ipv6": "1", "accept_ra": "0", "autoconf": "0"}
 		if cfg.IPv6.Mode != "off" {
 			values = map[string]string{"disable_ipv6": "0", "accept_ra": "1", "autoconf": "1"}
 		}
