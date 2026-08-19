@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testManager() (*Manager, *bytes.Buffer) {
@@ -18,6 +19,9 @@ func testManager() (*Manager, *bytes.Buffer) {
 	m.EUID = func() int { return 0 }
 	m.Run = func(context.Context, command) error { return nil }
 	m.Output = func(context.Context, string, ...string) (string, error) { return "", nil }
+	// Ожидание дефолтного маршрута опрашивает таблицу раз в секунду. С живым
+	// time.Sleep каждый тест удаления стоил бы два десятка секунд.
+	m.Sleep = func(time.Duration) {}
 	return m, out
 }
 
@@ -241,5 +245,133 @@ func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
 	// Чужие файлы не наши, и трогать их нельзя.
 	if _, err := os.Stat(foreign); err != nil {
 		t.Fatalf("удалён чужой файл конфигурации сети: %v", err)
+	}
+}
+
+
+// Удаление снимает маршруты netOS, но systemd-networkd держит в памяти
+// прежнюю конфигурацию линка и сам адресацию не перезапускает. Без явного
+// reconfigure машина остаётся с адресом и без пути наружу — на удалённом
+// роутере это потеря доступа до перезагрузки.
+func TestUninstallHandsInterfacesBackToNetworkManager(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+
+	networkd := filepath.Join(m.Root, "etc/systemd/network/05-netos-eth0.network")
+	if err := os.MkdirAll(filepath.Dir(networkd), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(networkd, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Линк должен существовать: для удалённых виртуальных интерфейсов
+	// reconfigure звать незачем.
+	if err := os.MkdirAll(filepath.Join(m.Root, "sys/class/net/eth0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var commands []command
+	m.Run = func(_ context.Context, spec command) error {
+		commands = append(commands, spec)
+		return nil
+	}
+	// Маршрут виден только до очистки: дальше networkd его не возвращает.
+	shown := 0
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		if name == "ip" && contains(args, "default") {
+			shown++
+			if shown == 1 {
+				return "default via 45.38.170.1 dev eth0 proto netos metric 100\n", nil
+			}
+			return "", nil
+		}
+		return "", nil
+	}
+
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+
+	var reconfigured, restored bool
+	for _, c := range commands {
+		if c.name == "networkctl" && len(c.args) == 2 && c.args[0] == "reconfigure" && c.args[1] == "eth0" {
+			reconfigured = true
+		}
+		if c.name == "ip" && contains(c.args, "add") && contains(c.args, "45.38.170.1") {
+			restored = true
+		}
+	}
+	if !reconfigured {
+		t.Fatalf("интерфейс не возвращён systemd-networkd: %#v", commands)
+	}
+	if !restored {
+		t.Fatalf("дефолтный маршрут не восстановлен, машина осталась без связи: %#v", commands)
+	}
+}
+
+// Когда штатный менеджер сети маршрут вернул, лезть руками нельзя: чужой
+// маршрут поверх своего означал бы дубль и неопределённый выбор канала.
+func TestUninstallDoesNotAddRouteWhenNetworkManagerReturnedIt(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+
+	var commands []command
+	m.Run = func(_ context.Context, spec command) error {
+		commands = append(commands, spec)
+		return nil
+	}
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		if name == "ip" && contains(args, "default") {
+			return "default via 45.38.170.1 dev eth0 proto dhcp\n", nil
+		}
+		return "", nil
+	}
+
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range commands {
+		if c.name == "ip" && contains(c.args, "add") {
+			t.Fatalf("маршрут добавлен вручную, хотя менеджер сети вернул свой: %#v", c)
+		}
+	}
+}
+
+// Компоненты включает администратор, и на машине с одной панелью их юнитов
+// нет. Отсутствующий юнит — достигнутая цель, а не сбой: systemctl не должен
+// вызываться и пугать администратора пятью отказами подряд.
+func TestUninstallSkipsComponentUnitsThatWereNeverInstalled(t *testing.T) {
+	m, out := testManager()
+	sandbox(t, m)
+
+	installed := filepath.Join(m.Root, "etc/systemd/system/netos-dnsmasq.service")
+	if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var disabled []string
+	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "systemctl" && len(spec.args) > 1 && spec.args[0] == "disable" {
+			disabled = append(disabled, spec.args[len(spec.args)-1])
+		}
+		return nil
+	}
+
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(disabled, "netos-dnsmasq.service") {
+		t.Fatalf("заведённый юнит компонента не погашен: %v", disabled)
+	}
+	for _, unit := range []string{"netos-unbound.service", "netos-dnsproxy.service", "netos-kea-dhcp4.service"} {
+		if contains(disabled, unit) {
+			t.Fatalf("systemctl вызван для юнита, которого нет: %s", unit)
+		}
+	}
+	if strings.Contains(out.String(), "Предупреждение: systemctl") {
+		t.Fatalf("удаление пожаловалось на systemctl из-за юнитов, которых нет: %s", out.String())
 	}
 }

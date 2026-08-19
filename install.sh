@@ -55,13 +55,18 @@ step "Проверяю систему"
 
 command -v systemctl >/dev/null 2>&1 || die "требуется systemd"
 
+# os-release читается в подоболочке: файл объявляет собственные VERSION и
+# NAME, и обычный `. /etc/os-release` затёр бы VERSION установщика — тогда
+# ссылка на релиз собирается из версии дистрибутива ("13 (trixie)") и загрузка
+# падает. Наружу выносятся только те значения, которые нам нужны.
 if [ -r /etc/os-release ]; then
-    . /etc/os-release
-    case "${ID:-}${ID_LIKE:-}" in
+    OS_FAMILY=$( . /etc/os-release; printf '%s' "${ID:-}${ID_LIKE:-}" )
+    OS_NAME=$( . /etc/os-release; printf '%s' "${PRETTY_NAME:-неизвестна}" )
+    case "$OS_FAMILY" in
         *debian*|*ubuntu*) : ;;
-        *) warn "система ${PRETTY_NAME:-неизвестна}, netOS рассчитан на Debian — продолжаю на свой страх" ;;
+        *) warn "система ${OS_NAME}, netOS рассчитан на Debian — продолжаю на свой страх" ;;
     esac
-    info "Система: ${PRETTY_NAME:-неизвестна}"
+    info "Система: ${OS_NAME}"
 fi
 
 ARCH="$(uname -m)"

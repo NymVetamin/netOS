@@ -38,6 +38,7 @@ type Manager struct {
 	Now     func() time.Time
 	Run     func(context.Context, command) error
 	Output  func(context.Context, string, ...string) (string, error)
+	Sleep   func(time.Duration)
 
 	// Root подставляется перед всеми системными путями. В работе он пуст, а в
 	// тестах указывает на временный каталог: иначе прогон тестов удаления под
@@ -63,7 +64,7 @@ func (m *Manager) sys(path string) string {
 func New(version string) *Manager {
 	m := &Manager{
 		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
-		Version: version, EUID: effectiveUID, Now: time.Now,
+		Version: version, EUID: effectiveUID, Now: time.Now, Sleep: time.Sleep,
 		StateDir: "/var/lib/netos", ConfigDir: "/etc/netos", LogDir: "/var/log/netos",
 		BackupDir: "/var/backups/netos", Binary: "/usr/local/bin/netosd",
 		CLI: "/usr/local/bin/netos", Unit: "/etc/systemd/system/netosd.service",
@@ -290,7 +291,14 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	}
 
 	m.bestEffort(ctx, "systemctl", "disable", "netosd")
+	// Гасятся только те юниты компонентов, которые действительно заведены.
+	// Компоненты включает администратор, и на машине с одной лишь панелью нет
+	// ни одного из них: отсутствующий юнит — это достигнутая цель, а не сбой,
+	// и systemctl ругался бы на каждый пятью строками подряд.
 	for _, unit := range []string{"netos-dnsmasq.service", "netos-isc-dhcp.service", "netos-kea-dhcp4.service", "netos-unbound.service", "netos-dnsproxy.service"} {
+		if _, err := os.Stat(m.sys("/etc/systemd/system/" + unit)); err != nil {
+			continue
+		}
 		m.bestEffort(ctx, "systemctl", "disable", "--now", unit)
 	}
 	// Юниты, которых по одному на интерфейс или аплинк, ищем по маске: их
@@ -311,6 +319,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	clear6 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
 	m.bestEffortInput(ctx, clear4, "iptables-restore")
 	m.bestEffortInput(ctx, clear6, "ip6tables-restore")
+	// Дефолтные маршруты запоминаются до очистки: следующая строка сносит в том
+	// числе маршрут аплинка, и без запаса вернуть его будет неоткуда.
+	savedRoutes := m.captureDefaultRoutes(ctx)
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "static")
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
@@ -322,6 +333,13 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.default.accept_ra=1")
 	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.all.autoconf=1")
 	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.default.autoconf=1")
+
+	// Режим управления сетью определяется до удаления файлов: после него
+	// понять, кому возвращать интерфейсы, будет уже нельзя.
+	ifupdownMode := false
+	if _, err := os.Stat(m.sys("/etc/network/interfaces.d/netos.conf")); err == nil {
+		ifupdownMode = true
+	}
 
 	for _, path := range []string{
 		m.Unit,
@@ -339,7 +357,12 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		_ = os.Remove(path)
 	}
 	networkd, _ := filepath.Glob(m.sys("/etc/systemd/network/05-netos-*"))
+	var links []string
 	for _, path := range networkd {
+		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "05-netos-"), ".network")
+		if name != "" {
+			links = append(links, name)
+		}
 		_ = os.Remove(path)
 	}
 	if !keepData {
@@ -352,6 +375,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	_ = os.Remove(m.Binary)
 	_ = os.Remove(m.CLI)
 	m.bestEffort(ctx, "systemctl", "daemon-reload")
+	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
 	fmt.Fprintln(m.Out, "netOS удалён. Установленные через apt компоненты оставлены в системе.")
 	return nil
 }
@@ -391,6 +415,104 @@ func (m *Manager) backupNow(ctx context.Context) error {
 	}
 	fmt.Fprintf(m.Out, "Резервная копия создана: %s\n", path)
 	return nil
+}
+
+// defaultRoute описывает дефолтный маршрут в объёме, которого хватает, чтобы
+// вернуть его на место.
+type defaultRoute struct {
+	via string
+	dev string
+}
+
+// captureDefaultRoutes запоминает дефолтные маршруты до того, как удаление их
+// снесёт.
+func (m *Manager) captureDefaultRoutes(ctx context.Context) []defaultRoute {
+	out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
+	if err != nil {
+		return nil
+	}
+	var routes []defaultRoute
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		var r defaultRoute
+		for i := 0; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "via":
+				r.via = fields[i+1]
+			case "dev":
+				r.dev = fields[i+1]
+			}
+		}
+		if r.dev != "" {
+			routes = append(routes, r)
+		}
+	}
+	return routes
+}
+
+// restoreNetworking возвращает интерфейсы штатному менеджеру сети.
+//
+// Одного удаления файлов мало. Маршруты netOS сняты вместе с proto 201, но
+// systemd-networkd продолжает держать в памяти прежнюю конфигурацию линка и
+// адресацию заново не запускает: машина остаётся с адресом, но без пути
+// наружу. На роутере, который админят удалённо, это потеря доступа до
+// перезагрузки — ровно то, ради чего удаление и запускали, только без связи.
+//
+// Попытки идут молча: на машине с ifupdown нет networkctl, на машине с
+// networkd нет networking.service, и сообщать о таких неудачах нечего.
+// Значение имеет один факт — появился дефолтный маршрут или нет.
+func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdownMode bool, saved []defaultRoute) {
+	m.quiet(ctx, "networkctl", "reload")
+	for _, link := range links {
+		// Виртуальных интерфейсов netOS к этому моменту уже нет, и
+		// reconfigure для них означал бы только шум в выводе.
+		if _, err := os.Stat(m.sys("/sys/class/net/" + link)); err != nil {
+			continue
+		}
+		m.quiet(ctx, "networkctl", "reconfigure", link)
+	}
+	if ifupdownMode {
+		m.quiet(ctx, "systemctl", "restart", "networking")
+	}
+	if m.waitDefaultRoute(ctx, 20) {
+		return
+	}
+
+	// Штатный менеджер маршрут не вернул. Ставим обратно тот, что был до
+	// удаления: маршрут чужого происхождения лучше, чем машина без связи.
+	for _, r := range saved {
+		if r.via != "" {
+			m.quiet(ctx, "ip", "-4", "route", "add", "default", "via", r.via, "dev", r.dev)
+		} else {
+			m.quiet(ctx, "ip", "-4", "route", "add", "default", "dev", r.dev)
+		}
+	}
+	if len(saved) > 0 && m.waitDefaultRoute(ctx, 3) {
+		fmt.Fprintln(m.Out, "Дефолтный маршрут восстановлен вручную: штатный менеджер сети его не вернул.")
+		return
+	}
+	fmt.Fprintln(m.Err, "Предупреждение: машина осталась без дефолтного маршрута. Проверьте сеть до перезагрузки.")
+}
+
+// waitDefaultRoute ждёт появления дефолтного маршрута, опрашивая таблицу раз в
+// секунду. DHCP-аренда приходит не мгновенно, а проверять сразу после
+// reconfigure означало бы объявить восстановление неудачным раньше времени.
+func (m *Manager) waitDefaultRoute(ctx context.Context, attempts int) bool {
+	for i := 0; ; i++ {
+		out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
+		if err == nil && strings.TrimSpace(out) != "" {
+			return true
+		}
+		if i >= attempts {
+			return false
+		}
+		m.Sleep(time.Second)
+	}
+}
+
+// quiet выполняет попытку восстановления, о неудаче которой сообщать нечего.
+func (m *Manager) quiet(ctx context.Context, name string, args ...string) {
+	_ = m.run(ctx, name, args...)
 }
 
 func (m *Manager) removePolicyRules(ctx context.Context) {
