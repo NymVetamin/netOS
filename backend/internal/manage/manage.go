@@ -414,6 +414,12 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	_ = os.Remove(m.Binary)
 	_ = os.Remove(m.CLI)
 	m.bestEffort(ctx, "systemctl", "daemon-reload")
+	// Демоны, которых netOS погасил ради единоличного управления, возвращаются
+	// вместе с системой: удаление обязано оставлять машину такой, какой она
+	// была до установки.
+	for _, unit := range []string{"tuned.service"} {
+		m.quiet(ctx, "systemctl", "enable", "--now", unit)
+	}
 	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
 	fmt.Fprintln(m.Out, "netOS удалён. Установленные через apt компоненты оставлены в системе.")
 	return nil
