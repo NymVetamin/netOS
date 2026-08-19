@@ -113,7 +113,7 @@ EOF
 # Debian их нет. Сам netOS без них обходится — параметры ядра он пишет прямо в
 # /proc/sys, — но администратор, пришедший на роутер руками, ожидает найти
 # sysctl и modprobe на месте.
-PACKAGES="iptables iproute2 ca-certificates curl busybox procps kmod"
+PACKAGES="iptables iproute2 ca-certificates curl busybox procps kmod bash-completion"
 if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     PACKAGES="$PACKAGES git nodejs npm"
 fi
@@ -234,6 +234,15 @@ mv -f "$BIN_PATH.new" "$BIN_PATH"
 ln -sfn "$BIN_PATH" "$CLI_PATH"
 ok "бинарник и команда netos установлены"
 
+# Дополнение команд генерирует сам netos: список команд задан в его коде, и
+# отдельный файл в репозитории разошёлся бы с ним при первой же новой команде.
+if "$CLI_PATH" completion bash > /etc/bash_completion.d/netos 2>/dev/null; then
+    ok "дополнение команд установлено (заработает в новой сессии)"
+else
+    rm -f /etc/bash_completion.d/netos
+    warn "не удалось установить дополнение команд"
+fi
+
 # --- служба ------------------------------------------------------------------
 
 step "Настраиваю службу"
@@ -262,7 +271,10 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable netosd >/dev/null 2>&1
+# --no-reload: systemctl enable сам просит systemd перечитать юниты, а мы это
+# только что сделали. Лишнее перечитывание прогоняет все генераторы системы
+# заново — полсекунды и порция чужих ошибок в журнале на ровном месте.
+systemctl enable --no-reload netosd >/dev/null 2>&1 || systemctl enable netosd >/dev/null 2>&1
 ok "служба netosd зарегистрирована"
 
 # --- запуск ------------------------------------------------------------------
@@ -348,7 +360,7 @@ else
 fi
 echo "${B}============================================================${R}"
 echo
-info "Управление:   netos help"
+info "Управление:   netos help (дополнение по Tab — в новой сессии)"
 info "Обновление:   sudo netos update"
 info "Состояние:    netos status"
 info "Журнал:       netos logs -f"
