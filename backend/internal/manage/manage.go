@@ -41,6 +41,10 @@ type command struct {
 	args  []string
 	env   []string
 	stdin string
+	// silent прячет вывод команды. Нужен там, где неудача ожидаема и ничего не
+	// значит: systemctl честно пишет «Unit NetworkManager.service not found» на
+	// машине, где его нет, и это выглядело бы сбоем удаления.
+	silent bool
 }
 
 type Manager struct {
@@ -571,8 +575,12 @@ func (m *Manager) waitDefaultRoute(ctx context.Context, attempts int) bool {
 }
 
 // quiet выполняет попытку восстановления, о неудаче которой сообщать нечего.
+//
+// Гасится и вывод самой команды: systemctl честно пишет «Unit
+// NetworkManager.service not found» на машине, где его нет, и это выглядело бы
+// сбоем удаления, хотя ничего не произошло.
 func (m *Manager) quiet(ctx context.Context, name string, args ...string) {
-	_ = m.run(ctx, name, args...)
+	_ = m.Run(ctx, command{name: name, args: args, silent: true})
 }
 
 func (m *Manager) removePolicyRules(ctx context.Context) {
@@ -671,6 +679,9 @@ func (m *Manager) bestEffortInput(ctx context.Context, input, name string, args 
 func (m *Manager) runOS(ctx context.Context, spec command) error {
 	cmd := exec.CommandContext(ctx, spec.name, spec.args...)
 	cmd.Stdout, cmd.Stderr = m.Out, m.Err
+	if spec.silent {
+		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	}
 	if spec.stdin != "" {
 		cmd.Stdin = strings.NewReader(spec.stdin)
 	} else {
