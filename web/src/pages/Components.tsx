@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ComponentInfo } from "../api";
+import { api, CatalogResponse } from "../api";
 import { Badge, Card, Notice, Spinner, Switch } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -9,28 +9,51 @@ type Patch = (mutate: (draft: any) => void) => void;
 // После установки netOS на машине нет ни DHCP-сервера, ни резолвера, ни VPN:
 // только панель и доступ по SSH. Всё остальное появляется здесь и только по
 // решению администратора.
+
+// LIVE_POLL_MS — как часто перепрашивается живое состояние машины. Установка
+// пакета занимает минуты, а служба поднимается и падает за секунды, поэтому
+// «используется» должно обновляться само, без перезагрузки страницы.
+const LIVE_POLL_MS = 5000;
+
 export function ComponentsPage({ config, patch }: { config: any; patch: Patch }) {
-  const [catalog, setCatalog] = useState<ComponentInfo[] | null>(null);
+  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
 
   useEffect(() => {
-    api
-      .catalog()
-      .then((r) => setCatalog(r.components))
-      .catch(() => setCatalog([]));
+    let alive = true;
+    const load = () =>
+      api
+        .catalog()
+        .then((r) => alive && setCatalog(r))
+        .catch(() => alive && setCatalog((prev) => prev ?? { components: [] }));
+    load();
+    const timer = window.setInterval(load, LIVE_POLL_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   if (!catalog) return <Spinner />;
 
-  const installed = new Map<string, boolean>(
+  const wanted = new Map<string, boolean>(
     (config.components || []).map((c: any) => [c.id, c.installed]),
   );
+  // Что лежит на машине и что на ней работает — разные вопросы, и оба
+  // отвечаются живой системой, а не конфигурацией: пакет мог не установиться,
+  // а установленный демон — быть никем не выбран.
+  const present = catalog.installed || {};
+  const running = catalog.running || {};
 
-  const groups = catalog.reduce<Record<string, ComponentInfo[]>>((acc, c) => {
-    (acc[c.group] = acc[c.group] || []).push(c);
-    return acc;
-  }, {});
+  const groups = catalog.components.reduce<Record<string, CatalogResponse["components"]>>(
+    (acc, c) => {
+      (acc[c.group] = acc[c.group] || []).push(c);
+      return acc;
+    },
+    {},
+  );
 
-  const installedCount = Array.from(installed.values()).filter(Boolean).length;
+  const installedCount = Array.from(wanted.values()).filter(Boolean).length;
+  const runningCount = Object.values(running).filter(Boolean).length;
 
   function toggle(id: string, on: boolean) {
     patch((d) => {
@@ -64,21 +87,29 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
       <Notice tone="info" title="Базовая установка минимальна">
         Сразу после установки на машине работают только веб-панель и SSH. Роутер не
         поднимает служб, которых у него не просили: меньше открытых портов, меньше
-        занятого места, меньше того, что может сломаться. Установлено сейчас:{" "}
-        {installedCount}.
+        занятого места, меньше того, что может сломаться. Выбрано компонентов:{" "}
+        {installedCount}, работает служб: {runningCount}.
       </Notice>
 
       {Object.entries(groups).map(([group, items]) => (
         <Card key={group} title={group}>
           <div className="stack">
             {items.map((c) => {
-              const on = installed.get(c.id) === true;
+              const on = wanted.get(c.id) === true;
+              const onDisk = present[c.id] === true;
+              const atWork = running[c.id] === true;
               return (
                 <div key={c.id} className={`component ${on ? "on" : ""}`}>
                   <div className="component-main">
                     <div className="row" style={{ gap: "0.5rem" }}>
                       <strong>{c.title}</strong>
-                      {on && <Badge tone="ok">установлен</Badge>}
+                      {onDisk && <Badge tone="ok">установлен</Badge>}
+                      {atWork && <Badge tone="ok">используется</Badge>}
+                      {/* Выбран, но ещё не установлен: изменение не применено.
+                          Обратного случая — «будет удалён» — здесь нет: базовые
+                          пакеты вроде iproute2 и ppp стоят на машине всегда и
+                          выбранными не числятся, а удалять их netOS не станет. */}
+                      {on && !onDisk && <Badge tone="warn">будет установлен</Badge>}
                       {c.external && <Badge tone="warn">не из репозитория Debian</Badge>}
                     </div>
                     <div className="dim" style={{ marginTop: 2 }}>

@@ -44,6 +44,17 @@ export type ComponentInfo = {
   provides?: string[];
   size_hint?: string;
   external?: boolean;
+  run_units?: string[];
+};
+
+// CatalogResponse — каталог вместе с живым состоянием машины. installed
+// говорит, что пакет лежит на диске, running — что демон компонента работает
+// прямо сейчас. Желаемое состояние панель знает из конфигурации, и эти два
+// поля нужны, чтобы расхождение было видно.
+export type CatalogResponse = {
+  components: ComponentInfo[];
+  installed?: Record<string, boolean>;
+  running?: Record<string, boolean>;
 };
 
 // RouteEntry — разобранная запись таблицы маршрутизации.
@@ -170,7 +181,7 @@ export const api = {
   confirm: () => request<{ ok: boolean }>("POST", "/api/config/confirm"),
   rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
 
-  catalog: () => request<{ components: ComponentInfo[] }>("GET", "/api/catalog"),
+  catalog: () => request<CatalogResponse>("GET", "/api/catalog"),
   status: () => request<any>("GET", "/api/status"),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),

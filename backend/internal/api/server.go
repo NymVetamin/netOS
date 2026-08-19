@@ -29,12 +29,24 @@ import (
 //go:embed all:webdist
 var webFS embed.FS
 
+// ComponentProbe отвечает на вопрос, что из каталога стоит на машине и что из
+// установленного работает прямо сейчас. Панель показывает оба состояния: между
+// «пакет установлен» и «демон обслуживает сеть» есть разница, и по одному
+// только первому непонятно, кто из двух установленных серверов DHCP работает.
+type ComponentProbe interface {
+	Status(ctx context.Context) map[string]bool
+	Running(ctx context.Context) map[string]bool
+}
+
 // Server — веб-панель.
 type Server struct {
 	Store     *store.Store
 	Engine    *apply.Engine
 	Collector *runtime.Collector
 	Logger    Logger
+	// Components может быть nil: панель обязана работать и без опроса машины,
+	// тогда каталог отдаётся без состояний.
+	Components ComponentProbe
 
 	// draft — конфигурация, которую администратор редактирует, но ещё не
 	// применил.

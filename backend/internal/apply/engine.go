@@ -71,6 +71,44 @@ var Order = []string{
 	"wifi",
 }
 
+// connectivitySubsystems — подсистемы, изменение которых способно оборвать
+// доступ администратора к панели: адреса, маршруты, правила файрволла,
+// беспроводная сеть. Только их изменения требуют подтверждения после
+// применения.
+//
+// Остальное подтверждать незачем. Смена сервера DHCP, резолвера, имени хоста
+// или установка компонента связь с панелью не рвут: администратор, которому
+// нечего проверять, получает окно с обратным отсчётом и вынужден нажимать
+// «Всё работает» после каждой мелочи. Ценность подтверждения от этого падает —
+// его начинают подтверждать не глядя, а именно оно спасает от правила
+// файрволла, закрывшего доступ.
+var connectivitySubsystems = map[string]bool{
+	"netconf":     true,
+	"interfaces":  true,
+	"networks":    true,
+	"wan":         true,
+	"routing":     true,
+	"channels":    true,
+	"policy":      true,
+	"firewall":    true,
+	"ipv6":        true,
+	"wifi":        true,
+	"vpn-servers": true,
+}
+
+// NeedsConfirmation сообщает, требует ли план подтверждения администратором.
+//
+// Пустой план подтверждать тоже нечего: применять нечего, значит и рваться
+// нечему.
+func NeedsConfirmation(actions []Action) bool {
+	for _, a := range actions {
+		if a.Disruptive || connectivitySubsystems[a.Subsystem] {
+			return true
+		}
+	}
+	return false
+}
+
 // RollbackInfo описывает состоявшийся откат. Панель показывает его
 // администратору: иначе человек, не успевший подтвердить изменения, увидит
 // лишь молча вернувшиеся старые настройки и не поймёт, что произошло.
@@ -284,7 +322,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	e.current = cfg
 	res := &Result{Applied: actions, Revision: revision}
 
-	if needConfirm && previous != nil {
+	if needConfirm && previous != nil && NeedsConfirmation(actions) {
 		timeout := time.Duration(cfg.System.Panel.CommitTimeout) * time.Second
 		if timeout <= 0 {
 			timeout = 90 * time.Second

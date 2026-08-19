@@ -111,6 +111,37 @@ func TestDnsmasqServesLocalZoneWhenAnotherResolverOwnsPort53(t *testing.T) {
 	}
 }
 
+// TestDnsmasqNeverMixesBindModes закрывает ошибку, из-за которой dnsmasq не
+// поднимался вовсе: подчинённый резолвер добавлял bind-interfaces к общему
+// bind-dynamic, а вместе они запрещены («cannot set --bind-interfaces and
+// --bind-dynamic»). Ловится только здесь: dnsmasq --test конфликт пропускает,
+// он вскрывается на привязке сокетов, уже после успешного применения.
+func TestDnsmasqNeverMixesBindModes(t *testing.T) {
+	cases := map[string]*config.Config{
+		"подчинённый резолвер": resolverConfig(),
+		"dnsmasq на 53":        dnsmasqOwnsDNSConfig(),
+		"только DHCP":          dhcpOnlyConfig(),
+	}
+	for name, cfg := range cases {
+		out := NewDnsmasq(nil).Render(cfg)
+		if strings.Contains(out, "bind-interfaces") && strings.Contains(out, "bind-dynamic") {
+			t.Fatalf("%s: обе привязки сразу, dnsmasq не запустится:\n%s", name, out)
+		}
+	}
+}
+
+func dnsmasqOwnsDNSConfig() *config.Config {
+	cfg := resolverConfig()
+	cfg.DNS.Provider = "dnsmasq"
+	return cfg
+}
+
+func dhcpOnlyConfig() *config.Config {
+	cfg := resolverConfig()
+	cfg.DNS.Enabled = false
+	return cfg
+}
+
 func TestDnsmasqStaysSilentWhenItOnlyServesDHCP(t *testing.T) {
 	cfg := resolverConfig()
 	cfg.DNS.Enabled = false

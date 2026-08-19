@@ -198,7 +198,12 @@ func (d *Dnsmasq) renderLocalDNS(b *strings.Builder, cfg *config.Config) {
 	w("port=%d", dnsmasqLocalPort)
 	w("interface=lo")
 	w("listen-address=127.0.0.1")
-	w("bind-interfaces")
+	// bind-interfaces здесь не ставим, хотя привязка нужна только к loopback:
+	// в общей части конфига уже стоит bind-dynamic, а вместе они несовместимы —
+	// dnsmasq отказывается запускаться («cannot set --bind-interfaces and
+	// --bind-dynamic»). Проверка dnsmasq --test этого не ловит: конфликт
+	// вскрывается на привязке сокетов, то есть уже после успешного применения.
+	// bind-dynamic делает то же самое: с interface=lo слушается только loopback.
 	w("no-resolv")
 	w("no-poll")
 	// Пустой список апстримов: на неизвестное имя честно отвечаем отказом,

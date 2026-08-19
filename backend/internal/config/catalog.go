@@ -17,8 +17,17 @@ type ComponentInfo struct {
 	Description string `json:"description"`
 	// Packages — что ставится через apt.
 	Packages []string `json:"packages"`
-	// Units — службы, которыми управляет netOS после установки.
+	// Units — штатные службы дистрибутива, которые netOS гасит после
+	// установки пакета: демонами управляет он сам, своими юнитами.
 	Units []string `json:"units,omitempty"`
+	// RunUnits — юниты самого netOS, по которым видно, что компонент не просто
+	// установлен, а работает. Имя может быть шаблоном: юниты аплинков
+	// называются по идентификатору канала и заранее неизвестны.
+	//
+	// Пусто там, где работу компонента нечем измерить: ipset, iproute2 и
+	// утилиты диагностики демонов не поднимают, и «используется» для них
+	// означало бы лишь то, что пакет стоит.
+	RunUnits []string `json:"run_units,omitempty"`
 	// Provides — роли, которые компонент закрывает: dns, dhcp, vpn-client и так
 	// далее. Панель по ним подсказывает, чего не хватает для нужной функции.
 	Provides []string `json:"provides,omitempty"`
@@ -36,28 +45,31 @@ type ComponentInfo struct {
 var Catalog = []ComponentInfo{
 	// --- выдача адресов ---
 	{
-		ID: "dnsmasq", Title: "dnsmasq", Group: "Базовые службы",
+		ID: "dnsmasq", Title: "dnsmasq", Group: "DHCP службы",
 		Description: "Лёгкий сервер DHCP и кэширующий DNS в одном процессе. Обычный выбор для домашнего роутера.",
-		Packages: []string{"dnsmasq"},
+		Packages:    []string{"dnsmasq"},
 		// netOS запускает собственный экземпляр с генерируемым конфигом,
 		// поэтому штатный юнит гасится сразу после установки пакета.
 		Units:    []string{"dnsmasq.service"},
+		RunUnits: []string{"netos-dnsmasq.service"},
 		Provides: []string{"dhcp", "dns"},
-		SizeHint:    "около 1 МБ",
+		SizeHint: "около 1 МБ",
 	},
 	{
-		ID: "isc-dhcp-server", Title: "ISC DHCP", Group: "Базовые службы",
+		ID: "isc-dhcp-server", Title: "ISC DHCP", Group: "DHCP службы",
 		Description: "Классический сервер DHCP с богатым набором опций. Знаком администраторам корпоративных сетей.",
 		Packages:    []string{"isc-dhcp-server"},
 		Units:       []string{"isc-dhcp-server.service"},
+		RunUnits:    []string{"netos-isc-dhcp.service"},
 		Provides:    []string{"dhcp"},
 		SizeHint:    "около 3 МБ",
 	},
 	{
-		ID: "kea", Title: "Kea DHCP", Group: "Базовые службы",
+		ID: "kea", Title: "Kea DHCP", Group: "DHCP службы",
 		Description: "Преемник ISC DHCP: управление через REST, хуки, отдельная база аренд.",
 		Packages:    []string{"kea-dhcp4-server"},
 		Units:       []string{"kea-dhcp4-server.service"},
+		RunUnits:    []string{"netos-kea-dhcp4.service"},
 		Provides:    []string{"dhcp"},
 		SizeHint:    "около 12 МБ",
 	},
@@ -73,15 +85,17 @@ var Catalog = []ComponentInfo{
 		// резолвером роутера штатный экземпляр и падает на каждом запуске
 		// («Link lo is loopback device»), оставаясь в состоянии failed. Резолвер
 		// роутера принадлежит netOS, помощник для чужого экземпляра нам не нужен.
-		Units:       []string{"unbound.service", "unbound-resolvconf.service"},
-		Provides:    []string{"dns", "dot"},
-		SizeHint:    "около 5 МБ",
+		Units:    []string{"unbound.service", "unbound-resolvconf.service"},
+		RunUnits: []string{"netos-unbound.service"},
+		Provides: []string{"dns", "dot"},
+		SizeHint: "около 5 МБ",
 	},
 	{
 		ID: "dnsproxy", Title: "dnsproxy", Group: "DNS",
 		Description: "Шифрованный DNS во всех видах: DoT, DoH и DoQ, отдельные апстримы для отдельных доменов.",
 		Provides:    []string{"dns", "dot", "doh", "doq"},
 		SizeHint:    "около 20 МБ",
+		RunUnits:    []string{"netos-dnsproxy.service"},
 		External:    true,
 	},
 	{
@@ -125,13 +139,14 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "l2tp", Title: "L2TP", Group: "Подключение к провайдеру",
 		Description: "Нужен, если провайдер даёт интернет через туннель до своего концентратора по логину и паролю.",
-		Packages: []string{"xl2tpd", "ppp"},
+		Packages:    []string{"xl2tpd", "ppp"},
 		// Штатный юнит обязательно перечислен: без этого установка пакета
 		// поднимает xl2tpd со своим конфигом, и он занимает порт 1701, на
 		// котором должен работать туннель netOS.
 		Units:    []string{"xl2tpd.service"},
+		RunUnits: []string{"netos-l2tp-*.service"},
 		Provides: []string{"vpn-client", "wan"},
-		SizeHint:    "около 2 МБ",
+		SizeHint: "около 2 МБ",
 	},
 	{
 		ID: "ocserv", Title: "ocserv", Group: "VPN",
@@ -147,6 +162,7 @@ var Catalog = []ComponentInfo{
 		ID: "pppoe", Title: "PPPoE", Group: "Подключение к провайдеру",
 		Description: "Нужен, если провайдер выдаёт интернет через логин и пароль по PPPoE.",
 		Packages:    []string{"pppoe", "ppp"},
+		RunUnits:    []string{"netos-pppoe-*.service"},
 		Provides:    []string{"wan"},
 		SizeHint:    "около 1 МБ",
 	},

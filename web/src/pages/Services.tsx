@@ -63,7 +63,7 @@ function DHCPSection({
           <div className="row wrap" style={{ gap: "1.5rem", marginBottom: "1rem" }}>
             <Switch
               checked={config.dhcp?.enabled}
-              label="Раздавать адреса"
+              label="DHCP сервер"
               onChange={(v) =>
                 patch((d) => {
                   d.dhcp.enabled = v;

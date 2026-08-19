@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -462,17 +463,44 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "черновик уже изменён в другой вкладке; обновите страницу")
 		return
 	}
-	s.draft = &cfg
+	// Черновик, совпавший с применённой конфигурацией, черновиком быть
+	// перестаёт. Иначе администратор, изменивший значение и вернувший его
+	// обратно, до конца сеанса видит полосу «есть несохранённые изменения» и
+	// кнопку «Применить», которой нечего применять.
+	dirty := !sameConfig(&cfg, s.Engine.Current())
+	if dirty {
+		s.draft = &cfg
+	} else {
+		s.draft = nil
+	}
 	s.draftVersion++
 	version := s.draftVersion
 	s.draftMu.Unlock()
 
 	writeJSON(w, http.StatusOK, configResponse{
 		Config:       &cfg,
-		Dirty:        true,
+		Dirty:        dirty,
 		Problems:     result.Problems,
 		DraftVersion: version,
 	})
+}
+
+// sameConfig сравнивает конфигурации по содержимому. Сравниваем сериализацию,
+// а не структуры: reflect.DeepEqual считает разными nil и пустой срез, а
+// панель присылает то одно, то другое в зависимости от того, трогали ли раздел.
+func sameConfig(a, b *config.Config) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	left, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(left, right)
 }
 
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
@@ -730,7 +758,16 @@ func draftPrecondition(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 // строит по нему раздел компонентов и подсказывает, чего не хватает для
 // нужной функции.
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"components": config.Catalog})
+	resp := map[string]any{"components": config.Catalog}
+	if s.Components != nil {
+		// installed — что действительно лежит на диске, running — чей демон
+		// поднят. Желаемое состояние панель знает из конфигурации, а эти два
+		// поля показывают живую машину: установленный компонент может быть
+		// никем не выбран и не работать.
+		resp["installed"] = s.Components.Status(r.Context())
+		resp["running"] = s.Components.Running(r.Context())
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

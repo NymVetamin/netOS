@@ -131,6 +131,30 @@ func (s *Systemd) IsActive(ctx context.Context, unit string) bool {
 	return strings.TrimSpace(out) == "active"
 }
 
+// ActiveUnits возвращает имена работающих юнитов, подходящих под шаблон
+// (например «netos-*.service»). Одним запросом, а не опросом по одному: панель
+// спрашивает состояние всех компонентов сразу и делает это регулярно, а каждый
+// systemctl is-active — это отдельный процесс.
+//
+// Шаблон обязателен и здесь же передаётся systemctl: юниты аплинков названы по
+// идентификатору канала, и заранее их имён никто не знает.
+func (s *Systemd) ActiveUnits(ctx context.Context, pattern string) []string {
+	out, err := s.R.Run(ctx, "systemctl", "list-units", "--type=service",
+		"--state=active", "--no-legend", "--plain", "--no-pager", pattern)
+	if err != nil {
+		return nil
+	}
+	var units []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		units = append(units, fields[0])
+	}
+	return units
+}
+
 func (s *Systemd) DaemonReload(ctx context.Context) error {
 	return s.systemctl(ctx, "daemon-reload")
 }

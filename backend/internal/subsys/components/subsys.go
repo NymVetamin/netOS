@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -217,4 +218,39 @@ func (s *Subsystem) Status(ctx context.Context) map[string]bool {
 		out[info.ID] = present
 	}
 	return out
+}
+
+// Running сообщает, какие компоненты не просто установлены, а работают прямо
+// сейчас: их демон поднят юнитом netOS.
+//
+// Установленный пакет и работающая служба — разные вещи, и по одному только
+// «установлен» непонятно, кто из двух установленных серверов DHCP обслуживает
+// сеть. Компоненты без собственного юнита (наборы адресов, утилиты
+// диагностики) в ответе не появляются вовсе: работу измерять нечем.
+func (s *Subsystem) Running(ctx context.Context) map[string]bool {
+	// Один запрос на все юниты netOS, а не по одному на компонент: панель
+	// спрашивает это состояние регулярно.
+	active := s.Systemd.ActiveUnits(ctx, "netos-*.service")
+
+	out := map[string]bool{}
+	for _, info := range config.Catalog {
+		if len(info.RunUnits) == 0 {
+			continue
+		}
+		out[info.ID] = anyUnitActive(info.RunUnits, active)
+	}
+	return out
+}
+
+// anyUnitActive сверяет шаблоны юнитов компонента с работающими. Шаблон нужен
+// для аплинков: netos-l2tp-<канал>.service именуется по идентификатору канала.
+func anyUnitActive(patterns, active []string) bool {
+	for _, pattern := range patterns {
+		for _, unit := range active {
+			if ok, err := path.Match(pattern, unit); err == nil && ok {
+				return true
+			}
+		}
+	}
+	return false
 }

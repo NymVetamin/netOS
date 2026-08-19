@@ -226,7 +226,11 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       try {
         const res = await api.saveConfig(next);
         setProblems(res.problems || []);
-        setDirty(true);
+        // Черновик, совпавший с применённой конфигурацией, черновиком быть
+        // перестаёт: сервер отвечает dirty=false, и полоса применения уходит
+        // сама. Иначе правка, возвращённая к исходному значению, до конца
+        // сеанса предлагала бы применить пустоту.
+        setDirty(res.dirty);
         setSaveError("");
       } catch (err) {
         if (err instanceof ApiError) {

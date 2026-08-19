@@ -201,6 +201,9 @@ func main() {
 		return "dnsmasq"
 	}
 	panel := api.New(st, engine, collector, logger)
+	// Каталог компонентов панель показывает вместе с живым состоянием машины:
+	// что установлено и чей демон работает прямо сейчас.
+	panel.Components = components.New(runner, logger)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

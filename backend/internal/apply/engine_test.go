@@ -20,8 +20,12 @@ type testSubsystem struct {
 }
 
 func (s *testSubsystem) Name() string { return "interfaces" }
+
+// Plan сообщает об изменении адресации: подтверждения после применения требуют
+// только те подсистемы, что способны оборвать доступ к панели, и без такого
+// действия движок не стал бы заводить транзакцию вовсе.
 func (s *testSubsystem) Plan(*config.Config, *config.Config) ([]Action, error) {
-	return nil, nil
+	return []Action{{Kind: "update", Target: "eth0", Disruptive: true}}, nil
 }
 func (s *testSubsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	if s.apply != nil {
@@ -173,5 +177,56 @@ func TestLivePanelPortChangeIsRejectedBeforeApply(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("до отказа успело выполниться применений: %d", calls)
+	}
+}
+
+// safeSubsystem меняет то, что связь с панелью оборвать не может: резолвер.
+type safeSubsystem struct{}
+
+func (safeSubsystem) Name() string { return "dns" }
+func (safeSubsystem) Plan(*config.Config, *config.Config) ([]Action, error) {
+	return []Action{{Kind: "update", Target: "DNS-резолвер"}}, nil
+}
+func (safeSubsystem) Apply(context.Context, *config.Config) error  { return nil }
+func (safeSubsystem) Health(context.Context, *config.Config) error { return nil }
+
+// TestHarmlessChangeNeedsNoConfirmation закрепляет, что окно с обратным
+// отсчётом появляется не после всякого применения. Смена резолвера или сервера
+// DHCP связь с панелью не рвёт, и требовать подтверждения там — приучать
+// администратора нажимать «Всё работает» не глядя.
+func TestHarmlessChangeNeedsNoConfirmation(t *testing.T) {
+	e := NewEngine(testLogger{}, false)
+	if err := e.Register(safeSubsystem{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Apply(context.Background(), validConfig("initial"), 1, false); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.Apply(context.Background(), validConfig("next"), 2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NeedsConfirm {
+		t.Fatal("подтверждения потребовало изменение, которое не может оборвать доступ")
+	}
+	if pending, _ := e.Pending(); pending {
+		t.Fatal("движок оставил незавершённую транзакцию и заблокировал следующее применение")
+	}
+}
+
+// TestConnectivityChangeStillNeedsConfirmation — обратная сторона: изменение
+// адресации по-прежнему обязано ждать подтверждения, иначе теряется вся защита
+// от правила, закрывшего администратору доступ.
+func TestConnectivityChangeStillNeedsConfirmation(t *testing.T) {
+	e := newTestEngine(t, &testSubsystem{})
+	if _, err := e.Apply(context.Background(), validConfig("initial"), 1, false); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.Apply(context.Background(), validConfig("next"), 2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.NeedsConfirm {
+		t.Fatal("изменение адресации применилось без подтверждения")
 	}
 }
