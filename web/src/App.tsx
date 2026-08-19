@@ -83,7 +83,147 @@ export default function App() {
     return <Login onSuccess={setSession} />;
   }
 
+  // Пока временный пароль не сменён, сервер отклоняет любой изменяющий запрос.
+  // Панель в этом состоянии показывалась целиком, но не работал ни один
+  // переключатель: правки молча отбрасывались ещё в браузере. Показываем ровно
+  // то единственное, что сейчас разрешено сделать.
+  if (session.must_change) {
+    return (
+      <FirstPassword
+        onDone={async () => {
+          try {
+            setSession(await api.session());
+          } catch {
+            setSession(null);
+          }
+        }}
+        onLogout={async () => {
+          await api.logout();
+          setSession(null);
+        }}
+      />
+    );
+  }
+
   return <Shell session={session} onLogout={() => setSession(null)} />;
+}
+
+// ---------------------------------------------------------------------------
+// Обязательная смена временного пароля
+// ---------------------------------------------------------------------------
+
+function FirstPassword({
+  onDone,
+  onLogout,
+}: {
+  onDone: () => void | Promise<void>;
+  onLogout: () => void;
+}) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const mismatch = repeat.length > 0 && next !== repeat;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.changePassword(current, next);
+      await onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось сменить пароль");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-screen">
+      <form className="login-card" onSubmit={submit}>
+        <div className="login-brand">
+          <span className="mark">nO</span>
+          <div>
+            <h1 style={{ fontSize: 17 }}>Смена пароля</h1>
+            <div className="faint" style={{ fontSize: 12 }}>
+              временный пароль нужно сменить до первой настройки
+            </div>
+          </div>
+        </div>
+
+        <div style={{ height: "1rem" }} />
+
+        <Notice tone="warn" title="Настройка пока недоступна">
+          Пароль, выданный при установке, был напечатан открытым текстом. Пока он не
+          сменён, роутер не принимает изменения конфигурации.
+        </Notice>
+
+        <div style={{ height: "0.9rem" }} />
+
+        <div className="field">
+          <label htmlFor="cur">Временный пароль</label>
+          <input
+            id="cur"
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="new">Новый пароль</label>
+          <input
+            id="new"
+            type="password"
+            autoComplete="new-password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+          />
+          <div className="hint">Не короче 10 символов</div>
+        </div>
+        <div className="field">
+          <label htmlFor="rep">Повторите новый пароль</label>
+          <input
+            id="rep"
+            type="password"
+            autoComplete="new-password"
+            value={repeat}
+            onChange={(e) => setRepeat(e.target.value)}
+          />
+        </div>
+
+        {mismatch && (
+          <div style={{ marginBottom: "0.9rem" }}>
+            <Notice tone="danger" title="Пароли не совпадают" />
+          </div>
+        )}
+        {error && (
+          <div style={{ marginBottom: "0.9rem" }}>
+            <Notice tone="danger" title={error} />
+          </div>
+        )}
+
+        <button
+          className="btn primary"
+          style={{ width: "100%" }}
+          disabled={busy || !current || next.length < 10 || mismatch}
+        >
+          {busy ? "Меняю…" : "Сменить пароль и продолжить"}
+        </button>
+        <button
+          type="button"
+          className="btn ghost"
+          style={{ width: "100%", marginTop: "0.5rem" }}
+          onClick={onLogout}
+        >
+          Выйти
+        </button>
+      </form>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -335,12 +475,6 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
       <main className="main">
         <div className="page">
-          {session.must_change && (
-            <Notice tone="warn" title="Пароль по умолчанию не сменён">
-              Смените пароль в разделе «Система».
-            </Notice>
-          )}
-
           {session.role !== "admin" && (
             <Notice tone="info" title="Режим просмотра">
               Изменение конфигурации для этой учётной записи запрещено.
