@@ -69,6 +69,15 @@ const (
 	nmConfPath = "/etc/NetworkManager/conf.d/99-netos.conf"
 )
 
+// ifupdownDir и ifupdownMain — то, что читает ifupdown.
+//
+// Переменные, а не константы: проверку конфликтов надо уметь прогонять на
+// временном каталоге, не трогая настоящую сеть машины сборки.
+var (
+	ifupdownDir  = "/etc/network/interfaces.d"
+	ifupdownMain = "/etc/network/interfaces"
+)
+
 type Logger interface {
 	Infof(format string, args ...any)
 	Warnf(format string, args ...any)
@@ -77,6 +86,13 @@ type Logger interface {
 type Subsystem struct {
 	Runner system.Runner
 	Logger Logger
+
+	// warnedIfupdown — то, о чём уже предупреждали в прошлый раз.
+	//
+	// Applyы идут при каждом изменении конфигурации, и без памяти одно и то же
+	// предупреждение падало бы в журнал десятками одинаковых строк. Повторяем
+	// его только тогда, когда состав конфликтов действительно изменился.
+	warnedIfupdown string
 }
 
 func New(r system.Runner, logger Logger) *Subsystem {
@@ -154,7 +170,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 
 // applyNetOS отбирает интерфейсы netOS у остальных механизмов настройки сети.
 func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
-	s.warnAboutIfupdown(cfg)
+	s.warnAboutIfupdown(ctx, cfg)
 
 	// Отбирать нечего, если механизма нет или он не работает.
 	if !s.unitPresent(ctx, "systemd-networkd.service") ||
@@ -359,14 +375,28 @@ func (s *Subsystem) syncNetworkdFiles(ctx context.Context, files map[string]stri
 // У ifupdown нет приоритетов: два описания одного интерфейса — это ошибка, а
 // не переопределение. Молча оставить чужую строку тоже неправильно: при
 // загрузке она поднимет второй клиент DHCP на интерфейсе netOS.
-func (s *Subsystem) warnAboutIfupdown(cfg *config.Config) {
+//
+// Но только если этой загрузке есть чему случиться. Запись в
+// /etc/network/interfaces.d при выключенной и неработающей networking.service
+// не делает ничего и не сделает после перезагрузки: читать её некому.
+// Предупреждать о ней — значит требовать от администратора действий там, где
+// делать нечего, и делать это при каждом применении конфигурации. Ровно так
+// оно и выглядело: на машине с networking в inactive журнал заполнялся
+// требованием убрать безобидный файл.
+func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 	if s.Logger == nil {
 		return
 	}
-	paths, _ := filepath.Glob("/etc/network/interfaces.d/*")
-	paths = append(paths, "/etc/network/interfaces")
+	if !s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service") {
+		s.warnedIfupdown = ""
+		return
+	}
+
+	paths, _ := filepath.Glob(filepath.Join(ifupdownDir, "*"))
+	paths = append(paths, ifupdownMain)
 	managed := managedInterfaces(cfg)
 
+	var conflicts []string
 	for _, path := range paths {
 		if path == ifupdownPath {
 			continue
@@ -376,13 +406,24 @@ func (s *Subsystem) warnAboutIfupdown(cfg *config.Config) {
 			continue
 		}
 		for _, name := range managed {
-			if !mentionsInterface(string(data), name) {
-				continue
+			if mentionsInterface(string(data), name) {
+				conflicts = append(conflicts, path+" → "+name)
 			}
-			s.Logger.Warnf(
-				"%s настраивает интерфейс %s, которым управляет netOS: перекрыть эту запись нельзя — уберите её или отключите networking.service",
-				path, name)
 		}
+	}
+
+	// Один и тот же набор конфликтов — одно предупреждение, а не по строке на
+	// каждое применение конфигурации.
+	fingerprint := strings.Join(conflicts, ";")
+	if fingerprint == s.warnedIfupdown {
+		return
+	}
+	s.warnedIfupdown = fingerprint
+	for _, conflict := range conflicts {
+		path, name, _ := strings.Cut(conflict, " → ")
+		s.Logger.Warnf(
+			"%s настраивает интерфейс %s, которым управляет netOS: перекрыть эту запись нельзя — уберите её или отключите networking.service",
+			path, name)
 	}
 }
 
@@ -520,6 +561,22 @@ func (s *Subsystem) requireUnit(ctx context.Context, unit, name string) error {
 func (s *Subsystem) unitPresent(ctx context.Context, unit string) bool {
 	out, err := s.Runner.Run(ctx, "systemctl", "list-unit-files", "--no-legend", unit)
 	return err == nil && strings.TrimSpace(out) != ""
+}
+
+// unitEnabled сообщает, поднимется ли юнит при следующей загрузке. Для
+// выключенной службы содержимое её конфигурации значения не имеет.
+func (s *Subsystem) unitEnabled(ctx context.Context, unit string) bool {
+	out, err := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	if err != nil {
+		// is-enabled отдаёт ненулевой код и на disabled, и на отсутствующий
+		// юнит. И то и другое означает «не поднимется».
+		return false
+	}
+	switch strings.TrimSpace(out) {
+	case "enabled", "enabled-runtime", "static", "indirect", "generated", "alias":
+		return true
+	}
+	return false
 }
 
 func (s *Subsystem) unitActive(ctx context.Context, unit string) bool {
