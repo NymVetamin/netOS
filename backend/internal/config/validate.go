@@ -324,11 +324,24 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		switch w.Proto {
 		case "dhcp":
 		case "static":
-			if _, err := netip.ParsePrefix(w.Address); err != nil {
+			prefix, prefixErr := netip.ParsePrefix(w.Address)
+			if prefixErr != nil {
 				r.errf(path+".address", "адрес должен быть с маской, например 203.0.113.5/24")
 			}
-			if _, err := netip.ParseAddr(w.Gateway); err != nil {
+			gw, gwErr := netip.ParseAddr(w.Gateway)
+			if gwErr != nil {
 				r.errf(path+".gateway", "некорректный адрес шлюза")
+			}
+			// Шлюз вне подсети интерфейса ядру недостижим: ip route отвечает
+			// «Nexthop has invalid gateway», применение падает и откатывается.
+			// Откат спасает связность, но администратор узнаёт о промахе уже
+			// после того, как аплинк на секунду перестроили. Предупреждаем до
+			// применения — ошибкой это делать нельзя, бывают точка-точка и
+			// шлюз за onlink-маршрутом.
+			if prefixErr == nil && gwErr == nil && !prefix.Contains(gw) {
+				r.warnf(path+".gateway",
+					"шлюз %s вне подсети %s: ядро примет такой маршрут только через onlink",
+					w.Gateway, w.Address)
 			}
 		case "pppoe":
 			if w.Username == "" {

@@ -116,3 +116,24 @@ func (r *stubbornRunner) Run(ctx context.Context, name string, args ...string) (
 func (r *stubbornRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
 	return r.Run(ctx, name, args...)
 }
+
+
+// Штатный юнит успевает стартовать из postinst пакета и упасть на порту,
+// который уже держит netOS. Погашенный, он навсегда остаётся в состоянии
+// failed: systemctl показывает красную строку, а вся система — degraded, хотя
+// ничего не сломано. Администратор идёт искать несуществующую поломку.
+func TestDisableClearsFailedStateOfTheUnit(t *testing.T) {
+	r := &scriptedRunner{active: true}
+	if err := NewSystemd(r).Disable(context.Background(), "dnsmasq.service"); err != nil {
+		t.Fatal(err)
+	}
+	var cleared bool
+	for _, c := range r.commands {
+		if strings.HasPrefix(c, "systemctl reset-failed dnsmasq.service") {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("состояние failed не сброшено: %v", r.commands)
+	}
+}

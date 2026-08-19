@@ -115,3 +115,49 @@ func TestAcceptZonePolicyCounts(t *testing.T) {
 		t.Fatal("зона wan с политикой accept не засчитана за доступ")
 	}
 }
+
+
+// Шлюз вне подсети интерфейса ядро не примет: ip route отвечает «Nexthop has
+// invalid gateway», применение падает и откатывается. Откат спасает связность,
+// но аплинк к тому моменту уже перестроили. Предупреждаем заранее — и именно
+// предупреждаем, потому что бывают точка-точка и шлюз за onlink-маршрутом.
+func TestGatewayOutsideInterfaceSubnetIsWarningNotError(t *testing.T) {
+	cfg := Default()
+	cfg.WANs = []WAN{{
+		ID: "wan", Name: "Аплинк", Interface: "if-wan", Enabled: true,
+		Proto: "static", Address: "45.38.170.119/24", Gateway: "10.99.99.99", Metric: 100,
+	}}
+	cfg.Interfaces = []Interface{{ID: "if-wan", Name: "eth0", Type: "physical", Enabled: true}}
+	cfg.Normalize()
+
+	res := cfg.Validate()
+	var warned bool
+	for _, p := range res.Problems {
+		if p.Severity == "warning" && p.Path == "wans[0].gateway" {
+			warned = true
+		}
+		if p.Severity == "error" && p.Path == "wans[0].gateway" {
+			t.Fatalf("шлюз вне подсети объявлен ошибкой: %s", p.Message)
+		}
+	}
+	if !warned {
+		t.Fatalf("промах со шлюзом не замечен: %#v", res.Problems)
+	}
+}
+
+// Обычный шлюз внутри подсети не должен вызывать ни слова.
+func TestGatewayInsideSubnetIsSilent(t *testing.T) {
+	cfg := Default()
+	cfg.WANs = []WAN{{
+		ID: "wan", Name: "Аплинк", Interface: "if-wan", Enabled: true,
+		Proto: "static", Address: "45.38.170.119/24", Gateway: "45.38.170.1", Metric: 100,
+	}}
+	cfg.Interfaces = []Interface{{ID: "if-wan", Name: "eth0", Type: "physical", Enabled: true}}
+	cfg.Normalize()
+
+	for _, p := range cfg.Validate().Problems {
+		if p.Path == "wans[0].gateway" {
+			t.Fatalf("исправный шлюз вызвал жалобу: %s", p.Message)
+		}
+	}
+}

@@ -326,3 +326,39 @@ func TestNetconfRunsBeforeAddressingSubsystems(t *testing.T) {
 		}
 	}
 }
+
+
+// systemd-networkd — не единственный, кто настраивает сеть в Debian и Ubuntu.
+// На образах с NetworkManager он ведёт себя так же: держит своё представление
+// о линке и снимает чужие адреса. Без отстранения netOS работал бы на нашей
+// тестовой машине и молча не работал бы на соседней.
+func TestNetworkManagerGivesUpEveryInterfaceNetOSOwns(t *testing.T) {
+	cfg := routerConfig()
+	out := renderNetworkManagerConf(managedInterfaces(cfg))
+
+	if !strings.Contains(out, "[keyfile]") {
+		t.Fatalf("нет секции keyfile:\n%s", out)
+	}
+	for _, name := range []string{"eth0", "eth1", "eth2", "br-lan", "vl-guest"} {
+		if !strings.Contains(out, "interface-name:"+name) {
+			t.Fatalf("интерфейс %s не отобран у NetworkManager:\n%s", name, out)
+		}
+	}
+	// Разделитель у NetworkManager — точка с запятой; запятая молча
+	// превратила бы список в одно несуществующее имя.
+	if strings.Contains(out, ",") {
+		t.Fatalf("список разделён запятыми, NetworkManager такой не поймёт:\n%s", out)
+	}
+	if n := strings.Count(out, ";"); n != 4 {
+		t.Fatalf("ожидалось 4 разделителя на 5 интерфейсов, получено %d:\n%s", n, out)
+	}
+}
+
+// Интерфейс, до которого netOS дела нет, отбирать нельзя: на ноутбуке
+// администратора это был бы Wi-Fi, с которого роутер и настраивают.
+func TestNetworkManagerKeepsInterfacesNetOSDoesNotOwn(t *testing.T) {
+	out := renderNetworkManagerConf(managedInterfaces(routerConfig()))
+	if strings.Contains(out, "wlan0") {
+		t.Fatalf("отобран чужой интерфейс:\n%s", out)
+	}
+}

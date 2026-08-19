@@ -392,6 +392,10 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		// машину с описанием сегментов, которых больше никто не создаёт.
 		m.sys("/etc/network/interfaces.d/netos.conf"),
 		m.sys("/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"),
+		// Отстранение NetworkManager снимается вместе с netOS: иначе
+		// интерфейсы остались бы ничьими и после перезагрузки машина не
+		// поднялась бы в сеть.
+		m.sys("/etc/NetworkManager/conf.d/99-netos.conf"),
 	} {
 		_ = os.Remove(path)
 	}
@@ -420,6 +424,8 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	for _, unit := range []string{"tuned.service"} {
 		m.quiet(ctx, "systemctl", "enable", "--now", unit)
 	}
+	// NetworkManager должен узнать, что интерфейсы снова его.
+	m.quiet(ctx, "systemctl", "reload", "NetworkManager.service")
 	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
 	fmt.Fprintln(m.Out, "netOS удалён. Установленные через apt компоненты оставлены в системе.")
 	return nil

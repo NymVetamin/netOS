@@ -580,7 +580,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			User: username, Action: "apply", Target: strconv.FormatInt(revID, 10),
 			Detail: err.Error(), SourceIP: clientIP(r), Success: false,
 		})
-		writeError(w, http.StatusInternalServerError, "применение не удалось: %v", err)
+		// Черновик после неудачи остаётся прежним, вместе с тем значением, из-за
+		// которого всё и упало. Это правильно — исправлять его администратору,
+		// — но без подсказки следующая попытка бьётся в ту же стену.
+		writeError(w, http.StatusInternalServerError,
+			"применение не удалось: %v. Система откачена к прежней конфигурации; "+
+				"исправьте черновик или отмените изменения", err)
 		return
 	}
 

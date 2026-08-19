@@ -55,6 +55,18 @@ const (
 	// waitOnlineDropIn снимает требование к состоянию линка, которое netOS
 	// сделал невыполнимым. 99 — чтобы применяться после чужих drop-in.
 	waitOnlineDropIn = "/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"
+	// nmConfPath отбирает интерфейсы у NetworkManager.
+	//
+	// systemd-networkd — не единственный, кто настраивает сеть в Debian и
+	// Ubuntu: на образах с рабочим столом и на части серверных сборок этим
+	// занимается NetworkManager, и ведёт он себя так же — держит собственное
+	// представление о линке, назначает адреса и снимает чужие. Без этого файла
+	// netOS и NM переписывали бы адрес по очереди, а на другой машине netOS
+	// молча не работал бы.
+	//
+	// Номер 99 обязателен: NetworkManager перебирает conf.d в лексическом
+	// порядке, и более поздний файл переопределяет более ранний.
+	nmConfPath = "/etc/NetworkManager/conf.d/99-netos.conf"
 )
 
 type Logger interface {
@@ -106,6 +118,13 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	backend := cfg.System.NetworkBackend
+
+	// NetworkManager отстраняется во всех режимах. Какой бы механизм ни
+	// описывал сеть — netOS, ifupdown или networkd, — интерфейсы принадлежат
+	// netOS, и второй хозяин у них недопустим.
+	if err := s.syncNetworkManager(ctx, managedInterfaces(cfg)); err != nil {
+		return err
+	}
 
 	// Описание неактивного механизма убираем: иначе после переключения на
 	// машине останутся два описания одной сети, и какое из них отработает при
@@ -191,6 +210,75 @@ ExecStart=/usr/lib/systemd/systemd-networkd-wait-online
 	}
 	_, err := s.Runner.Run(ctx, "systemctl", "daemon-reload")
 	return err
+}
+
+// syncNetworkManager просит NetworkManager не трогать интерфейсы netOS.
+//
+// Отбирать их нужно средствами самого NM: остановка службы решала бы задачу
+// грубее, чем требуется, и лишила бы администратора управления теми
+// интерфейсами, до которых netOS дела нет — например, Wi-Fi-клиентом на
+// ноутбуке, с которого роутер и настраивают.
+func (s *Subsystem) syncNetworkManager(ctx context.Context, names []string) error {
+	if !s.unitPresent(ctx, "NetworkManager.service") {
+		// NM на машине нет. Файл мог остаться от прежней установки — убираем
+		// за собой, но перезагружать нечего.
+		return removeFile(nmConfPath)
+	}
+
+	if len(names) == 0 {
+		if _, err := os.Stat(nmConfPath); err != nil {
+			return nil
+		}
+		if err := removeFile(nmConfPath); err != nil {
+			return err
+		}
+		return s.reloadNetworkManager(ctx)
+	}
+
+	content := []byte(renderNetworkManagerConf(names))
+	if !system.FileChanged(nmConfPath, content) {
+		return nil
+	}
+	if err := system.WriteFileAtomic(nmConfPath, content, 0o644); err != nil {
+		return fmt.Errorf("отстранение NetworkManager: %w", err)
+	}
+	return s.reloadNetworkManager(ctx)
+}
+
+// renderNetworkManagerConf собирает содержимое файла для NetworkManager.
+//
+// Вынесено отдельно, чтобы формат можно было проверить тестом, не трогая
+// /etc/NetworkManager на машине, где идёт сборка.
+func renderNetworkManagerConf(names []string) string {
+	var b strings.Builder
+	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Перечисленными интерфейсами управляет netOS. NetworkManager не должен\n")
+	b.WriteString("# назначать им адреса и снимать чужие.\n")
+	b.WriteString("[keyfile]\n")
+	b.WriteString("unmanaged-devices=")
+	for i, name := range names {
+		if i > 0 {
+			b.WriteString(";")
+		}
+		b.WriteString("interface-name:" + name)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// reloadNetworkManager просит NM перечитать conf.d.
+//
+// Неработающая служба — не ошибка: файл лежит на месте и подействует, когда
+// NM запустится. Ронять из-за этого применение конфигурации нельзя.
+func (s *Subsystem) reloadNetworkManager(ctx context.Context) error {
+	if !s.unitActive(ctx, "NetworkManager.service") {
+		return nil
+	}
+	if _, err := s.Runner.Run(ctx, "systemctl", "reload", "NetworkManager.service"); err != nil && s.Logger != nil {
+		s.Logger.Warnf("NetworkManager не перечитал конфигурацию: %v", err)
+	}
+	return nil
 }
 
 func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error {

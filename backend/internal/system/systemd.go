@@ -61,6 +61,12 @@ func (s *Systemd) Disable(ctx context.Context, unit string) error {
 	if err := s.systemctl(ctx, "stop", unit); err != nil && !unitMissing(err) {
 		return err
 	}
+	// Штатный юнит успевает стартовать из postinst пакета — раньше, чем netOS
+	// вообще узнаёт об установке, — и падает на занятом порту. Погашенный, он
+	// так и остаётся в состоянии failed: systemctl показывает красную строку,
+	// а вся система — degraded, хотя ничего не сломано. Состояние сбрасываем.
+	_ = s.systemctl(ctx, "reset-failed", unit)
+
 	// Проверяем результат, а не коды возврата: цель — чтобы демон не работал.
 	if s.IsActive(ctx, unit) {
 		return fmt.Errorf("служба %s продолжает работать после остановки", unit)
