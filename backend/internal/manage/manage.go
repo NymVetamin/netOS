@@ -334,6 +334,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы
 		// машину с описанием сегментов, которых больше никто не создаёт.
 		m.sys("/etc/network/interfaces.d/netos.conf"),
+		m.sys("/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"),
 	} {
 		_ = os.Remove(path)
 	}

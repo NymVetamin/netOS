@@ -52,6 +52,9 @@ const (
 	// конфигурация netOS молча не работала бы. 05 ставит её раньше принятых
 	// в дистрибутивах 10, 20 и 80.
 	networkdPrefix = "05-netos-"
+	// waitOnlineDropIn снимает требование к состоянию линка, которое netOS
+	// сделал невыполнимым. 99 — чтобы применяться после чужих drop-in.
+	waitOnlineDropIn = "/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"
 )
 
 type Logger interface {
@@ -113,6 +116,14 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
+	if backend != "netos" && backend != "" {
+		// Требование к ожиданию сети снимает только прямое управление:
+		// в остальных режимах адреса назначает сам механизм системы.
+		if err := s.syncWaitOnline(ctx, false); err != nil {
+			return err
+		}
+	}
+
 	switch backend {
 	case "ifupdown":
 		return s.applyIfupdown(ctx, cfg)
@@ -129,10 +140,57 @@ func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
 	// Отбирать нечего, если механизма нет или он не работает.
 	if !s.unitPresent(ctx, "systemd-networkd.service") ||
 		!s.unitActive(ctx, "systemd-networkd.service") {
-		return s.syncNetworkdFiles(ctx, nil)
+		return s.syncWaitOnline(ctx, false)
 	}
 
-	return s.syncNetworkdFiles(ctx, passiveFiles(cfg))
+	if err := s.syncNetworkdFiles(ctx, passiveFiles(cfg)); err != nil {
+		return err
+	}
+	return s.syncWaitOnline(ctx, true)
+}
+
+// syncWaitOnline снимает с ожидания сети требование, которое netOS сделал
+// невыполнимым.
+//
+// Образы с netplan кладут в /run drop-in, требующий от аплинка состояния
+// degraded или routable. Оба означают наличие адреса, а адрес при прямом
+// управлении назначает netOS — и не может назначить вовремя: на облачных
+// образах cloud-init сидит в sysinit.target и ждёт network-online, тогда как
+// netosd не стартует раньше basic.target, который идёт после sysinit. Круг
+// размыкается только двухминутным таймаутом, и ровно столько занимала загрузка.
+//
+// Свой drop-in сбрасывает ExecStart, и решение возвращается к тому, что
+// написано у каждого линка в RequiredForOnline. Имя начинается с 99, потому что
+// drop-in применяются в лексическом порядке имён, а netplan занимает 10.
+func (s *Subsystem) syncWaitOnline(ctx context.Context, needed bool) error {
+	content := []byte(`# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.
+#
+# Требование к состоянию линка снято: адреса при прямом управлении назначает
+# netOS, и решает RequiredForOnline в файлах /etc/systemd/network/05-netos-*.
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online
+`)
+
+	if !needed {
+		if _, err := os.Stat(waitOnlineDropIn); err != nil {
+			return nil
+		}
+		if err := removeFile(waitOnlineDropIn); err != nil {
+			return err
+		}
+		_, err := s.Runner.Run(ctx, "systemctl", "daemon-reload")
+		return err
+	}
+
+	if !system.FileChanged(waitOnlineDropIn, content) {
+		return nil
+	}
+	if err := system.WriteFileAtomic(waitOnlineDropIn, content, 0o644); err != nil {
+		return fmt.Errorf("настройка ожидания сети: %w", err)
+	}
+	_, err := s.Runner.Run(ctx, "systemctl", "daemon-reload")
+	return err
 }
 
 func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error {
@@ -297,9 +355,27 @@ func renderPassive(iface config.Interface, suppressIPv6 bool) string {
 	// Линк держим поднятым: по нему пойдёт разговор клиента DHCP или PPPoE.
 	w("ActivationPolicy=up")
 	if !iface.Enabled {
-		// Выключенный интерфейс никогда не станет routable, и ожидание сети при
+		// Выключенный интерфейс не получит даже несущей, и ожидание сети при
 		// загрузке упёрлось бы в таймаут из-за него.
 		w("RequiredForOnline=no")
+	} else {
+		// carrier — то есть достаточно поднятого линка, адрес не требуется.
+		//
+		// Требовать routable нельзя: адрес назначает netOS, а он к этому
+		// моменту ещё не работает и на облачных образах работать не может.
+		// Там cloud-init сидит в sysinit.target и ждёт network-online, а
+		// netosd не стартует раньше basic.target, который идёт после sysinit.
+		// Круг размыкается только таймаутом systemd-networkd-wait-online в две
+		// минуты — ровно столько и занимала загрузка.
+		//
+		// Именно carrier, а не degraded: degraded означает «есть link-local
+		// адрес», а его мы отключаем через LinkLocalAddressing=no, и до этого
+		// состояния линк не доберётся никогда. Проверено изолированно, через
+		// wait-online -i: с degraded отказ по таймауту, с carrier — 15 мс.
+		//
+		// Это честная формулировка: при прямом управлении обязанности networkd
+		// на этом линке ровно поднятием и заканчиваются.
+		w("RequiredForOnline=carrier")
 	}
 	return b.String()
 }

@@ -217,18 +217,27 @@ func hasAddress(name, address string) bool {
 	return contains(addressesOf(name), address)
 }
 
-// networkdComplaints собирает свежие жалобы networkd на разбор конфигурации.
+// networkdComplaints собирает свежие жалобы networkd именно на разбор наших
+// файлов.
+//
+// Упоминание нашего файла само по себе жалобой не является: networkd пишет в
+// журнал безобидное «Found matching .network file, based on potentially
+// unpredictable interface name» на каждое сопоставление по имени. Ищем только
+// то, что говорит о непонятой конфигурации.
 func networkdComplaints() string {
 	out, err := exec.Command("journalctl", "-u", "systemd-networkd",
 		"--since", "-1 min", "--no-pager", "-p", "warning").Output()
 	if err != nil {
 		return ""
 	}
+	problems := []string{"Unknown key", "Failed to parse", "Invalid ", "Ignoring "}
 	var lines []string
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "netos-") || strings.Contains(line, "Unknown key") ||
-			strings.Contains(line, "Failed to parse") || strings.Contains(line, "Invalid") {
-			lines = append(lines, line)
+		for _, problem := range problems {
+			if strings.Contains(line, problem) {
+				lines = append(lines, line)
+				break
+			}
 		}
 	}
 	return strings.Join(lines, "\n")

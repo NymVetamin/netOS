@@ -199,16 +199,19 @@ func TestBackendNetosKeepsLinksVisibleToNetworkd(t *testing.T) {
 		t.Fatalf("линк скрыт от networkd — загрузка будет ждать таймаут:\n%s", out)
 	}
 
-	// Выключенный интерфейс routable не станет никогда, и ожидание сети при
-	// загрузке упёрлось бы в таймаут уже из-за него.
+	// Ожидание сети при загрузке не должно требовать адреса: назначает его
+	// netOS, а он на облачных образах стартует уже после того, как
+	// systemd-networkd-wait-online сдастся по таймауту. Именно carrier:
+	// degraded требует link-local адреса, который мы отключаем.
+	if !strings.Contains(out, "RequiredForOnline=carrier") {
+		t.Fatalf("ожидание сети требует адреса — загрузка встанет на таймаут:\n%s", out)
+	}
+
+	// Выключенный интерфейс не получит и несущей, поэтому исключается вовсе.
 	cfg.Interfaces[1].Enabled = false
 	perIface := renderPassive(cfg.Interfaces[1], true)
 	if !strings.Contains(perIface, "RequiredForOnline=no") {
 		t.Fatalf("выключенный интерфейс блокирует ожидание сети:\n%s", perIface)
-	}
-	cfg.Interfaces[1].Enabled = true
-	if strings.Contains(renderPassive(cfg.Interfaces[1], true), "RequiredForOnline") {
-		t.Fatalf("включённый интерфейс исключён из ожидания сети — ждать станет некого")
 	}
 }
 
