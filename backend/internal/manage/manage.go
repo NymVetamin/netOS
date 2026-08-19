@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -34,7 +35,7 @@ func installerURL(version string) string {
 // renderableArtifacts перечисляет то, что умеет печатать netosd -render.
 // Список продублирован здесь намеренно: CLI обязан отказать до запуска демона,
 // а не показывать пользователю его внутреннюю ошибку.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "config"}
+var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "sysctl", "config"}
 
 type command struct {
 	name  string
@@ -61,6 +62,14 @@ type Manager struct {
 	// Root подставляется перед всеми системными путями. В работе он пуст, а в
 	// тестах указывает на временный каталог: иначе прогон тестов удаления под
 	// root снёс бы установленный netOS на самой машине сборки.
+	// in — общий буферизованный ввод для всех вопросов подряд.
+	//
+	// Отдельный bufio.Reader на каждый вопрос читать нельзя: он забирает из
+	// потока всё, что успело прийти, и следующий вопрос получает EOF вместо
+	// ответа. Заметно это только там, где вопросов два — «сбросить?» и
+	// «сделать копию?», — и выглядит как молча выбранный ответ по умолчанию.
+	in *bufio.Reader
+
 	Root      string
 	StateDir  string
 	ConfigDir string
@@ -164,19 +173,56 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
-		version, err := positionalVersion(args[1:])
+		rest, force := extractFlags(args[1:], "--force", "-f")
+		version, err := positionalVersion(rest)
 		if err != nil {
 			return err
 		}
-		return m.install(ctx, version)
+		// reinstall разворачивает версию заново по определению: за этой
+		// командой приходят, когда установка развалилась, и отказ «у вас уже
+		// последняя» был бы ровно тем, чего от неё не ждут.
+		return m.install(ctx, version, force || args[0] == "reinstall")
 	case "reset":
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
-		if err := onlyFlags(args[1:], "--yes", "-y"); err != nil {
+		if err := onlyFlags(args[1:], "--yes", "-y", "--backup", "--no-backup"); err != nil {
 			return err
 		}
-		return m.reset(ctx, contains(args[1:], "--yes") || contains(args[1:], "-y"))
+		if contains(args[1:], "--backup") && contains(args[1:], "--no-backup") {
+			return fmt.Errorf("--backup и --no-backup исключают друг друга")
+		}
+		return m.reset(ctx,
+			contains(args[1:], "--yes") || contains(args[1:], "-y"),
+			contains(args[1:], "--backup"), contains(args[1:], "--no-backup"))
+	case "restore":
+		if err := m.requireRoot(); err != nil {
+			return err
+		}
+		rest, yes := extractFlags(args[1:], "--yes", "-y")
+		if len(rest) > 1 {
+			return fmt.Errorf("ожидался не более чем один файл резервной копии")
+		}
+		choice := ""
+		if len(rest) == 1 {
+			choice = rest[0]
+			if strings.HasPrefix(choice, "-") {
+				return fmt.Errorf("неизвестный параметр %q", choice)
+			}
+		}
+		return m.restore(ctx, choice, yes)
+	case "completion":
+		shell := "bash"
+		if len(args) == 2 {
+			shell = args[1]
+		} else if len(args) > 2 {
+			return fmt.Errorf("использование: netos completion [bash]")
+		}
+		if shell != "bash" {
+			return fmt.Errorf("дополнение поддерживается только для bash")
+		}
+		fmt.Fprint(m.Out, bashCompletion)
+		return nil
 	case "uninstall":
 		if err := m.requireRoot(); err != nil {
 			return err
@@ -198,26 +244,97 @@ func (m *Manager) help() {
 Использование:
   netos status                 состояние службы
   netos logs [-f|--follow]     последние записи журнала
-  netos update [версия]        обновить до latest или указанной версии
-  netos reinstall [версия]     то же, что update
-  netos reset [-y|--yes]       сбросить настройки и пользователей к заводским
+  netos update [версия] [-f|--force]
+                               обновить до latest или указанной версии;
+                               без --force ничего не делает, если версия та же
+  netos reinstall [версия]     развернуть версию заново, даже если она уже стоит
+  netos reset [--backup|--no-backup] [-y|--yes]
+                               сбросить настройки и пользователей к заводским
+  netos backup                 создать резервную копию
+  netos restore [файл] [-y|--yes]
+                               восстановить из резервной копии; без файла
+                               покажет список и спросит, какую брать
   netos uninstall [--keep-data] [-y|--yes]
                                удалить netOS (по умолчанию с резервной копией)
-  netos backup                 создать резервную копию
   netos start|stop|restart     управление службой
-  netos plan                   чем живая система расходится с конфигурацией
+  netos plan                   что netOS изменит в живой системе, если применить
+                               конфигурацию прямо сейчас
   netos render <артефакт>      вывести сгенерированный конфиг:
                                iptables, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
-                               network, config
+                               network, sysctl, config
+  netos completion [bash]      скрипт дополнения команд для оболочки
   netos version                версия netOS
 
 update и reinstall сохраняют конфигурацию, пользователей и сертификаты.`)
 }
 
-func (m *Manager) install(ctx context.Context, version string) error {
+// bashCompletion — скрипт дополнения. Держим его здесь, а не отдельным файлом
+// в репозитории: список команд и артефактов задан рядом, и разъехаться им
+// труднее. Установщик кладёт вывод в /etc/bash_completion.d/netos.
+const bashCompletion = `# Дополнение команд netos. Сгенерировано: netos completion bash
+_netos() {
+    local cur cmd
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    cmd="${COMP_WORDS[1]}"
+
+    if [ "$COMP_CWORD" -eq 1 ]; then
+        COMPREPLY=($(compgen -W "status logs start stop restart plan render backup restore update reinstall reset uninstall completion version help" -- "$cur"))
+        return
+    fi
+
+    case "$cmd" in
+        render)
+            COMPREPLY=($(compgen -W "iptables dnsmasq isc-dhcp kea-dhcp4 unbound dnsproxy network sysctl config" -- "$cur"))
+            ;;
+        logs)
+            COMPREPLY=($(compgen -W "-f --follow" -- "$cur"))
+            ;;
+        update|reinstall)
+            COMPREPLY=($(compgen -W "latest -f --force" -- "$cur"))
+            ;;
+        reset)
+            COMPREPLY=($(compgen -W "-y --yes --backup --no-backup" -- "$cur"))
+            ;;
+        uninstall)
+            COMPREPLY=($(compgen -W "-y --yes --keep-data" -- "$cur"))
+            ;;
+        restore)
+            # Резервные копии видны только root, и у остальных список будет
+            # пуст — это честнее, чем показывать несуществующие имена.
+            COMPREPLY=($(compgen -W "-y --yes $(ls /var/backups/netos/*.tar.gz 2>/dev/null)" -- "$cur"))
+            ;;
+        completion)
+            COMPREPLY=($(compgen -W "bash" -- "$cur"))
+            ;;
+        *)
+            COMPREPLY=()
+            ;;
+    esac
+}
+complete -F _netos netos
+`
+
+func (m *Manager) install(ctx context.Context, version string, force bool) error {
 	name := version
 	if name == "" {
 		name = "latest"
+	}
+
+	// Обновление до версии, которая уже стоит, — это несколько минут загрузки,
+	// перезапуск службы и разрыв связности ради нулевого результата. Проверяем
+	// заранее, но только когда есть с чем сравнивать: у сборки из исходников
+	// версия «dev» и она не сопоставима с тегом релиза.
+	if !force && m.Version != "" && m.Version != "dev" {
+		target := version
+		if target == "" || target == "latest" {
+			target = m.latestVersion(ctx)
+		}
+		if target != "" && sameVersion(target, m.Version) {
+			fmt.Fprintf(m.Out, "netOS %s — это уже установленная версия, обновлять нечего.\n",
+				displayVersion(m.Version))
+			fmt.Fprintln(m.Out, "Развернуть её заново: netos update --force (или netos reinstall).")
+			return nil
+		}
 	}
 
 	// Наличие релиза проверяется до всего остального. Иначе первым, что видит
@@ -262,6 +379,37 @@ func (m *Manager) install(ctx context.Context, version string) error {
 	return m.runEnv(ctx, env, "bash", path)
 }
 
+// latestVersion узнаёт тег последнего релиза по редиректу releases/latest.
+//
+// Через редирект, а не через api.github.com: у API есть лимит на анонимные
+// запросы, и на роутере за общим NAT он вполне достижим — обновление начало бы
+// молча считать, что версия устарела. Пустая строка означает «выяснить не
+// удалось»: это не повод отказывать в обновлении.
+func (m *Manager) latestVersion(ctx context.Context) string {
+	out, err := m.Output(ctx, "curl", "-4", "-fsSLI", "-o", "/dev/null",
+		"-w", "%{url_effective}", "--retry", "2",
+		fmt.Sprintf("https://github.com/%s/releases/latest", installerRepo))
+	if err != nil {
+		return ""
+	}
+	url := strings.TrimSpace(out)
+	i := strings.LastIndex(url, "/tag/")
+	if i < 0 {
+		return ""
+	}
+	tag := url[i+len("/tag/"):]
+	if !validVersion(tag) {
+		return ""
+	}
+	return tag
+}
+
+// sameVersion сравнивает теги, не придираясь к ведущей v: релиз может быть
+// помечен «v0.06», а в бинарник через ldflags попасть «0.06».
+func sameVersion(a, b string) bool {
+	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
+}
+
 func releaseURL(version string) string {
 	if version == "" || version == "latest" {
 		return fmt.Sprintf("https://github.com/NymVetamin/netOS/releases/latest/download/netosd-linux-%s", runtime.GOARCH)
@@ -269,18 +417,39 @@ func releaseURL(version string) string {
 	return fmt.Sprintf("https://github.com/NymVetamin/netOS/releases/download/%s/netosd-linux-%s", version, runtime.GOARCH)
 }
 
-func (m *Manager) reset(ctx context.Context, yes bool) error {
-	if !yes && !m.confirm("Сброс удалить все настройки, историю и пользователей. Продолжить?") {
+// reset возвращает netOS к заводскому состоянию.
+//
+// withBackup и noBackup — это три разных ответа администратора, а не булев
+// флаг: «сделай копию», «не делай» и «я не сказал». В последнем случае
+// спрашиваем: копия занимает место и время, а решение принимает владелец
+// машины.
+func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) error {
+	if !yes && !m.confirm("Сброс удалит все настройки, историю и пользователей. Продолжить?") {
 		fmt.Fprintln(m.Out, "Отменено.")
 		return nil
 	}
+
+	makeBackup := true
+	switch {
+	case noBackup:
+		makeBackup = false
+	case withBackup:
+		makeBackup = true
+	case !yes:
+		makeBackup = m.confirm("Сделать резервную копию перед сбросом?")
+	}
+
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
-	backup, err := m.backup(ctx, "reset")
-	if err != nil {
-		_ = m.run(ctx, "systemctl", "start", "netosd")
-		return err
+	backup := ""
+	if makeBackup {
+		path, err := m.backup(ctx, "reset")
+		if err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return err
+		}
+		backup = path
 	}
 	for _, path := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if err := os.RemoveAll(path); err != nil {
@@ -297,22 +466,193 @@ func (m *Manager) reset(ctx context.Context, yes bool) error {
 		return err
 	}
 	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
-		return fmt.Errorf("запуск после сброса: %w; резервная копия: %s", err, backup)
+		if backup != "" {
+			return fmt.Errorf("запуск после сброса: %w; резервная копия: %s", err, backup)
+		}
+		return fmt.Errorf("запуск после сброса: %w", err)
 	}
-	fmt.Fprintf(m.Out, "netOS сброшен. Резервная копия: %s\n", backup)
+	fmt.Fprintln(m.Out, "netOS сброшен.")
+	if backup != "" {
+		fmt.Fprintf(m.Out, "Резервная копия: %s\n", backup)
+	}
+	m.printCredentials()
+	return nil
+}
+
+// printCredentials показывает данные первого входа на экране.
+//
+// Отправлять администратора читать файл незачем: он стоит перед терминалом
+// ровно затем, чтобы узнать пароль, и путь к файлу — это лишний шаг. Файл
+// после показа удаляется: прочитанный пароль не должен лежать на диске
+// открытым текстом, а сменить его netOS всё равно потребует при первом входе.
+func (m *Manager) printCredentials() {
 	credentials := filepath.Join(m.StateDir, "initial-credentials")
+	// Файл появляется не сразу: демон сначала применяет всю конфигурацию и
+	// только потом заводит учётную запись.
 	for i := 0; i < 80; i++ {
 		if info, err := os.Stat(credentials); err == nil && info.Size() > 0 {
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		m.Sleep(500 * time.Millisecond)
 	}
-	if _, err := os.Stat(credentials); err == nil {
-		fmt.Fprintf(m.Out, "Новые данные входа: %s\n", credentials)
-	} else {
-		fmt.Fprintf(m.Err, "Новые данные входа ещё создаются; проверьте: netos logs -f\n")
+	data, err := os.ReadFile(credentials)
+	if err != nil || len(data) == 0 {
+		fmt.Fprintln(m.Err, "Новые данные входа ещё создаются; проверьте: netos logs -f")
+		return
 	}
+	fmt.Fprintln(m.Out)
+	fmt.Fprintln(m.Out, "Данные для входа:")
+	fmt.Fprintln(m.Out)
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		fmt.Fprintln(m.Out, "  "+line)
+	}
+	fmt.Fprintln(m.Out)
+	fmt.Fprintln(m.Out, "  Пароль потребуется сменить при первом входе.")
+	fmt.Fprintln(m.Out)
+	_ = os.Remove(credentials)
+}
+
+// backupEntry — резервная копия, найденная в каталоге.
+type backupEntry struct {
+	path string
+	name string
+	size int64
+	when time.Time
+}
+
+// listBackups перечисляет копии, новыми вперёд.
+func (m *Manager) listBackups() ([]backupEntry, error) {
+	paths, err := filepath.Glob(filepath.Join(m.BackupDir, "netos-*.tar.gz"))
+	if err != nil {
+		return nil, err
+	}
+	var entries []backupEntry
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, backupEntry{
+			path: path, name: filepath.Base(path),
+			size: info.Size(), when: info.ModTime(),
+		})
+	}
+	// Имя копии содержит дату создания, и при совпадающем времени файла
+	// сортировка по имени даёт тот же порядок. Без запасного признака список
+	// на файловой системе с грубым разрешением времени менялся бы от запуска к
+	// запуску, а администратор выбирает копию по номеру в нём.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].when.Equal(entries[j].when) {
+			return entries[i].name > entries[j].name
+		}
+		return entries[i].when.After(entries[j].when)
+	})
+	return entries, nil
+}
+
+// restore возвращает состояние из резервной копии.
+//
+// Копия — это /var/lib/netos, /etc/netos и /var/log/netos целиком: конфигурация,
+// история ревизий, учётные записи и сертификат панели. Живая система приводится
+// в соответствие обычным путём — восстановленную конфигурацию применяет netosd
+// при запуске.
+func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
+	entries, err := m.listBackups()
+	if err != nil {
+		return err
+	}
+
+	var selected string
+	switch {
+	case choice != "":
+		// Принимаем и полный путь, и одно имя файла: в списке видно имя, и
+		// набирать каталог целиком незачем.
+		selected = choice
+		if !strings.ContainsRune(choice, filepath.Separator) {
+			selected = filepath.Join(m.BackupDir, choice)
+		}
+		if _, err := os.Stat(selected); err != nil {
+			return fmt.Errorf("резервная копия %s не найдена", choice)
+		}
+	case len(entries) == 0:
+		return fmt.Errorf("в %s нет ни одной резервной копии", m.BackupDir)
+	default:
+		fmt.Fprintf(m.Out, "Резервные копии в %s:\n\n", m.BackupDir)
+		for i, e := range entries {
+			fmt.Fprintf(m.Out, "  %2d) %s   %s, %s\n",
+				i+1, e.when.Format("2006-01-02 15:04"), e.name, humanSize(e.size))
+		}
+		fmt.Fprintln(m.Out)
+		if yes {
+			// Выбирать за администратора можно только очевидное.
+			selected = entries[0].path
+			fmt.Fprintf(m.Out, "Беру самую свежую: %s\n", entries[0].name)
+		} else {
+			fmt.Fprintf(m.Out, "Какую восстановить? [1-%d, пусто — отмена] ", len(entries))
+			line, _ := m.reader().ReadString('\n')
+			line = strings.TrimSpace(line)
+			if line == "" {
+				fmt.Fprintln(m.Out, "Отменено.")
+				return nil
+			}
+			n := 0
+			if _, err := fmt.Sscanf(line, "%d", &n); err != nil || n < 1 || n > len(entries) {
+				return fmt.Errorf("нет копии с номером %q", line)
+			}
+			selected = entries[n-1].path
+		}
+	}
+
+	if !yes && !m.confirm(fmt.Sprintf(
+		"Текущая конфигурация, история и учётные записи будут заменены содержимым %s. Продолжить?",
+		filepath.Base(selected))) {
+		fmt.Fprintln(m.Out, "Отменено.")
+		return nil
+	}
+
+	if err := m.stopDaemon(ctx); err != nil {
+		return err
+	}
+
+	// Состояние до восстановления сохраняется всегда и без вопросов:
+	// администратор согласился его заменить, а вернуться к нему после неудачного
+	// восстановления будет неоткуда.
+	safety, err := m.backup(ctx, "before-restore")
+	if err != nil {
+		_ = m.run(ctx, "systemctl", "start", "netosd")
+		return err
+	}
+
+	// Каталоги очищаются перед распаковкой: tar кладёт файлы поверх, и без
+	// уборки в восстановленной установке остались бы сегменты, правила и
+	// пользователи, которых в копии нет.
+	for _, path := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("очистка %s: %w; состояние до восстановления: %s", path, err, safety)
+		}
+	}
+	if err := m.run(ctx, "tar", "-C", string(filepath.Separator), "-xzf", selected); err != nil {
+		return fmt.Errorf("распаковка %s: %w; состояние до восстановления: %s", selected, err, safety)
+	}
+
+	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
+		return fmt.Errorf("запуск после восстановления: %w; состояние до восстановления: %s", err, safety)
+	}
+	fmt.Fprintf(m.Out, "Восстановлено из %s\n", filepath.Base(selected))
+	fmt.Fprintf(m.Out, "Состояние до восстановления сохранено: %s\n", safety)
+	fmt.Fprintln(m.Out, "Конфигурация из копии применена при запуске службы: netos status")
 	return nil
+}
+
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f МБ", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%d КБ", n/(1<<10))
+	default:
+		return fmt.Sprintf("%d Б", n)
+	}
 }
 
 func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
@@ -332,7 +672,14 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		fmt.Fprintf(m.Out, "Резервная копия: %s\n", backup)
 	}
 
-	m.bestEffort(ctx, "systemctl", "disable", "netosd")
+	// --no-reload у каждого disable ниже — не микрооптимизация. systemctl
+	// сам просит systemd перечитать юниты после снятия симлинков, и на
+	// удалении с десятком компонентов это десяток перезагрузок конфигурации
+	// подряд. Каждая занимает около полусекунды и прогоняет все генераторы,
+	// включая чужие сломанные: журнал заполняется их ошибками, а команда
+	// заметно тормозит. Перечитывание нужно ровно одно — оно идёт ниже, после
+	// удаления файлов юнитов.
+	m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "netosd")
 	// Гасятся только те юниты компонентов, которые действительно заведены.
 	// Компоненты включает администратор, и на машине с одной лишь панелью нет
 	// ни одного из них: отсутствующий юнит — это достигнутая цель, а не сбой,
@@ -341,14 +688,14 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		if _, err := os.Stat(m.sys("/etc/systemd/system/" + unit)); err != nil {
 			continue
 		}
-		m.bestEffort(ctx, "systemctl", "disable", "--now", unit)
+		m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", unit)
 	}
 	// Юниты, которых по одному на интерфейс или аплинк, ищем по маске: их
 	// имена зависят от конфигурации, и списком их не перечислить.
 	for _, pattern := range []string{"netos-dhcp-*.service", "netos-pppoe-*.service"} {
 		units, _ := filepath.Glob(m.sys("/etc/systemd/system/" + pattern))
 		for _, unit := range units {
-			m.bestEffort(ctx, "systemctl", "disable", "--now", filepath.Base(unit))
+			m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", filepath.Base(unit))
 			_ = os.Remove(unit)
 		}
 	}
@@ -401,6 +748,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		m.sys("/etc/modules-load.d/netos.conf"),
 		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),
+		m.sys("/etc/bash_completion.d/netos"),
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы
 		// машину с описанием сегментов, которых больше никто не создаёт.
 		m.sys("/etc/network/interfaces.d/netos.conf"),
@@ -621,9 +969,17 @@ func (m *Manager) removeVirtualInterfaces(ctx context.Context) {
 	}
 }
 
+// reader отдаёт общий буферизованный ввод, создавая его при первом вопросе.
+func (m *Manager) reader() *bufio.Reader {
+	if m.in == nil {
+		m.in = bufio.NewReader(m.In)
+	}
+	return m.in
+}
+
 func (m *Manager) confirm(question string) bool {
 	fmt.Fprintf(m.Out, "%s [y/N] ", question)
-	line, _ := bufio.NewReader(m.In).ReadString('\n')
+	line, _ := m.reader().ReadString('\n')
 	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "y", "yes", "д", "да":
 		return true
@@ -723,6 +1079,23 @@ func validVersion(value string) bool {
 		return false
 	}
 	return true
+}
+
+// extractFlags отделяет перечисленные флаги от позиционных аргументов и
+// сообщает, встретился ли хоть один из них. Нужен там, где флаг может стоять
+// и до, и после значения: "netos update --force v0.06" и "netos update v0.06
+// --force" — одна и та же команда.
+func extractFlags(args []string, flags ...string) ([]string, bool) {
+	var rest []string
+	found := false
+	for _, arg := range args {
+		if contains(flags, arg) {
+			found = true
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	return rest, found
 }
 
 func onlyFlags(args []string, allowed ...string) error {
