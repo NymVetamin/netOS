@@ -98,11 +98,11 @@ func (c *Core) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := system.WriteFileAtomic(confPath, []byte(data), 0o644); err != nil {
 		return err
 	}
-	return applyFile(ctx, c.Runner, confPath)
+	return applyValues(c.values(cfg))
 }
 
 func (c *Core) Health(ctx context.Context, cfg *config.Config) error {
-	out, err := c.Runner.Run(ctx, "sysctl", "-n", "net.ipv4.ip_forward")
+	out, err := readSysctl("net.ipv4.ip_forward")
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := system.WriteFileAtomic(ipv6ConfPath, []byte(data), 0o644); err != nil {
 		return err
 	}
-	if err := applyFile(ctx, s.Runner, ipv6ConfPath); err != nil {
+	if err := applyValues(s.values(cfg)); err != nil {
 		return err
 	}
 
@@ -199,16 +199,15 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 			values = map[string]string{"disable_ipv6": "0", "accept_ra": "1", "autoconf": "1"}
 		}
 		for key, value := range values {
-			setting := fmt.Sprintf("net.ipv6.conf.%s.%s=%s", name, key, value)
 			// Ошибку игнорируем: интерфейс мог исчезнуть между чтением и записью.
-			_, _ = s.Runner.Run(ctx, "sysctl", "-q", "-w", setting)
+			_ = writeSysctl("net.ipv6.conf."+name+"."+key, value)
 		}
 	}
 	return nil
 }
 
 func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
-	out, err := s.Runner.Run(ctx, "sysctl", "-n", "net.ipv6.conf.all.disable_ipv6")
+	out, err := readSysctl("net.ipv6.conf.all.disable_ipv6")
 	if err != nil {
 		// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
 		return nil
@@ -240,15 +239,64 @@ func renderSysctl(values map[string]string) string {
 	return b.String()
 }
 
-// applyFile загружает файл параметров. Часть ключей может отсутствовать
-// (например, nf_conntrack_max до загрузки модуля), поэтому единичные ошибки
-// не считаем фатальными — они пишутся в вывод и видны в журнале.
-func applyFile(ctx context.Context, r system.Runner, path string) error {
-	_, err := r.Run(ctx, "sysctl", "-q", "-p", path)
-	if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
-		return err
+// applyValues проставляет параметры ядра напрямую через /proc/sys.
+//
+// Внешний sysctl намеренно не используется. Он живёт в пакете procps, которого
+// на минимальной установке Debian просто нет: netosd падал на первом же
+// применении с «executable file not found» и уходил в цикл перезапусков. На
+// облачных образах procps стоит всегда, поэтому промах не был виден до
+// проверки на чистой системе.
+//
+// Прямая запись заодно точнее: мы знаем, какие именно ключи нам принадлежат, и
+// не зависим от того, как та или иная версия sysctl разбирает файл.
+//
+// Отсутствующий ключ — не ошибка: nf_conntrack_max появляется только вместе с
+// модулем, а в контейнере часть параметров не существует вовсе. Молчать про
+// такое можно: файл в /etc/sysctl.d остаётся и подействует, когда ключ
+// появится.
+func applyValues(values map[string]string) error {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+
+	for _, key := range keys {
+		if err := writeSysctl(key, values[key]); err != nil {
+			return fmt.Errorf("параметр %s: %w", key, err)
+		}
 	}
 	return nil
+}
+
+// writeSysctl переводит имя параметра в путь внутри /proc/sys и записывает
+// значение.
+func writeSysctl(key, value string) error {
+	path := filepath.Join("/proc/sys", filepath.Join(strings.Split(key, ".")...))
+	err := os.WriteFile(path, []byte(value), 0o644)
+	switch {
+	case err == nil:
+		return nil
+	case os.IsNotExist(err):
+		// Ключа в этом ядре нет.
+		return nil
+	case os.IsPermission(err):
+		// Параметр есть, но пространство имён его не отдаёт — так ведут себя
+		// контейнеры. Роутеру это не мешает: там, где netOS хозяин, права есть.
+		return nil
+	default:
+		return err
+	}
+}
+
+// readSysctl читает значение параметра из /proc/sys.
+func readSysctl(key string) (string, error) {
+	path := filepath.Join("/proc/sys", filepath.Join(strings.Split(key, ".")...))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func interfaceNames() ([]string, error) {

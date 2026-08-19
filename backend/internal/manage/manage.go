@@ -364,13 +364,22 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
 	m.removeVirtualInterfaces(ctx)
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv4.ip_forward=0")
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.all.disable_ipv6=0")
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.default.disable_ipv6=0")
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.all.accept_ra=1")
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.default.accept_ra=1")
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.all.autoconf=1")
-	m.bestEffort(ctx, "sysctl", "-q", "-w", "net.ipv6.conf.default.autoconf=1")
+	// Параметры ядра возвращаются записью в /proc/sys, а не командой sysctl:
+	// она живёт в пакете procps, которого на минимальной установке Debian нет,
+	// и удаление оставило бы машину с выключенным IPv6 и включённым
+	// форвардингом.
+	for key, value := range map[string]string{
+		"net.ipv4.ip_forward":                "0",
+		"net.ipv6.conf.all.disable_ipv6":     "0",
+		"net.ipv6.conf.default.disable_ipv6": "0",
+		"net.ipv6.conf.all.accept_ra":        "1",
+		"net.ipv6.conf.default.accept_ra":    "1",
+		"net.ipv6.conf.all.autoconf":         "1",
+		"net.ipv6.conf.default.autoconf":     "1",
+	} {
+		path := filepath.Join(m.sys("/proc/sys"), filepath.Join(strings.Split(key, ".")...))
+		_ = os.WriteFile(path, []byte(value), 0o644)
+	}
 
 	// Режим управления сетью определяется до удаления файлов: после него
 	// понять, кому возвращать интерфейсы, будет уже нельзя.

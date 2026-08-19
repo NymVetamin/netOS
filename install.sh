@@ -109,7 +109,11 @@ EOF
 # Базовая установка ставит только то, без чего не поднимется сам роутер и
 # панель. DHCP-сервер, резолверы, VPN и точка доступа — это компоненты,
 # которые администратор выбирает в панели уже после установки.
-PACKAGES="iptables iproute2 ca-certificates curl busybox"
+# procps и kmod на облачных образах есть всегда, а на минимальной установке
+# Debian их нет. Сам netOS без них обходится — параметры ядра он пишет прямо в
+# /proc/sys, — но администратор, пришедший на роутер руками, ожидает найти
+# sysctl и modprobe на месте.
+PACKAGES="iptables iproute2 ca-certificates curl busybox procps kmod"
 if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     PACKAGES="$PACKAGES git nodejs npm"
 fi
@@ -320,7 +324,11 @@ if [ "$UPGRADE" = "1" ]; then
     echo "  ${GREEN}netOS обновлён${R}"
     echo
     echo "  Конфигурация и учётные записи сохранены."
-    PANEL_IP=$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
+    # Глобального адреса может не быть вовсе: аплинк ещё не поднялся, машина
+    # стоит за NAT без внешнего адреса. Печатать "https://:8443" нельзя — по
+    # такой ссылке никуда не попадёшь, а выглядит она как поломка установки.
+    PANEL_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    [ -n "$PANEL_IP" ] || PANEL_IP=$(hostname)
     echo "  Панель: ${B}https://${PANEL_IP}:${PORT}${R}"
 else
     echo "  ${GREEN}netOS установлен${R}"
