@@ -14,11 +14,11 @@ func routerConfig() *config.Config {
 	cfg := config.Default()
 	cfg.System.NetworkBackend = "ifupdown"
 	cfg.Interfaces = []config.Interface{
-		{ID: "if-wan", Name: "eth0", Type: "physical"},
-		{ID: "if-p1", Name: "eth1", Type: "physical"},
-		{ID: "if-p2", Name: "eth2", Type: "physical"},
-		{ID: "if-lan", Name: "br-lan", Type: "bridge", Members: []string{"eth1", "eth2"}},
-		{ID: "if-guest", Name: "vl-guest", Type: "vlan", Parent: "br-lan", VLANID: 20},
+		{ID: "if-wan", Name: "eth0", Type: "physical", Enabled: true},
+		{ID: "if-p1", Name: "eth1", Type: "physical", Enabled: true},
+		{ID: "if-p2", Name: "eth2", Type: "physical", Enabled: true},
+		{ID: "if-lan", Name: "br-lan", Type: "bridge", Members: []string{"eth1", "eth2"}, Enabled: true},
+		{ID: "if-guest", Name: "vl-guest", Type: "vlan", Parent: "br-lan", VLANID: 20, Enabled: true},
 	}
 	cfg.Networks = []config.Network{
 		{ID: "lan", Name: "LAN", Interface: "if-lan", RouterAddress: "192.168.10.1/24", Enabled: true},
@@ -160,27 +160,55 @@ func TestNetworkdSuppressesIPv6(t *testing.T) {
 // управляет systemd-networkd, он продолжит выдавать адрес по DHCP, netOS будет
 // считать тот же адрес своим статическим, и до истечения аренды никто не
 // заметит, что панель говорит одно, а машиной правит другое.
-func TestBackendNetosTakesInterfacesAwayFromNetworkd(t *testing.T) {
+func TestBackendNetosTakesAddressingAwayFromNetworkd(t *testing.T) {
 	cfg := routerConfig()
 	cfg.System.NetworkBackend = "netos"
 	out := render(cfg)
 
 	for _, name := range []string{"eth0", "eth1", "eth2", "br-lan", "vl-guest"} {
 		if !strings.Contains(out, "Name="+name) {
-			t.Fatalf("интерфейс %s не отобран у networkd:\n%s", name, out)
+			t.Fatalf("интерфейс %s не описан:\n%s", name, out)
 		}
 	}
-	if got := strings.Count(out, "Unmanaged=yes"); got != 5 {
-		t.Fatalf("отобрано интерфейсов: %d, ожидалось 5:\n%s", got, out)
+	// Адресация — за netOS: ни своих адресов, ни клиента DHCP.
+	if strings.Contains(out, "Address=") || strings.Contains(out, "DHCP=yes") {
+		t.Fatalf("networkd назначает адреса в обход netOS:\n%s", out)
 	}
-	// Ничего, кроме отказа от управления, в этом режиме писаться не должно:
-	// адреса назначает netOS.
-	if strings.Contains(out, "Address=") || strings.Contains(out, "Bridge=") {
+	// И чужие адреса он снимать не должен.
+	if got := strings.Count(out, "KeepConfiguration=yes"); got != 5 {
+		t.Fatalf("KeepConfiguration не у всех интерфейсов (%d из 5):\n%s", got, out)
+	}
+	// Ничего сверх отказа от адресации в этом режиме не пишется.
+	if strings.Contains(out, "Kind=") || strings.Contains(out, "Bridge=") {
 		t.Fatalf("в режиме прямого управления networkd получил настройки:\n%s", out)
 	}
-	// Чужие интерфейсы не наши: машина может обслуживать и другие сети.
 	if strings.Contains(out, "Name=eth9") {
-		t.Fatalf("отобран интерфейс, которого нет в конфигурации:\n%s", out)
+		t.Fatalf("описан интерфейс, которого нет в конфигурации:\n%s", out)
+	}
+}
+
+// Unmanaged=yes выглядит очевидным решением и им не является: неуправляемые
+// линки networkd не считает вовсе, и когда netOS забирает себе все интерфейсы,
+// systemd-networkd-wait-online ждёт впустую весь таймаут — две минуты к каждой
+// загрузке. Поймано только перезагрузкой машины.
+func TestBackendNetosKeepsLinksVisibleToNetworkd(t *testing.T) {
+	cfg := routerConfig()
+	cfg.System.NetworkBackend = "netos"
+	out := render(cfg)
+	if strings.Contains(out, "Unmanaged") {
+		t.Fatalf("линк скрыт от networkd — загрузка будет ждать таймаут:\n%s", out)
+	}
+
+	// Выключенный интерфейс routable не станет никогда, и ожидание сети при
+	// загрузке упёрлось бы в таймаут уже из-за него.
+	cfg.Interfaces[1].Enabled = false
+	perIface := renderPassive(cfg.Interfaces[1], true)
+	if !strings.Contains(perIface, "RequiredForOnline=no") {
+		t.Fatalf("выключенный интерфейс блокирует ожидание сети:\n%s", perIface)
+	}
+	cfg.Interfaces[1].Enabled = true
+	if strings.Contains(renderPassive(cfg.Interfaces[1], true), "RequiredForOnline") {
+		t.Fatalf("включённый интерфейс исключён из ожидания сети — ждать станет некого")
 	}
 }
 
@@ -243,14 +271,14 @@ func TestNetworkdKeepsConfigurationMadeByNetOS(t *testing.T) {
 }
 
 // У каждого режима свой результат, и он не пустой ни в одном из них: даже
-// прямое управление требует сказать systemd-networkd не трогать интерфейсы.
+// прямое управление требует сказать systemd-networkd не трогать адресацию.
 func TestEachBackendProducesItsOwnDescription(t *testing.T) {
 	cfg := routerConfig()
 
 	cfg.System.NetworkBackend = "netos"
 	direct := render(cfg)
-	if !strings.Contains(direct, "Unmanaged=yes") {
-		t.Fatalf("прямое управление не отбирает интерфейсы:\n%s", direct)
+	if !strings.Contains(direct, "KeepConfiguration=yes") {
+		t.Fatalf("прямое управление не отбирает адресацию:\n%s", direct)
 	}
 
 	cfg.System.NetworkBackend = "ifupdown"

@@ -9,8 +9,9 @@
 //
 // Режимы:
 //
-//   - netos — интерфейсы поднимает netOS через iproute2. Для systemd-networkd
-//     генерируются файлы Unmanaged=yes, чтобы он к ним не прикасался.
+//   - netos — интерфейсы поднимает netOS через iproute2. systemd-networkd
+//     получает описание, в котором линк управляемый, но пассивный: адресов он
+//     не назначает и чужих не снимает.
 //   - ifupdown, networkd — netOS дополнительно описывает сеть средствами
 //     выбранного механизма, и бриджи, VLAN и адреса сегментов существуют уже
 //     с загрузки, до старта netosd.
@@ -131,11 +132,7 @@ func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
 		return s.syncNetworkdFiles(ctx, nil)
 	}
 
-	files := map[string]string{}
-	for _, name := range managedInterfaces(cfg) {
-		files[networkdPrefix+name+".network"] = renderUnmanaged(name)
-	}
-	return s.syncNetworkdFiles(ctx, files)
+	return s.syncNetworkdFiles(ctx, passiveFiles(cfg))
 }
 
 func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error {
@@ -263,20 +260,62 @@ func mentionsInterface(content, name string) bool {
 	return false
 }
 
-// renderUnmanaged велит systemd-networkd не трогать интерфейс.
-func renderUnmanaged(name string) string {
+// renderPassive отдаёт адресацию интерфейса netOS, оставляя его при этом
+// видимым для systemd-networkd.
+//
+// Напрашивающийся `Unmanaged=yes` здесь не годится, и выяснилось это только
+// перезагрузкой. Неуправляемые линки networkd не считает вовсе, и когда netOS
+// забирает себе все интерфейсы, у него не остаётся ни одного:
+// systemd-networkd-wait-online ждёт впустую весь свой таймаут и добавляет к
+// загрузке две минуты, а консоль при этом выглядит зависшей.
+//
+// Поэтому линк остаётся управляемым, но пассивным: адресов networkd не
+// назначает (нет ни DHCP, ни Address) и чужих не снимает (`KeepConfiguration`).
+// Так он виден как configured, загрузка не задерживается, а network-online
+// начинает означать ровно то, что нужно, — netOS настроил сеть.
+func renderPassive(iface config.Interface, suppressIPv6 bool) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	w("# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.")
 	w("#")
-	w("# Этим интерфейсом управляет netOS напрямую. Файл нужен, чтобы")
-	w("# systemd-networkd не назначал на него адреса и не спорил за маршруты.")
+	w("# Адресами этого интерфейса управляет netOS напрямую. Файл нужен, чтобы")
+	w("# systemd-networkd не назначал свои и не снимал чужие.")
 	w("[Match]")
-	w("Name=%s", name)
+	w("Name=%s", iface.Name)
+	w("")
+	w("[Network]")
+	w("DHCP=no")
+	// Без этого networkd снимает адреса и маршруты, которых нет в его файле, —
+	// то есть стирает работу netOS.
+	w("KeepConfiguration=yes")
+	if suppressIPv6 {
+		w("LinkLocalAddressing=no")
+	}
+	w("IPv6AcceptRA=no")
 	w("")
 	w("[Link]")
-	w("Unmanaged=yes")
+	// Линк держим поднятым: по нему пойдёт разговор клиента DHCP или PPPoE.
+	w("ActivationPolicy=up")
+	if !iface.Enabled {
+		// Выключенный интерфейс никогда не станет routable, и ожидание сети при
+		// загрузке упёрлось бы в таймаут из-за него.
+		w("RequiredForOnline=no")
+	}
 	return b.String()
+}
+
+// passiveFiles собирает описания для режима прямого управления.
+func passiveFiles(cfg *config.Config) map[string]string {
+	files := map[string]string{}
+	seen := map[string]bool{}
+	for _, iface := range cfg.Interfaces {
+		if iface.Name == "" || seen[iface.Name] {
+			continue
+		}
+		seen[iface.Name] = true
+		files[networkdPrefix+iface.Name+".network"] = renderPassive(iface, cfg.IPv6.Mode == "off")
+	}
+	return files
 }
 
 // managedInterfaces перечисляет интерфейсы, за которые отвечает netOS.
@@ -340,11 +379,7 @@ func render(cfg *config.Config) string {
 	case "networkd":
 		return joinFiles(renderNetworkd(cfg))
 	}
-	files := map[string]string{}
-	for _, name := range managedInterfaces(cfg) {
-		files[networkdPrefix+name+".network"] = renderUnmanaged(name)
-	}
-	return joinFiles(files)
+	return joinFiles(passiveFiles(cfg))
 }
 
 func joinFiles(files map[string]string) string {

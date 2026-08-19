@@ -37,11 +37,11 @@ const (
 func integrationConfig() *config.Config {
 	cfg := config.Default()
 	cfg.Interfaces = []config.Interface{
-		{ID: "if-wan", Name: testUplink, Type: "physical"},
-		{ID: "if-p1", Name: testPort1, Type: "physical"},
-		{ID: "if-p2", Name: testPort2, Type: "physical"},
-		{ID: "if-lan", Name: testBridge, Type: "bridge", Members: []string{testPort1, testPort2}},
-		{ID: "if-guest", Name: testVLAN, Type: "vlan", Parent: testBridge, VLANID: 20},
+		{ID: "if-wan", Name: testUplink, Type: "physical", Enabled: true},
+		{ID: "if-p1", Name: testPort1, Type: "physical", Enabled: true},
+		{ID: "if-p2", Name: testPort2, Type: "physical", Enabled: true},
+		{ID: "if-lan", Name: testBridge, Type: "bridge", Members: []string{testPort1, testPort2}, Enabled: true},
+		{ID: "if-guest", Name: testVLAN, Type: "vlan", Parent: testBridge, VLANID: 20, Enabled: true},
 	}
 	cfg.Networks = []config.Network{
 		{ID: "lan", Name: "LAN", Interface: "if-lan", RouterAddress: "192.168.77.1/24", Enabled: true},
@@ -257,11 +257,12 @@ func contains(values []string, want string) bool {
 
 // Передача управления от systemd-networkd к netOS.
 //
-// Проверка ровно того, что делает netconf в режиме прямого управления, и того
-// последствия, из-за которого пришлось менять порядок подсистем: сделав
-// интерфейс неуправляемым, networkd снимает выданный им адрес. Значит, netOS
-// обязан назначить свой сразу следом — иначе на аплинке возник бы провал, а на
-// удалённой машине это потеря доступа.
+// Проверяем два свойства, каждое из которых было нарушено и стоило поломки.
+// Первое: адрес, назначенный netOS, обязан пережить передачу — иначе аплинк
+// остаётся без адреса, а на удалённой машине это потеря доступа. Второе: линк
+// обязан остаться видимым для networkd — со скрытым линком
+// systemd-networkd-wait-online ждёт впустую весь таймаут и добавляет к загрузке
+// две минуты.
 func TestIntegrationNetOSTakesOverFromNetworkd(t *testing.T) {
 	requireIntegration(t)
 	if _, err := exec.LookPath("networkctl"); err != nil {
@@ -280,9 +281,9 @@ func TestIntegrationNetOSTakesOverFromNetworkd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = exec.Command("ip", "link", "del", iface).Run() })
 
-	// Сначала пусть интерфейсом управляет networkd и выдаст адрес.
+	// Сначала интерфейсом управляет networkd и выдаёт адрес сам.
 	managed := filepath.Join(networkdDir, networkdPrefix+iface+".network")
-	body := "[Match]\nName=" + iface + "\n\n[Network]\nAddress=" + address + "\n"
+	body := "[Match]\nName=" + iface + "\n\n[Network]\nAddress=10.99.66.9/24\n"
 	if err := os.WriteFile(managed, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -293,37 +294,45 @@ func TestIntegrationNetOSTakesOverFromNetworkd(t *testing.T) {
 	if out, err := exec.Command("networkctl", "reload").CombinedOutput(); err != nil {
 		t.Fatalf("networkctl reload: %v\n%s", err, out)
 	}
-	if !waitFor(t, 15*time.Second, func() bool { return hasAddress(iface, address) }) {
-		t.Fatal("networkd не назначил адрес — проверять нечего")
+	if !waitFor(t, 15*time.Second, func() bool { return hasAddress(iface, "10.99.66.9/24") }) {
+		t.Fatal("networkd не назначил свой адрес — проверять нечего")
 	}
 
-	// Теперь netOS забирает интерфейс себе — тем же кодом, что и в бою.
+	// Теперь адрес назначает netOS — ровно той командой, что и подсистема wan.
+	if out, err := exec.Command("ip", "addr", "replace", address, "dev", iface).CombinedOutput(); err != nil {
+		t.Fatalf("не удалось назначить адрес netOS: %v\n%s", err, out)
+	}
+
+	// И netOS забирает адресацию себе тем же кодом, что и в бою.
 	cfg := config.Default()
 	cfg.System.NetworkBackend = "netos"
-	cfg.Interfaces = []config.Interface{{ID: "if-x", Name: iface, Type: "physical"}}
+	cfg.Interfaces = []config.Interface{{ID: "if-x", Name: iface, Type: "physical", Enabled: true}}
 	s := New(system.NewExec(), nil)
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatalf("передача управления не удалась: %v", err)
 	}
+	time.Sleep(3 * time.Second)
 
-	if !waitFor(t, 15*time.Second, func() bool { return !hasAddress(iface, address) }) {
-		t.Fatal("networkd продолжает держать адрес после отказа от управления")
-	}
-	state, _ := exec.Command("networkctl", "status", iface).Output()
-	if !strings.Contains(string(state), "unmanaged") {
-		t.Fatalf("интерфейс не помечен неуправляемым:\n%s", state)
-	}
+	t.Run("адрес netOS пережил передачу", func(t *testing.T) {
+		if !hasAddress(iface, address) {
+			t.Fatalf("адрес снят при передаче, интерфейс остался с %v", addressesOf(iface))
+		}
+	})
 
-	// И это именно тот провал, который закрывают подсистемы адресации: команда
-	// netOS возвращает адрес, причём постоянным, а не с чужой арендой.
-	if out, err := exec.Command("ip", "addr", "replace", address, "dev", iface).CombinedOutput(); err != nil {
-		t.Fatalf("netOS не смог вернуть адрес: %v\n%s", err, out)
-	}
-	if !hasAddress(iface, address) {
-		t.Fatal("адрес не вернулся")
-	}
-	shown, _ := exec.Command("ip", "-4", "addr", "show", "dev", iface).Output()
-	if strings.Contains(string(shown), "dynamic") {
-		t.Fatalf("адрес остался чужой арендой, а не собственным:\n%s", shown)
-	}
+	t.Run("линк остался видимым для networkd", func(t *testing.T) {
+		out, _ := exec.Command("networkctl", "status", iface).Output()
+		if strings.Contains(string(out), "unmanaged") {
+			t.Fatalf("линк скрыт от networkd — загрузка будет ждать таймаут:\n%s", out)
+		}
+	})
+
+	t.Run("ожидание сети не упирается в таймаут", func(t *testing.T) {
+		start := time.Now()
+		cmd := exec.Command("/usr/lib/systemd/systemd-networkd-wait-online", "--timeout=20")
+		err := cmd.Run()
+		elapsed := time.Since(start)
+		if err != nil || elapsed > 10*time.Second {
+			t.Fatalf("ожидание сети заняло %s (ошибка: %v) — загрузка будет тормозить", elapsed.Round(time.Second), err)
+		}
+	})
 }
