@@ -42,6 +42,60 @@ jobs:
             GOARCH=$arch go build -trimpath -o /dev/null ./cmd/netosd
           done
 
+  # Готовый бинарник каждой сборки. Нужен, чтобы заливать изменения на тестовую
+  # машину, не выпуская релиз: scripts/dev-push.sh забирает артефакт через
+  # gh run download, когда локального Go нет. Собирается ровно так же, как
+  # релизный, — с фронтендом внутри и без CGO.
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Порядок обязателен: vite кладёт файлы в backend/internal/api/webdist,
+      # откуда их забирает go:embed.
+      - name: сборка фронтенда
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: сборка бинарников
+        working-directory: backend
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          mkdir -p ../dist
+          for arch in amd64 arm64; do
+            GOARCH=$arch go build \
+              -trimpath \
+              -ldflags "-X main.version=dev-${GITHUB_SHA::7}" \
+              -o "../dist/netosd-linux-$arch" ./cmd/netosd
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netosd-linux-amd64
+          path: dist/netosd-linux-amd64
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netosd-linux-arm64
+          path: dist/netosd-linux-arm64
+          retention-days: 7
+
   frontend:
     runs-on: ubuntu-latest
     steps:
