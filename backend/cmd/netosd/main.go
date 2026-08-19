@@ -63,7 +63,7 @@ func main() {
 		dryRun      = flag.Bool("dry-run", false, "показать действия, ничего не применяя")
 		verbose     = flag.Bool("v", false, "подробный журнал выполняемых команд")
 		showPlan    = flag.Bool("plan", false, "показать план применения и выйти")
-		render      = flag.String("render", "", "напечатать сгенерированный артефакт (iptables|dnsmasq|config) и выйти")
+		render      = flag.String("render", "", "напечатать сгенерированный артефакт (iptables|dnsmasq|sysctl|config) и выйти")
 		initOnly    = flag.Bool("init", false, "создать стартовую конфигурацию и выйти")
 		applyNow    = flag.Bool("apply", false, "применить активную конфигурацию и выйти")
 		showVersion = flag.Bool("version", false, "показать версию и выйти")
@@ -147,10 +147,6 @@ func main() {
 		actions, err := engine.PlanFrom(applied, cfg)
 		if err != nil {
 			log.Fatalf("построение плана: %v", err)
-		}
-		if len(actions) == 0 {
-			fmt.Println("Живая система соответствует применённой конфигурации.")
-			return
 		}
 		printPlan(actions)
 		return
@@ -386,7 +382,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 
 // renderableArtifacts — что умеет печатать netosd -render. Список общий с
 // командой netos render, чтобы справка не разошлась с действительностью.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "config"}
+var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "sysctl", "config"}
 
 func renderArtifact(kind string, cfg *config.Config) error {
 	switch kind {
@@ -410,6 +406,8 @@ func renderArtifact(kind string, cfg *config.Config) error {
 		fmt.Print(services.NewUnbound(nil).Render(cfg))
 	case "dnsproxy":
 		fmt.Print(services.NewDnsproxy(nil).Render(cfg))
+	case "sysctl":
+		fmt.Print(sysctl.Render(cfg))
 	case "network":
 		// Персистентная конфигурация сети зависит от выбранного механизма;
 		// печатаем то, что реально будет записано.
@@ -429,24 +427,59 @@ func renderArtifact(kind string, cfg *config.Config) error {
 	return nil
 }
 
+// printPlan печатает расхождение живой системы с конфигурацией.
+//
+// Заголовок здесь не украшение. Команда называется plan, и первый вопрос к её
+// выводу — что именно показано: то, что уже сделано, или то, что будет
+// сделано. Отвечаем прямо в выводе, а не отправляем в документацию.
 func printPlan(actions []apply.Action) {
 	if len(actions) == 0 {
-		fmt.Println("Изменений нет: система уже соответствует конфигурации.")
+		fmt.Println("Живая система соответствует конфигурации: применять нечего.")
+		fmt.Println()
+		fmt.Println("netos plan сравнивает состояние машины с активной конфигурацией netOS")
+		fmt.Println("и печатает, что изменилось бы при её применении. Сам он ничего не меняет.")
 		return
 	}
-	fmt.Printf("Запланировано действий: %d\n\n", len(actions))
+
+	fmt.Println("Живая система расходится с конфигурацией netOS.")
+	fmt.Println("Ниже — что сделал бы netOS, если применить конфигурацию сейчас.")
+	fmt.Println("Сама команда ничего не меняет: применяет netosd — из панели или при запуске.")
+	fmt.Println()
+	fmt.Printf("Действий: %d\n\n", len(actions))
+
+	// Порядок не трогаем: действия перечислены в порядке apply.Order, то есть
+	// в том, в котором и будут выполнены, а он содержательный — часть
+	// подсистем обязана идти раньше других.
+	kinds := map[string]string{
+		"create": "создать",
+		"update": "изменить",
+		"delete": "удалить",
+		"start":  "запустить",
+		"stop":   "остановить",
+	}
+	disruptive := 0
 	for _, a := range actions {
 		mark := " "
 		if a.Disruptive {
 			mark = "!"
+			disruptive++
+		}
+		kind := kinds[a.Kind]
+		if kind == "" {
+			kind = a.Kind
 		}
 		detail := ""
 		if a.Detail != "" {
 			detail = " — " + a.Detail
 		}
-		fmt.Printf(" %s [%-10s] %-8s %s%s\n", mark, a.Subsystem, a.Kind, a.Target, detail)
+		fmt.Printf(" %s %-12s %-10s %s%s\n", mark, a.Subsystem, kind, a.Target, detail)
 	}
-	fmt.Println("\n! — действие кратковременно прерывает связность")
+
+	fmt.Println()
+	if disruptive > 0 {
+		fmt.Printf("! — кратковременно прерывает связность (таких действий: %d)\n", disruptive)
+	}
+	fmt.Println("Применяются изменения из панели; netos restart приводит систему к конфигурации целиком.")
 }
 
 func printSummary(cfg *config.Config) {
