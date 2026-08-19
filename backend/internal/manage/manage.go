@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/netos-router/netos/internal/subsys/services"
 )
 
 const installerRepo = "NymVetamin/netOS"
@@ -35,7 +37,7 @@ func installerURL(version string) string {
 // renderableArtifacts перечисляет то, что умеет печатать netosd -render.
 // Список продублирован здесь намеренно: CLI обязан отказать до запуска демона,
 // а не показывать пользователю его внутреннюю ошибку.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "sysctl", "config"}
+var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "resolv", "network", "sysctl", "config"}
 
 type command struct {
 	name  string
@@ -261,7 +263,7 @@ func (m *Manager) help() {
                                конфигурацию прямо сейчас
   netos render <артефакт>      вывести сгенерированный конфиг:
                                iptables, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
-                               network, sysctl, config
+                               resolv, network, sysctl, config
   netos completion [bash]      скрипт дополнения команд для оболочки
   netos version                версия netOS
 
@@ -284,7 +286,7 @@ _netos() {
 
     case "$cmd" in
         render)
-            COMPREPLY=($(compgen -W "iptables dnsmasq isc-dhcp kea-dhcp4 unbound dnsproxy network sysctl config" -- "$cur"))
+            COMPREPLY=($(compgen -W "iptables dnsmasq isc-dhcp kea-dhcp4 unbound dnsproxy resolv network sysctl config" -- "$cur"))
             ;;
         logs)
             COMPREPLY=($(compgen -W "-f --follow" -- "$cur"))
@@ -728,6 +730,15 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	} {
 		path := filepath.Join(m.sys("/proc/sys"), filepath.Join(strings.Split(key, ".")...))
 		_ = os.WriteFile(path, []byte(value), 0o644)
+	}
+
+	// Резолвер роутера возвращается системе до удаления состояния: чем был
+	// /etc/resolv.conf до netOS, помнит файл в StateDir, и после его удаления
+	// восстанавливать будет неоткуда.
+	if resolvedWanted, err := services.RestoreSystemResolverFiles(m.Root); err != nil {
+		fmt.Fprintf(m.Err, "Предупреждение: резолвер системы не восстановлен: %v\n", err)
+	} else if resolvedWanted {
+		m.quiet(ctx, "systemctl", "enable", "--now", "systemd-resolved.service")
 	}
 
 	// Режим управления сетью определяется до удаления файлов: после него

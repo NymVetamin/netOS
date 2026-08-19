@@ -189,7 +189,15 @@ export const api = {
     return res;
   },
 
-  async render(kind: "iptables" | "dnsmasq" | "isc-dhcp" | "kea-dhcp4"): Promise<string> {
+  // Список артефактов приходит с сервера: какие конфиги лежат на машине,
+  // зависит от выбранных демонов, и зашитый в панели перечень показывал бы
+  // dnsmasq даже там, где работают unbound и ISC DHCP.
+  async renderList(): Promise<{ id: string; title: string }[]> {
+    const res = await request<{ artifacts: { id: string; title: string }[] }>("GET", "/api/render");
+    return res.artifacts || [];
+  },
+
+  async render(kind: string): Promise<string> {
     const res = await fetch(`/api/render/${kind}`, { credentials: "same-origin" });
     if (!res.ok) throw new ApiError(res.status, `Ошибка ${res.status}`);
     return res.text();

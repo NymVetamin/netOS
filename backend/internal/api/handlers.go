@@ -13,9 +13,8 @@ import (
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/store"
-	"github.com/netos-router/netos/internal/subsys/firewall"
-	"github.com/netos-router/netos/internal/subsys/services"
 )
 
 type ctxKey string
@@ -876,31 +875,43 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var content string
-	switch r.PathValue("kind") {
-	case "iptables":
-		rs, err := firewall.Build(cfg)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "%v", err)
-			return
-		}
-		content = rs.IPv4
-		if rs.IPv6 != "" {
-			content += "\n# --- ip6tables ---\n" + rs.IPv6
-		}
-	case "dnsmasq":
-		content = services.NewDnsmasq(nil).Render(cfg)
-	case "isc-dhcp":
-		content = services.NewISCDHCP(nil).Render(cfg)
-	case "kea-dhcp4":
-		content = services.NewKeaDHCP(nil).Render(cfg)
-	default:
+	kind := r.PathValue("kind")
+	if _, ok := render.ByID(kind); !ok {
 		writeError(w, http.StatusNotFound, "неизвестный артефакт")
+		return
+	}
+	content, err := render.Render(kind, cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "%v", err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(content))
+}
+
+// handleRenderList перечисляет артефакты, которые при текущей конфигурации
+// действительно лежат на машине.
+//
+// Список приходит с сервера, а не зашит в панели: демоны выбирает
+// администратор, и диагностика обязана показывать конфигурацию того, который
+// работает. Зашитый список показывал dnsmasq даже там, где выбраны unbound и
+// ISC DHCP, а самих unbound и ISC не показывал вовсе.
+func (s *Server) handleRenderList(w http.ResponseWriter, r *http.Request) {
+	cfg := s.currentDraft()
+	if cfg == nil {
+		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
+		return
+	}
+	type item struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	items := []item{}
+	for _, a := range render.Active(cfg) {
+		items = append(items, item{ID: a.ID, Title: a.Title})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"artifacts": items})
 }
 
 // uptimeSeconds читает время работы машины.

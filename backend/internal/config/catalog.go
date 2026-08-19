@@ -69,7 +69,11 @@ var Catalog = []ComponentInfo{
 		// unbound-anchor — отдельный пакет в Debian, без него не создать
 		// якорь DNSSEC, и резолвер не поднимется с включённой проверкой.
 		Packages: []string{"unbound", "unbound-anchor"},
-		Units:    []string{"unbound.service"},
+		// unbound-resolvconf гасится вместе с самим unbound: он объявляет
+		// резолвером роутера штатный экземпляр и падает на каждом запуске
+		// («Link lo is loopback device»), оставаясь в состоянии failed. Резолвер
+		// роутера принадлежит netOS, помощник для чужого экземпляра нам не нужен.
+		Units:       []string{"unbound.service", "unbound-resolvconf.service"},
 		Provides:    []string{"dns", "dot"},
 		SizeHint:    "около 5 МБ",
 	},

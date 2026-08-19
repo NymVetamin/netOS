@@ -19,6 +19,7 @@ type Manager struct {
 	Kea      *KeaDHCP
 	Unbound  *Unbound
 	Dnsproxy *Dnsproxy
+	Resolv   *SystemResolver
 	Packages *system.Packages
 	Systemd  *system.Systemd
 }
@@ -30,6 +31,7 @@ func NewManager(r system.Runner) *Manager {
 		Kea:      NewKeaDHCP(r),
 		Unbound:  NewUnbound(r),
 		Dnsproxy: NewDnsproxy(r),
+		Resolv:   NewSystemResolver(r),
 		Packages: system.NewPackages(r),
 		Systemd:  system.NewSystemd(r),
 	}
@@ -218,14 +220,18 @@ func NewDNS(m *Manager) *DNS { return &DNS{M: m} }
 func (s *DNS) Name() string { return "dns" }
 
 func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return append(s.planProvider(old, new), s.planSystemResolver(old, new)...), nil
+}
+
+func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
 	if !new.DNS.Enabled {
 		if old != nil && old.DNS.Enabled {
-			return []apply.Action{{Kind: "delete", Target: "DNS-резолвер", Disruptive: true}}, nil
+			return []apply.Action{{Kind: "delete", Target: "DNS-резолвер", Disruptive: true}}
 		}
-		return nil, nil
+		return nil
 	}
 	if old == nil || !old.DNS.Enabled {
-		return []apply.Action{{Kind: "create", Target: "DNS-резолвер", Detail: new.DNS.Provider}}, nil
+		return []apply.Action{{Kind: "create", Target: "DNS-резолвер", Detail: new.DNS.Provider}}
 	}
 	if old.DNS.Provider != new.DNS.Provider {
 		return []apply.Action{{
@@ -233,23 +239,46 @@ func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
 			Target:     "DNS-резолвер",
 			Detail:     fmt.Sprintf("%s → %s", old.DNS.Provider, new.DNS.Provider),
 			Disruptive: true,
-		}}, nil
+		}}
 	}
 	switch new.DNS.Provider {
 	case "dnsmasq":
 		if s.M.Dnsmasq.Render(old) != s.M.Dnsmasq.Render(new) {
-			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
+			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}
 		}
 	case "unbound":
 		if s.M.Unbound.Render(old) != s.M.Unbound.Render(new) {
-			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
+			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}
 		}
 	case "dnsproxy":
 		if s.M.Dnsproxy.Render(old) != s.M.Dnsproxy.Render(new) {
-			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}, nil
+			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}
 		}
 	}
-	return nil, nil
+	return nil
+}
+
+// planSystemResolver показывает смену резолвера самого роутера: это остановка
+// systemd-resolved и подмена /etc/resolv.conf, то есть изменение, о котором
+// администратор обязан узнать до применения, а не после.
+func (s *DNS) planSystemResolver(old, new *config.Config) []apply.Action {
+	was := old != nil && s.M.Resolv.Needed(old)
+	will := s.M.Resolv.Needed(new)
+	if was == will {
+		return nil
+	}
+	if will {
+		return []apply.Action{{
+			Kind:   "update",
+			Target: "резолвер роутера",
+			Detail: "имена машины разрешает " + new.DNS.Provider + ", systemd-resolved останавливается",
+		}}
+	}
+	return []apply.Action{{
+		Kind:   "update",
+		Target: "резолвер роутера",
+		Detail: "возвращается системе",
+	}}
 }
 
 // Apply для DNS почти всегда ничего не делает: если резолвер — dnsmasq, его
@@ -270,19 +299,30 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	if !cfg.DNS.Enabled {
-		return nil
+		// Резолвера у машины больше нет — значит и файл, которым netOS владел,
+		// пора вернуть системе, иначе роутер остался бы без имён вовсе.
+		return s.M.Resolv.Apply(ctx, cfg)
 	}
 	switch cfg.DNS.Provider {
 	case "dnsmasq":
-		return s.M.Dnsmasq.Apply(ctx, cfg)
+		if err := s.M.Dnsmasq.Apply(ctx, cfg); err != nil {
+			return err
+		}
 	case "unbound":
-		return s.M.Unbound.Apply(ctx, cfg)
+		if err := s.M.Unbound.Apply(ctx, cfg); err != nil {
+			return err
+		}
 	case "dnsproxy":
-		return s.M.Dnsproxy.Apply(ctx, cfg)
+		if err := s.M.Dnsproxy.Apply(ctx, cfg); err != nil {
+			return err
+		}
 	case "adguardhome":
 		return fmt.Errorf("провайдер AdGuard Home появится в следующей фазе")
 	}
-	return nil
+	// Резолвер роутера переключается последним — после того, как выбранный
+	// демон уже поднят и проверен. Обратный порядок оставил бы машину без имён
+	// на всё время применения, а с ней и apt, и проверки живости каналов.
+	return s.M.Resolv.Apply(ctx, cfg)
 }
 
 func (s *DNS) Health(ctx context.Context, cfg *config.Config) error {

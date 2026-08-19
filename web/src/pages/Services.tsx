@@ -404,7 +404,19 @@ function ResolutionChain({ config }: { config: any }) {
     </div>
   );
 
-  const steps = [step("Клиенты сети", `запрос на ${provider}, порт ${config.dns?.port}`)];
+  // Резолвером пользуется и сам роутер: netOS забирает себе /etc/resolv.conf,
+  // чтобы у машины не было второго пути к именам мимо шифрования и фильтров.
+  // Указать порт в этом файле нечем, поэтому на нестандартном порту роутер
+  // остаётся с системным резолвером — и об этом надо сказать, а не умолчать.
+  const routerUsesOwn = config.dns?.port === 53;
+  const steps = [
+    step(
+      "Клиенты сети и сам роутер",
+      routerUsesOwn
+        ? `запрос на ${provider}, порт 53`
+        : `клиенты — на ${provider}, порт ${config.dns?.port}; роутер порт указать не может и идёт мимо`,
+    ),
+  ];
   if (localDNS) {
     steps.push(
       step(

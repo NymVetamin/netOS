@@ -299,6 +299,56 @@ func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
 }
 
 
+// Резолвер роутера netOS забирает себе, а значит обязан отдать: машина после
+// удаления должна разрешать имена ровно так же, как до установки. Память об
+// исходном состоянии лежит в StateDir, который удаление стирает, — восстановить
+// файл позже будет неоткуда.
+func TestUninstallGivesResolvConfBackToSystem(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	var commands []string
+	m.Run = func(_ context.Context, c command) error {
+		commands = append(commands, c.name+" "+strings.Join(c.args, " "))
+		return nil
+	}
+
+	resolv := filepath.Join(m.Root, "etc/resolv.conf")
+	state := filepath.Join(m.Root, "var/lib/netos/resolv-conf.state")
+	for _, dir := range []string{filepath.Dir(resolv), filepath.Dir(state)} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(resolv, []byte("nameserver 127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state, []byte(
+		`{"kind":"file","content":"nameserver 10.0.0.1\n","resolved_enabled":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(resolv)
+	if err != nil {
+		t.Fatalf("resolv.conf не восстановлен: %v", err)
+	}
+	if string(content) != "nameserver 10.0.0.1\n" {
+		t.Errorf("восстановлено не исходное содержимое: %q", content)
+	}
+	var revived bool
+	for _, c := range commands {
+		if strings.Contains(c, "enable --now systemd-resolved.service") {
+			revived = true
+		}
+	}
+	if !revived {
+		t.Errorf("systemd-resolved не возвращён системе: %v", commands)
+	}
+}
+
 // Удаление снимает маршруты netOS, но systemd-networkd держит в памяти
 // прежнюю конфигурацию линка и сам адресацию не перезапускает. Без явного
 // reconfigure машина остаётся с адресом и без пути наружу — на удалённом

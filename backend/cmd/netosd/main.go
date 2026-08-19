@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -20,6 +19,7 @@ import (
 	"github.com/netos-router/netos/internal/bootstrap"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/manage"
+	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
@@ -382,48 +382,18 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 
 // renderableArtifacts — что умеет печатать netosd -render. Список общий с
 // командой netos render, чтобы справка не разошлась с действительностью.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "network", "sysctl", "config"}
+var renderableArtifacts = render.IDs()
 
 func renderArtifact(kind string, cfg *config.Config) error {
-	switch kind {
-	case "iptables":
-		rs, err := firewall.Build(cfg)
-		if err != nil {
-			return err
-		}
-		fmt.Print(rs.IPv4)
-		if rs.IPv6 != "" {
-			fmt.Println("\n# --- ip6tables ---")
-			fmt.Print(rs.IPv6)
-		}
-	case "dnsmasq":
-		fmt.Print(services.NewDnsmasq(nil).Render(cfg))
-	case "isc-dhcp":
-		fmt.Print(services.NewISCDHCP(nil).Render(cfg))
-	case "kea-dhcp4":
-		fmt.Print(services.NewKeaDHCP(nil).Render(cfg))
-	case "unbound":
-		fmt.Print(services.NewUnbound(nil).Render(cfg))
-	case "dnsproxy":
-		fmt.Print(services.NewDnsproxy(nil).Render(cfg))
-	case "sysctl":
-		fmt.Print(sysctl.Render(cfg))
-	case "network":
-		// Персистентная конфигурация сети зависит от выбранного механизма;
-		// печатаем то, что реально будет записано.
-		out, err := netconf.RenderFor(cfg)
-		if err != nil {
-			return err
-		}
-		fmt.Print(out)
-	case "config":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(cfg)
-	default:
+	if _, ok := render.ByID(kind); !ok {
 		return fmt.Errorf(
 			"неизвестный артефакт %q (доступны: %s)", kind, strings.Join(renderableArtifacts, ", "))
 	}
+	out, err := render.Render(kind, cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
 	return nil
 }
 

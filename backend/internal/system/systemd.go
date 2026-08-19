@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -50,6 +51,9 @@ func (s *Systemd) Enable(ctx context.Context, unit string) error {
 // переключил провайдера DHCP или DNS: старый демон не должен остаться висеть
 // на 53 порту и мешать новому.
 func (s *Systemd) Disable(ctx context.Context, unit string) error {
+	if s.alreadyDisabled(ctx, unit) {
+		return nil
+	}
 	// disable и stop разделены намеренно. Для служб, унаследованных от SysV,
 	// systemctl перенаправляет disable в update-rc.d и останавливать демона не
 	// идёт: --now в этом случае молча ничего не делает. Так ведёт себя xl2tpd
@@ -72,6 +76,34 @@ func (s *Systemd) Disable(ctx context.Context, unit string) error {
 		return fmt.Errorf("служба %s продолжает работать после остановки", unit)
 	}
 	return nil
+}
+
+// alreadyDisabled сообщает, что делать нечего: юнит не работает и не включён.
+//
+// Проверка нужна не ради скорости. netOS гасит чужие юниты при каждом
+// применении конфигурации, и почти всегда они уже погашены. Но systemctl
+// disable для службы, унаследованной от SysV, идёт через systemd-sysv-install
+// и заставляет systemd перечитать юниты, а вместе с ними прогнать все
+// генераторы системы — включая чужие, чьи предупреждения заполняют журнал.
+// Один пакет isc-dhcp-server с init-скриптом без нативного юнита давал по
+// полтора десятка таких записей на каждое применение. Опрос состояния таких
+// последствий не имеет.
+// Пропускаем работу только при однозначно известном состоянии. Коды возврата
+// здесь ничего не значат — «inactive» и «disabled» systemctl сообщает вместе с
+// ненулевым кодом, — поэтому судим по выводу. Пустой вывод означает, что
+// ответа не было: работу в этом случае делаем, а не считаем сделанной.
+func (s *Systemd) alreadyDisabled(ctx context.Context, unit string) bool {
+	active, _ := s.R.Run(ctx, "systemctl", "is-active", unit)
+	if strings.TrimSpace(active) != "inactive" {
+		// active, activating, failed — есть что останавливать или сбрасывать.
+		return false
+	}
+	enabled, _ := s.R.Run(ctx, "systemctl", "is-enabled", unit)
+	switch strings.TrimSpace(enabled) {
+	case "disabled", "masked", "masked-runtime", "static", "generated", "transient":
+		return true
+	}
+	return false
 }
 
 // unitMissing распознаёт отказ из-за отсутствующего юнита.
@@ -133,9 +165,51 @@ func (p *Packages) Ensure(ctx context.Context, pkgs ...string) ([]string, error)
 	if len(missing) == 0 {
 		return nil, nil
 	}
+	// Демонов запускает netOS собственными юнитами, поэтому postinst пакета
+	// запускать их не должен: у него для этого нет ни конфига, ни причины.
+	release, err := holdDaemons()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--no-install-recommends"}, missing...)
 	if _, err := p.R.Run(ctx, "apt-get", args...); err != nil {
 		return nil, fmt.Errorf("установка пакетов %s: %w", strings.Join(missing, ", "), err)
 	}
 	return missing, nil
+}
+
+// policyRCPath — скрипт, у которого Debian спрашивает разрешения, прежде чем
+// postinst пакета запустит демона. Код возврата 101 означает запрет.
+const policyRCPath = "/usr/sbin/policy-rc.d"
+
+// holdDaemons запрещает запуск демонов на время установки пакета и возвращает
+// функцию, снимающую запрет.
+//
+// Без этого пакет поднимает штатного демона со своим конфигом сразу после
+// распаковки — раньше, чем netOS успевает его выключить, и всегда со своим
+// конфигом, а не с генерируемым. Ничем хорошим это не кончается: dhcpd падает
+// с «Not configured to listen on any interfaces», unbound — на отсутствующем
+// якоре DNSSEC по пути из его же конфига, systemd крутит перезапуски, пока
+// netOS не доберётся до Disable, а вспомогательные юниты вроде
+// unbound-resolvconf остаются в состоянии failed. От установки одного
+// компонента в журнале остаётся полоса ошибок, за которой не видно настоящих.
+//
+// Чужой policy-rc.d не трогаем: он принадлежит не нам, и вернуть его на место
+// после подмены надёжно нельзя. Запрет в этом случае просто не ставится.
+func holdDaemons() (func(), error) {
+	if _, err := os.Stat(policyRCPath); err == nil {
+		return func() {}, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	script := "#!/bin/sh\n" +
+		"# Создано netOS на время установки пакета и удаляется сразу после неё.\n" +
+		"# Демонами управляет netOS собственными юнитами.\n" +
+		"exit 101\n"
+	if err := WriteFileAtomic(policyRCPath, []byte(script), 0o755); err != nil {
+		return nil, err
+	}
+	return func() { _ = os.Remove(policyRCPath) }, nil
 }

@@ -92,6 +92,64 @@ func TestDisableAlsoStopsSysVService(t *testing.T) {
 	}
 }
 
+// Уже погашенный юнит не трогаем. netOS гасит чужие службы при каждом
+// применении конфигурации, и почти всегда они давно погашены; но systemctl
+// disable для службы, унаследованной от SysV, заставляет systemd прогнать все
+// генераторы системы, а их предупреждения заполняют журнал.
+func TestDisableSkipsUnitThatIsAlreadyOff(t *testing.T) {
+	r := &statefulRunner{active: "inactive", enabled: "disabled"}
+	if err := NewSystemd(r).Disable(context.Background(), "isc-dhcp-server.service"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.commands {
+		if strings.HasPrefix(c, "systemctl disable") || strings.HasPrefix(c, "systemctl stop") {
+			t.Fatalf("погашенный юнит трогали зря: %v", r.commands)
+		}
+	}
+}
+
+// Включённый юнит гасим, даже если он сейчас не работает: иначе он поднимется
+// при следующей загрузке и подерётся за порт с демоном netOS.
+func TestDisableStillDisablesEnabledButStoppedUnit(t *testing.T) {
+	r := &statefulRunner{active: "inactive", enabled: "enabled"}
+	if err := NewSystemd(r).Disable(context.Background(), "unbound-resolvconf.service"); err != nil {
+		t.Fatal(err)
+	}
+	var disabled bool
+	for _, c := range r.commands {
+		if strings.HasPrefix(c, "systemctl disable unbound-resolvconf.service") {
+			disabled = true
+		}
+	}
+	if !disabled {
+		t.Fatalf("включённый юнит остался включённым: %v", r.commands)
+	}
+}
+
+// statefulRunner отвечает заданными состояниями на опрос и записывает всё,
+// что было вызвано.
+type statefulRunner struct {
+	commands []string
+	active   string
+	enabled  string
+}
+
+func (r *statefulRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	command := name + " " + strings.Join(args, " ")
+	switch {
+	case strings.HasPrefix(command, "systemctl is-active"):
+		return r.active + "\n", nil
+	case strings.HasPrefix(command, "systemctl is-enabled"):
+		return r.enabled + "\n", nil
+	}
+	r.commands = append(r.commands, command)
+	return "", nil
+}
+
+func (r *statefulRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
 // Если после всего служба всё ещё работает, молчать нельзя: она держит порт.
 func TestDisableReportsServiceThatSurvives(t *testing.T) {
 	r := &scriptedRunner{active: true}

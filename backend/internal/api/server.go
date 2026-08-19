@@ -117,6 +117,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/arp", s.handleARP)
 	auth("GET /api/routes", s.handleRoutes)
 	auth("GET /api/audit", s.handleAudit)
+	auth("GET /api/render", s.handleRenderList)
 	auth("GET /api/render/{kind}", s.handleRender)
 
 	// --- сам интерфейс ---

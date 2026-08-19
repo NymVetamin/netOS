@@ -28,6 +28,7 @@ sudo netos restore           # список копий и восстановле
 sudo netos reset             # заводской сброс
 sudo netos uninstall         # полное удаление с резервной копией
 sudo netos render sysctl     # какие параметры ядра ставит netOS
+sudo netos render resolv     # к какому резолверу netOS отправляет сам роутер
 netos help                   # все команды
 ```
 

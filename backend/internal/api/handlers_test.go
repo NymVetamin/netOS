@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -52,5 +54,46 @@ func TestViewerPermissions(t *testing.T) {
 		if viewerAllowed(r) {
 			t.Errorf("viewer неожиданно разрешён %s %s", r.Method, r.URL.Path)
 		}
+	}
+}
+
+// Диагностика в панели показывает конфиги демонов, которые работают. Список
+// приходит отсюда: пока он был зашит в панели, она показывала dnsmasq и на
+// машине, где выбраны unbound и ISC DHCP, а их собственные конфиги скрывала.
+func TestRenderListFollowsChosenDaemons(t *testing.T) {
+	cfg := config.Default()
+	cfg.DHCP.Enabled, cfg.DHCP.Provider = true, "isc-dhcp-server"
+	cfg.DNS.Enabled, cfg.DNS.Provider, cfg.DNS.Port = true, "unbound", 53
+
+	s := &Server{draft: cfg}
+	w := httptest.NewRecorder()
+	s.handleRenderList(w, httptest.NewRequest(http.MethodGet, "/api/render", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var got struct {
+		Artifacts []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, a := range got.Artifacts {
+		if a.Title == "" {
+			t.Errorf("артефакт %q без названия для вкладки", a.ID)
+		}
+		seen[a.ID] = true
+	}
+	for _, want := range []string{"iptables", "isc-dhcp", "unbound", "resolv"} {
+		if !seen[want] {
+			t.Errorf("в диагностике нет %q: %v", want, got.Artifacts)
+		}
+	}
+	if seen["dnsmasq"] {
+		t.Errorf("показан выключенный dnsmasq: %v", got.Artifacts)
 	}
 }
