@@ -235,7 +235,7 @@ func ensureAdmin(st *store.Store, cfg *config.Config, logger apply.Logger) error
 	if err != nil {
 		return err
 	}
-	if _, err := st.CreateUser("admin", hash, "admin", true); err != nil {
+	if _, err := st.CreateUser("admin", hash, "admin"); err != nil {
 		return err
 	}
 
@@ -255,7 +255,7 @@ func ensureAdmin(st *store.Store, cfg *config.Config, logger apply.Logger) error
 	fmt.Println("  Пользователь:  admin")
 	fmt.Println("  Пароль:        " + password)
 	fmt.Println()
-	fmt.Println("  Пароль потребуется сменить при первом входе.")
+	fmt.Println("  Пароль сгенерирован случайным и на этой машине больше нигде не хранится.")
 	fmt.Println("  Сертификат самоподписанный — браузер предупредит об этом.")
 	fmt.Println("==============================================================")
 	fmt.Println()

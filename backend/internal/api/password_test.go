@@ -1,0 +1,105 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/netos-router/netos/internal/store"
+)
+
+// newAuthedServer заводит сервер с одним администратором и живой сессией.
+func newAuthedServer(t *testing.T) (*Server, *http.Cookie, string) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "netos.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	hash, err := HashPassword("initial-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser("admin", hash, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateSession("session-token", "admin", "127.0.0.1", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Store: st, csrfTokens: map[string]string{"session-token": "csrf-token"}}
+	return s, &http.Cookie{Name: sessionCookie, Value: "session-token"}, "csrf-token"
+}
+
+// Обязательной смены пароля нет: пароль первого запуска и так случайный.
+// Раньше до его смены сервер отклонял любой изменяющий запрос, и панель
+// молча не работала — вернуться к этому нельзя.
+func TestFreshAdminMayChangeConfigRightAway(t *testing.T) {
+	s, cookie, csrf := newAuthedServer(t)
+
+	reached := false
+	handler := s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config", nil)
+	req.AddCookie(cookie)
+	req.Header.Set(csrfHeader, csrf)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || !reached {
+		t.Fatalf("изменяющий запрос отклонён: код %d, тело %s", w.Code, w.Body.String())
+	}
+}
+
+// Пароль первого запуска лежит на диске открытым текстом. Уборку раньше делала
+// обязательная смена пароля; без неё файл жил бы вечно, поэтому его удаляет
+// первый успешный вход.
+func TestLoginRemovesInitialCredentials(t *testing.T) {
+	s, _, _ := newAuthedServer(t)
+
+	credentials := filepath.Join(t.TempDir(), "initial-credentials")
+	if err := os.WriteFile(credentials, []byte("Пароль: initial-password-123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := initialCredentialsPath
+	initialCredentialsPath = credentials
+	t.Cleanup(func() { initialCredentialsPath = old })
+
+	body := `{"username":"admin","password":"initial-password-123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleLogin(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("вход не удался: код %d, тело %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(credentials); err == nil {
+		t.Fatal("пароль остался лежать на диске открытым текстом после входа")
+	}
+}
+
+// Ответы сервера не должны обещать панели поле, которого больше нет.
+func TestLoginResponseHasNoMustChange(t *testing.T) {
+	s, _, _ := newAuthedServer(t)
+
+	body := `{"username":"admin","password":"initial-password-123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleLogin(w, req)
+
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["must_change"]; ok {
+		t.Fatalf("сервер всё ещё отдаёт must_change: %v", got)
+	}
+}

@@ -484,7 +484,7 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 // Отправлять администратора читать файл незачем: он стоит перед терминалом
 // ровно затем, чтобы узнать пароль, и путь к файлу — это лишний шаг. Файл
 // после показа удаляется: прочитанный пароль не должен лежать на диске
-// открытым текстом, а сменить его netOS всё равно потребует при первом входе.
+// открытым текстом.
 func (m *Manager) printCredentials() {
 	credentials := filepath.Join(m.StateDir, "initial-credentials")
 	// Файл появляется не сразу: демон сначала применяет всю конфигурацию и
@@ -506,8 +506,6 @@ func (m *Manager) printCredentials() {
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
 		fmt.Fprintln(m.Out, "  "+line)
 	}
-	fmt.Fprintln(m.Out)
-	fmt.Fprintln(m.Out, "  Пароль потребуется сменить при первом входе.")
 	fmt.Fprintln(m.Out)
 	_ = os.Remove(credentials)
 }

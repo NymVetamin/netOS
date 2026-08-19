@@ -51,7 +51,7 @@ func TestSessionReissuesCSRFTokenAfterReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if _, err := st.CreateUser("admin", "unused", "admin", false); err != nil {
+	if _, err := st.CreateUser("admin", "unused", "admin"); err != nil {
 		t.Fatal(err)
 	}
 	s := &Server{Store: st, csrfTokens: map[string]string{}}

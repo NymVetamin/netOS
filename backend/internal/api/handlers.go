@@ -25,6 +25,14 @@ const (
 	ctxRole ctxKey = "role"
 )
 
+// initialCredentialsPath — файл с данными первого запуска, который пишет
+// netosd, а читает установщик. Панель его удаляет: пароль, который уже
+// увидели, не должен оставаться на диске открытым текстом.
+//
+// Переменная, а не константа: проверять уборку надо на временном файле, а не
+// на настоящем /var/lib/netos машины, где идёт сборка.
+var initialCredentialsPath = "/var/lib/netos/initial-credentials"
+
 // requireAuth проверяет сессию и, для изменяющих запросов, CSRF-токен.
 func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,11 +49,6 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 		user, err := s.Store.UserByName(username)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "пользователь не найден")
-			return
-		}
-		if user.MustChange && r.Method != http.MethodGet && r.Method != http.MethodHead &&
-			r.URL.Path != "/api/password" && r.URL.Path != "/api/logout" {
-			writeError(w, http.StatusForbidden, "сначала смените временный пароль")
 			return
 		}
 		if user.Role != "admin" && (user.Role != "viewer" || !viewerAllowed(r)) {
@@ -120,7 +123,6 @@ type loginResponse struct {
 	Username   string `json:"username"`
 	Role       string `json:"role"`
 	CSRFToken  string `json:"csrf_token"`
-	MustChange bool   `json:"must_change"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -189,13 +191,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	_ = s.Store.TouchLogin(user.Username)
+	// Пароль первого запуска уже дошёл до того, кто им воспользовался, —
+	// держать его на диске открытым текстом больше незачем. Обязательной
+	// смены пароля нет, поэтому уборка привязана ко входу, а не к ней.
+	_ = os.Remove(initialCredentialsPath)
 	_ = s.Store.Audit(store.AuditEntry{User: user.Username, Action: "login", SourceIP: ip, Success: true})
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Username:   user.Username,
-		Role:       user.Role,
-		CSRFToken:  csrf,
-		MustChange: user.MustChange,
+		Username:  user.Username,
+		Role:      user.Role,
+		CSRFToken: csrf,
 	})
 }
 
@@ -238,11 +243,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"username":    user.Username,
-		"role":        user.Role,
-		"csrf_token":  csrf,
-		"must_change": user.MustChange,
-		"last_login":  user.LastLogin,
+		"username":   user.Username,
+		"role":       user.Role,
+		"csrf_token": csrf,
+		"last_login": user.LastLogin,
 	})
 }
 
@@ -282,9 +286,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "не удалось сохранить пароль")
 		return
 	}
-	// Пароль сменён — файл с временными учётными данными больше не нужен и
-	// не должен лежать на диске.
-	_ = os.Remove("/var/lib/netos/initial-credentials")
+	// Пароль сменён — файл с данными первого запуска больше не нужен и не
+	// должен лежать на диске.
+	_ = os.Remove(initialCredentialsPath)
 
 	_ = s.Store.Audit(store.AuditEntry{
 		User: username, Action: "password_change", SourceIP: clientIP(r), Success: true,

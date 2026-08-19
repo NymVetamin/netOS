@@ -52,7 +52,6 @@ type User struct {
 	PasswordHash string     `json:"-"`
 	Role         string     `json:"role"` // admin | viewer
 	TOTPSecret   string     `json:"-"`
-	MustChange   bool       `json:"must_change"`
 	CreatedAt    time.Time  `json:"created_at"`
 	LastLogin    *time.Time `json:"last_login,omitempty"`
 }
@@ -126,7 +125,6 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'admin',
     totp_secret   TEXT NOT NULL DEFAULT '',
-    must_change   INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL,
     last_login    INTEGER
 );
@@ -319,10 +317,17 @@ func (s *Store) PruneRevisions(keep int) error {
 // Пользователи
 // ---------------------------------------------------------------------------
 
-func (s *Store) CreateUser(username, passwordHash, role string, mustChange bool) (int64, error) {
+// CreateUser заводит учётную запись.
+//
+// Столбца must_change здесь больше нет: пароль первого запуска генерируется
+// случайным на каждой установке, и требовать его сменить — навязывать работу
+// там, где владелец машины решает сам. На установках, заведённых прежними
+// версиями, столбец остаётся в таблице с умолчанием 0 и никому не мешает;
+// переписывать ради него схему незачем.
+func (s *Store) CreateUser(username, passwordHash, role string) (int64, error) {
 	res, err := s.db.Exec(
-		`INSERT INTO users (username, password_hash, role, must_change, created_at) VALUES (?, ?, ?, ?, ?)`,
-		username, passwordHash, role, boolToInt(mustChange), time.Now().Unix())
+		`INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)`,
+		username, passwordHash, role, time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -331,22 +336,20 @@ func (s *Store) CreateUser(username, passwordHash, role string, mustChange bool)
 
 func (s *Store) UserByName(username string) (*User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, role, totp_secret, must_change, created_at, last_login
+		`SELECT id, username, password_hash, role, totp_secret, created_at, last_login
          FROM users WHERE username = ?`, username)
 
 	var u User
 	var createdAt int64
 	var lastLogin sql.NullInt64
-	var mustChange int
 
 	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret,
-		&mustChange, &createdAt, &lastLogin); err != nil {
+		&createdAt, &lastLogin); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	u.MustChange = mustChange != 0
 	u.CreatedAt = time.Unix(createdAt, 0)
 	if lastLogin.Valid {
 		t := time.Unix(lastLogin.Int64, 0)
@@ -357,7 +360,7 @@ func (s *Store) UserByName(username string) (*User, error) {
 
 func (s *Store) UpdatePassword(username, passwordHash string) error {
 	_, err := s.db.Exec(
-		`UPDATE users SET password_hash = ?, must_change = 0 WHERE username = ?`, passwordHash, username)
+		`UPDATE users SET password_hash = ? WHERE username = ?`, passwordHash, username)
 	return err
 }
 

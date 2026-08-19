@@ -169,12 +169,12 @@ export function SystemPage({
         </div>
       </Card>
 
-      <ChangePassword mustChange={session.must_change} />
+      <ChangePassword />
     </>
   );
 }
 
-function ChangePassword({ mustChange }: { mustChange: boolean }) {
+function ChangePassword() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -186,12 +186,6 @@ function ChangePassword({ mustChange }: { mustChange: boolean }) {
 
   return (
     <Card title="Пароль администратора">
-      {mustChange && (
-        <Notice tone="warn" title="Смените пароль, выданный при установке">
-          Он был напечатан открытым текстом при установке и лежит в файле
-          /var/lib/netos/initial-credentials — после смены пароля файл удаляется.
-        </Notice>
-      )}
       <div className="form-grid">
         <Field label="Текущий пароль">
           <input

@@ -62,7 +62,6 @@ export type RouteEntry = {
 export type Session = {
   username: string;
   role: string;
-  must_change: boolean;
   last_login?: string;
   csrf_token: string;
 };
