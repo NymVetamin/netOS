@@ -121,6 +121,48 @@ func TestDeletedBridgeAndVLANLeaveTheSystem(t *testing.T) {
 	}
 }
 
+// Пустой owned-links — маркер, что миграция уже выполнена. Повторный Apply
+// не имеет права удалять TUN/WireGuard других подсистем: Xray при неизменной
+// конфигурации останется active и не создаст удалённый интерфейс заново.
+func TestRepeatedApplyPreservesChannelAndVPNLinks(t *testing.T) {
+	newFakeNet(t, "eth0", "tun-ch1", "wg-ch2", "wg-srv3")
+	runner := &linkRunner{}
+	s := &Interfaces{Runner: runner, OwnedPath: ownedFile(t)}
+
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "if-1", Name: "eth0", Type: "physical", Enabled: true}}
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tun-ch1", "wg-ch2", "wg-srv3"} {
+		if runner.has("ip link delete " + name) {
+			t.Fatalf("удалён интерфейс другой подсистемы %s: %v", name, runner.commands)
+		}
+	}
+}
+
+// На старой установке owned-links ещё отсутствует. В этот единственный проход
+// старый интерфейсный мост убирается, но каналы и VPN-серверы не затрагиваются.
+func TestLegacyMigrationOnlyCleansInterfaceOwnedLinks(t *testing.T) {
+	newFakeNet(t, "eth0", "br-old:bridge", "tun-ch1", "wg-ch2", "wg-srv3")
+	runner := &linkRunner{}
+	s := &Interfaces{Runner: runner, OwnedPath: filepath.Join(t.TempDir(), "owned-links")}
+
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "if-1", Name: "eth0", Type: "physical", Enabled: true}}
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.has("ip link delete br-old") {
+		t.Fatalf("наследственный мост не удалён: %v", runner.commands)
+	}
+	for _, name := range []string{"tun-ch1", "wg-ch2", "wg-srv3"} {
+		if runner.has("ip link delete " + name) {
+			t.Fatalf("миграция удалила интерфейс другой подсистемы %s: %v", name, runner.commands)
+		}
+	}
+}
+
 // Список владения переживает перезагрузку: без него удаление из панели опять
 // перестало бы доходить до системы.
 func TestOwnedListSurvivesRestart(t *testing.T) {

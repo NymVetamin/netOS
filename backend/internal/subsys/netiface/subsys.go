@@ -259,6 +259,8 @@ func dummyNameFor(bridge string) string {
 // администратор, и мост «br1» под шаблон «br-*» не попадал — удаление из
 // панели до системы не доходило вовсе.
 func (s *Interfaces) removeStale(ctx context.Context, cfg *config.Config) error {
+	_, ownedStatErr := os.Stat(s.OwnedPath)
+	migrateLegacy := s.OwnedPath != "" && os.IsNotExist(ownedStatErr)
 	s.owned = s.loadOwned()
 	wanted := wantedLinks(cfg)
 
@@ -269,15 +271,19 @@ func (s *Interfaces) removeStale(ctx context.Context, cfg *config.Config) error 
 		}
 	}
 	// Установки прежних версий списка не имеют: там владение определялось
-	// префиксом имени. Пока файл не наполнился, разбираем и такие имена, иначе
-	// созданное до обновления осталось бы навсегда.
-	names, err := listLinks()
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		if !wanted[name] && isLegacyManagedName(name) {
-			stale[name] = true
+	// префиксом имени. Эту миграцию выполняем ровно один раз, пока файла ещё
+	// нет. Пустой существующий файл — полноценный маркер завершённой миграции.
+	// Иначе Interfaces при каждом Apply удаляла живые TUN других подсистем,
+	// после чего неизменённый Xray/OpenConnect не перезапускался.
+	if migrateLegacy {
+		names, err := listLinks()
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			if !wanted[name] && isLegacyManagedName(name) {
+				stale[name] = true
+			}
 		}
 	}
 
@@ -969,7 +975,10 @@ func describeMismatch(cfg *config.Config, iface config.Interface) string {
 // версий, когда владение определялось префиксом. Ныне владение хранится в
 // OwnedPath; шаблон остался только чтобы убрать за старой установкой.
 func isLegacyManagedName(name string) bool {
-	for _, prefix := range []string{"br-", "vl-", "bond-", "d-", "wg-ch", "tun-ch", "wg-srv"} {
+	// Только типы, которыми владеет подсистема Interfaces. Каналы и VPN-
+	// серверы имеют отдельные реестры владения и сами отвечают за wg-ch*,
+	// tun-ch* и wg-srv*; удалять их отсюда нельзя даже во время миграции.
+	for _, prefix := range []string{"br-", "vl-", "bond-", "d-"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
