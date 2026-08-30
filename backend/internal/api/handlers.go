@@ -1134,7 +1134,7 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.Engine.Current()
 	stats, _ := s.Collector.InterfaceStats()
-	clients, _ := s.Collector.Clients(r.Context())
+	clients, _ := s.Collector.Clients(r.Context(), localClientInterfaces(cfg))
 
 	online := 0
 	for _, c := range clients {
@@ -1169,7 +1169,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
-	clients, err := s.Collector.Clients(r.Context())
+	cfg := s.Engine.Current()
+	clients, err := s.Collector.Clients(r.Context(), localClientInterfaces(cfg))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
 		return
@@ -1177,7 +1178,7 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 
 	// Дополняем наблюдаемые устройства тем, что администратор о них задал:
 	// именем, каналом, блокировкой.
-	if cfg := s.Engine.Current(); cfg != nil {
+	if cfg != nil {
 		known := map[string]config.Client{}
 		for _, c := range cfg.Clients {
 			known[c.MAC] = c
@@ -1210,6 +1211,22 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"clients": clients})
+}
+
+func localClientInterfaces(cfg *config.Config) map[string]bool {
+	out := map[string]bool{}
+	if cfg == nil {
+		return out
+	}
+	for _, network := range cfg.Networks {
+		if !network.Enabled {
+			continue
+		}
+		if name := cfg.InterfaceName(network.Interface); name != "" {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {

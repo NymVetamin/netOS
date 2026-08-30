@@ -296,7 +296,7 @@ func interfaceIsUp(operstate, flags string) bool {
 // Аренда без записи ARP означает, что устройство получало адрес, но сейчас
 // молчит; запись ARP без аренды — что адрес прописан статически на самом
 // устройстве. Оба случая администратору полезно видеть.
-func (c *Collector) Clients(ctx context.Context) ([]Client, error) {
+func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool) ([]Client, error) {
 	leases, err := c.Leases()
 	if err != nil {
 		return nil, err
@@ -320,6 +320,12 @@ func (c *Collector) Clients(ctx context.Context) ([]Client, error) {
 	}
 
 	for _, a := range arp {
+		// ip neigh содержит и соседей на WAN. Шлюз провайдера — не клиент
+		// локальной сети: показывать для него «заблокировать» или назначение
+		// канала опасно, поскольку администратор может отрезать весь аплинк.
+		if !localInterfaces[a.Interface] {
+			continue
+		}
 		reachable := a.State == "REACHABLE" || a.State == "DELAY" || a.State == "STALE"
 		if cl, ok := byMAC[a.MAC]; ok {
 			cl.Interface = a.Interface
