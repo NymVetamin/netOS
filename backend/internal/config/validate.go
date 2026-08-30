@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/netip"
@@ -65,7 +66,7 @@ func (c *Config) Validate() *ValidationResult {
 func (c *Config) validateClients(r *ValidationResult) {
 	ids := map[string]int{}
 	macs := map[string]int{}
-	channels := c.channelIDs()
+	channels := c.usableChannelIDs()
 	networks := c.networkIDs()
 	blocked := 0
 
@@ -95,7 +96,7 @@ func (c *Config) validateClients(r *ValidationResult) {
 			r.errf(path+".network", "неизвестный сегмент %q", client.Network)
 		}
 		if client.Channel != "" && !channels[client.Channel] {
-			r.errf(path+".channel", "неизвестный канал %q", client.Channel)
+			r.errf(path+".channel", "канал %q не существует или выключен", client.Channel)
 		}
 		if client.DownKbit < 0 {
 			r.errf(path+".down_kbit", "скорость не может быть отрицательной")
@@ -196,6 +197,12 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		if radio.Enabled && !c.HasComponent("hostapd") {
 			r.errf(fmt.Sprintf("wifi[%d]", i),
 				"для точки доступа нужен компонент «Точка доступа Wi-Fi»")
+		}
+	}
+	for i, channel := range c.Channels {
+		if channel.Enabled && channel.Type == "wireguard" && !c.HasComponent("wireguard") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i),
+				"для канала WireGuard нужен компонент «WireGuard»")
 		}
 	}
 }
@@ -429,7 +436,7 @@ func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]stri
 func (c *Config) validateNetworks(r *ValidationResult) {
 	ifaceIDs := c.interfaceIDs()
 	zones := c.zoneNames()
-	channels := c.channelIDs()
+	channels := c.usableChannelIDs()
 
 	type seg struct {
 		name   string
@@ -449,7 +456,7 @@ func (c *Config) validateNetworks(r *ValidationResult) {
 			r.errf(path+".zone", "неизвестная зона файрволла %q", n.Zone)
 		}
 		if n.DefaultChannel != "" && !channels[n.DefaultChannel] {
-			r.errf(path+".default_channel", "неизвестный канал %q", n.DefaultChannel)
+			r.errf(path+".default_channel", "канал %q не существует или выключен", n.DefaultChannel)
 		}
 
 		prefix, err := netip.ParsePrefix(n.RouterAddress)
@@ -1071,6 +1078,8 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 		if u.Channel != "" && !channels[u.Channel] {
 			r.errf(path+".channel", "неизвестный канал %q", u.Channel)
+		} else if u.Channel != "" && u.Channel != "direct" {
+			r.errf(path+".channel", "привязка DNS-апстрима к каналу ещё не реализована")
 		}
 	}
 
@@ -1119,6 +1128,8 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 		if rule.Channel != "" && !channels[rule.Channel] {
 			r.errf(path+".channel", "неизвестный канал %q", rule.Channel)
+		} else if rule.Enabled && rule.Channel != "" && rule.Channel != "direct" {
+			r.errf(path+".channel", "привязка split-DNS к каналу ещё не реализована")
 		}
 	}
 	for i, blocklist := range c.DNS.Blocklists {
@@ -1148,8 +1159,14 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		default:
 			r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
 		}
-		if ch.Enabled && ch.Type != "direct" {
+		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" {
 			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
+		}
+		if ch.Index < 0 || ch.Index > 9999 || (ch.Type != "direct" && ch.Index == 0) {
+			r.errf(path+".index", "индекс канала должен быть в диапазоне 1-9999")
+		}
+		if ch.Type == "wireguard" {
+			c.validateWireGuardChannel(r, path, ch)
 		}
 		switch ch.Mode {
 		case "tun", "tproxy", "socks":
@@ -1193,27 +1210,96 @@ func (c *Config) validateChannels(r *ValidationResult) {
 	}
 }
 
+func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch Channel) {
+	if ch.Mode != "tun" {
+		r.errf(path+".mode", "WireGuard работает только в режиме TUN")
+	}
+	if ch.FailMode != "block" {
+		r.errf(path+".fail_mode", "для WireGuard пока поддерживается только kill-switch «блокировать»")
+	}
+	wg, err := ch.WireGuardConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if prefix, err := netip.ParsePrefix(wg.Address); err != nil || !prefix.Addr().Is4() {
+		r.errf(path+".config.address", "нужен IPv4-адрес туннеля с маской")
+	}
+	validateWGKey := func(field, value string, optional bool) {
+		if optional && value == "" {
+			return
+		}
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil || len(decoded) != 32 {
+			r.errf(path+".config."+field, "ключ WireGuard должен быть base64 от 32 байт")
+		}
+	}
+	validateWGKey("private_key", wg.PrivateKey, false)
+	validateWGKey("peer_public_key", wg.PeerPublicKey, false)
+	validateWGKey("preshared_key", wg.PresharedKey, true)
+	if host, port, err := net.SplitHostPort(wg.Endpoint); err != nil || host == "" || !inPortRange(port) {
+		r.errf(path+".config.endpoint", "endpoint должен быть в формате host:port")
+	}
+	if len(wg.AllowedIPs) == 0 {
+		r.errf(path+".config.allowed_ips", "нужна хотя бы одна разрешённая подсеть")
+	}
+	hasDefault := false
+	for i, cidr := range wg.AllowedIPs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			r.errf(fmt.Sprintf("%s.config.allowed_ips[%d]", path, i), "некорректная IPv4-подсеть")
+		} else if prefix == netip.MustParsePrefix("0.0.0.0/0") {
+			hasDefault = true
+		}
+	}
+	if !hasDefault {
+		r.errf(path+".config.allowed_ips", "исходящий канал должен включать 0.0.0.0/0")
+	}
+	if wg.PersistentKeepalive < 0 || wg.PersistentKeepalive > 65535 {
+		r.errf(path+".config.persistent_keepalive", "значение должно быть в диапазоне 0-65535 секунд")
+	}
+	if wg.MTU != 0 && (wg.MTU < 576 || wg.MTU > 9000) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+}
+
 func (c *Config) validatePolicies(r *ValidationResult) {
-	channels := c.channelIDs()
+	channels := c.usableChannelIDs()
 	networks := c.networkIDs()
 	servers := map[string]bool{}
 	for _, s := range c.VPNServers {
 		servers[s.ID] = true
 	}
 
+	ids := map[string]bool{}
 	for i, p := range c.Policies {
 		path := fmt.Sprintf("policies[%d]", i)
-		if p.Enabled {
-			r.errf(path+".enabled", "применение политик выбора канала ещё не реализовано")
+		if p.ID == "" || ids[p.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор политики")
 		}
+		ids[p.ID] = true
 		if !channels[p.Channel] {
-			r.errf(path+".channel", "политика ссылается на несуществующий канал %q", p.Channel)
+			r.errf(path+".channel", "канал %q не существует или выключен", p.Channel)
 		}
 		if p.Network != "" && !networks[p.Network] {
 			r.errf(path+".network", "неизвестный сегмент %q", p.Network)
 		}
 		if p.VPNServer != "" && !servers[p.VPNServer] {
 			r.errf(path+".vpn_server", "неизвестный VPN-сервер %q", p.VPNServer)
+		}
+		if p.Enabled && (p.VPNServer != "" || p.VPNPeer != "") {
+			r.errf(path, "выбор трафика по VPN-серверу или VPN-пиру ещё не реализован")
+		}
+		if p.Enabled && len(p.Domains) > 0 {
+			r.errf(path+".domains", "выбор трафика по доменам ещё не реализован")
+		}
+		switch p.Protocol {
+		case "", "any", "tcp", "udp", "icmp":
+		default:
+			r.errf(path+".protocol", "поддерживаются протоколы TCP, UDP, ICMP или any")
+		}
+		if p.DstPort != "" && p.Protocol != "tcp" && p.Protocol != "udp" {
+			r.errf(path+".protocol", "для политики с портами нужно выбрать TCP или UDP")
 		}
 		validateCIDR(r, path+".src_ip", p.SrcIP)
 		validateCIDR(r, path+".dst_ip", p.DstIP)
@@ -1342,6 +1428,16 @@ func (c *Config) channelIDs() map[string]bool {
 	m := map[string]bool{}
 	for _, ch := range c.Channels {
 		m[ch.ID] = true
+	}
+	return m
+}
+
+func (c *Config) usableChannelIDs() map[string]bool {
+	m := map[string]bool{}
+	for _, ch := range c.Channels {
+		if ch.Enabled && (ch.Type == "direct" || ch.Type == "wireguard") {
+			m[ch.ID] = true
+		}
 	}
 	return m
 }

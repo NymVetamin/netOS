@@ -262,7 +262,7 @@ func (m *Manager) help() {
   netos plan                   что netOS изменит в живой системе, если применить
                                конфигурацию прямо сейчас
   netos render <артефакт>      вывести сгенерированный конфиг:
-                               iptables, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
+                               iptables, wireguard, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
                                resolv, network, sysctl, config
   netos completion [bash]      скрипт дополнения команд для оболочки
   netos version                версия netOS
@@ -286,7 +286,7 @@ _netos() {
 
     case "$cmd" in
         render)
-            COMPREPLY=($(compgen -W "iptables dnsmasq isc-dhcp kea-dhcp4 unbound dnsproxy resolv network sysctl config" -- "$cur"))
+            COMPREPLY=($(compgen -W "iptables wireguard dnsmasq isc-dhcp kea-dhcp4 unbound dnsproxy resolv network sysctl config" -- "$cur"))
             ;;
         logs)
             COMPREPLY=($(compgen -W "-f --follow" -- "$cur"))
@@ -756,6 +756,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		m.sys("/etc/sysctl.d/99-netos.conf"), m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
 		m.sys("/etc/modules-load.d/netos.conf"),
 		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
+		m.sys("/etc/iproute2/rt_tables.d/netos-channels.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),
 		m.sys("/etc/bash_completion.d/netos"),
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы

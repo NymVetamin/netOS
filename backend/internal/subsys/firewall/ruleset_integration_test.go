@@ -38,6 +38,13 @@ func TestIntegrationIptablesAcceptsGeneratedRuleset(t *testing.T) {
 	cfg.Clients = []config.Client{
 		{ID: "blocked", Name: "Тестовый клиент", MAC: "02:00:00:00:00:01", Blocked: true},
 	}
+	cfg.Channels = append(cfg.Channels, config.Channel{
+		ID: "wg-test", Index: 99, Name: "Тестовый VPN", Enabled: true, Type: "wireguard",
+	})
+	cfg.Policies = []config.Policy{{
+		ID: "https-vpn", Name: "HTTPS через VPN", Enabled: true, Priority: 100,
+		Channel: "wg-test", Protocol: "tcp", DstPort: "443,8000-8010",
+	}}
 
 	rules, err := Build(cfg)
 	if err != nil {

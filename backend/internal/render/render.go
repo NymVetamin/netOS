@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/services"
@@ -51,6 +52,33 @@ var (
 	resolv   = services.NewSystemResolver(nil)
 )
 
+func wireGuardActive(cfg *config.Config) bool {
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && ch.Type == "wireguard" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderWireGuard(cfg *config.Config) (string, error) {
+	var b bytes.Buffer
+	for _, ch := range cfg.Channels {
+		if !ch.Enabled || ch.Type != "wireguard" {
+			continue
+		}
+		text, err := channels.RenderWireGuard(ch)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s (%s) ---\n%s\n", ch.Name, channels.InterfaceName(ch), text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных каналов WireGuard.\n")
+	}
+	return b.String(), nil
+}
+
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
@@ -67,6 +95,10 @@ var artifacts = []Artifact{
 			}
 			return out, nil
 		},
+	},
+	{
+		ID: "wireguard", Title: "Конфигурация WireGuard",
+		Active: wireGuardActive, Render: renderWireGuard,
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",

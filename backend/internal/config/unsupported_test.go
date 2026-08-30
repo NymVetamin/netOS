@@ -7,8 +7,7 @@ import (
 
 func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 	cfg := Default()
-	cfg.Channels = append(cfg.Channels, Channel{ID: "wg", Index: 1, Name: "VPN", Enabled: true, Type: "wireguard", Mode: "tun", FailMode: "block"})
-	cfg.Policies = []Policy{{ID: "p", Name: "policy", Enabled: true, Channel: "direct"}}
+	cfg.Channels = append(cfg.Channels, Channel{ID: "xray", Index: 1, Name: "VPN", Enabled: true, Type: "xray", Mode: "tun", FailMode: "block"})
 	cfg.VPNServers = []VPNServer{{ID: "srv", Name: "server", Type: "wireguard", Enabled: true, Subnet: "10.9.0.1/24"}}
 	cfg.WiFi = []WiFiRadio{{ID: "radio", Device: "wlan0", Enabled: true, Country: "RU"}}
 	cfg.DNS.Blocklists = []Blocklist{{ID: "ads", Enabled: true}}
@@ -22,7 +21,7 @@ func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"channels[1].enabled", "policies[0].enabled", "vpn_servers[0].enabled",
+		"channels[1].enabled", "vpn_servers[0].enabled",
 		"wifi[0].enabled", "dns.blocklists[0].enabled",
 	} {
 		if !strings.Contains(got.String(), want) {
@@ -33,7 +32,7 @@ func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 
 func TestUnimplementedObjectsMayBeSavedDisabled(t *testing.T) {
 	cfg := Default()
-	cfg.Channels = append(cfg.Channels, Channel{ID: "wg", Index: 1, Name: "VPN", Type: "wireguard", Mode: "tun", FailMode: "block"})
+	cfg.Channels = append(cfg.Channels, Channel{ID: "xray", Index: 1, Name: "VPN", Type: "xray", Mode: "tun", FailMode: "block"})
 	cfg.Policies = []Policy{{ID: "p", Name: "policy", Channel: "direct", SrcIP: "192.0.2.1"}}
 	cfg.VPNServers = []VPNServer{{ID: "srv", Name: "server", Type: "wireguard", Subnet: "10.9.0.1/24"}}
 	cfg.WiFi = []WiFiRadio{{ID: "radio", Device: "wlan0", Country: "RU"}}

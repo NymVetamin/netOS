@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/channels"
 )
 
 // Ruleset — сгенерированный набор правил.
@@ -337,7 +338,7 @@ func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
 		for _, proto := range protocols(n.Protocol) {
 			port := n.DestPort
 			if port == "" {
-				port = n.ExtPort
+				port = iptablesPortSpec(n.ExtPort)
 			}
 			b.line("-A %s -d %s -p %s --dport %s -m conntrack --ctstate DNAT -m comment --comment %q -j ACCEPT",
 				chain, n.DestIP, proto, port, "проброс: "+n.Name)
@@ -392,10 +393,10 @@ func selectors(r config.FirewallRule) string {
 		fmt.Fprintf(&s, " -m mac --mac-source %s", r.SrcMAC)
 	}
 	if r.SrcPort != "" {
-		fmt.Fprintf(&s, " -m multiport --sports %s", r.SrcPort)
+		fmt.Fprintf(&s, " -m multiport --sports %s", iptablesPortSpec(r.SrcPort))
 	}
 	if r.DstPort != "" {
-		fmt.Fprintf(&s, " -m multiport --dports %s", r.DstPort)
+		fmt.Fprintf(&s, " -m multiport --dports %s", iptablesPortSpec(r.DstPort))
 	}
 	if r.ConnState != "" {
 		fmt.Fprintf(&s, " -m conntrack --ctstate %s", strings.ToUpper(r.ConnState))
@@ -435,6 +436,12 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":INPUT ACCEPT [0:0]")
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && ch.Type == "wireguard" {
+			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE",
+				channels.InterfaceName(ch), "NAT канала «"+ch.Name+"»")
+		}
+	}
 
 	if cfg.DNS.Enabled && cfg.DNS.ForceLocal {
 		for _, n := range cfg.Networks {
@@ -503,7 +510,7 @@ func (b *builder) natDestination(n config.NATRule) {
 			dest = n.DestIP + ":" + n.DestPort
 		}
 		b.line("-A PREROUTING%s -p %s --dport %s -m comment --comment %q -j DNAT --to-destination %s",
-			sel.String(), proto, n.ExtPort, truncate(n.Name, 240), dest)
+			sel.String(), proto, iptablesPortSpec(n.ExtPort), truncate(n.Name, 240), dest)
 	}
 }
 
@@ -519,6 +526,8 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
+	b.channelPolicies(cfg)
+
 	for _, z := range cfg.Firewall.Zones {
 		if !z.MSSClamp {
 			continue
@@ -530,6 +539,125 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+// channelPolicies присваивает новым соединениям fwmark канала, а следующим
+// пакетам того же соединения восстанавливает его из conntrack. Явные политики
+// имеют приоритет над настройкой клиента, а клиент — над настройкой сегмента.
+func (b *builder) channelPolicies(cfg *config.Config) {
+	channelByID := map[string]config.Channel{}
+	for _, ch := range cfg.Channels {
+		channelByID[ch.ID] = ch
+	}
+
+	type policyRule struct {
+		priority int
+		id       string
+		match    string
+		channel  string
+		comment  string
+	}
+	var rules []policyRule
+	for _, p := range cfg.Policies {
+		if !p.Enabled {
+			continue
+		}
+		rules = append(rules, policyRule{
+			priority: p.Priority, id: p.ID, match: policySelectors(cfg, p),
+			channel: p.Channel, comment: p.Name,
+		})
+	}
+	sort.SliceStable(rules, func(i, j int) bool {
+		if rules[i].priority != rules[j].priority {
+			return rules[i].priority < rules[j].priority
+		}
+		return rules[i].id < rules[j].id
+	})
+
+	clients := append([]config.Client(nil), cfg.Clients...)
+	sort.Slice(clients, func(i, j int) bool { return clients[i].ID < clients[j].ID })
+	for _, client := range clients {
+		if client.Blocked || client.Channel == "" || client.Channel == "direct" {
+			continue
+		}
+		rules = append(rules, policyRule{
+			priority: 1_000_000, id: client.ID,
+			match:   " -m mac --mac-source " + strings.ToLower(client.MAC),
+			channel: client.Channel, comment: "канал клиента «" + client.Name + "»",
+		})
+	}
+
+	networks := append([]config.Network(nil), cfg.Networks...)
+	sort.Slice(networks, func(i, j int) bool { return networks[i].ID < networks[j].ID })
+	for _, network := range networks {
+		if !network.Enabled || network.DefaultChannel == "" || network.DefaultChannel == "direct" {
+			continue
+		}
+		rules = append(rules, policyRule{
+			priority: 2_000_000, id: network.ID,
+			match:   " -s " + subnetOf(network.RouterAddress),
+			channel: network.DefaultChannel, comment: "канал сегмента «" + network.Name + "»",
+		})
+	}
+	if len(rules) == 0 {
+		return
+	}
+
+	b.line(":NETOS-POLICY - [0:0]")
+	b.line("-A PREROUTING -j CONNMARK --restore-mark")
+	b.line("-A PREROUTING -m mark --mark 0 -j NETOS-POLICY")
+	for _, rule := range rules {
+		if rule.channel == "" || rule.channel == "direct" {
+			b.line("-A NETOS-POLICY%s -m comment --comment %q -j RETURN", rule.match, truncate(rule.comment, 240))
+			continue
+		}
+		ch, ok := channelByID[rule.channel]
+		if !ok || !ch.Enabled || ch.Type != "wireguard" {
+			continue // валидатор не разрешает применить такую конфигурацию
+		}
+		mark := fmt.Sprintf("0x%x", channels.Mark(ch))
+		b.line("-A NETOS-POLICY%s -m comment --comment %q -j MARK --set-mark %s", rule.match, truncate(rule.comment, 240), mark)
+		b.line("-A NETOS-POLICY -m mark --mark %s -j CONNMARK --save-mark", mark)
+		b.line("-A NETOS-POLICY -m mark --mark %s -j RETURN", mark)
+	}
+}
+
+func policySelectors(cfg *config.Config, p config.Policy) string {
+	var s strings.Builder
+	if p.Network != "" {
+		for _, network := range cfg.Networks {
+			if network.ID == p.Network {
+				fmt.Fprintf(&s, " -s %s", subnetOf(network.RouterAddress))
+				break
+			}
+		}
+	}
+	if p.SrcIP != "" {
+		fmt.Fprintf(&s, " -s %s", p.SrcIP)
+	}
+	if p.SrcMAC != "" {
+		fmt.Fprintf(&s, " -m mac --mac-source %s", strings.ToLower(p.SrcMAC))
+	}
+	if p.Protocol != "" && p.Protocol != "any" {
+		fmt.Fprintf(&s, " -p %s", p.Protocol)
+	}
+	if p.DstIP != "" {
+		fmt.Fprintf(&s, " -d %s", p.DstIP)
+	}
+	if p.DstPort != "" {
+		fmt.Fprintf(&s, " -m multiport --dports %s", iptablesPortSpec(p.DstPort))
+	}
+	if p.Schedule != nil {
+		s.WriteString(scheduleMatch(*p.Schedule))
+	}
+	return s.String()
+}
+
+// В JSON диапазоны пишутся привычно как 8000-8010, а iptables в match
+// ожидает двоеточие: 8000:8010. Для --to-destination исходная запись
+// сохраняется, поскольку там синтаксис другой.
+func iptablesPortSpec(spec string) string {
+	return strings.ReplaceAll(spec, "-", ":")
 }
 
 // ---------------------------------------------------------------------------

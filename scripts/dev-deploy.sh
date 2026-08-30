@@ -39,12 +39,12 @@ else
     exit 1
 fi
 
-if [ "$1" = "--restart" ] || [ "$2" = "--restart" ]; then
+if [[ " $* " == *" --restart "* ]]; then
     echo "→ перезапуск netosd"
     ssh "$HOST" 'systemctl restart netosd && sleep 3 && systemctl is-active netosd'
 fi
 
-if [ "$1" = "--vet" ]; then
+if [[ " $* " == *" --vet "* ]]; then
     echo "→ go vet"
     ssh "$HOST" 'cd /opt/netos/backend && go vet ./...' && echo "   чисто"
 fi

@@ -22,6 +22,7 @@ import (
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
+	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/hostsettings"
@@ -371,6 +372,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		netiface.NewWAN(runner),
 		netconf.New(runner, logger),
 		routing.New(runner),
+		channels.New(runner, stateDir),
 		firewall.New(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),

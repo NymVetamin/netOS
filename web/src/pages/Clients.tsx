@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
 import { Badge, Card, Empty, TableWrap } from "../ui";
 
-// Клиенты — центральное место будущего выбора канала: именно здесь
-// администратор скажет «этот телефон ходит через xray, а телевизор напрямую».
-// Пока каналы не реализованы, страница ведёт учёт устройств и их блокировку.
+// Для каждого клиента можно переопределить канал сегмента. Явные политики
+// всё равно стоят выше этой настройки.
 export function Clients({
   config,
   patch,
@@ -78,6 +77,7 @@ export function Clients({
                   <th>Интерфейс</th>
                   <th>Источник</th>
                   <th>Аренда до</th>
+                  <th>Канал</th>
                   <th>Доступ</th>
                 </tr>
               </thead>
@@ -118,6 +118,17 @@ export function Clients({
                         </Badge>
                       </td>
                       <td className="faint">{lease ? formatTime(lease.expires) : "—"}</td>
+                      <td>
+                        <select
+                          value={cfgClient?.channel || ""}
+                          onChange={(e) => updateClient(c.mac, { channel: e.target.value })}
+                        >
+                          <option value="">По настройке сегмента</option>
+                          {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => (
+                            <option key={channel.id} value={channel.id}>{channel.name}</option>
+                          ))}
+                        </select>
+                      </td>
                       <td>
                         <button
                           className={`btn sm ${cfgClient?.blocked ? "danger" : ""}`}
