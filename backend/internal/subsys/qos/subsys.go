@@ -38,7 +38,11 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	if old != nil {
 		before = old.QoS
 	}
-	if reflect.DeepEqual(before, next.QoS) {
+	var oldClients []config.Client
+	if old != nil {
+		oldClients = old.Clients
+	}
+	if reflect.DeepEqual(before, next.QoS) && reflect.DeepEqual(oldClients, next.Clients) {
 		return nil, nil
 	}
 	kind := "update"
@@ -59,7 +63,10 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		for _, item := range previous {
 			s.remove(ctx, item)
 		}
-		return s.writeOwned(nil)
+		if err := s.writeOwned(nil); err != nil {
+			return err
+		}
+		return s.applyClients(ctx, cfg)
 	}
 
 	ownedIFB := map[string]bool{}
@@ -100,7 +107,10 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("QoS %s: %w", item.WAN, err)
 		}
 	}
-	return s.writeOwned(wanted)
+	if err := s.writeOwned(wanted); err != nil {
+		return err
+	}
+	return s.applyClients(ctx, cfg)
 }
 
 func desiredLinks(cfg *config.Config) ([]ownedLink, error) {
@@ -161,7 +171,7 @@ func (s *Subsystem) applyLink(ctx context.Context, item ownedLink, setting confi
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	if !cfg.QoS.Enabled {
-		return nil
+		return s.healthClients(ctx, cfg)
 	}
 	links, err := desiredLinks(cfg)
 	if err != nil {
@@ -175,7 +185,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 	}
-	return nil
+	return s.healthClients(ctx, cfg)
 }
 
 func (s *Subsystem) remove(ctx context.Context, item ownedLink) {

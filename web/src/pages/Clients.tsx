@@ -38,6 +38,11 @@ export function Clients({
         Object.assign(existing, changes);
         return;
       }
+      const live = clients.find((client) => client.mac === mac);
+      const detectedNetwork = (config.networks || []).find((network: any) => {
+        const iface = (config.interfaces || []).find((item: any) => item.id === network.interface);
+        return iface?.name === live?.interface;
+      })?.id || "";
       draft.clients.push({
         id: "cl-" + mac.replace(/:/g, ""),
         mac,
@@ -45,6 +50,7 @@ export function Clients({
         blocked: false,
         down_kbit: 0,
         up_kbit: 0,
+        network: detectedNetwork,
         ...changes,
       });
     });
@@ -78,6 +84,8 @@ export function Clients({
                   <th>Источник</th>
                   <th>Аренда до</th>
                   <th>Канал</th>
+                  <th>Сегмент</th>
+                  <th>Лимит ↓ / ↑, Кбит/с</th>
                   <th>Доступ</th>
                 </tr>
               </thead>
@@ -128,6 +136,20 @@ export function Clients({
                             <option key={channel.id} value={channel.id}>{channel.name}</option>
                           ))}
                         </select>
+                      </td>
+                      <td>
+                        <select value={cfgClient?.network || ""} onChange={(e) => updateClient(c.mac, { network: e.target.value })}>
+                          <option value="">— не выбран —</option>
+                          {(config.networks || []).filter((network: any) => network.enabled).map((network: any) => (
+                            <option key={network.id} value={network.id}>{network.name || network.id}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <div className="row" style={{ minWidth: 190 }}>
+                          <input aria-label="Лимит загрузки" title="Загрузка" type="number" min={0} placeholder="без лимита" style={{ width: 88 }} value={cfgClient?.down_kbit || 0} onChange={(e) => updateClient(c.mac, { down_kbit: Number(e.target.value) })} />
+                          <input aria-label="Лимит отдачи" title="Отдача" type="number" min={0} placeholder="без лимита" style={{ width: 88 }} value={cfgClient?.up_kbit || 0} onChange={(e) => updateClient(c.mac, { up_kbit: Number(e.target.value) })} />
+                        </div>
                       </td>
                       <td>
                         <button

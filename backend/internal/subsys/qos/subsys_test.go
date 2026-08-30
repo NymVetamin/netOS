@@ -111,3 +111,34 @@ func TestForeignIFBIsNotModified(t *testing.T) {
 		}
 	}
 }
+
+func TestClientLimitsCreateMACFiltersAndCleanup(t *testing.T) {
+	runner := &fakeRunner{links: map[string]bool{"lan0": true}}
+	s := New(runner, t.TempDir())
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "lan", Name: "lan0", Type: "bridge", Enabled: true}}
+	cfg.Networks = []config.Network{{ID: "home", Interface: "lan", Enabled: true}}
+	cfg.Clients = []config.Client{{ID: "phone", MAC: "aa:bb:cc:dd:ee:ff", Network: "home", DownKbit: 5000, UpKbit: 1000}}
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.commands, "\n")
+	for _, want := range []string{
+		"tc qdisc replace dev lan0 root handle 1: htb default 1",
+		"flower dst_mac aa:bb:cc:dd:ee:ff classid 1:10",
+		"flower src_mac aa:bb:cc:dd:ee:ff action police rate 1000kbit",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q:\n%s", want, joined)
+		}
+	}
+	runner.commands = nil
+	cfg.Clients = nil
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(runner.commands, "\n")
+	if !strings.Contains(joined, "tc qdisc del dev lan0 root") || !strings.Contains(joined, "tc qdisc del dev lan0 ingress") {
+		t.Fatalf("client QoS was not cleaned up:\n%s", joined)
+	}
+}

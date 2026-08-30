@@ -181,9 +181,16 @@ func (c *Config) validateClients(r *ValidationResult) {
 		}
 		if client.DownKbit < 0 {
 			r.errf(path+".down_kbit", "скорость не может быть отрицательной")
+		} else if client.DownKbit > 0 && client.DownKbit < 64 {
+			r.errf(path+".down_kbit", "минимальный лимит — 64 Кбит/с")
 		}
 		if client.UpKbit < 0 {
 			r.errf(path+".up_kbit", "скорость не может быть отрицательной")
+		} else if client.UpKbit > 0 && client.UpKbit < 64 {
+			r.errf(path+".up_kbit", "минимальный лимит — 64 Кбит/с")
+		}
+		if (client.DownKbit > 0 || client.UpKbit > 0) && client.Network == "" {
+			r.errf(path+".network", "для ограничения скорости выберите сегмент клиента")
 		}
 		if client.Blocked {
 			blocked++
