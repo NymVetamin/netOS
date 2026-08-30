@@ -7,20 +7,24 @@ import { Badge, Card, Empty, Tile, TableWrap } from "../ui";
 // а не декоративные графики.
 export function Dashboard({ config }: { config: any }) {
   const [status, setStatus] = useState<any>(null);
+  const [statistics, setStatistics] = useState<any[]>([]);
+
+  const wanInterfaces = (config.wans || [])
+    .filter((w: any) => w.enabled)
+    .map((w: any) => wanInterfaceName(config, w));
 
   useEffect(() => {
-    const load = () => api.status().then(setStatus).catch(() => {});
+    const load = () => {
+      api.status().then(setStatus).catch(() => {});
+      api.statistics(24, wanInterfaces).then((result) => setStatistics(result.points || [])).catch(() => {});
+    };
     load();
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [wanInterfaces.join(",")]);
 
   const interfaces: any[] = status?.interfaces || [];
-  const wanNames = new Set(
-    (config.wans || [])
-      .filter((w: any) => w.enabled)
-      .map((w: any) => interfaceName(config, w.interface)),
-  );
+  const wanNames = new Set(wanInterfaces);
   const wan = interfaces.find((i) => wanNames.has(i.name));
 
   return (
@@ -88,6 +92,10 @@ export function Dashboard({ config }: { config: any }) {
             })}
           </div>
         )}
+      </Card>
+
+      <Card title="Скорость интернета" subtitle="Фактический трафик всех включённых интернет-каналов за 24 часа">
+        <TrafficChart points={statistics} interfaces={wanInterfaces} />
       </Card>
 
       <Card title="Интерфейсы" subtitle="Счётчики с момента запуска системы" tight>
@@ -175,4 +183,53 @@ function ServiceInfo({
 export function interfaceName(config: any, id: string): string {
   const iface = (config.interfaces || []).find((i: any) => i.id === id);
   return iface?.name || id;
+}
+
+function wanInterfaceName(config: any, wan: any): string {
+  if (wan.proto === "pppoe" || wan.proto === "l2tp") return `ppp-${wan.id}`;
+  return interfaceName(config, wan.interface);
+}
+
+function TrafficChart({ points, interfaces }: { points: any[]; interfaces: string[] }) {
+  const series = points.map((point) => {
+    let down = 0;
+    let up = 0;
+    for (const name of interfaces) {
+      down += point.interfaces?.[name]?.rx_bps || 0;
+      up += point.interfaces?.[name]?.tx_bps || 0;
+    }
+    return { at: point.at, down, up };
+  });
+  if (series.length < 2) return <Empty>История появится после двух замеров — примерно через 30 секунд</Empty>;
+  const width = 720;
+  const height = 190;
+  const pad = 14;
+  const peak = Math.max(1, ...series.flatMap((item) => [item.down, item.up]));
+  const path = (key: "down" | "up") => series.map((item, index) => {
+    const x = pad + (index / Math.max(1, series.length - 1)) * (width - pad * 2);
+    const y = height - pad - (item[key] / peak) * (height - pad * 2);
+    return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const last = series[series.length - 1];
+  return (
+    <div>
+      <div className="row wrap" style={{ marginBottom: ".75rem", gap: "1rem" }}>
+        <Badge tone="accent">↓ {formatBitrate(last.down)}</Badge>
+        <Badge tone="ok">↑ {formatBitrate(last.up)}</Badge>
+        <span className="faint">пик {formatBitrate(peak)}</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="График входящей и исходящей скорости" style={{ width: "100%", height: 190, display: "block" }}>
+        {[0.25, 0.5, 0.75, 1].map((part) => <line key={part} x1={pad} x2={width - pad} y1={height - pad - part * (height - pad * 2)} y2={height - pad - part * (height - pad * 2)} stroke="var(--border)" strokeWidth="1" />)}
+        <path d={path("down")} fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <path d={path("up")} fill="none" stroke="var(--ok)" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+    </div>
+  );
+}
+
+function formatBitrate(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Гбит/с`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Мбит/с`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)} Кбит/с`;
+  return `${Math.round(value)} бит/с`;
 }

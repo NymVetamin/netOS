@@ -212,7 +212,10 @@ func main() {
 		}
 		return "dnsmasq"
 	}
+	traffic := runtime.NewTrafficHistory("/var/lib/netos/traffic-history.json", collector)
+	go traffic.Run(ctx)
 	panel := api.New(st, engine, collector, logger)
+	panel.Traffic = traffic
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)

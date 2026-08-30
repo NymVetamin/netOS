@@ -44,6 +44,7 @@ type Server struct {
 	Store     *store.Store
 	Engine    *apply.Engine
 	Collector *runtime.Collector
+	Traffic   *runtime.TrafficHistory
 	Logger    Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
@@ -135,6 +136,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/catalog", s.handleCatalog)
 	auth("GET /api/status", s.handleStatus)
 	auth("GET /api/ddns/status", s.handleDDNSStatus)
+	auth("GET /api/statistics", s.handleStatistics)
 	auth("GET /api/clients", s.handleClients)
 	auth("GET /api/interfaces", s.handleInterfaces)
 	auth("GET /api/leases", s.handleLeases)

@@ -214,7 +214,7 @@ func viewerAllowed(r *http.Request) bool {
 		return true
 	}
 	switch r.URL.Path {
-	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/clients",
+	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/statistics", "/api/clients",
 		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes", "/api/audit",
 		"/api/revisions":
 		return true
@@ -634,6 +634,30 @@ func (s *Server) handleDDNSStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.DDNS.Status())
+}
+
+func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
+	if s.Traffic == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"points": []any{}})
+		return
+	}
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours == 0 {
+		hours = 24
+	}
+	if hours < 1 || hours > 168 {
+		writeError(w, http.StatusBadRequest, "диапазон должен быть от 1 до 168 часов")
+		return
+	}
+	var names []string
+	for _, name := range strings.Split(r.URL.Query().Get("interfaces"), ",") {
+		name = strings.TrimSpace(name)
+		if name != "" && len(name) <= 15 {
+			names = append(names, name)
+		}
+	}
+	points := s.Traffic.Points(time.Now().UTC().Add(-time.Duration(hours)*time.Hour), names)
+	writeJSON(w, http.StatusOK, map[string]any{"points": points, "interval_seconds": int(s.Traffic.Interval.Seconds())})
 }
 
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:
