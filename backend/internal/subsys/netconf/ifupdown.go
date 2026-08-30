@@ -57,7 +57,7 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 
 	switch iface.Type {
 	case "bridge":
-		members := iface.Members
+		members := p.namesOf(iface.Members)
 		if len(members) == 0 {
 			// Бридж без портов всё равно должен подняться: в него могут
 			// добавляться интерфейсы каналов и точки доступа.
@@ -70,10 +70,10 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		// поднятия, и клиент успевает не получить адрес по DHCP.
 		w("    bridge_fd 0")
 	case "vlan":
-		w("    vlan-raw-device %s", iface.Parent)
+		w("    vlan-raw-device %s", p.name(iface.Parent))
 	case "bond":
-		if len(iface.Members) > 0 {
-			w("    bond-slaves %s", strings.Join(iface.Members, " "))
+		if slaves := p.namesOf(iface.Members); len(slaves) > 0 {
+			w("    bond-slaves %s", strings.Join(slaves, " "))
 		}
 		w("    bond-mode 802.3ad")
 	}

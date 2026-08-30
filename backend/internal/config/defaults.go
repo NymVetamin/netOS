@@ -31,7 +31,7 @@ func defaultConfig() *Config {
 			},
 			Panel: Panel{
 				Port:          8443,
-				CommitTimeout: 90,
+				CommitTimeout: 30,
 				TLS:           TLS{Mode: "selfsigned"},
 			},
 		},
@@ -268,7 +268,7 @@ func (c *Config) Normalize() {
 		c.System.Panel.Port = 8443
 	}
 	if c.System.Panel.CommitTimeout == 0 {
-		c.System.Panel.CommitTimeout = 90
+		c.System.Panel.CommitTimeout = 30
 	}
 	if c.System.Panel.TLS.Mode == "" {
 		c.System.Panel.TLS.Mode = "selfsigned"
@@ -294,6 +294,10 @@ func (c *Config) Normalize() {
 	if c.Components == nil {
 		c.Components = []Component{}
 	}
+	// Связи между интерфейсами описываются идентификаторами. Конфигурация с
+	// прежней версии схемы хранит там имена — переводим, иначе мост остался бы
+	// без портов, а VLAN без родителя, и притом молча.
+	c.normalizeInterfaceLinks()
 
 	for i := range c.WANs {
 		if c.WANs[i].Metric == 0 {

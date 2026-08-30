@@ -29,3 +29,4 @@ npm-debug.log*
 initial-credentials
 netos.db
 netos.db-*
+*.txt

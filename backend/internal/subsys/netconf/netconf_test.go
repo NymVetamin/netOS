@@ -17,8 +17,8 @@ func routerConfig() *config.Config {
 		{ID: "if-wan", Name: "eth0", Type: "physical", Enabled: true},
 		{ID: "if-p1", Name: "eth1", Type: "physical", Enabled: true},
 		{ID: "if-p2", Name: "eth2", Type: "physical", Enabled: true},
-		{ID: "if-lan", Name: "br-lan", Type: "bridge", Members: []string{"eth1", "eth2"}, Enabled: true},
-		{ID: "if-guest", Name: "vl-guest", Type: "vlan", Parent: "br-lan", VLANID: 20, Enabled: true},
+		{ID: "if-lan", Name: "br-lan", Type: "bridge", Members: []string{"if-p1", "if-p2"}, Enabled: true},
+		{ID: "if-guest", Name: "vl-guest", Type: "vlan", Parent: "if-lan", VLANID: 20, Enabled: true},
 	}
 	cfg.Networks = []config.Network{
 		{ID: "lan", Name: "LAN", Interface: "if-lan", RouterAddress: "192.168.10.1/24", Enabled: true},

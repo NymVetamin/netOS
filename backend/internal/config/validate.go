@@ -149,10 +149,17 @@ func (c *Config) validateInterfaces(r *ValidationResult) {
 		}
 		ids[iface.ID] = true
 
-		if iface.Name == "" {
+		switch {
+		case iface.Name == "":
 			r.errf(path+".name", "пустое имя интерфейса")
-		} else if names[iface.Name] {
+		case names[iface.Name]:
 			r.errf(path+".name", "интерфейс %q объявлен дважды", iface.Name)
+		case !ValidInterfaceName(iface.Name):
+			// Ядро обрежет длинное имя молча, а на имя ссылаются зоны
+			// файрволла: правило уйдёт в пустоту, и это не будет видно нигде.
+			r.errf(path+".name",
+				"имя %q ядро не примет: не длиннее %d символов, без пробелов и косых черт",
+				iface.Name, maxInterfaceName)
 		}
 		names[iface.Name] = true
 
@@ -184,15 +191,174 @@ func (c *Config) validateInterfaces(r *ValidationResult) {
 		}
 	}
 
+	c.validateTopology(r)
+}
+
+// validateTopology проверяет связи между интерфейсами на выполнимость.
+//
+// Панель позволяет выбрать что угодно, а ядро — нет: порт входит ровно в один
+// мост, подчинённый порт не имеет своего адреса, мост нельзя вложить в мост.
+// Раньше такие сочетания принимались молча и применялись частично:
+// администратор видел в панели одну картину, а в ip a другую.
+func (c *Config) validateTopology(r *ValidationResult) {
+	byID := map[string]Interface{}
+	for _, i := range c.Interfaces {
+		byID[i.ID] = i
+	}
+	// Владелец порта: в какой мост или агрегацию он уже включён.
+	owner := map[string]string{}
+	for _, i := range c.Interfaces {
+		if i.Type != "bridge" && i.Type != "bond" {
+			continue
+		}
+		for _, m := range i.Members {
+			if owner[m] == "" {
+				owner[m] = i.Name
+			}
+		}
+	}
+
+	vlanTaken := map[string]string{} // родитель+номер → имя VLAN
+
 	for i, iface := range c.Interfaces {
 		path := fmt.Sprintf("interfaces[%d]", i)
-		if iface.Type == "vlan" && iface.Parent != "" && !names[iface.Parent] {
-			r.warnf(path+".parent", "родительский интерфейс %q не объявлен", iface.Parent)
-		}
+
+		seen := map[string]bool{}
 		for _, m := range iface.Members {
-			if !names[m] {
-				r.warnf(path+".members", "порт %q не объявлен в конфигурации", m)
+			member, ok := byID[m]
+			if !ok {
+				r.errf(path+".members", "порт %q не существует", m)
+				continue
 			}
+			if m == iface.ID {
+				r.errf(path+".members", "интерфейс %q включён сам в себя", iface.Name)
+				continue
+			}
+			if seen[m] {
+				r.errf(path+".members", "порт %q указан дважды", member.Name)
+			}
+			seen[m] = true
+
+			// Мост в мост ядро не вкладывает: подчинить можно только порт.
+			if member.Type == "bridge" {
+				r.errf(path+".members",
+					"мост %q нельзя включить в %q: ядро подчиняет мосту только порты и VLAN",
+					member.Name, iface.Name)
+			}
+			if member.Type == "bond" && iface.Type == "bond" {
+				r.errf(path+".members", "агрегацию %q нельзя включить в агрегацию %q",
+					member.Name, iface.Name)
+			}
+			// Порт принадлежит ровно одному мосту: второй хозяин означает, что
+			// применится тот, кто окажется последним, — и не тот, кого выбрали.
+			if own := owner[m]; own != "" && own != iface.Name {
+				r.errf(path+".members",
+					"порт %q уже входит в %q: включить его можно только куда-то одно",
+					member.Name, own)
+			}
+			if !member.Enabled {
+				r.warnf(path+".members", "порт %q выключен и трафик через %q не пойдёт",
+					member.Name, iface.Name)
+			}
+		}
+
+		if iface.Type != "vlan" {
+			continue
+		}
+		parent, ok := byID[iface.Parent]
+		if iface.Parent == "" {
+			continue // уже сообщили выше
+		}
+		if !ok {
+			r.errf(path+".parent", "родительский интерфейс %q не существует", iface.Parent)
+			continue
+		}
+		if parent.ID == iface.ID {
+			r.errf(path+".parent", "VLAN %q поднят сам над собой", iface.Name)
+			continue
+		}
+		if parent.Type == "vlan" {
+			r.errf(path+".parent",
+				"VLAN поверх VLAN (%q над %q) netOS не настраивает", iface.Name, parent.Name)
+		}
+		// Подчинённый порт отдаёт весь трафик мосту. VLAN, поднятый над ним,
+		// не увидит ничего: тегированный трафик уйдёт в мост целиком.
+		if own := owner[parent.ID]; own != "" {
+			r.errf(path+".parent",
+				"родитель %q входит в %q: весь его трафик уходит туда, и VLAN %q останется пустым",
+				parent.Name, own, iface.Name)
+		}
+		key := fmt.Sprintf("%s/%d", iface.Parent, iface.VLANID)
+		if other, taken := vlanTaken[key]; taken {
+			r.errf(path+".vlan_id", "VLAN %d на %q уже описан интерфейсом %q",
+				iface.VLANID, parent.Name, other)
+		}
+		vlanTaken[key] = iface.Name
+	}
+
+	c.validateInterfaceUse(r, owner, byID)
+}
+
+// validateInterfaceUse следит, чтобы адрес не назначали туда, где его быть не
+// может, и чтобы один интерфейс не занимали дважды.
+func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]string, byID map[string]Interface) {
+	// Сегмент и аплинк на одном интерфейсе несовместимы: подсистема аплинков
+	// снимает с него все адреса, кроме своего, — локальный сегмент исчезнет
+	// при первом же применении, и притом молча.
+	type use struct{ kind, by string }
+	usedBy := map[string]use{}
+	claim := func(path, id string, u use) {
+		if id == "" {
+			return
+		}
+		prev, taken := usedBy[id]
+		switch {
+		case !taken:
+			usedBy[id] = u
+		case prev.kind != u.kind:
+			r.errf(path+".interface",
+				"на интерфейсе уже %s: аплинк и локальный сегмент на одной карте не уживаются",
+				prev.by)
+		case u.kind == "wan":
+			r.errf(path+".interface", "на интерфейсе уже %s: двух аплинков на одной карте не бывает", prev.by)
+		default:
+			// Несколько подсетей на одном интерфейсе ядро принимает, но клиенты
+			// увидят друг друга: это одна широковещательная область.
+			r.warnf(path+".interface",
+				"на интерфейсе уже %s: сегменты окажутся в одной широковещательной области", prev.by)
+		}
+	}
+
+	for i, n := range c.Networks {
+		path := fmt.Sprintf("networks[%d]", i)
+		iface, ok := byID[n.Interface]
+		if !ok {
+			continue // об этом сообщает validateNetworks
+		}
+		if own := owner[n.Interface]; own != "" {
+			r.errf(path+".interface",
+				"порт %q входит в мост %q и своего адреса не имеет: назначьте сегмент самому мосту",
+				iface.Name, own)
+		}
+		if n.Enabled {
+			claim(path, n.Interface, use{"network", "сегмент «" + n.Name + "»"})
+		}
+	}
+	for i, w := range c.WANs {
+		path := fmt.Sprintf("wans[%d]", i)
+		iface, ok := byID[w.Interface]
+		if !ok {
+			continue // об этом сообщает validateWANs
+		}
+		if own := owner[w.Interface]; own != "" {
+			r.errf(path+".interface",
+				"порт %q входит в мост %q: аплинк на подчинённом порту не поднимется",
+				iface.Name, own)
+		}
+		if w.Enabled {
+			// Выключенный интерфейс аплинку не помеха: подсистема аплинков
+			// поднимает линк сама — на нём работает клиент DHCP или PPPoE.
+			claim(path, w.Interface, use{"wan", "аплинк «" + w.Name + "»"})
 		}
 	}
 }

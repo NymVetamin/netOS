@@ -23,6 +23,9 @@ type plan struct {
 	VLANs map[string][]config.Interface
 	// Uplink — интерфейсы аплинков: их поднимаем, но не настраиваем.
 	Uplink map[string]bool
+	// Names — имя интерфейса по идентификатору. Связи в конфигурации описаны
+	// идентификаторами, а генераторы оперируют именами.
+	Names map[string]string
 	// SuppressIPv6 повторяет политику IPv6 из конфигурации.
 	SuppressIPv6 bool
 }
@@ -33,14 +36,14 @@ func buildPlan(cfg *config.Config) plan {
 		Master:       map[string]config.Interface{},
 		VLANs:        map[string][]config.Interface{},
 		Uplink:       map[string]bool{},
+		Names:        map[string]string{},
 		SuppressIPv6: cfg.IPv6.Mode == "off",
 	}
 
 	byID := map[string]config.Interface{}
-	byName := map[string]config.Interface{}
 	for _, iface := range cfg.Interfaces {
 		byID[iface.ID] = iface
-		byName[iface.Name] = iface
+		p.Names[iface.ID] = iface.Name
 	}
 
 	for _, n := range cfg.Networks {
@@ -60,15 +63,18 @@ func buildPlan(cfg *config.Config) plan {
 		}
 	}
 
+	// Members и Parent хранят идентификаторы: имя интерфейса администратор
+	// меняет, а связь обязана это пережить. Здесь переводим их в имена — ими
+	// оперируют и networkd, и ifupdown.
 	for _, iface := range cfg.Interfaces {
 		switch iface.Type {
 		case "bridge", "bond":
-			for _, member := range iface.Members {
+			for _, member := range cfg.InterfaceNames(iface.Members) {
 				p.Master[member] = iface
 			}
 		case "vlan":
-			if iface.Parent != "" {
-				p.VLANs[iface.Parent] = append(p.VLANs[iface.Parent], iface)
+			if parent := cfg.InterfaceName(iface.Parent); parent != "" {
+				p.VLANs[parent] = append(p.VLANs[parent], iface)
 			}
 		}
 	}
@@ -95,4 +101,18 @@ func buildPlan(cfg *config.Config) plan {
 // вмешательство в которые сломало бы Multi-WAN.
 func (p plan) managedByNetOS(iface config.Interface) bool {
 	return p.Uplink[iface.Name]
+}
+
+// name переводит идентификатор интерфейса в имя.
+func (p plan) name(id string) string { return p.Names[id] }
+
+// names переводит список идентификаторов в имена, пропуская неизвестные.
+func (p plan) namesOf(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if n := p.Names[id]; n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }

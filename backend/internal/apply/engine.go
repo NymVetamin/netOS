@@ -325,7 +325,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	if needConfirm && previous != nil && NeedsConfirmation(actions) {
 		timeout := time.Duration(cfg.System.Panel.CommitTimeout) * time.Second
 		if timeout <= 0 {
-			timeout = 90 * time.Second
+			timeout = 30 * time.Second
 		}
 		p := &pendingCommit{
 			previous: previous,

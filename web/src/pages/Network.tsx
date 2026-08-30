@@ -127,9 +127,11 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                       value={w.interface}
                       onChange={(e) => patch((d) => (d.wans[idx].interface = e.target.value))}
                     >
-                      {(config.interfaces || []).map((i: any) => (
+                      {!w.interface && <option value="">не выбран</option>}
+                      {ifaceOptions(config, w.interface).map((i: any) => (
                         <option key={i.id} value={i.id}>
                           {i.name}
+                          {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
                         </option>
                       ))}
                     </select>
@@ -400,14 +402,19 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                       }
                     />
                   </Field>
-                  <Field label="Порт или мост">
+                  <Field
+                    label="Порт или мост"
+                    hint="Порт, отданный мосту, здесь не появится: адрес принадлежит самому мосту"
+                  >
                     <select
                       value={n.interface}
                       onChange={(e) => patch((d) => (d.networks[idx].interface = e.target.value))}
                     >
-                      {(config.interfaces || []).map((i: any) => (
+                      {!n.interface && <option value="">не выбран</option>}
+                      {ifaceOptions(config, n.interface).map((i: any) => (
                         <option key={i.id} value={i.id}>
                           {i.name}
+                          {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
                         </option>
                       ))}
                     </select>
@@ -497,6 +504,8 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
 // ---------------------------------------------------------------------------
 
 function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
+  const interfaces: any[] = config.interfaces || [];
+
   return (
     <Card
       title="Порты, мосты и VLAN"
@@ -509,10 +518,9 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
             onClick={() =>
               patch((d) => {
                 d.interfaces = d.interfaces || [];
-                const n = d.interfaces.filter((i: any) => i.type === "bridge").length + 1;
                 d.interfaces.push({
                   id: "br-" + Date.now(),
-                  name: "br" + n,
+                  name: freeName(d.interfaces, "br"),
                   type: "bridge",
                   members: [],
                   enabled: true,
@@ -524,16 +532,24 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
           </button>
           <button
             className="btn sm"
+            disabled={vlanParents(config).length === 0}
+            title={
+              vlanParents(config).length === 0
+                ? "Нет интерфейса, над которым можно поднять VLAN: все порты отданы мостам"
+                : undefined
+            }
             onClick={() =>
               patch((d) => {
                 d.interfaces = d.interfaces || [];
-                const parent = d.interfaces[0]?.name || "eth0";
+                const parent = vlanParents(d)[0];
+                if (!parent) return;
+                const vid = freeVlanID(d, parent.id);
                 d.interfaces.push({
                   id: "vl-" + Date.now(),
-                  name: parent + ".100",
+                  name: vlanName(parent.name, vid),
                   type: "vlan",
-                  parent,
-                  vlan_id: 100,
+                  parent: parent.id,
+                  vlan_id: vid,
                   enabled: true,
                 });
               })
@@ -551,13 +567,14 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
               <th>Имя</th>
               <th>Тип</th>
               <th>Состав</th>
+              <th>Занят</th>
               <th>MTU</th>
               <th>Включён</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {(config.interfaces || []).map((i: any, idx: number) => (
+            {interfaces.map((i: any, idx: number) => (
               <tr key={i.id}>
                 <td>
                   {i.type === "physical" ? (
@@ -568,7 +585,15 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                       className="mono"
                       style={{ width: 130 }}
                       value={i.name}
-                      onChange={(e) => patch((d) => (d.interfaces[idx].name = e.target.value))}
+                      onChange={(e) =>
+                        patch((d) => {
+                          // Связи идут по идентификатору, поэтому переименование
+                          // ничего не рвёт. Имена дочерних VLAN, которые их ещё
+                          // не переопределяли, идут следом за родителем.
+                          d.interfaces[idx].name = e.target.value;
+                          renameVLANChildren(d, i.id, i.name, e.target.value);
+                        })
+                      }
                     />
                   )}
                 </td>
@@ -577,33 +602,15 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                 </td>
                 <td className="faint mono">
                   {i.type === "vlan" ? (
-                    <span className="row" style={{ gap: "0.3rem" }}>
-                      <select
-                        value={i.parent || ""}
-                        onChange={(e) => patch((d) => (d.interfaces[idx].parent = e.target.value))}
-                      >
-                        {(config.interfaces || [])
-                          .filter((x: any) => x.type !== "vlan")
-                          .map((x: any) => (
-                            <option key={x.id} value={x.name}>
-                              {x.name}
-                            </option>
-                          ))}
-                      </select>
-                      <input
-                        type="number"
-                        style={{ width: 80 }}
-                        value={i.vlan_id || 0}
-                        onChange={(e) =>
-                          patch((d) => (d.interfaces[idx].vlan_id = Number(e.target.value)))
-                        }
-                      />
-                    </span>
-                  ) : i.type === "bridge" ? (
+                    <VLANPicker config={config} patch={patch} index={idx} iface={i} />
+                  ) : i.type === "bridge" || i.type === "bond" ? (
                     <MemberPicker config={config} patch={patch} index={idx} iface={i} />
                   ) : (
                     "—"
                   )}
+                </td>
+                <td className="faint" style={{ fontSize: 12.5 }}>
+                  {usageOf(config, i) || "свободен"}
                 </td>
                 <td>
                   <input
@@ -624,11 +631,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                   {i.type !== "physical" && (
                     <button
                       className="btn ghost sm"
-                      onClick={() =>
-                        patch(
-                          (d) => (d.interfaces = d.interfaces.filter((x: any) => x.id !== i.id)),
-                        )
-                      }
+                      onClick={() => patch((d) => removeInterface(d, i.id))}
                     >
                       Удалить
                     </button>
@@ -639,11 +642,64 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
           </tbody>
         </table>
       </TableWrap>
+      <div className="faint" style={{ fontSize: 12.5, marginTop: "0.7rem" }}>
+        Порт входит только в один мост. У подчинённого порта нет своего адреса:
+        сегмент и подключение к провайдеру назначаются самому мосту.
+      </div>
     </Card>
   );
 }
 
+// VLANPicker выбирает родителя и номер. Родителем может быть только тот
+// интерфейс, чей трафик действительно дойдёт до VLAN: свободный порт, мост или
+// агрегация. Порт, отданный мосту, отдаёт туда всё, включая тегированное.
+function VLANPicker({
+  config,
+  patch,
+  index,
+  iface,
+}: {
+  config: any;
+  patch: Patch;
+  index: number;
+  iface: any;
+}) {
+  const parents = vlanParents(config, iface.id);
+  const current = byID(config, iface.parent);
+  const orphan = iface.parent && !current;
+
+  return (
+    <span className="row wrap" style={{ gap: "0.3rem" }}>
+      <select
+        value={iface.parent || ""}
+        onChange={(e) => patch((d) => setVLANParent(d, index, e.target.value))}
+      >
+        {!iface.parent && <option value="">не выбран</option>}
+        {orphan && <option value={iface.parent}>интерфейс удалён</option>}
+        {current && !parents.some((p: any) => p.id === current.id) && (
+          <option value={current.id}>{current.name} (занят)</option>
+        )}
+        {parents.map((x: any) => (
+          <option key={x.id} value={x.id}>
+            {x.name}
+          </option>
+        ))}
+      </select>
+      <input
+        type="number"
+        style={{ width: 80 }}
+        min={1}
+        max={4094}
+        value={iface.vlan_id || 0}
+        onChange={(e) => patch((d) => setVLANID(d, index, Number(e.target.value)))}
+      />
+    </span>
+  );
+}
+
 // MemberPicker показывает, какие порты входят в мост, и позволяет их менять.
+// Занятые в другом мосту и отданные под аплинк показаны, но выбрать их нельзя:
+// объяснение рядом честнее исчезнувшей строки.
 function MemberPicker({
   config,
   patch,
@@ -655,31 +711,53 @@ function MemberPicker({
   index: number;
   iface: any;
 }) {
-  const candidates = (config.interfaces || []).filter(
-    (x: any) => x.type === "physical" || x.type === "vlan",
-  );
   const members: string[] = iface.members || [];
+  const candidates = (config.interfaces || []).filter(
+    (x: any) =>
+      x.id !== iface.id &&
+      (x.type === "physical" || x.type === "vlan") &&
+      // VLAN, поднятый над этим же мостом, включать в него нельзя: вышло бы
+      // кольцо из интерфейса в самого себя.
+      x.parent !== iface.id,
+  );
 
   return (
     <div className="row wrap" style={{ gap: "0.5rem" }}>
-      {candidates.length === 0 && <span className="faint">нет свободных портов</span>}
-      {candidates.map((c: any) => (
-        <label key={c.id} className="row" style={{ gap: "0.25rem", cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={members.includes(c.name)}
-            onChange={(e) =>
-              patch((d) => {
-                const list: string[] = d.interfaces[index].members || [];
-                d.interfaces[index].members = e.target.checked
-                  ? [...list, c.name]
-                  : list.filter((m) => m !== c.name);
-              })
-            }
-          />
-          <span className="mono">{c.name}</span>
-        </label>
-      ))}
+      {candidates.length === 0 && <span className="faint">нет портов</span>}
+      {candidates.map((c: any) => {
+        const mine = members.includes(c.id);
+        const blocker = mine ? "" : whyUnavailable(config, c, iface);
+        return (
+          <label
+            key={c.id}
+            className="row"
+            style={{ gap: "0.25rem", cursor: blocker ? "not-allowed" : "pointer" }}
+            title={blocker || undefined}
+          >
+            <input
+              type="checkbox"
+              checked={mine}
+              disabled={!!blocker}
+              onChange={(e) =>
+                patch((d) => {
+                  const list: string[] = d.interfaces[index].members || [];
+                  d.interfaces[index].members = e.target.checked
+                    ? [...list, c.id]
+                    : list.filter((m) => m !== c.id);
+                })
+              }
+            />
+            <span className="mono" style={blocker ? { opacity: 0.45 } : undefined}>
+              {c.name}
+            </span>
+            {blocker && (
+              <span className="faint" style={{ fontSize: 11.5 }}>
+                ({blocker})
+              </span>
+            )}
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -734,4 +812,155 @@ function typeLabel(t: string): string {
     default:
       return t;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Связи между интерфейсами
+//
+// Ссылки хранятся идентификаторами, а не именами: имя администратор меняет, и
+// связь по имени пережила бы переименование только на бумаге. Правила ниже —
+// те же, что проверяет сервер: порт входит ровно в один мост, у подчинённого
+// порта нет своего адреса, VLAN поднимается только над тем, чей трафик до него
+// дойдёт. Панель не даёт натыкать невозможное, а не молчит и не чинит потом.
+// ---------------------------------------------------------------------------
+
+const MAX_IFACE_NAME = 15;
+
+function byID(config: any, id: string): any {
+  if (!id) return undefined;
+  return (config.interfaces || []).find((i: any) => i.id === id);
+}
+
+// masterOf — мост или агрегация, которой отдан порт.
+function masterOf(config: any, id: string): any {
+  return (config.interfaces || []).find(
+    (i: any) =>
+      (i.type === "bridge" || i.type === "bond") && (i.members || []).includes(id),
+  );
+}
+
+// usageOf объясняет одной строкой, кем интерфейс занят. Без этого непонятно,
+// почему порт нельзя выбрать, и почему настройка не даёт ожидаемого результата.
+function usageOf(config: any, iface: any): string {
+  const parts: string[] = [];
+  const master = masterOf(config, iface.id);
+  if (master) parts.push("в мосту " + master.name);
+  const wan = (config.wans || []).find((w: any) => w.interface === iface.id);
+  if (wan) parts.push("аплинк «" + wan.name + "»");
+  const net = (config.networks || []).find((n: any) => n.interface === iface.id);
+  if (net) parts.push("сегмент «" + net.name + "»");
+  const vlans = (config.interfaces || []).filter(
+    (i: any) => i.type === "vlan" && i.parent === iface.id,
+  );
+  if (vlans.length > 0) parts.push("VLAN " + vlans.map((v: any) => v.name).join(", "));
+  return parts.join(", ");
+}
+
+// whyUnavailable объясняет, почему порт нельзя включить в этот мост.
+function whyUnavailable(config: any, candidate: any, target: any): string {
+  const master = masterOf(config, candidate.id);
+  if (master && master.id !== target.id) return "уже в " + master.name;
+  const wan = (config.wans || []).find((w: any) => w.interface === candidate.id);
+  if (wan) return "занят аплинком";
+  const net = (config.networks || []).find((n: any) => n.interface === candidate.id);
+  if (net) return "занят сегментом «" + net.name + "»";
+  return "";
+}
+
+// vlanParents — интерфейсы, над которыми VLAN действительно заработает.
+// Подчинённый мосту порт отдаёт туда весь трафик, включая тегированный, и
+// VLAN над ним остался бы пустым. VLAN поверх VLAN netOS не настраивает.
+function vlanParents(config: any, exceptID?: string): any[] {
+  return (config.interfaces || []).filter(
+    (i: any) =>
+      i.id !== exceptID && i.type !== "vlan" && !masterOf(config, i.id),
+  );
+}
+
+// vlanName строит имя так, как его принято записывать в Linux: имя родителя,
+// точка, номер. Длину режем сами: ядро обрежет молча, а на имя ссылаются зоны
+// файрволла.
+function vlanName(parentName: string, vlanID: number): string {
+  const suffix = "." + vlanID;
+  const keep = Math.max(1, MAX_IFACE_NAME - suffix.length);
+  return parentName.slice(0, keep) + suffix;
+}
+
+// freeVlanID подбирает номер, не занятый на этом же родителе: два интерфейса с
+// одним номером на одном родителе ядро не создаст.
+function freeVlanID(config: any, parentID: string): number {
+  const taken = new Set(
+    (config.interfaces || [])
+      .filter((i: any) => i.type === "vlan" && i.parent === parentID)
+      .map((i: any) => i.vlan_id),
+  );
+  let id = 100;
+  while (taken.has(id) && id < 4095) id++;
+  return id;
+}
+
+function freeName(interfaces: any[], prefix: string): string {
+  const taken = new Set(interfaces.map((i: any) => i.name));
+  let n = 1;
+  while (taken.has(prefix + n)) n++;
+  return prefix + n;
+}
+
+// setVLANParent и setVLANID меняют связь и подтягивают имя, если его не
+// переопределяли вручную: иначе в таблице остаётся eth0.100 на другом порту и
+// с другим номером.
+function setVLANParent(draft: any, index: number, parentID: string) {
+  const iface = draft.interfaces[index];
+  const before = byID(draft, iface.parent);
+  const after = byID(draft, parentID);
+  const wasDefault = !before || iface.name === vlanName(before.name, iface.vlan_id);
+  iface.parent = parentID;
+  if (wasDefault && after) iface.name = vlanName(after.name, iface.vlan_id);
+}
+
+function setVLANID(draft: any, index: number, vlanID: number) {
+  const iface = draft.interfaces[index];
+  const parent = byID(draft, iface.parent);
+  const wasDefault = parent && iface.name === vlanName(parent.name, iface.vlan_id);
+  iface.vlan_id = vlanID;
+  if (wasDefault) iface.name = vlanName(parent.name, vlanID);
+}
+
+// renameVLANChildren тянет за родителем имена дочерних VLAN, пока они
+// стандартные: администратор переименовал порт, а eth0.100 на нём остался бы.
+function renameVLANChildren(draft: any, parentID: string, oldName: string, newName: string) {
+  for (const child of draft.interfaces || []) {
+    if (child.type === "vlan" && child.parent === parentID) {
+      if (child.name === vlanName(oldName, child.vlan_id)) {
+        child.name = vlanName(newName, child.vlan_id);
+      }
+    }
+  }
+}
+
+// removeInterface убирает интерфейс вместе со всеми ссылками на него. Без
+// уборки оставались бы мост с несуществующим портом и VLAN без родителя —
+// конфигурация, которую нельзя применить.
+function removeInterface(draft: any, id: string) {
+  draft.interfaces = (draft.interfaces || []).filter((i: any) => i.id !== id);
+  // VLAN живёт только вместе с родителем: без него настраивать нечего.
+  const orphans = (draft.interfaces || []).filter(
+    (i: any) => i.type === "vlan" && i.parent === id,
+  );
+  for (const o of orphans) removeInterface(draft, o.id);
+
+  for (const i of draft.interfaces || []) {
+    if (i.members) i.members = i.members.filter((m: string) => m !== id);
+  }
+  draft.networks = (draft.networks || []).filter((n: any) => n.interface !== id);
+  draft.wans = (draft.wans || []).filter((w: any) => w.interface !== id);
+}
+
+// ifaceOptions — интерфейсы, которым можно назначить адрес: сегмент или
+// аплинк. Подчинённый порт своего адреса не имеет, поэтому в список не идёт,
+// но уже выбранный показывается, чтобы настройка не подменилась молча.
+function ifaceOptions(config: any, selected: string): any[] {
+  return (config.interfaces || []).filter(
+    (i: any) => i.id === selected || !masterOf(config, i.id),
+  );
 }

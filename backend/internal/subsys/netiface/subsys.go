@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,9 +24,25 @@ import (
 // Interfaces управляет L2: бриджи, VLAN, bond, MTU, состояние up/down.
 type Interfaces struct {
 	Runner system.Runner
+	// OwnedPath — файл со списком имён интерфейсов, которыми владеет netOS.
+	//
+	// Без него удаление моста и VLAN из панели не доходило до системы: понять,
+	// что делать с интерфейсом, которого в конфигурации больше нет, можно
+	// только помня, что он оттуда и взялся. Прежний код судил по префиксу
+	// имени (br-, vl-), а имя задаёт администратор — мост «br1» под правило не
+	// попадал и оставался в ip a навсегда.
+	OwnedPath string
+
+	// owned — список из OwnedPath, прочитанный в начале Apply.
+	owned map[string]bool
 }
 
-func NewInterfaces(r system.Runner) *Interfaces { return &Interfaces{Runner: r} }
+// DefaultOwnedPath — где хранится список интерфейсов, созданных netOS.
+const DefaultOwnedPath = "/var/lib/netos/owned-links"
+
+func NewInterfaces(r system.Runner) *Interfaces {
+	return &Interfaces{Runner: r, OwnedPath: DefaultOwnedPath}
+}
 
 func (s *Interfaces) Name() string { return "interfaces" }
 
@@ -45,13 +62,16 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 		case !existed && iface.Type != "physical":
 			actions = append(actions, apply.Action{
 				Kind: "create", Target: iface.Name,
-				Detail: describeInterface(iface),
+				Detail: describeInterface(new, iface),
 			})
 		case existed && !reflect.DeepEqual(prev, iface):
 			actions = append(actions, apply.Action{
 				Kind: "update", Target: iface.Name,
-				Detail:     describeInterface(iface),
-				Disruptive: prev.Type != iface.Type || prev.VLANID != iface.VLANID,
+				Detail: describeInterface(new, iface),
+				// Переименование рвёт связность так же, как смена типа:
+				// интерфейс со старым именем удаляется целиком.
+				Disruptive: prev.Type != iface.Type || prev.VLANID != iface.VLANID ||
+					prev.Name != iface.Name || prev.Parent != iface.Parent,
 			})
 		}
 		delete(oldByID, iface.ID)
@@ -69,31 +89,51 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
-	// Порядок важен: bond и bridge должны существовать до того, как в них
-	// добавят порты, а родитель VLAN — до создания самого VLAN.
+	// Лишнее убираем первым: переименованный мост занимает старое имя и держит
+	// порты, а VLAN, у которого сменили номер или родителя, перевесить нельзя —
+	// только пересоздать.
+	if err := s.removeStale(ctx, cfg); err != nil {
+		return err
+	}
+
+	// Дальше порядок важен: bond и bridge должны существовать до того, как в
+	// них добавят порты, а родитель VLAN — до создания самого VLAN.
 	for _, kind := range []string{"bond", "bridge", "vlan"} {
 		for _, iface := range cfg.Interfaces {
 			if iface.Type != kind {
 				continue
 			}
-			if err := s.ensure(ctx, iface); err != nil {
+			if err := s.ensure(ctx, cfg, iface); err != nil {
 				return err
 			}
 		}
 	}
 
 	for _, iface := range cfg.Interfaces {
-		if err := s.configure(ctx, iface); err != nil {
+		if err := s.configure(ctx, cfg, iface); err != nil {
 			return err
 		}
 	}
-	return s.removeStale(ctx, cfg)
+	return s.rememberOwned(cfg)
 }
 
 // ensure создаёт виртуальный интерфейс, если его ещё нет.
-func (s *Interfaces) ensure(ctx context.Context, iface config.Interface) error {
+func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface config.Interface) error {
 	if linkExists(iface.Name) {
-		return nil
+		mismatch := describeMismatch(cfg, iface)
+		if mismatch == "" {
+			return nil
+		}
+		// Имя занято интерфейсом, который не соответствует настройке. Свой —
+		// пересоздаём: у VLAN нельзя на ходу сменить ни номер, ни родителя, и
+		// без пересоздания панель показывала бы одно, а ip a другое.
+		if !s.owned[iface.Name] {
+			return fmt.Errorf("имя %s уже занято интерфейсом, который не создавал netOS (%s)",
+				iface.Name, mismatch)
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "link", "delete", iface.Name); err != nil {
+			return fmt.Errorf("пересоздание %s (%s): %w", iface.Name, mismatch, err)
+		}
 	}
 	switch iface.Type {
 	case "bridge":
@@ -103,10 +143,14 @@ func (s *Interfaces) ensure(ctx context.Context, iface config.Interface) error {
 		// STP защищает от петли, если кто-то соединит два порта одного бриджа.
 		_, _ = s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "type", "bridge", "stp_state", "1")
 	case "vlan":
-		if !linkExists(iface.Parent) {
-			return fmt.Errorf("родительский интерфейс %s для VLAN %s не существует", iface.Parent, iface.Name)
+		parent := cfg.InterfaceName(iface.Parent)
+		if parent == "" {
+			return fmt.Errorf("VLAN %s: родительский интерфейс не выбран", iface.Name)
 		}
-		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "link", iface.Parent,
+		if !linkExists(parent) {
+			return fmt.Errorf("родительский интерфейс %s для VLAN %s не существует", parent, iface.Name)
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "link", parent,
 			"name", iface.Name, "type", "vlan", "id", fmt.Sprint(iface.VLANID)); err != nil {
 			return fmt.Errorf("создание VLAN %s: %w", iface.Name, err)
 		}
@@ -119,7 +163,7 @@ func (s *Interfaces) ensure(ctx context.Context, iface config.Interface) error {
 }
 
 // configure применяет параметры и членство в бридже/bond.
-func (s *Interfaces) configure(ctx context.Context, iface config.Interface) error {
+func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface config.Interface) error {
 	if !linkExists(iface.Name) {
 		// Физический порт может отсутствовать: сетевую карту вынули или
 		// переименовали. Это не повод валить всё применение.
@@ -135,7 +179,7 @@ func (s *Interfaces) configure(ctx context.Context, iface config.Interface) erro
 		_, _ = s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "address", iface.MAC)
 	}
 
-	for _, member := range iface.Members {
+	for _, member := range cfg.InterfaceNames(iface.Members) {
 		if !linkExists(member) {
 			continue
 		}
@@ -163,6 +207,13 @@ func (s *Interfaces) configure(ctx context.Context, iface config.Interface) erro
 		if err := s.ensureBridgeCarrier(ctx, iface.Name); err != nil {
 			return err
 		}
+	}
+
+	// Порт, выведенный из моста в панели, обязан из него выйти и в системе:
+	// иначе он остаётся подчинённым, его адрес не работает, а администратор
+	// видит в панели свободный порт.
+	if err := s.releaseFormerMembers(ctx, cfg, iface); err != nil {
+		return err
 	}
 
 	state := "up"
@@ -201,30 +252,135 @@ func dummyNameFor(bridge string) string {
 	return name
 }
 
-// removeStale удаляет виртуальные интерфейсы netOS, которых больше нет в
-// конфигурации. Чужие интерфейсы не трогаем.
+// removeStale удаляет интерфейсы, которыми netOS владеет, но которых больше
+// нет в конфигурации. Чужие интерфейсы не трогаем.
+//
+// Владение определяется не по имени, а по списку в OwnedPath: имя задаёт
+// администратор, и мост «br1» под шаблон «br-*» не попадал — удаление из
+// панели до системы не доходило вовсе.
 func (s *Interfaces) removeStale(ctx context.Context, cfg *config.Config) error {
-	wanted := map[string]bool{}
-	for _, i := range cfg.Interfaces {
-		wanted[i.Name] = true
-		// Dummy-порт живёт ровно столько, сколько бридж остаётся пустым: как
-		// только в него добавят настоящий порт, dummy будет удалён здесь же.
-		if i.Type == "bridge" && len(i.Members) == 0 {
-			wanted[dummyNameFor(i.Name)] = true
+	s.owned = s.loadOwned()
+	wanted := wantedLinks(cfg)
+
+	stale := map[string]bool{}
+	for name := range s.owned {
+		if !wanted[name] {
+			stale[name] = true
 		}
 	}
-
+	// Установки прежних версий списка не имеют: там владение определялось
+	// префиксом имени. Пока файл не наполнился, разбираем и такие имена, иначе
+	// созданное до обновления осталось бы навсегда.
 	names, err := listLinks()
 	if err != nil {
 		return err
 	}
 	for _, name := range names {
-		if wanted[name] || !isManagedName(name) {
+		if !wanted[name] && isLegacyManagedName(name) {
+			stale[name] = true
+		}
+	}
+
+	for name := range stale {
+		if !linkExists(name) {
 			continue
 		}
-		_, _ = s.Runner.Run(ctx, "ip", "link", "delete", name)
+		if _, err := s.Runner.Run(ctx, "ip", "link", "delete", name); err != nil {
+			// Интерфейс мог исчезнуть сам: вынули карту, ушёл модуль. Валить
+			// из-за этого всё применение незачем.
+			continue
+		}
 	}
 	return nil
+}
+
+// releaseFormerMembers выводит из моста или агрегации порты, которых больше нет
+// в её составе. Без этого снятая в панели галочка не доходила до системы:
+// порт оставался подчинённым, а его собственный адрес не работал.
+func (s *Interfaces) releaseFormerMembers(ctx context.Context, cfg *config.Config, iface config.Interface) error {
+	if iface.Type != "bridge" && iface.Type != "bond" {
+		return nil
+	}
+	keep := map[string]bool{}
+	for _, name := range cfg.InterfaceNames(iface.Members) {
+		keep[name] = true
+	}
+	if len(iface.Members) == 0 {
+		keep[dummyNameFor(iface.Name)] = true
+	}
+	for _, port := range slavesOf(iface.Name) {
+		if keep[port] {
+			continue
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", port, "nomaster"); err != nil {
+			return fmt.Errorf("вывод %s из %s: %w", port, iface.Name, err)
+		}
+	}
+	return nil
+}
+
+// wantedLinks — имена, которые обязаны существовать после применения.
+func wantedLinks(cfg *config.Config) map[string]bool {
+	wanted := map[string]bool{}
+	for _, i := range cfg.Interfaces {
+		wanted[i.Name] = true
+		// Dummy-порт живёт ровно столько, сколько бридж остаётся пустым: как
+		// только в него добавят настоящий порт, dummy будет удалён.
+		if i.Type == "bridge" && len(i.Members) == 0 {
+			wanted[dummyNameFor(i.Name)] = true
+		}
+	}
+	return wanted
+}
+
+// rememberOwned записывает, какими интерфейсами netOS владеет сейчас. Список
+// переживает перезагрузку и обновление: без него удаление из панели опять
+// перестало бы доходить до системы.
+func (s *Interfaces) rememberOwned(cfg *config.Config) error {
+	if s.OwnedPath == "" {
+		return nil
+	}
+	var names []string
+	for _, i := range cfg.Interfaces {
+		if i.Type == "physical" {
+			continue // порт существует и без нас
+		}
+		names = append(names, i.Name)
+		if i.Type == "bridge" && len(i.Members) == 0 {
+			names = append(names, dummyNameFor(i.Name))
+		}
+	}
+	sort.Strings(names)
+	s.owned = map[string]bool{}
+	for _, n := range names {
+		s.owned[n] = true
+	}
+	data := []byte(strings.Join(names, "\n"))
+	if len(names) > 0 {
+		data = append(data, '\n')
+	}
+	if err := system.WriteFileAtomic(s.OwnedPath, data, 0o644); err != nil {
+		return fmt.Errorf("запись списка интерфейсов netOS: %w", err)
+	}
+	return nil
+}
+
+func (s *Interfaces) loadOwned() map[string]bool {
+	owned := map[string]bool{}
+	if s.OwnedPath == "" {
+		return owned
+	}
+	data, err := os.ReadFile(s.OwnedPath)
+	if err != nil {
+		// Файла нет при первом применении и на установке прежней версии.
+		return owned
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			owned[line] = true
+		}
+	}
+	return owned
 }
 
 func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
@@ -655,18 +811,26 @@ func (s *WAN) Health(ctx context.Context, cfg *config.Config) error {
 // вспомогательное
 // ---------------------------------------------------------------------------
 
+// Пути к sysfs и procfs вынесены в переменные, чтобы тесты могли подсунуть
+// вместо них каталог с вымышленными интерфейсами: настоящие мосты и VLAN на
+// машине разработчика создавать незачем.
+var (
+	sysClassNet = "/sys/class/net"
+	procNetVLAN = "/proc/net/vlan"
+)
+
 // linkExists проверяет наличие интерфейса через sysfs — это дешевле запуска ip
 // и не требует контекста.
 func linkExists(name string) bool {
 	if name == "" {
 		return false
 	}
-	_, err := os.Stat("/sys/class/net/" + name)
+	_, err := os.Stat(sysClassNet + "/" + name)
 	return err == nil
 }
 
 func listLinks() ([]string, error) {
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(sysClassNet)
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +843,7 @@ func listLinks() ([]string, error) {
 
 // masterOf возвращает имя бриджа или bond, в который включён порт.
 func masterOf(name string) string {
-	link, err := os.Readlink("/sys/class/net/" + name + "/master")
+	link, err := os.Readlink(sysClassNet + "/" + name + "/master")
 	if err != nil {
 		return ""
 	}
@@ -687,9 +851,111 @@ func masterOf(name string) string {
 	return parts[len(parts)-1]
 }
 
-// isManagedName сообщает, создан ли интерфейс самим netOS. Удалять чужие
-// интерфейсы нельзя: на машине может быть что угодно ещё.
-func isManagedName(name string) bool {
+// slavesOf возвращает порты, подчинённые бриджу или агрегации прямо сейчас.
+// Список берётся из системы, а не из конфигурации: нас интересует именно то,
+// что в конфигурации не описано и подлежит выводу.
+func slavesOf(master string) []string {
+	entries, err := os.ReadDir(sysClassNet + "/" + master + "/brif")
+	if err == nil {
+		out := make([]string, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, e.Name())
+		}
+		return out
+	}
+	names, err := listLinks()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, name := range names {
+		if masterOf(name) == master {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// linkKind определяет, чем интерфейс является на самом деле: bridge, bond,
+// vlan или physical. Пустая строка означает «определить не удалось» — тогда
+// выводов о несоответствии не делаем.
+func linkKind(name string) string {
+	if _, err := os.Stat(sysClassNet + "/" + name + "/bridge"); err == nil {
+		return "bridge"
+	}
+	if _, err := os.Stat(sysClassNet + "/" + name + "/bonding"); err == nil {
+		return "bond"
+	}
+	if _, err := os.Stat(procNetVLAN + "/" + name); err == nil {
+		return "vlan"
+	}
+	if _, err := os.Stat(sysClassNet + "/" + name + "/device"); err == nil {
+		return "physical"
+	}
+	return ""
+}
+
+// vlanOf возвращает номер и родителя существующего VLAN. Данные берутся из
+// /proc/net/vlan, который создаёт модуль 8021q; строки там выглядят так:
+//
+//	eth0.100  VID: 100	 REORDER_HDR: 1  dev->priv_flags: 1
+//	Device: eth0
+func vlanOf(name string) (id int, parent string, ok bool) {
+	data, err := os.ReadFile(procNetVLAN + "/" + name)
+	if err != nil {
+		return 0, "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "VID:":
+				_, _ = fmt.Sscan(fields[i+1], &id)
+			case "Device:":
+				parent = fields[i+1]
+			}
+		}
+	}
+	return id, parent, id > 0
+}
+
+// describeMismatch объясняет, чем существующий интерфейс отличается от
+// описанного в конфигурации. Пустая строка означает, что различий нет.
+//
+// Без этой проверки смена номера VLAN или его родителя в панели не доходила до
+// системы: интерфейс с нужным именем уже был, и его молча оставляли как есть.
+// Администратор видел в панели одно, а в ip a — другое.
+func describeMismatch(cfg *config.Config, iface config.Interface) string {
+	if iface.Type == "physical" {
+		return ""
+	}
+	kind := linkKind(iface.Name)
+	if kind == "" {
+		return "" // определить не удалось — не выдумываем
+	}
+	if kind != iface.Type {
+		return fmt.Sprintf("это %s, а не %s", kind, iface.Type)
+	}
+	if iface.Type != "vlan" {
+		return ""
+	}
+	id, parent, ok := vlanOf(iface.Name)
+	if !ok {
+		return ""
+	}
+	if id != iface.VLANID {
+		return fmt.Sprintf("номер VLAN %d вместо %d", id, iface.VLANID)
+	}
+	if want := cfg.InterfaceName(iface.Parent); want != "" && parent != want {
+		return fmt.Sprintf("поднят над %s вместо %s", parent, want)
+	}
+	return ""
+}
+
+// isLegacyManagedName сообщает, похоже ли имя на созданное netOS прежних
+// версий, когда владение определялось префиксом. Ныне владение хранится в
+// OwnedPath; шаблон остался только чтобы убрать за старой установкой.
+func isLegacyManagedName(name string) bool {
 	for _, prefix := range []string{"br-", "vl-", "bond-", "d-", "wg-ch", "tun-ch", "wg-srv"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
@@ -716,14 +982,18 @@ func addressesOf(ctx context.Context, r system.Runner, iface string) (map[string
 	return result, nil
 }
 
-func describeInterface(i config.Interface) string {
+func describeInterface(cfg *config.Config, i config.Interface) string {
 	switch i.Type {
 	case "vlan":
-		return fmt.Sprintf("VLAN %d на %s", i.VLANID, i.Parent)
+		parent := cfg.InterfaceName(i.Parent)
+		if parent == "" {
+			parent = "(не выбран)"
+		}
+		return fmt.Sprintf("VLAN %d на %s", i.VLANID, parent)
 	case "bridge":
-		return "бридж: " + strings.Join(i.Members, ", ")
+		return "бридж: " + strings.Join(cfg.InterfaceNames(i.Members), ", ")
 	case "bond":
-		return "агрегация: " + strings.Join(i.Members, ", ")
+		return "агрегация: " + strings.Join(cfg.InterfaceNames(i.Members), ", ")
 	}
 	return i.Type
 }
