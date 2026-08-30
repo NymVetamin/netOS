@@ -307,13 +307,25 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                       />
                     </Field>
                     {w.proto === "pppoe" && (
-                      <Field label="Имя услуги" hint="Обычно оставляют пустым">
-                        <input
-                          type="text"
-                          value={w.service || ""}
-                          onChange={(e) => patch((d) => (d.wans[idx].service = e.target.value))}
-                        />
-                      </Field>
+                      <>
+                        <Field label="Имя услуги" hint="PPPoE Service-Name; обычно оставляют пустым">
+                          <input
+                            type="text"
+                            value={w.service || ""}
+                            onChange={(e) => patch((d) => (d.wans[idx].service = e.target.value))}
+                          />
+                        </Field>
+                        <Field
+                          label="Имя концентратора"
+                          hint="PPPoE Access Concentrator (AC); заполняйте только если это требует провайдер"
+                        >
+                          <input
+                            type="text"
+                            value={w.ac || ""}
+                            onChange={(e) => patch((d) => (d.wans[idx].ac = e.target.value))}
+                          />
+                        </Field>
+                      </>
                     )}
                   </div>
                 )}

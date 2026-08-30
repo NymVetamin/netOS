@@ -173,9 +173,8 @@ type WAN struct {
 	// Proto: dhcp | static | pppoe | l2tp
 	Proto string `json:"proto"`
 	// Для static.
-	Address string   `json:"address,omitempty"`
-	Gateway string   `json:"gateway,omitempty"`
-	DNS     []string `json:"dns,omitempty"`
+	Address string `json:"address,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
 	// Для pppoe и l2tp.
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
