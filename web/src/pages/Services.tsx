@@ -10,9 +10,8 @@ const DNS_CAPS: Record<
   { dot: boolean; doh: boolean; doq: boolean; filterAAAA: boolean }
 > = {
   dnsmasq: { dot: false, doh: false, doq: false, filterAAAA: true },
-  // unbound умеет только DoT и не вырезает AAAA вовсе — об этом лучше узнать
-  // здесь, чем обнаружить, что включённый в настройках фильтр не работает.
-  unbound: { dot: true, doh: false, doq: false, filterAAAA: false },
+  // netOS фильтрует AAAA в unbound через respip-теги для loopback и локальных сегментов.
+  unbound: { dot: true, doh: false, doq: false, filterAAAA: true },
   dnsproxy: { dot: true, doh: true, doq: true, filterAAAA: true },
   adguardhome: { dot: true, doh: true, doq: true, filterAAAA: true },
 };
