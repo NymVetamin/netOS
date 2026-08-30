@@ -813,6 +813,22 @@ function interfacesOfZone(config: any, zone: string): string[] {
       if (w.enabled) names.push(String(byID.get(w.interface) || ""));
     }
   }
+	if (zone === "vpn") {
+		for (const channel of config.channels || []) {
+			if (!channel.enabled || channel.type === "direct") continue;
+			const prefix = channel.type === "wireguard" ? "wg-ch" :
+				channel.type === "l2tp" ? "ppp-ch" :
+				channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";
+			names.push(`${prefix}${channel.index}`);
+		}
+		for (const server of config.vpn_servers || []) {
+			if (!server.enabled) continue;
+			const prefix = server.type === "wireguard" ? "wg-srv" :
+				server.type === "ocserv" ? "vpns" :
+				server.type === "ikev2" ? "xfrm-srv" : "";
+			if (prefix) names.push(`${prefix}${server.index}`);
+		}
+	}
   return names.filter(Boolean);
 }
 
