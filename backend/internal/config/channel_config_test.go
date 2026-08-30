@@ -42,6 +42,26 @@ func TestWireGuardChannelRejectsUnknownAndBrokenValues(t *testing.T) {
 	}
 }
 
+func TestWireGuardFailModesAndProbeValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "wireguard", Installed: true}}
+	ch := validWireGuardChannel()
+	ch.FailMode = "fallback"
+	ch.Fallback = "direct"
+	ch.Probe = Probe{Enabled: true, Type: "tcp", Targets: []string{"1.1.1.1:443"}, Interval: 5, Timeout: 2, FailThreshold: 2, RiseThreshold: 1}
+	cfg.Channels = append(cfg.Channels, ch)
+	for _, p := range cfg.Validate().Problems {
+		if p.Severity == "error" {
+			t.Fatalf("valid fallback rejected: %+v", p)
+		}
+	}
+
+	cfg.Channels[0].Enabled = false
+	if !problem(t, cfg, "channels", "выключенный запасной") {
+		t.Fatal("disabled fallback channel accepted")
+	}
+}
+
 func TestPolicyMayUseEnabledWireGuardChannel(t *testing.T) {
 	cfg := Default()
 	cfg.Components = []Component{{ID: "wireguard", Installed: true}}

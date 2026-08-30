@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
@@ -33,16 +35,33 @@ type Subsystem struct {
 	RTTablesPath string
 	SysClassNet  string
 	ProcSysNet   string
+	Logger       Logger
+	Probe        func(context.Context, config.Channel, string) bool
+
+	mu          sync.Mutex
+	states      map[string]*channelState
+	pausedUntil time.Time
 }
 
-func New(r system.Runner, stateDir string) *Subsystem {
-	return &Subsystem{
+type Logger interface {
+	Infof(string, ...any)
+	Warnf(string, ...any)
+}
+
+func New(r system.Runner, stateDir string, loggers ...Logger) *Subsystem {
+	s := &Subsystem{
 		Runner:       r,
 		StateDir:     stateDir,
 		RTTablesPath: "/etc/iproute2/rt_tables.d/netos-channels.conf",
 		SysClassNet:  "/sys/class/net",
 		ProcSysNet:   "/proc/sys/net",
+		states:       map[string]*channelState{},
 	}
+	if len(loggers) > 0 {
+		s.Logger = loggers[0]
+	}
+	s.Probe = s.probe
+	return s
 }
 
 func (s *Subsystem) Name() string { return "channels" }
@@ -95,6 +114,8 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	wanted := enabledWireGuard(cfg)
 	owned, err := s.readOwned()
 	if err != nil {
@@ -140,6 +161,8 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		return err
 	}
+	s.states = map[string]*channelState{}
+	s.pausedUntil = time.Now().Add(15 * time.Second)
 	return nil
 }
 
@@ -273,9 +296,14 @@ func (s *Subsystem) ensureRoutes(ctx context.Context, ch config.Channel, name st
 }
 
 func (s *Subsystem) ensureRule(ctx context.Context, ch config.Channel) error {
+	return s.ensureRuleTable(ctx, ch, TableNumber(ch))
+}
+
+func (s *Subsystem) ensureRuleTable(ctx context.Context, ch config.Channel, lookup int) error {
 	priority := fmt.Sprint(Priority(ch))
-	table := fmt.Sprint(TableNumber(ch))
+	table := fmt.Sprint(lookup)
 	mark := fmt.Sprintf("0x%x", Mark(ch))
+	tableName := "netos-ch" + fmt.Sprint(lookup-tableBase)
 	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return fmt.Errorf("чтение правил: %w", err)
@@ -283,7 +311,7 @@ func (s *Subsystem) ensureRule(ctx context.Context, ch config.Channel) error {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), priority+":") &&
 			strings.Contains(line, "fwmark "+mark) &&
-			(strings.Contains(line, "lookup "+table) || strings.Contains(line, "lookup netos-ch"+fmt.Sprint(ch.Index))) {
+			(strings.Contains(line, "lookup "+table) || strings.Contains(line, "lookup "+tableName)) {
 			return nil
 		}
 	}

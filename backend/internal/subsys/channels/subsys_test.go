@@ -52,10 +52,15 @@ func (r *channelRunner) Run(_ context.Context, name string, args ...string) (str
 		r.routes += "default dev wg-ch1 proto netos metric 100\n"
 	case strings.Contains(command, "route replace blackhole default"):
 		r.routes += "blackhole default proto netos metric 1000\n"
+	case command == "ip -4 route flush table 1001":
+		r.routes = ""
 	case command == "ip -4 rule show":
 		return r.rules, nil
 	case strings.Contains(command, "rule add fwmark 0x1001"):
-		r.rules = "10001: from all fwmark 0x1001 lookup 1001\n"
+		lookup := args[len(args)-1]
+		r.rules = "10001: from all fwmark 0x1001 lookup " + lookup + "\n"
+	case command == "ip -4 rule del priority 10001":
+		r.rules = ""
 	case command == "ip link delete wg-ch1":
 		_ = os.RemoveAll(filepath.Join(r.s.SysClassNet, "wg-ch1"))
 	}
@@ -147,5 +152,50 @@ func TestWireGuardNumbersAreStable(t *testing.T) {
 	}
 	if TableNumber(ch) != 1017 || Mark(ch) != 0x1011 || Priority(ch) != 10017 {
 		t.Fatal(fmt.Sprintf("table=%d mark=%x priority=%d", TableNumber(ch), Mark(ch), Priority(ch)))
+	}
+}
+
+func TestMonitorAppliesBlockAndRestoresChannel(t *testing.T) {
+	s, runner := newTestSubsystem(t)
+	cfg := channelConfig()
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	ch := cfg.Channels[1]
+	ch.Probe.FailThreshold = 1
+	ch.Probe.RiseThreshold = 1
+	state := &channelState{}
+	s.record(context.Background(), cfg, ch, state, false)
+	if !state.Down || strings.Contains(runner.routes, "default dev wg-ch1") || !strings.Contains(runner.routes, "blackhole default") {
+		t.Fatalf("kill-switch not applied: down=%v routes=%q", state.Down, runner.routes)
+	}
+	s.record(context.Background(), cfg, ch, state, true)
+	if state.Down || !strings.Contains(runner.routes, "default dev wg-ch1") || !strings.Contains(runner.rules, "lookup 1001") {
+		t.Fatalf("channel not restored: down=%v routes=%q rules=%q", state.Down, runner.routes, runner.rules)
+	}
+}
+
+func TestMonitorCanUseDirectOrFallback(t *testing.T) {
+	s, runner := newTestSubsystem(t)
+	cfg := channelConfig()
+	ch := cfg.Channels[1]
+	ch.Probe.FailThreshold = 1
+	ch.FailMode = "direct"
+	runner.rules = "10001: from all fwmark 0x1001 lookup 1001\n"
+	s.record(context.Background(), cfg, ch, &channelState{}, false)
+	if runner.rules != "" {
+		t.Fatalf("direct fallback kept policy rule: %q", runner.rules)
+	}
+
+	fallback := ch
+	fallback.ID = "backup"
+	fallback.Index = 2
+	fallback.Enabled = true
+	cfg.Channels = append(cfg.Channels, fallback)
+	ch.FailMode = "fallback"
+	ch.Fallback = "backup"
+	s.record(context.Background(), cfg, ch, &channelState{}, false)
+	if !strings.Contains(runner.rules, "lookup 1002") {
+		t.Fatalf("fallback table not selected: %q", runner.rules)
 	}
 }

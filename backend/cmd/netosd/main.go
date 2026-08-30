@@ -108,7 +108,8 @@ func main() {
 
 	engine := apply.NewEngine(logger, *dryRun)
 	multiWAN := multiwan.New(runner, stateDir, logger)
-	if err := registerSubsystems(engine, runner, logger, multiWAN); err != nil {
+	channelMonitor := channels.New(runner, stateDir, logger)
+	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor); err != nil {
 		log.Fatalf("регистрация подсистем: %v", err)
 	}
 
@@ -190,6 +191,7 @@ func main() {
 		return
 	}
 	go multiWAN.Run(ctx, engine.Current)
+	go channelMonitor.Run(ctx, engine.Current)
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
 	// Дальше пароль знает только владелец машины.
@@ -362,7 +364,7 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	return cfg, id, nil
 }
 
-func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller) error {
+func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem) error {
 	svc := services.NewManager(runner)
 
 	subsystems := []apply.Subsystem{
@@ -376,7 +378,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		multiWAN,
 		netconf.New(runner, logger),
 		routing.New(runner),
-		channels.New(runner, stateDir),
+		channelMonitor,
 		firewall.New(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),

@@ -1238,6 +1238,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		if ch.Type == "wireguard" {
 			c.validateWireGuardChannel(r, path, ch)
 		}
+		if ch.Type != "direct" {
+			validateProbe(r, path+".probe", ch.Probe)
+		}
 		switch ch.Mode {
 		case "tun", "tproxy", "socks":
 		default:
@@ -1270,6 +1273,10 @@ func (c *Config) validateChannels(r *ValidationResult) {
 				r.errf("channels", "канал %q ссылается на несуществующий запасной %q", cur.ID, cur.Fallback)
 				break
 			}
+			if !next.Enabled {
+				r.errf("channels", "канал %q ссылается на выключенный запасной %q", cur.ID, cur.Fallback)
+				break
+			}
 			if seen[next.ID] {
 				r.errf("channels", "цикл в цепочке запасных каналов, начиная с %q", ch.ID)
 				break
@@ -1283,9 +1290,6 @@ func (c *Config) validateChannels(r *ValidationResult) {
 func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch Channel) {
 	if ch.Mode != "tun" {
 		r.errf(path+".mode", "WireGuard работает только в режиме TUN")
-	}
-	if ch.FailMode != "block" {
-		r.errf(path+".fail_mode", "для WireGuard пока поддерживается только kill-switch «блокировать»")
 	}
 	wg, err := ch.WireGuardConfig()
 	if err != nil {

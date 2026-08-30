@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
@@ -58,6 +59,43 @@ func TestIntegrationWireGuardLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	ch.Probe.FailThreshold = 1
+	ch.Probe.RiseThreshold = 1
+	state := &channelState{}
+	s.record(context.Background(), cfg, ch, state, false)
+	routes, _ := s.Runner.Run(context.Background(), "ip", "-4", "route", "show", "table", "1999")
+	if strings.Contains(routes, "default dev wg-ch999") || !strings.Contains(routes, "blackhole default") {
+		t.Fatalf("kill-switch table is unsafe:\n%s", routes)
+	}
+	s.record(context.Background(), cfg, ch, state, true)
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatalf("channel did not recover: %v", err)
+	}
+
+	ch.FailMode = "direct"
+	s.record(context.Background(), cfg, ch, &channelState{}, false)
+	rules, _ := s.Runner.Run(context.Background(), "ip", "-4", "rule", "show")
+	if strings.Contains(rules, "10999:") {
+		t.Fatalf("direct fail mode kept channel rule:\n%s", rules)
+	}
+	if err := s.restoreChannel(context.Background(), ch); err != nil {
+		t.Fatal(err)
+	}
+
+	backup := ch
+	backup.ID = "backup"
+	backup.Index = 998
+	cfg.Channels = append(cfg.Channels, backup)
+	ch.FailMode = "fallback"
+	ch.Fallback = "backup"
+	s.record(context.Background(), cfg, ch, &channelState{}, false)
+	rules, _ = s.Runner.Run(context.Background(), "ip", "-4", "rule", "show")
+	if !strings.Contains(rules, "10999:") || !(strings.Contains(rules, "lookup 1998") || strings.Contains(rules, "lookup netos-ch998")) {
+		t.Fatalf("fallback rule was not installed:\n%s", rules)
+	}
+	if err := s.restoreChannel(context.Background(), ch); err != nil {
 		t.Fatal(err)
 	}
 	// Второе применение проверяет идемпотентный путь существующего интерфейса.

@@ -34,7 +34,7 @@ export function ChannelsPage({ config, patch }: Props) {
         mode: "tun",
         fail_mode: "block",
         fallback: "",
-        probe: { type: "none", target: "", interval_sec: 0, timeout_sec: 0, failures: 0 },
+        probe: { enabled: true, type: "icmp", targets: ["1.1.1.1"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: {
           address: "",
           private_key: "",
@@ -85,6 +85,7 @@ export function ChannelsPage({ config, patch }: Props) {
             <WireGuardEditor
               key={channel.id}
               channel={channel}
+              channels={channels}
               installed={wireguardInstalled}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
@@ -106,12 +107,14 @@ export function ChannelsPage({ config, patch }: Props) {
 
 function WireGuardEditor({
   channel,
+  channels,
   installed,
   referenced,
   update,
   remove,
 }: {
   channel: any;
+  channels: any[];
   installed: boolean;
   referenced: boolean;
   update: (mutate: (channel: any) => void) => void;
@@ -173,8 +176,40 @@ function WireGuardEditor({
         <Field label="Persistent keepalive, сек">
           <input type="number" min={0} max={65535} value={cfg.persistent_keepalive || 0} onChange={(e) => setConfig("persistent_keepalive", Number(e.target.value))} />
         </Field>
+        <Field label="При отказе">
+          <select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => (draft.fail_mode = e.target.value))}>
+            <option value="block">Блокировать (kill-switch)</option>
+            <option value="fallback">Запасной канал</option>
+            <option value="direct">Напрямую</option>
+          </select>
+        </Field>
+        {channel.fail_mode === "fallback" && (
+          <Field label="Запасной канал">
+            <select value={channel.fallback || ""} onChange={(e) => update((draft) => (draft.fallback = e.target.value))}>
+              <option value="">Выберите канал</option>
+              {channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Проверка канала">
+          <Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe = draft.probe || {}; draft.probe.enabled = enabled; })} />
+        </Field>
+        {channel.probe?.enabled !== false && <>
+          <Field label="Тип проверки">
+            <select value={channel.probe?.type || "icmp"} onChange={(e) => update((draft) => (draft.probe.type = e.target.value))}>
+              <option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option>
+            </select>
+          </Field>
+          <Field label="Цели" hint="По одной в строке">
+            <textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => (draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean)))} />
+          </Field>
+          <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => (draft.probe.interval = Number(e.target.value)))} /></Field>
+          <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => (draft.probe.timeout = Number(e.target.value)))} /></Field>
+          <Field label="Ошибок до отказа"><input type="number" min={1} value={channel.probe?.fail_threshold || 3} onChange={(e) => update((draft) => (draft.probe.fail_threshold = Number(e.target.value)))} /></Field>
+          <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => (draft.probe.rise_threshold = Number(e.target.value)))} /></Field>
+        </>}
       </div>
-      <div className="hint">При недоступном туннеле выбранный трафик блокируется и не уходит напрямую.</div>
+      <div className="hint">Проверка идёт через интерфейс самого туннеля; переключение выполняется только после заданного числа ошибок.</div>
     </form>
   );
 }
