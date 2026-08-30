@@ -40,8 +40,8 @@ func integrationConfig() *config.Config {
 		{ID: "if-wan", Name: testUplink, Type: "physical", Enabled: true},
 		{ID: "if-p1", Name: testPort1, Type: "physical", Enabled: true},
 		{ID: "if-p2", Name: testPort2, Type: "physical", Enabled: true},
-		{ID: "if-lan", Name: testBridge, Type: "bridge", Members: []string{testPort1, testPort2}, Enabled: true},
-		{ID: "if-guest", Name: testVLAN, Type: "vlan", Parent: testBridge, VLANID: 20, Enabled: true},
+		{ID: "if-lan", Name: testBridge, Type: "bridge", Members: []string{"if-p1", "if-p2"}, Enabled: true},
+		{ID: "if-guest", Name: testVLAN, Type: "vlan", Parent: "if-lan", VLANID: 20, Enabled: true},
 	}
 	cfg.Networks = []config.Network{
 		{ID: "lan", Name: "LAN", Interface: "if-lan", RouterAddress: "192.168.77.1/24", Enabled: true},

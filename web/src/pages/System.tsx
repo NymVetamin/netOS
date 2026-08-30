@@ -87,10 +87,11 @@ export function SystemPage({
         <div style={{ marginTop: "0.9rem" }}>
           {config.system?.network_backend === "netos" ? (
             <Notice tone="info" title="Интерфейсы переходят под управление netOS">
-              Перечисленные в конфигурации интерфейсы помечаются для
-              systemd-networkd как неуправляемые, чтобы он не выдавал на них адреса и
-              не спорил за маршруты. Записи в /etc/network/interfaces перекрыть
-              нельзя — если такие найдутся, netOS предупредит об этом в журнале.
+              systemd-networkd оставляет перечисленные интерфейсы управляемыми, но
+              пассивными: не выдаёт им адреса и не спорит за маршруты, а ожидание сети
+              при загрузке не упирается в таймаут. Записи в /etc/network/interfaces
+              перекрыть нельзя — если такие найдутся, netOS предупредит об этом в
+              журнале.
             </Notice>
           ) : (
             <Notice tone="info" title="Что попадёт в сгенерированный файл">
@@ -184,63 +185,69 @@ function ChangePassword() {
 
   const mismatch = repeat.length > 0 && next !== repeat;
 
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || !current || next.length < 10 || !repeat || next !== repeat) return;
+    setBusy(true);
+    setErr("");
+    setMsg("");
+    try {
+      await api.changePassword(current, next);
+      setMsg("Пароль изменён");
+      setCurrent("");
+      setNext("");
+      setRepeat("");
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Card title="Пароль администратора">
-      <div className="form-grid">
-        <Field label="Текущий пароль">
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-          />
-        </Field>
-        <Field label="Новый пароль" hint="Не короче 10 символов">
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={next}
-            onChange={(e) => setNext(e.target.value)}
-          />
-        </Field>
-        <Field label="Повторите новый пароль">
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={repeat}
-            onChange={(e) => setRepeat(e.target.value)}
-          />
-        </Field>
-      </div>
+      <form onSubmit={submit}>
+        <div className="form-grid">
+          <Field label="Текущий пароль">
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          </Field>
+          <Field label="Новый пароль" hint="Не короче 10 символов">
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+            />
+          </Field>
+          <Field label="Повторите новый пароль">
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={repeat}
+              onChange={(e) => setRepeat(e.target.value)}
+            />
+          </Field>
+        </div>
 
-      {mismatch && <div style={{ color: "var(--danger)" }}>Пароли не совпадают</div>}
-      {err && <div style={{ color: "var(--danger)" }}>{err}</div>}
-      {msg && <div style={{ color: "var(--ok)" }}>{msg}</div>}
+        {mismatch && <div style={{ color: "var(--danger)" }}>Пароли не совпадают</div>}
+        {err && <div style={{ color: "var(--danger)" }}>{err}</div>}
+        {msg && <div style={{ color: "var(--ok)" }}>{msg}</div>}
 
-      <div style={{ marginTop: "0.9rem" }}>
-        <button
-          className="btn primary"
-          disabled={busy || !current || next.length < 10 || mismatch}
-          onClick={async () => {
-            setBusy(true);
-            setErr("");
-            setMsg("");
-            try {
-              await api.changePassword(current, next);
-              setMsg("Пароль изменён");
-              setCurrent("");
-              setNext("");
-              setRepeat("");
-            } catch (e: any) {
-              setErr(e.message);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          Сменить пароль
-        </button>
-      </div>
+        <div style={{ marginTop: "0.9rem" }}>
+          <button
+            type="submit"
+            className="btn primary"
+            disabled={busy || !current || next.length < 10 || !repeat || mismatch}
+          >
+            Сменить пароль
+          </button>
+        </div>
+      </form>
     </Card>
   );
 }
