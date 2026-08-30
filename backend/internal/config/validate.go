@@ -61,8 +61,44 @@ func (c *Config) Validate() *ValidationResult {
 	c.validatePolicies(r)
 	c.validateVPNServers(r)
 	c.validateWiFi(r)
+	c.validateQoS(r)
 
 	return r
+}
+
+func (c *Config) validateQoS(r *ValidationResult) {
+	if !c.QoS.Enabled && len(c.QoS.WANs) == 0 {
+		return
+	}
+	wanIDs := map[string]bool{}
+	for _, wan := range c.WANs {
+		wanIDs[wan.ID] = wan.Enabled
+	}
+	seen := map[string]int{}
+	for i, item := range c.QoS.WANs {
+		path := fmt.Sprintf("qos.wans[%d]", i)
+		if !wanIDs[item.WAN] {
+			r.errf(path+".wan", "интернет-канал %q не существует или выключен", item.WAN)
+		} else if prev, ok := seen[item.WAN]; ok {
+			r.errf(path+".wan", "интернет-канал уже настроен в qos.wans[%d]", prev)
+		} else {
+			seen[item.WAN] = i
+		}
+		if item.UploadKbit < 64 || item.UploadKbit > 10_000_000 {
+			r.errf(path+".upload_kbit", "скорость должна быть от 64 до 10000000 Кбит/с")
+		}
+		if item.DownloadKbit < 64 || item.DownloadKbit > 10_000_000 {
+			r.errf(path+".download_kbit", "скорость должна быть от 64 до 10000000 Кбит/с")
+		}
+		switch item.Diffserv {
+		case "besteffort", "diffserv3", "diffserv4", "diffserv8":
+		default:
+			r.errf(path+".diffserv", "неизвестный профиль приоритетов %q", item.Diffserv)
+		}
+	}
+	if c.QoS.Enabled && len(c.QoS.WANs) == 0 {
+		r.errf("qos.wans", "добавьте хотя бы один интернет-канал")
+	}
 }
 
 func (c *Config) validateClients(r *ValidationResult) {

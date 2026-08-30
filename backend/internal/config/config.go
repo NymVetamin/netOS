@@ -53,6 +53,7 @@ type Config struct {
 	Policies   []Policy    `json:"policies"`
 	VPNServers []VPNServer `json:"vpn_servers"`
 	WiFi       []WiFiRadio `json:"wifi"`
+	QoS        QoS         `json:"qos"`
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +212,20 @@ type MultiWAN struct {
 	Enabled           bool   `json:"enabled"`
 	Mode              string `json:"mode"` // failover | balance
 	StickyConnections bool   `json:"sticky_connections"`
+}
+
+// QoS управляет очередями на интернет-каналах. Скорости задаются немного ниже
+// тарифа провайдера, чтобы очередь находилась на роутере, а не у провайдера.
+type QoS struct {
+	Enabled bool     `json:"enabled"`
+	WANs    []QoSWAN `json:"wans"`
+}
+
+type QoSWAN struct {
+	WAN          string `json:"wan"`
+	UploadKbit   int    `json:"upload_kbit"`
+	DownloadKbit int    `json:"download_kbit"`
+	Diffserv     string `json:"diffserv"` // besteffort | diffserv3 | diffserv4 | diffserv8
 }
 
 // ---------------------------------------------------------------------------

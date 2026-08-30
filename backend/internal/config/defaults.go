@@ -91,6 +91,7 @@ func defaultConfig() *Config {
 		Policies:   []Policy{},
 		VPNServers: []VPNServer{},
 		WiFi:       []WiFiRadio{},
+		QoS:        QoS{WANs: []QoSWAN{}},
 	}
 }
 
@@ -296,6 +297,14 @@ func (c *Config) Normalize() {
 	}
 	if c.Components == nil {
 		c.Components = []Component{}
+	}
+	if c.QoS.WANs == nil {
+		c.QoS.WANs = []QoSWAN{}
+	}
+	for i := range c.QoS.WANs {
+		if c.QoS.WANs[i].Diffserv == "" {
+			c.QoS.WANs[i].Diffserv = "diffserv4"
+		}
 	}
 	for i := range c.Clients {
 		if hw, err := net.ParseMAC(c.Clients[i].MAC); err == nil && len(hw) == 6 {

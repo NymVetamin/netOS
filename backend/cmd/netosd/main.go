@@ -29,6 +29,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/multiwan"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/netiface"
+	"github.com/netos-router/netos/internal/subsys/qos"
 	"github.com/netos-router/netos/internal/subsys/routing"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
@@ -378,6 +379,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		netiface.NewNetworks(runner),
 		netiface.NewWAN(runner),
 		multiWAN,
+		qos.New(runner, stateDir),
 		netconf.New(runner, logger),
 		routing.New(runner),
 		channelMonitor,

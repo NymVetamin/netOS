@@ -14,6 +14,7 @@ import { DiagnosticsPage } from "./pages/Diagnostics";
 import { ChannelsPage } from "./pages/Channels";
 import { VPNServersPage } from "./pages/VPNServers";
 import { WiFiPage } from "./pages/WiFi";
+import { TrafficPage } from "./pages/Traffic";
 
 type PageID =
   | "dashboard"
@@ -23,6 +24,7 @@ type PageID =
   | "channels"
   | "vpn-servers"
   | "wifi"
+  | "traffic"
   | "services"
   | "firewall"
   | "components"
@@ -46,6 +48,7 @@ const NAV: { group: string; items: { id: PageID; label: string; icon: string }[]
       { id: "channels", label: "Каналы и политики", icon: "◇" },
       { id: "vpn-servers", label: "VPN-серверы", icon: "⌁" },
       { id: "wifi", label: "Wi-Fi", icon: "⌁" },
+      { id: "traffic", label: "Трафик и QoS", icon: "≋" },
       { id: "firewall", label: "Файрволл", icon: "▣" },
       { id: "services", label: "DHCP и DNS", icon: "⌘" },
     ],
@@ -400,6 +403,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "channels" && <ChannelsPage config={cfg} patch={patch} />}
               {page === "vpn-servers" && <VPNServersPage config={cfg} patch={patch} />}
               {page === "wifi" && <WiFiPage config={cfg} patch={patch} />}
+              {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}
               {page === "services" && <ServicesPage config={cfg} patch={patch} />}
               {page === "firewall" && <FirewallPage config={cfg} patch={patch} />}
               {page === "components" && <ComponentsPage config={cfg} patch={patch} />}
