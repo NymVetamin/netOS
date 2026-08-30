@@ -171,7 +171,7 @@ export function SystemPage({
       </Card>
 
       {session.role === "admin" && <MaintenancePanel />}
-      <ChangePassword />
+      <ChangePassword username={session.username} />
     </>
   );
 }
@@ -269,7 +269,7 @@ function MaintenancePanel() {
   );
 }
 
-function ChangePassword() {
+function ChangePassword({ username }: { username: string }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -301,6 +301,7 @@ function ChangePassword() {
   return (
     <Card title="Пароль администратора">
       <form onSubmit={submit}>
+        <input className="sr-only" name="username" autoComplete="username" value={username} readOnly />
         <div className="form-grid">
           <Field label="Текущий пароль">
             <input

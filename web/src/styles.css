@@ -92,6 +92,18 @@
   box-sizing: border-box;
 }
 
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 html,
 body,
 #root {
@@ -775,7 +787,7 @@ pre.output {
 
 @media (max-width: 860px) {
   .shell {
-    grid-template-columns: 1fr;
+    display: block;
   }
   .sidebar {
     position: static;
@@ -812,9 +824,13 @@ pre.output {
     flex-direction: column;
   }
   .card-head > .row,
+  .card-head .vpn-add-actions,
   .card-head .channel-add-actions {
     flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
   }
+  .card-head .vpn-add-actions .btn,
   .card-head .channel-add-actions .btn {
     flex: 1 1 8rem;
   }
