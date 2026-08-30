@@ -153,6 +153,11 @@ export const api = {
       "POST", "/api/wireguard/keypair", privateKey ? { private_key: privateKey } : undefined,
     ),
 
+  xrayKeypair: (privateKey?: string) =>
+    request<{ private_key: string; public_key: string }>(
+      "POST", "/api/xray/keypair", privateKey ? { private_key: privateKey } : undefined,
+    ),
+
   async getConfig() {
     const res = await request<ConfigResponse>("GET", "/api/config");
     draftVersion = res.draft_version;

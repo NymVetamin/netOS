@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -28,6 +30,25 @@ func TestGenerateWireGuardKeypair(t *testing.T) {
 	derived, err := wireGuardPublicKey(privateKey)
 	if err != nil || derived != publicKey {
 		t.Fatalf("public key derivation mismatch: %q, %v", derived, err)
+	}
+}
+
+func TestGenerateXrayKeypair(t *testing.T) {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey := base64.RawURLEncoding.EncodeToString(key.Bytes())
+	publicKey := base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+	derived, err := xrayPublicKey(privateKey)
+	if err != nil || derived != publicKey {
+		t.Fatalf("public key derivation mismatch: %q, %v", derived, err)
+	}
+	for name, value := range map[string]string{"private": privateKey, "public": derived} {
+		decoded, err := base64.RawURLEncoding.DecodeString(value)
+		if err != nil || len(decoded) != 32 {
+			t.Fatalf("%s key is invalid: %q (%v)", name, value, err)
+		}
 	}
 }
 

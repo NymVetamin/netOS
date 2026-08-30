@@ -242,7 +242,7 @@ function streamSettings(network: string, security: string, options: any): any {
   if (network === "grpc") out.grpcSettings = { serviceName: options.serviceName || "" };
   if (network === "xhttp") out.xhttpSettings = { path: options.path || "/", host: options.host || "" };
   if (security === "tls") out.tlsSettings = { serverName: options.sni || options.host || "", fingerprint: options.fingerprint || "chrome" };
-  if (security === "reality") out.realitySettings = { serverName: options.sni || "", fingerprint: options.fingerprint || "chrome", publicKey: options.publicKey || "", shortId: options.shortId || "", spiderX: options.spiderX || "" };
+  if (security === "reality") out.realitySettings = { serverName: options.sni || "", fingerprint: options.fingerprint || "chrome", password: options.publicKey || "", shortId: options.shortId || "", spiderX: options.spiderX || "" };
   return out;
 }
 

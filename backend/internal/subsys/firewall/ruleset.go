@@ -296,11 +296,17 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 
 func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 	for _, server := range cfg.VPNServers {
-		if !server.Enabled || server.Type != "wireguard" {
+		if !server.Enabled {
 			continue
 		}
-		b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT",
-			chain, server.Port, truncate("VPN-сервер «"+server.Name+"»", 240))
+		protocol := "udp"
+		if server.Type == "xray" {
+			protocol = "tcp"
+		} else if server.Type != "wireguard" {
+			continue
+		}
+		b.line("-A %s -p %s --dport %d -m comment --comment %q -j ACCEPT",
+			chain, protocol, server.Port, truncate("VPN-сервер «"+server.Name+"»", 240))
 	}
 }
 
@@ -648,6 +654,18 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	for _, p := range cfg.Policies {
 		if !p.Enabled {
 			continue
+		}
+		if p.VPNServer != "" {
+			xrayServer := false
+			for _, server := range cfg.VPNServers {
+				if server.ID == p.VPNServer && server.Type == "xray" {
+					xrayServer = true
+					break
+				}
+			}
+			if xrayServer {
+				continue // Xray применяет такие политики внутри своего routing-блока.
+			}
 		}
 		rules = append(rules, policyRule{
 			priority: p.Priority, id: p.ID, match: policySelectors(cfg, p),

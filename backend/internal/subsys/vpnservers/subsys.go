@@ -20,6 +20,8 @@ import (
 type ownedServer struct {
 	Name  string `json:"name"`
 	Index int    `json:"index"`
+	Type  string `json:"type,omitempty"`
+	Unit  string `json:"unit,omitempty"`
 }
 
 type Subsystem struct {
@@ -27,20 +29,28 @@ type Subsystem struct {
 	StateDir    string
 	SysClassNet string
 	ProcSysNet  string
+	UnitDir     string
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
-	return &Subsystem{Runner: r, StateDir: stateDir, SysClassNet: "/sys/class/net", ProcSysNet: "/proc/sys/net"}
+	return &Subsystem{Runner: r, StateDir: stateDir, SysClassNet: "/sys/class/net", ProcSysNet: "/proc/sys/net", UnitDir: "/etc/systemd/system"}
 }
 
 func (s *Subsystem) Name() string { return "vpn-servers" }
 
 func InterfaceName(server config.VPNServer) string { return fmt.Sprintf("wg-srv%d", server.Index) }
 
+func resourceName(server config.VPNServer) string {
+	if server.Type == "xray" {
+		return fmt.Sprintf("xray-srv%d", server.Index)
+	}
+	return InterfaceName(server)
+}
+
 func enabledServers(cfg *config.Config) []config.VPNServer {
 	var out []config.VPNServer
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && server.Type == "wireguard" {
+		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray") {
 			out = append(out, server)
 		}
 	}
@@ -67,10 +77,10 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 			}
 			kind = "update"
 		}
-		actions = append(actions, apply.Action{Kind: kind, Target: server.Name, Detail: InterfaceName(server), Disruptive: true})
+		actions = append(actions, apply.Action{Kind: kind, Target: server.Name, Detail: resourceName(server), Disruptive: true})
 	}
 	for _, server := range previous {
-		actions = append(actions, apply.Action{Kind: "delete", Target: server.Name, Detail: InterfaceName(server), Disruptive: true})
+		actions = append(actions, apply.Action{Kind: "delete", Target: server.Name, Detail: resourceName(server), Disruptive: true})
 	}
 	return actions, nil
 }
@@ -84,7 +94,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	wantedNames := map[string]bool{}
 	ownedNames := map[string]bool{}
 	for _, server := range wanted {
-		wantedNames[InterfaceName(server)] = true
+		wantedNames[resourceName(server)] = true
 	}
 	for _, item := range owned {
 		ownedNames[item.Name] = true
@@ -95,8 +105,15 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	var nextOwned []ownedServer
 	var created []ownedServer
 	for _, server := range wanted {
-		item := ownedServer{Name: InterfaceName(server), Index: server.Index}
-		createdNow, err := s.applyWireGuard(ctx, server, ownedNames[item.Name], cfg.IPv6.Mode == "off")
+		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: server.Type}
+		var createdNow bool
+		switch server.Type {
+		case "wireguard":
+			createdNow, err = s.applyWireGuard(ctx, server, ownedNames[item.Name], cfg.IPv6.Mode == "off")
+		case "xray":
+			item.Unit = xrayUnitName(server)
+			createdNow, err = s.applyXray(ctx, cfg, server)
+		}
 		if err != nil {
 			for _, provisional := range created {
 				s.remove(ctx, provisional)
@@ -214,6 +231,13 @@ func (s *Subsystem) ensureAddress(ctx context.Context, name, address string) err
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	for _, server := range enabledServers(cfg) {
+		if server.Type == "xray" {
+			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", xrayUnitName(server))
+			if strings.TrimSpace(active) != "active" {
+				return fmt.Errorf("сервер %s не работает", server.Name)
+			}
+			continue
+		}
 		name := InterfaceName(server)
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
@@ -231,6 +255,10 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *Subsystem) remove(ctx context.Context, item ownedServer) {
+	if item.Type == "xray" {
+		s.cleanupXray(ctx, config.VPNServer{Index: item.Index, Type: "xray"})
+		return
+	}
 	if s.linkExists(item.Name) {
 		_, _ = s.Runner.Run(ctx, "ip", "link", "delete", item.Name)
 	}

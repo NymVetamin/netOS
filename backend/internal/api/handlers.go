@@ -70,6 +70,51 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"private_key": responsePrivate, "public_key": publicKey})
 }
 
+func xrayPublicKey(privateKey string) (string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(privateKey, "="))
+	if err != nil || len(decoded) != 32 {
+		return "", errors.New("некорректный закрытый ключ Reality")
+	}
+	key, err := ecdh.X25519().NewPrivateKey(decoded)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+}
+
+func (s *Server) handleXrayKeypair(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PrivateKey string `json:"private_key"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "некорректный запрос")
+			return
+		}
+	}
+	privateKey, publicKey := input.PrivateKey, ""
+	var err error
+	responsePrivate := ""
+	if privateKey == "" {
+		key, keyErr := ecdh.X25519().GenerateKey(rand.Reader)
+		if keyErr != nil {
+			err = keyErr
+		} else {
+			privateKey = base64.RawURLEncoding.EncodeToString(key.Bytes())
+			publicKey = base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+			responsePrivate = privateKey
+		}
+	} else {
+		publicKey, err = xrayPublicKey(privateKey)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "не удалось обработать ключи Reality")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"private_key": responsePrivate, "public_key": publicKey})
+}
+
 type ctxKey string
 
 const (

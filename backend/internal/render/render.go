@@ -23,6 +23,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
+	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
 
 // Artifact — один сгенерированный файл или набор правил.
@@ -106,6 +107,33 @@ func renderXray(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
+func xrayServersActive(cfg *config.Config) bool {
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "xray" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderXrayServers(cfg *config.Config) (string, error) {
+	var b bytes.Buffer
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "xray" {
+			continue
+		}
+		text, err := vpnservers.RenderXray(server, cfg)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s (TCP %d) ---\n%s\n", server.Name, server.Port, text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных входящих серверов Xray.\n")
+	}
+	return b.String(), nil
+}
+
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
@@ -130,6 +158,10 @@ var artifacts = []Artifact{
 	{
 		ID: "xray", Title: "Конфигурация Xray",
 		Active: xrayActive, Render: renderXray,
+	},
+	{
+		ID: "xray-servers", Title: "Входящие серверы Xray",
+		Active: xrayServersActive, Render: renderXrayServers,
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",

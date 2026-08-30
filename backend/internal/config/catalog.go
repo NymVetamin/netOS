@@ -119,6 +119,7 @@ var Catalog = []ComponentInfo{
 		Description: "VLESS, VMess, Trojan, Shadowsocks с Reality и XTLS. Для каналов, которые должны выглядеть обычным трафиком.",
 		Provides:    []string{"vpn-client", "vpn-server"},
 		SizeHint:    "около 30 МБ",
+		RunUnits:    []string{"netos-xray-*.service"},
 		External:    true,
 	},
 	{

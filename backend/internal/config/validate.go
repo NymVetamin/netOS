@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
@@ -218,6 +219,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		if server.Enabled && server.Type == "wireguard" && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
 				"для сервера WireGuard нужен компонент «WireGuard»")
+		}
+		if server.Enabled && server.Type == "xray" && !c.HasComponent("xray") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
+				"для сервера Xray нужен компонент «Xray»")
 		}
 	}
 }
@@ -1449,9 +1454,11 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 	channels := c.usableChannelIDs()
 	networks := c.networkIDs()
 	servers := map[string]bool{}
+	serverTypes := map[string]string{}
 	serverPeers := map[string]map[string]bool{}
 	for _, s := range c.VPNServers {
 		servers[s.ID] = true
+		serverTypes[s.ID] = s.Type
 		serverPeers[s.ID] = map[string]bool{}
 		for _, peer := range s.Peers {
 			serverPeers[s.ID][peer.ID] = true
@@ -1478,6 +1485,14 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 			r.errf(path+".vpn_peer", "для выбора VPN-пира сначала укажите VPN-сервер")
 		} else if p.VPNPeer != "" && !serverPeers[p.VPNServer][p.VPNPeer] {
 			r.errf(path+".vpn_peer", "неизвестный VPN-пир %q", p.VPNPeer)
+		}
+		if serverTypes[p.VPNServer] == "xray" {
+			if p.SrcIP != "" || p.SrcMAC != "" || p.Network != "" || p.Schedule != nil {
+				r.errf(path, "для Xray-сервера доступны условия по клиенту, протоколу, адресу и порту назначения")
+			}
+			if p.Protocol == "icmp" {
+				r.errf(path+".protocol", "VLESS не передаёт ICMP")
+			}
 		}
 		if p.Enabled && len(p.Domains) > 0 {
 			r.errf(path+".domains", "выбор трафика по доменам ещё не реализован")
@@ -1520,7 +1535,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			r.errf(path+".index", "индекс VPN-сервера должен быть уникальным числом 1-9999")
 		}
 		indexes[s.Index] = true
-		if s.Enabled && s.Type != "wireguard" {
+		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" {
 			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
 		}
 		switch s.Type {
@@ -1547,6 +1562,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if s.Type == "wireguard" {
 			c.validateWireGuardServer(r, path, s)
 		}
+		if s.Type == "xray" {
+			c.validateXrayServer(r, path, s)
+		}
 
 		seenAddr := map[string]bool{}
 		for j, peer := range s.Peers {
@@ -1570,10 +1588,76 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 	}
 }
 
+func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServer) {
+	xr, err := s.XrayConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !s.Enabled {
+		return
+	}
+	key, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(xr.PrivateKey, "="))
+	if err != nil || len(key) != 32 {
+		r.errf(path+".config.private_key", "закрытый ключ Reality должен содержать 32 байта в base64url")
+	}
+	if host, port, err := net.SplitHostPort(xr.Destination); err != nil || host == "" || !inPortRange(port) {
+		r.errf(path+".config.destination", "цель маскировки должна быть в формате www.example.com:443")
+	}
+	if xr.PublicEndpoint != "" {
+		if host, port, err := net.SplitHostPort(xr.PublicEndpoint); err != nil || host == "" || !inPortRange(port) {
+			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:443")
+		}
+	}
+	if len(xr.ServerNames) == 0 {
+		r.errf(path+".config.server_names", "укажите хотя бы одно имя сервера Reality")
+	}
+	if len(xr.ShortIDs) == 0 {
+		r.errf(path+".config.short_ids", "укажите хотя бы один short ID Reality")
+	}
+	for i, id := range xr.ShortIDs {
+		if len(id) == 0 || len(id) > 16 || len(id)%2 != 0 {
+			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен содержать чётное число hex-символов, не больше 16")
+			continue
+		}
+		if _, err := hex.DecodeString(id); err != nil {
+			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен быть шестнадцатеричным")
+		}
+	}
+	if s.Port < 1 || s.Port > 65535 {
+		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
+	}
+	seenUUID := map[string]bool{}
+	for i, peer := range s.Peers {
+		if peer.ID == "" {
+			r.errf(fmt.Sprintf("%s.peers[%d].id", path, i), "пустой идентификатор клиента")
+		}
+		uuid := strings.ToLower(peer.Credentials["uuid"])
+		if !validUUID(uuid) {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.uuid", path, i), "некорректный UUID клиента")
+		}
+		if uuid != "" && seenUUID[uuid] {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.uuid", path, i), "UUID уже назначен другому клиенту")
+		}
+		seenUUID[uuid] = true
+	}
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	_, err := hex.DecodeString(strings.ReplaceAll(value, "-", ""))
+	return err == nil
+}
+
 func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPNServer) {
 	wg, err := s.WireGuardConfig()
 	if err != nil {
 		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !s.Enabled {
 		return
 	}
 	validateWGKey(r, path+".config.private_key", wg.PrivateKey, false)

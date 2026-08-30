@@ -124,3 +124,36 @@ func TestXrayArtifactFollowsAndRendersChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestXrayServerArtifactFollowsServer(t *testing.T) {
+	cfg := config.Default()
+	if has(ids(Active(cfg)), "xray-servers") {
+		t.Fatal("Xray server artifact is active without a server")
+	}
+	_, server := vpnserversTestConfig()
+	cfg.VPNServers = []config.VPNServer{server}
+	if !has(ids(Active(cfg)), "xray-servers") {
+		t.Fatal("enabled Xray server is absent from diagnostics")
+	}
+	out, err := Render("xray-servers", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"protocol": "vless"`) || !strings.Contains(out, `"security": "reality"`) {
+		t.Fatalf("unexpected Xray server artifact:\n%s", out)
+	}
+}
+
+func vpnserversTestConfig() (*config.Config, config.VPNServer) {
+	cfg := config.Default()
+	server := config.VPNServer{
+		ID: "reality", Index: 2, Name: "Reality", Enabled: true, Type: "xray", Port: 443,
+		Subnet: "10.10.0.1/24", DefaultChannel: "direct",
+		Config: map[string]any{
+			"private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "destination": "www.example.com:443",
+			"server_names": []string{"www.example.com"}, "short_ids": []string{"0123456789abcdef"},
+		},
+		Peers: []config.VPNPeer{{ID: "phone", Enabled: true, Address: "10.10.0.2", Credentials: map[string]string{"uuid": "123e4567-e89b-12d3-a456-426614174000"}}},
+	}
+	return cfg, server
+}

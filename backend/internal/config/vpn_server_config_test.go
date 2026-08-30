@@ -43,3 +43,43 @@ func TestWireGuardServerRequiresComponent(t *testing.T) {
 	}
 	t.Fatal("сервер без компонента WireGuard принят")
 }
+
+func TestDisabledVPNServerMayBeSavedAsIncompleteDraft(t *testing.T) {
+	cfg := Default()
+	cfg.VPNServers = []VPNServer{{
+		ID: "draft", Index: 1, Name: "Draft", Type: "wireguard", Subnet: "10.9.0.1/24", Port: 51820,
+		Config: map[string]any{"private_key": "", "mtu": 1420},
+	}}
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("disabled draft rejected: %+v", result.Problems)
+	}
+	cfg.VPNServers[0].Enabled = true
+	if result := cfg.Validate(); !result.HasErrors() {
+		t.Fatal("enabled server with an empty key was accepted")
+	}
+}
+
+func TestXrayServerValidation(t *testing.T) {
+	key := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	cfg := Default()
+	cfg.Components = []Component{{ID: "xray", Installed: true}}
+	cfg.VPNServers = []VPNServer{{
+		ID: "reality", Index: 2, Name: "Reality", Enabled: true, Type: "xray",
+		Subnet: "10.10.0.1/24", Port: 443, DefaultChannel: "direct",
+		Config: map[string]any{
+			"private_key": key, "destination": "www.example.com:443",
+			"server_names": []string{"www.example.com"}, "short_ids": []string{"0123456789abcdef"},
+		},
+		Peers: []VPNPeer{{ID: "phone", Name: "Phone", Enabled: true, Address: "10.10.0.2", Credentials: map[string]string{"uuid": "123e4567-e89b-12d3-a456-426614174000"}}},
+	}}
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("valid Xray server rejected: %+v", result.Problems)
+	}
+	cfg.VPNServers[0].Config["short_ids"] = []string{"not-hex"}
+	for _, problem := range cfg.Validate().Problems {
+		if problem.Path == "vpn_servers[0].config.short_ids[0]" {
+			return
+		}
+	}
+	t.Fatal("invalid Reality short ID accepted")
+}

@@ -695,6 +695,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	for _, pattern := range []string{
 		"netos-dhcp-*.service", "netos-pppoe-*.service", "netos-l2tp-*.service",
 		"netos-openconnect-ch*.service", "netos-xray-ch*.service",
+		"netos-xray-srv*.service",
 	} {
 		units, _ := filepath.Glob(m.sys("/etc/systemd/system/" + pattern))
 		for _, unit := range units {
