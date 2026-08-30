@@ -72,8 +72,14 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
               draft.multiwan = draft.multiwan || { mode: "failover", sticky_connections: true };
               draft.multiwan.enabled = enabled;
             })}
-            label="Включить failover"
+            label="Включить Multi-WAN"
           />
+        </Field>
+        <Field label="Распределение">
+          <select disabled={!config.multiwan?.enabled} value={config.multiwan?.mode || "failover"} onChange={(e) => patch((draft) => (draft.multiwan.mode = e.target.value))}>
+            <option value="failover">Резервирование</option>
+            <option value="balance">Балансировка по весам</option>
+          </select>
         </Field>
         <Field label="Соединения" hint="Установленные соединения не перескакивают между аплинками">
           <Switch checked={config.multiwan?.sticky_connections !== false} disabled label="Закреплять до завершения" onChange={() => {}} />
@@ -92,6 +98,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
               d.wans = d.wans || [];
               d.wans.push({
                 id: "wan-" + Date.now(),
+                index: Math.max(0, ...d.wans.map((wan: any) => wan.index || 0)) + 1,
                 name: "Аплинк " + (d.wans.length + 1),
                 interface: d.interfaces?.[0]?.id || "",
                 enabled: false,
@@ -329,6 +336,11 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                       onChange={(e) => patch((d) => (d.wans[idx].mtu = Number(e.target.value)))}
                     />
                   </Field>
+                  {config.multiwan?.mode === "balance" && (
+                    <Field label="Вес" hint="Доля новых соединений">
+                      <input type="number" min={1} max={1000} value={w.weight || 1} onChange={(e) => patch((d) => (d.wans[idx].weight = Number(e.target.value)))} />
+                    </Field>
+                  )}
                 </div>
               </div>
             </div>

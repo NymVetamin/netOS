@@ -44,19 +44,19 @@ func TestFailoverSuppressesAndRestoresRouteAtThresholds(t *testing.T) {
 	c.suppressed = map[string]string{}
 	w := config.WAN{ID: "primary", Name: "Primary", Probe: config.Probe{FailThreshold: 2, RiseThreshold: 2}}
 	state := &linkState{}
-	c.record(context.Background(), w, "wan0", state, false)
+	c.record(context.Background(), w, "wan0", state, false, true)
 	if r.route == "" {
 		t.Fatal("маршрут снят раньше порога")
 	}
-	c.record(context.Background(), w, "wan0", state, false)
+	c.record(context.Background(), w, "wan0", state, false, true)
 	if r.route != "" || !state.Down {
 		t.Fatal("маршрут не снят после порога")
 	}
-	c.record(context.Background(), w, "wan0", state, true)
+	c.record(context.Background(), w, "wan0", state, true, true)
 	if r.route != "" {
 		t.Fatal("маршрут восстановлен раньше порога")
 	}
-	c.record(context.Background(), w, "wan0", state, true)
+	c.record(context.Background(), w, "wan0", state, true, true)
 	if r.route == "" || state.Down {
 		t.Fatal("маршрут не восстановлен")
 	}

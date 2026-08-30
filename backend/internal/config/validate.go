@@ -528,6 +528,7 @@ func (c *Config) validateWANs(r *ValidationResult) {
 	// какой из них основной. Две одинаковые означают, что выбор остаётся за
 	// ядром, а переключение при отказе становится непредсказуемым.
 	metricOwner := map[int]string{}
+	indexOwner := map[int]string{}
 	claimMetric := func(path string, metric int, owner string) {
 		if previous, taken := metricOwner[metric]; taken {
 			r.errf(path+".metric",
@@ -540,6 +541,17 @@ func (c *Config) validateWANs(r *ValidationResult) {
 
 	for i, w := range c.WANs {
 		path := fmt.Sprintf("wans[%d]", i)
+		if w.Index == 0 && c.MultiWAN.Enabled {
+			r.errf(path+".index", "для Multi-WAN нужен стабильный индекс аплинка")
+		} else if w.Index < 0 || w.Index > 999 {
+			r.errf(path+".index", "индекс аплинка должен быть в диапазоне 1-999")
+		} else if w.Index > 0 && indexOwner[w.Index] != "" {
+			previous := indexOwner[w.Index]
+			r.errf(path+".index", "индекс %d уже занят аплинком %q", w.Index, previous)
+		}
+		if w.Index > 0 {
+			indexOwner[w.Index] = w.ID
+		}
 		if !ifaceIDs[w.Interface] {
 			r.errf(path+".interface", "аплинк ссылается на несуществующий интерфейс %q", w.Interface)
 		}
@@ -638,7 +650,11 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		switch c.MultiWAN.Mode {
 		case "failover":
 		case "balance":
-			r.errf("multiwan.mode", "балансировка Multi-WAN ещё не реализована; доступен failover")
+			for i, wan := range c.WANs {
+				if wan.Enabled && wan.Weight < 1 {
+					r.errf(fmt.Sprintf("wans[%d].weight", i), "вес должен быть положительным")
+				}
+			}
 		default:
 			r.errf("multiwan.mode", "неизвестный режим Multi-WAN %q", c.MultiWAN.Mode)
 		}

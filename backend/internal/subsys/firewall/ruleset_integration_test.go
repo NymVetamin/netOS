@@ -28,13 +28,16 @@ func TestIntegrationIptablesAcceptsGeneratedRuleset(t *testing.T) {
 	cfg.Interfaces = []config.Interface{
 		{ID: "lan-if", Name: "nftest-lan", Type: "physical", Enabled: true},
 		{ID: "wan-if", Name: "nftest-wan", Type: "physical", Enabled: true},
+		{ID: "wan2-if", Name: "nftest-wan2", Type: "physical", Enabled: true},
 	}
 	cfg.Networks = []config.Network{
 		{ID: "lan", Name: "LAN", Interface: "lan-if", RouterAddress: "192.0.2.1/24", Zone: "lan", Enabled: true},
 	}
 	cfg.WANs = []config.WAN{
-		{ID: "wan", Name: "WAN", Interface: "wan-if", Proto: "static", Address: "198.51.100.2/24", Gateway: "198.51.100.1", Metric: 100, Enabled: true},
+		{ID: "wan", Index: 1, Name: "WAN", Interface: "wan-if", Proto: "static", Address: "198.51.100.2/24", Gateway: "198.51.100.1", Metric: 100, Weight: 1, Enabled: true},
+		{ID: "wan2", Index: 2, Name: "WAN2", Interface: "wan2-if", Proto: "static", Address: "203.0.113.2/24", Gateway: "203.0.113.1", Metric: 200, Weight: 2, Enabled: true},
 	}
+	cfg.MultiWAN.Enabled, cfg.MultiWAN.Mode = true, "balance"
 	cfg.Clients = []config.Client{
 		{ID: "blocked", Name: "Тестовый клиент", MAC: "02:00:00:00:00:01", Blocked: true},
 	}

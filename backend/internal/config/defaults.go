@@ -307,7 +307,22 @@ func (c *Config) Normalize() {
 	// без портов, а VLAN без родителя, и притом молча.
 	c.normalizeInterfaceLinks()
 
+	usedWANIndexes := map[int]bool{}
+	for _, wan := range c.WANs {
+		if wan.Index > 0 {
+			usedWANIndexes[wan.Index] = true
+		}
+	}
 	for i := range c.WANs {
+		if c.WANs[i].Index == 0 {
+			for candidate := 1; ; candidate++ {
+				if !usedWANIndexes[candidate] {
+					c.WANs[i].Index = candidate
+					usedWANIndexes[candidate] = true
+					break
+				}
+			}
+		}
 		if c.WANs[i].Metric == 0 {
 			c.WANs[i].Metric = 100 + i
 		}

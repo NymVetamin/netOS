@@ -132,11 +132,11 @@ type Interface struct {
 	// ссылка по имени пережила бы переименование только на бумаге.
 	Members []string `json:"members,omitempty"`
 	// Parent — идентификатор интерфейса, поверх которого поднят VLAN.
-	Parent string `json:"parent,omitempty"`
-	VLANID  int      `json:"vlan_id,omitempty"`
-	MTU     int      `json:"mtu,omitempty"`
-	MAC     string   `json:"mac,omitempty"`
-	Enabled bool     `json:"enabled"`
+	Parent  string `json:"parent,omitempty"`
+	VLANID  int    `json:"vlan_id,omitempty"`
+	MTU     int    `json:"mtu,omitempty"`
+	MAC     string `json:"mac,omitempty"`
+	Enabled bool   `json:"enabled"`
 }
 
 // Network — L3-сегмент: подсеть и адрес роутера в ней.
@@ -164,6 +164,7 @@ type Network struct {
 
 type WAN struct {
 	ID        string `json:"id"`
+	Index     int    `json:"index"`
 	Name      string `json:"name"`
 	Interface string `json:"interface"`
 	Enabled   bool   `json:"enabled"`

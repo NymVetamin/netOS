@@ -22,6 +22,7 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
+	"github.com/netos-router/netos/internal/subsys/multiwan"
 )
 
 // Ruleset — сгенерированный набор правил.
@@ -436,6 +437,13 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":INPUT ACCEPT [0:0]")
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
+	if cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "balance" {
+		for _, wan := range cfg.WANs {
+			if wan.Enabled {
+				b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE", wanInterface(cfg, wan), "NAT аплинка «"+wan.Name+"»")
+			}
+		}
+	}
 	for _, ch := range cfg.Channels {
 		if ch.Enabled && ch.Type == "wireguard" {
 			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE",
@@ -527,6 +535,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
 	b.channelPolicies(cfg)
+	b.multiWANPolicies(cfg)
 
 	for _, z := range cfg.Firewall.Zones {
 		if !z.MSSClamp {
@@ -539,6 +548,46 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+func (b *builder) multiWANPolicies(cfg *config.Config) {
+	if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode != "balance" {
+		return
+	}
+	var wans []config.WAN
+	total := 0
+	for _, wan := range cfg.WANs {
+		if wan.Enabled {
+			wans = append(wans, wan)
+			total += wan.Weight
+		}
+	}
+	if len(wans) < 2 || total <= 0 {
+		return
+	}
+	b.line(":NETOS-MULTIWAN - [0:0]")
+	b.line("-A PREROUTING -j CONNMARK --restore-mark")
+	b.line("-A PREROUTING -m mark --mark 0 -j NETOS-MULTIWAN")
+	remaining := total
+	for i, wan := range wans {
+		mark := fmt.Sprintf("0x%x", multiwan.Mark(wan))
+		if i == len(wans)-1 {
+			b.line("-A NETOS-MULTIWAN -j MARK --set-mark %s", mark)
+		} else {
+			probability := float64(wan.Weight) / float64(remaining)
+			b.line("-A NETOS-MULTIWAN -m statistic --mode random --probability %.6f -j MARK --set-mark %s", probability, mark)
+		}
+		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark", mark)
+		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j RETURN", mark)
+		remaining -= wan.Weight
+	}
+}
+
+func wanInterface(cfg *config.Config, wan config.WAN) string {
+	if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
+		return "ppp-" + wan.ID
+	}
+	return cfg.InterfaceName(wan.Interface)
 }
 
 // channelPolicies присваивает новым соединениям fwmark канала, а следующим
