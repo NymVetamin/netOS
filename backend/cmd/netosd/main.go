@@ -216,6 +216,7 @@ func main() {
 	go traffic.Run(ctx)
 	panel := api.New(st, engine, collector, logger)
 	panel.Traffic = traffic
+	panel.Maintenance = api.NewMaintenance(runner)
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)

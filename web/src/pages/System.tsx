@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { api, Session } from "../api";
-import { Card, Field, Notice, Switch } from "../ui";
+import { useEffect, useState } from "react";
+import { api, formatBytes, formatTime, Session } from "../api";
+import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -170,8 +170,102 @@ export function SystemPage({
         </div>
       </Card>
 
+      {session.role === "admin" && <MaintenancePanel />}
       <ChangePassword />
     </>
+  );
+}
+
+function MaintenancePanel() {
+  const [backups, setBackups] = useState<any[]>([]);
+  const [status, setStatus] = useState<any>({ state: "idle" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [restoreName, setRestoreName] = useState("");
+  const [restoreConfirm, setRestoreConfirm] = useState("");
+  const [version, setVersion] = useState("latest");
+  const [updateConfirm, setUpdateConfirm] = useState("");
+
+  async function load() {
+    const [list, live] = await Promise.all([api.backups(), api.maintenanceStatus()]);
+    setBackups(list.backups || []);
+    setStatus(live);
+  }
+  useEffect(() => {
+    load().catch(() => {});
+    const timer = window.setInterval(() => load().catch(() => {}), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function action(run: () => Promise<any>, success: string) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await run();
+      setMessage(success);
+      window.setTimeout(() => load().catch(() => {}), 4000);
+    } catch (e: any) {
+      setError(e.message || "Операция не выполнена");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const running = status.state === "active" || status.state === "activating";
+  return (
+    <Card
+      title="Резервные копии и обновление"
+      subtitle="Операции выполняются отдельно от панели и продолжаются после перезапуска службы"
+      actions={<Badge tone={running ? "warn" : status.result === "failed" ? "danger" : "neutral"}>{running ? "выполняется" : status.result === "failed" ? "последняя операция завершилась ошибкой" : "готово"}</Badge>}
+    >
+      {message && <Notice tone="info" title={message} />}
+      {error && <Notice tone="danger" title={error} />}
+      <div className="row wrap" style={{ margin: ".8rem 0" }}>
+        <button className="btn primary" disabled={busy || running} onClick={() => action(api.createBackup, "Создание резервной копии запланировано")}>Создать копию</button>
+      </div>
+      {backups.length === 0 ? <Empty>Резервных копий пока нет</Empty> : (
+        <TableWrap>
+          <table>
+            <thead><tr><th>Файл</th><th>Создан</th><th>Размер</th><th /></tr></thead>
+            <tbody>{backups.map((backup) => <tr key={backup.name}>
+              <td className="mono">{backup.name}</td>
+              <td>{formatTime(backup.modified)}</td>
+              <td>{formatBytes(backup.size)}</td>
+              <td><div className="row">
+                <a className="btn ghost sm" href={`/api/backups/${encodeURIComponent(backup.name)}`}>Скачать</a>
+                <button className="btn sm" disabled={busy || running} onClick={() => { setRestoreName(backup.name); setRestoreConfirm(""); }}>Восстановить</button>
+                <button className="btn ghost sm" disabled={busy || running} onClick={() => {
+                  if (window.confirm(`Удалить ${backup.name}?`)) action(() => api.deleteBackup(backup.name), "Резервная копия удалена");
+                }}>Удалить</button>
+              </div></td>
+            </tr>)}</tbody>
+          </table>
+        </TableWrap>
+      )}
+
+      {restoreName && <div style={{ marginTop: "1rem" }}>
+        <Notice tone="warn" title={`Восстановить ${restoreName}?`}>
+          Текущие настройки, история и учётные записи будут заменены. Перед восстановлением автоматически создастся страховочная копия.
+        </Notice>
+        <div className="row wrap" style={{ marginTop: ".7rem" }}>
+          <input style={{ maxWidth: 220 }} placeholder="Введите RESTORE" value={restoreConfirm} onChange={(e) => setRestoreConfirm(e.target.value)} />
+          <button className="btn danger" disabled={busy || restoreConfirm !== "RESTORE"} onClick={() => action(() => api.restoreBackup(restoreName, restoreConfirm), "Восстановление запланировано")}>Восстановить</button>
+          <button className="btn ghost" onClick={() => setRestoreName("")}>Отмена</button>
+        </div>
+      </div>}
+
+      <div style={{ marginTop: "1.2rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+        <strong>Обновление netOS</strong>
+        <div className="faint" style={{ fontSize: 12.5, margin: ".25rem 0 .7rem" }}>Перед обновлением установщик сохраняет данные; укажите latest или тег релиза, например v0.06.</div>
+        <div className="row wrap">
+          <input style={{ maxWidth: 160 }} value={version} onChange={(e) => setVersion(e.target.value.trim())} />
+          <input style={{ maxWidth: 220 }} placeholder="Введите UPDATE" value={updateConfirm} onChange={(e) => setUpdateConfirm(e.target.value)} />
+          <button className="btn" disabled={busy || running || updateConfirm !== "UPDATE" || !version} onClick={() => action(() => api.updateSystem(version, updateConfirm), "Обновление запланировано")}>Обновить</button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

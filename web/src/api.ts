@@ -196,6 +196,14 @@ export const api = {
   ddnsStatus: () => request<any>("GET", "/api/ddns/status"),
   statistics: (hours = 24, interfaces: string[] = []) =>
     request<any>("GET", `/api/statistics?hours=${hours}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
+  backups: () => request<{ backups: any[] }>("GET", "/api/backups"),
+  createBackup: () => request<{ scheduled: boolean }>("POST", "/api/backups"),
+  deleteBackup: (name: string) => request<{ ok: boolean }>("DELETE", `/api/backups/${encodeURIComponent(name)}`),
+  restoreBackup: (name: string, confirm: string) =>
+    request<{ scheduled: boolean }>("POST", "/api/maintenance/restore", { name, confirm }),
+  updateSystem: (version: string, confirm: string) =>
+    request<{ scheduled: boolean }>("POST", "/api/maintenance/update", { version, confirm }),
+  maintenanceStatus: () => request<any>("GET", "/api/maintenance/status"),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
   leases: () => request<{ leases: any[] }>("GET", "/api/leases"),

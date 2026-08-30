@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -214,7 +215,7 @@ func viewerAllowed(r *http.Request) bool {
 		return true
 	}
 	switch r.URL.Path {
-	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/statistics", "/api/clients",
+	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/statistics", "/api/maintenance/status", "/api/clients",
 		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes", "/api/audit",
 		"/api/revisions":
 		return true
@@ -658,6 +659,102 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 	}
 	points := s.Traffic.Points(time.Now().UTC().Add(-time.Duration(hours)*time.Hour), names)
 	writeJSON(w, http.StatusOK, map[string]any{"points": points, "interval_seconds": int(s.Traffic.Interval.Seconds())})
+}
+
+func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request) {
+	if s.Maintenance == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Maintenance.Status(r.Context()))
+}
+
+func (s *Server) handleBackups(w http.ResponseWriter, _ *http.Request) {
+	if s.Maintenance == nil {
+		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
+		return
+	}
+	backups, err := s.Maintenance.Backups()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "%v", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"backups": backups})
+}
+
+func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
+	if s.Maintenance == nil {
+		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
+		return
+	}
+	path, err := s.Maintenance.BackupPath(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "резервная копия не найдена")
+		return
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(path)))
+	w.Header().Set("Content-Type", "application/gzip")
+	http.ServeFile(w, r, path)
+}
+
+func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
+	s.scheduleMaintenance(w, r, "backup", "", "backup")
+}
+
+func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	if s.Maintenance == nil {
+		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
+		return
+	}
+	path, err := s.Maintenance.BackupPath(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "резервная копия не найдена")
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		writeError(w, http.StatusInternalServerError, "%v", err)
+		return
+	}
+	_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: "backup-delete", Target: filepath.Base(path), Success: true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleMaintenanceRestore(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Name    string `json:"name"`
+		Confirm string `json:"confirm"`
+	}
+	if err := readJSON(r, &input); err != nil || input.Confirm != "RESTORE" {
+		writeError(w, http.StatusBadRequest, "для восстановления требуется подтверждение RESTORE")
+		return
+	}
+	s.scheduleMaintenance(w, r, "restore", input.Name, "restore")
+}
+
+func (s *Server) handleMaintenanceUpdate(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Version string `json:"version"`
+		Confirm string `json:"confirm"`
+	}
+	if err := readJSON(r, &input); err != nil || input.Confirm != "UPDATE" {
+		writeError(w, http.StatusBadRequest, "для обновления требуется подтверждение UPDATE")
+		return
+	}
+	s.scheduleMaintenance(w, r, "update", input.Version, "update")
+}
+
+func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, operation, argument, action string) {
+	if s.Maintenance == nil {
+		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
+		return
+	}
+	if err := s.Maintenance.Schedule(r.Context(), operation, argument); err != nil {
+		_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: action, Target: argument, Detail: err.Error(), Success: false})
+		writeError(w, http.StatusConflict, "%v", err)
+		return
+	}
+	_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: action, Target: argument, Detail: "операция запланирована", Success: true})
+	writeJSON(w, http.StatusAccepted, map[string]any{"scheduled": true})
 }
 
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:

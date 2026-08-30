@@ -41,11 +41,12 @@ type ComponentProbe interface {
 
 // Server — веб-панель.
 type Server struct {
-	Store     *store.Store
-	Engine    *apply.Engine
-	Collector *runtime.Collector
-	Traffic   *runtime.TrafficHistory
-	Logger    Logger
+	Store       *store.Store
+	Engine      *apply.Engine
+	Collector   *runtime.Collector
+	Traffic     *runtime.TrafficHistory
+	Maintenance *Maintenance
+	Logger      Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
 	Components ComponentProbe
@@ -137,6 +138,13 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/status", s.handleStatus)
 	auth("GET /api/ddns/status", s.handleDDNSStatus)
 	auth("GET /api/statistics", s.handleStatistics)
+	auth("GET /api/maintenance/status", s.handleMaintenanceStatus)
+	auth("GET /api/backups", s.handleBackups)
+	auth("GET /api/backups/{name}", s.handleBackupDownload)
+	auth("POST /api/backups", s.handleCreateBackup)
+	auth("DELETE /api/backups/{name}", s.handleDeleteBackup)
+	auth("POST /api/maintenance/restore", s.handleMaintenanceRestore)
+	auth("POST /api/maintenance/update", s.handleMaintenanceUpdate)
 	auth("GET /api/clients", s.handleClients)
 	auth("GET /api/interfaces", s.handleInterfaces)
 	auth("GET /api/leases", s.handleLeases)
