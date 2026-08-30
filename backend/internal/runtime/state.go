@@ -80,13 +80,7 @@ func (c *Collector) Leases() ([]Lease, error) {
 	if c.LeaseProvider != nil {
 		provider = c.LeaseProvider()
 	}
-	path := c.LeasePath
-	switch provider {
-	case "isc-dhcp-server":
-		path = "/var/lib/netos/dhcpd.leases"
-	case "kea":
-		path = "/var/lib/netos/kea-leases4.csv"
-	}
+	path := leasePathForProvider(provider, c.LeasePath)
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -103,6 +97,19 @@ func (c *Collector) Leases() ([]Lease, error) {
 		return parseKeaLeases(f)
 	}
 	return parseDnsmasqLeases(f)
+}
+
+func leasePathForProvider(provider, dnsmasqPath string) string {
+	switch provider {
+	case "isc-dhcp-server":
+		return "/var/lib/netos/dhcpd.leases"
+	case "kea":
+		// Keep this in sync with services.keaLeasePath. Debian's AppArmor
+		// profile only permits Kea's writable database below /var/lib/kea.
+		return "/var/lib/kea/netos-leases4.csv"
+	default:
+		return dnsmasqPath
+	}
 }
 
 func parseDnsmasqLeases(f *os.File) ([]Lease, error) {

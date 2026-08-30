@@ -134,7 +134,15 @@ func (d *KeaDHCP) Render(cfg *config.Config) string {
 	for _, code := range privateCodes {
 		optionDefs = append(optionDefs, map[string]any{"name": fmt.Sprintf("netos-option-%d", code), "code": code, "type": "string", "space": "dhcp4"})
 	}
-	dhcp4 := map[string]any{"interfaces-config": map[string]any{"interfaces": ifaces}, "authoritative": true, "early-global-reservations-lookup": true, "reservations-global": true, "reservations": globalReservations, "lease-database": map[string]any{"type": "memfile", "persist": true, "name": keaLeasePath, "lfc-interval": 3600}, "option-def": optionDefs, "subnet4": subnets}
+	// A newly-created bridge can need a short moment to acquire carrier from
+	// its dummy port. Without retries Kea stays "active" but opens no DHCP
+	// socket, so clients never receive an address until the next Apply.
+	interfaces := map[string]any{
+		"interfaces":                      ifaces,
+		"service-sockets-max-retries":     60,
+		"service-sockets-retry-wait-time": 1000,
+	}
+	dhcp4 := map[string]any{"interfaces-config": interfaces, "authoritative": true, "early-global-reservations-lookup": true, "reservations-global": true, "reservations": globalReservations, "lease-database": map[string]any{"type": "memfile", "persist": true, "name": keaLeasePath, "lfc-interval": 3600}, "option-def": optionDefs, "subnet4": subnets}
 	root := map[string]any{"Dhcp4": dhcp4}
 	data, _ := json.MarshalIndent(root, "", "  ")
 	return string(data) + "\n"

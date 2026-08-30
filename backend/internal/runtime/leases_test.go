@@ -6,6 +6,18 @@ import (
 	"time"
 )
 
+func TestLeasePathForProvider(t *testing.T) {
+	if got := leasePathForProvider("kea", "/dnsmasq.leases"); got != "/var/lib/kea/netos-leases4.csv" {
+		t.Fatalf("Kea lease path = %q", got)
+	}
+	if got := leasePathForProvider("isc-dhcp-server", "/dnsmasq.leases"); got != "/var/lib/netos/dhcpd.leases" {
+		t.Fatalf("ISC lease path = %q", got)
+	}
+	if got := leasePathForProvider("dnsmasq", "/dnsmasq.leases"); got != "/dnsmasq.leases" {
+		t.Fatalf("dnsmasq lease path = %q", got)
+	}
+}
+
 func leaseFile(t *testing.T, body string) *os.File {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "leases-")

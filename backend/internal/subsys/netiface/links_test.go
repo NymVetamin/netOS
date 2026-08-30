@@ -184,8 +184,42 @@ func TestOwnedListSurvivesRestart(t *testing.T) {
 		t.Fatalf("мост не попал в список владения: %v", owned)
 	}
 	// Пустому мосту нужен dummy-порт для carrier, и он тоже наш.
-	if !owned[dummyNameFor("lan")] {
+	if !owned[dummyNameFor("lan")] || !owned[carrierPeerNameFor("lan")] {
 		t.Fatalf("dummy-порт не попал в список владения: %v", owned)
+	}
+}
+
+func TestEmptyBridgeUsesVethPairForCarrier(t *testing.T) {
+	newFakeNet(t, "br1:bridge")
+	runner := &linkRunner{}
+	s := &Interfaces{Runner: runner, owned: map[string]bool{}}
+	if err := s.ensureBridgeCarrier(context.Background(), "br1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ip link add name d-br1 type veth peer name p-br1",
+		"ip link set d-br1 master br1",
+		"ip link set p-br1 up",
+		"ip link set d-br1 up",
+	} {
+		if !runner.has(want) {
+			t.Fatalf("нет команды %q: %v", want, runner.commands)
+		}
+	}
+}
+
+func TestLegacyDummyCarrierIsReplaced(t *testing.T) {
+	newFakeNet(t, "br1:bridge", "d-br1")
+	runner := &linkRunner{}
+	s := &Interfaces{Runner: runner, OwnedPath: ownedFile(t, "br1", "d-br1")}
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "lan", Name: "br1", Type: "bridge", Enabled: true}}
+
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.has("ip link delete d-br1") || !runner.has("ip link add name d-br1 type veth peer name p-br1") {
+		t.Fatalf("устаревший dummy-порт не заменён: %v", runner.commands)
 	}
 }
 

@@ -229,15 +229,35 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 // ensureBridgeCarrier создаёт dummy-порт для пустого бриджа.
 func (s *Interfaces) ensureBridgeCarrier(ctx context.Context, bridge string) error {
 	dummy := dummyNameFor(bridge)
-	if !linkExists(dummy) {
-		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", dummy, "type", "dummy"); err != nil {
-			return fmt.Errorf("создание dummy-порта для %s: %w", bridge, err)
+	peer := carrierPeerNameFor(bridge)
+	dummyExists, peerExists := linkExists(dummy), linkExists(peer)
+	if dummyExists && !peerExists {
+		if !s.owned[dummy] {
+			return fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", dummy)
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "link", "delete", dummy); err != nil {
+			return fmt.Errorf("замена устаревшего carrier-порта %s: %w", dummy, err)
+		}
+		dummyExists = false
+	}
+	if peerExists && !dummyExists {
+		return fmt.Errorf("интерфейс %s уже существует без парного %s", peer, dummy)
+	}
+	if dummyExists && (!s.owned[dummy] || !s.owned[peer]) {
+		return fmt.Errorf("carrier-пара %s/%s не принадлежит netOS", dummy, peer)
+	}
+	if !dummyExists {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", dummy, "type", "veth", "peer", "name", peer); err != nil {
+			return fmt.Errorf("создание carrier-пары для %s: %w", bridge, err)
 		}
 	}
 	if masterOf(dummy) != bridge {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "set", dummy, "master", bridge); err != nil {
 			return fmt.Errorf("подключение dummy-порта к %s: %w", bridge, err)
 		}
+	}
+	if _, err := s.Runner.Run(ctx, "ip", "link", "set", peer, "up"); err != nil {
+		return err
 	}
 	_, err := s.Runner.Run(ctx, "ip", "link", "set", dummy, "up")
 	return err
@@ -246,6 +266,14 @@ func (s *Interfaces) ensureBridgeCarrier(ctx context.Context, bridge string) err
 // dummyNameFor строит имя dummy-порта, укладываясь в лимит ядра в 15 символов.
 func dummyNameFor(bridge string) string {
 	name := "d-" + strings.TrimPrefix(bridge, "br-")
+	if len(name) > 15 {
+		name = name[:15]
+	}
+	return name
+}
+
+func carrierPeerNameFor(bridge string) string {
+	name := "p-" + strings.TrimPrefix(bridge, "br-")
 	if len(name) > 15 {
 		name = name[:15]
 	}
@@ -334,6 +362,7 @@ func wantedLinks(cfg *config.Config) map[string]bool {
 		// только в него добавят настоящий порт, dummy будет удалён.
 		if i.Type == "bridge" && len(i.Members) == 0 {
 			wanted[dummyNameFor(i.Name)] = true
+			wanted[carrierPeerNameFor(i.Name)] = true
 		}
 	}
 	return wanted
@@ -354,6 +383,7 @@ func (s *Interfaces) rememberOwned(cfg *config.Config) error {
 		names = append(names, i.Name)
 		if i.Type == "bridge" && len(i.Members) == 0 {
 			names = append(names, dummyNameFor(i.Name))
+			names = append(names, carrierPeerNameFor(i.Name))
 		}
 	}
 	sort.Strings(names)
