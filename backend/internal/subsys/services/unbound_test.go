@@ -164,17 +164,32 @@ func TestReverseZoneRequiresByteAlignedMask(t *testing.T) {
 	}
 }
 
-func TestUnboundFilterAAAALimitationIsReported(t *testing.T) {
+func TestUnboundFiltersAAAAForEveryAllowedClient(t *testing.T) {
 	cfg := resolverConfig()
 	cfg.IPv6.FilterAAAA = true
-	res := cfg.Validate()
-	var warned bool
-	for _, p := range res.Problems {
-		if strings.Contains(p.Message, "AAAA") {
-			warned = true
+	out := NewUnbound(nil).Render(cfg)
+	for _, want := range []string{
+		`module-config: "respip validator iterator"`,
+		`define-tag: "netos-filter-aaaa"`,
+		`access-control-tag: 127.0.0.0/8 "netos-filter-aaaa"`,
+		`access-control-tag-action: 127.0.0.0/8 netos-filter-aaaa always_nodata`,
+		`access-control-tag: 192.168.10.0/24 "netos-filter-aaaa"`,
+		`access-control-tag-action: 192.168.10.0/24 netos-filter-aaaa always_nodata`,
+		`response-ip-tag: ::/0 "netos-filter-aaaa"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("нет директивы %q:\n%s", want, out)
 		}
 	}
-	if !warned {
-		t.Fatal("ограничение unbound по AAAA нигде не отражено")
+	for _, problem := range cfg.Validate().Problems {
+		if problem.Path == "ipv6.filter_aaaa" {
+			t.Fatalf("рабочий фильтр Unbound всё ещё отмечен как ограничение: %+v", problem)
+		}
+	}
+
+	cfg.IPv6.FilterAAAA = false
+	out = NewUnbound(nil).Render(cfg)
+	if strings.Contains(out, "netos-filter-aaaa") || strings.Contains(out, "module-config: \"respip") {
+		t.Fatalf("фильтр AAAA остался в выключенной конфигурации:\n%s", out)
 	}
 }

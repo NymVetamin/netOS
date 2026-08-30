@@ -77,6 +77,15 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	w("    interface: 127.0.0.1")
 	w("    access-control: 0.0.0.0/0 refuse")
 	w("    access-control: 127.0.0.0/8 allow")
+	if cfg.IPv6.FilterAAAA {
+		// Unbound does not have dnsmasq's filter-AAAA switch. Its supported
+		// equivalent is the respip module: tag IPv6 response addresses and
+		// turn matching answers into NOERROR/NODATA for every allowed client.
+		// Keeping this inside Unbound preserves DNSSEC and encrypted upstreams.
+		w("    module-config: \"respip validator iterator\"")
+		w("    define-tag: \"netos-filter-aaaa\"")
+		renderUnboundAAAAClient(&b, "127.0.0.0/8")
+	}
 	for _, n := range cfg.Networks {
 		if !n.Enabled || n.RouterAddress == "" {
 			continue
@@ -84,7 +93,13 @@ func (u *Unbound) Render(cfg *config.Config) string {
 		w("    interface: %s", addressOf(n.RouterAddress))
 		if subnet, err := subnetOf(n.RouterAddress); err == nil {
 			w("    access-control: %s allow", subnet)
+			if cfg.IPv6.FilterAAAA {
+				renderUnboundAAAAClient(&b, subnet)
+			}
 		}
+	}
+	if cfg.IPv6.FilterAAAA {
+		w("    response-ip-tag: ::/0 \"netos-filter-aaaa\"")
 	}
 
 	w("    hide-identity: yes")
@@ -140,6 +155,11 @@ func (u *Unbound) Render(cfg *config.Config) string {
 		w("%s", strings.TrimSpace(cfg.DNS.AdvancedOptions))
 	}
 	return b.String()
+}
+
+func renderUnboundAAAAClient(b *strings.Builder, subnet string) {
+	fmt.Fprintf(b, "    access-control-tag: %s \"netos-filter-aaaa\"\n", subnet)
+	fmt.Fprintf(b, "    access-control-tag-action: %s netos-filter-aaaa always_nodata\n", subnet)
 }
 
 // privateRanges — диапазоны, которые публичный DNS возвращать не должен.

@@ -20,8 +20,8 @@ const (
 
 // Dnsproxy владеет процессом dnsproxy.
 //
-// В отличие от unbound он умеет DoH и DoQ, а главное — вырезать AAAA из
-// ответов. Для роутера, который подавляет IPv6, это не мелочь: клиент,
+// В отличие от unbound он умеет DoH и DoQ; AAAA вырезает своей встроенной опцией.
+// Для роутера, который подавляет IPv6, это не мелочь: клиент,
 // получивший AAAA, попытается пойти в обход канала.
 //
 // Локальные имена, как и в связке с unbound, остаются за dnsmasq: адреса
@@ -116,7 +116,7 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 		w("dnssec: true")
 	}
 	if cfg.IPv6.FilterAAAA {
-		// Ровно то, чего не умеет unbound: AAAA получают пустой ответ.
+		// AAAA получают пустой ответ.
 		w("ipv6-disabled: true")
 	}
 	if cfg.DNS.RebindProtection {
