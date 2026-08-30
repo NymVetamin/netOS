@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	keaConfPath  = "/var/lib/netos/generated/kea-dhcp4.json"
-	keaLeasePath = "/var/lib/netos/kea-leases4.csv"
+	keaConfPath = "/var/lib/netos/generated/kea-dhcp4.json"
+	// Debian's Kea AppArmor profile only allows lease databases below
+	// /var/lib/kea. A syntactically valid config outside it starts and then
+	// immediately dies with DHCPSRV_MEMFILE_FAILED_TO_OPEN.
+	keaLeasePath = "/var/lib/kea/netos-leases4.csv"
 	keaUnit      = "netos-kea-dhcp4.service"
 )
 
@@ -175,7 +178,7 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	return d.Systemd.Restart(ctx, keaUnit)
 }
 func (d *KeaDHCP) ensureUnit(ctx context.Context) error {
-	unit := "[Unit]\nDescription=netOS Kea DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nExecStart=/usr/sbin/kea-dhcp4 -c " + keaConfPath + "\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n"
+	unit := renderKeaUnit()
 	path := filepath.Join("/etc/systemd/system", keaUnit)
 	if !system.FileChanged(path, []byte(unit)) {
 		return nil
@@ -184,6 +187,10 @@ func (d *KeaDHCP) ensureUnit(ctx context.Context) error {
 		return err
 	}
 	return d.Systemd.DaemonReload(ctx)
+}
+
+func renderKeaUnit() string {
+	return "[Unit]\nDescription=netOS Kea DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nRuntimeDirectory=kea\nRuntimeDirectoryMode=0755\nExecStart=/usr/sbin/kea-dhcp4 -c " + keaConfPath + "\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n"
 }
 func (d *KeaDHCP) Health(ctx context.Context, cfg *config.Config) error {
 	if d.Needed(cfg) && !d.Systemd.IsActive(ctx, keaUnit) {

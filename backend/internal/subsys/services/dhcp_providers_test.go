@@ -40,9 +40,16 @@ func TestKeaDHCPRender(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &root); err != nil {
 		t.Fatalf("невалидный JSON Kea: %v", err)
 	}
-	for _, want := range []string{`"interfaces"`, `"br0"`, `"192.168.50.0/24"`, `"DROP"`, `"192.168.50.10"`} {
+	for _, want := range []string{`"interfaces"`, `"br0"`, `"192.168.50.0/24"`, `"DROP"`, `"192.168.50.10"`, `"/var/lib/kea/netos-leases4.csv"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("в конфиге Kea нет %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestKeaUnitCreatesRequiredRuntimeDirectory(t *testing.T) {
+	unit := renderKeaUnit()
+	if !strings.Contains(unit, "RuntimeDirectory=kea") {
+		t.Fatalf("Kea unit does not create /run/kea:\n%s", unit)
 	}
 }
