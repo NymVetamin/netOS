@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/netos-router/netos/internal/config"
 )
 
 type quietLogger struct{}
@@ -74,6 +76,51 @@ func release(t *testing.T, want string) externalRelease {
 		SHA256:        map[string]string{"amd64": want, "arm64": want},
 		FileInArchive: "dnsproxy",
 		Target:        filepath.Join(t.TempDir(), "dnsproxy"),
+		VersionArgs:   []string{"--version"},
+	}
+}
+
+type versionRunner struct {
+	output string
+	calls  int
+}
+
+func (r *versionRunner) Run(context.Context, string, ...string) (string, error) {
+	r.calls++
+	return r.output, nil
+}
+
+func (r *versionRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+func TestInstalledExternalReleaseIsNotDownloadedAgain(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "xray")
+	if err := os.WriteFile(target, []byte("installed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel := externalRelease{
+		Version: "v26.7.28", Target: target, VersionArgs: []string{"version"},
+		URL:    func(string, string) string { return "https://example.invalid/xray.zip" },
+		SHA256: map[string]string{runtime.GOARCH: strings.Repeat("0", 64)},
+	}
+	originalRelease := externalReleases["xray"]
+	externalReleases["xray"] = rel
+	defer func() { externalReleases["xray"] = originalRelease }()
+	originalFetch := fetch
+	fetch = func(context.Context, string) ([]byte, error) {
+		t.Fatal("актуальный Xray не должен скачиваться повторно")
+		return nil, nil
+	}
+	defer func() { fetch = originalFetch }()
+
+	runner := &versionRunner{output: "Xray 26.7.28 (Xray, Penetrates Everything.)"}
+	s := New(runner, quietLogger{})
+	if err := s.installExternal(context.Background(), config.ComponentInfo{ID: "xray", External: true}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("версия проверена %d раз вместо одного", runner.calls)
 	}
 }
 

@@ -139,6 +139,9 @@ func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo) erro
 // не просто apt-get install.
 func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentInfo) error {
 	if rel, ok := externalReleases[info.ID]; ok {
+		if s.externalCurrent(ctx, rel) {
+			return nil
+		}
 		return s.installRelease(ctx, info.ID, rel)
 	}
 	switch info.ID {
@@ -146,6 +149,23 @@ func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentIn
 		return fmt.Errorf("установка компонента %s появится вместе с поддержкой самого компонента", info.Title)
 	}
 	return fmt.Errorf("неизвестный внешний компонент %s", info.ID)
+}
+
+// externalCurrent проверяет закреплённую версию, а не просто наличие файла.
+// Повторное применение любой настройки не должно зависеть от GitHub и заново
+// заменять работающий бинарник; повреждённая или устаревшая копия при этом
+// должна быть переустановлена обычным проверенным путём.
+func (s *Subsystem) externalCurrent(ctx context.Context, rel externalRelease) bool {
+	info, err := os.Stat(rel.Target)
+	if err != nil || !info.Mode().IsRegular() || s.Runner == nil || len(rel.VersionArgs) == 0 {
+		return false
+	}
+	out, err := s.Runner.Run(ctx, rel.Target, rel.VersionArgs...)
+	if err != nil {
+		return false
+	}
+	want := strings.TrimPrefix(rel.Version, "v")
+	return want != "" && strings.Contains(out, want)
 }
 
 func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error {

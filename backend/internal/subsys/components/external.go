@@ -36,6 +36,9 @@ type externalRelease struct {
 	FileInArchive string
 	// Target — куда положить исполняемый файл.
 	Target string
+	// VersionArgs — аргументы, которыми уже установленный бинарник сообщает
+	// версию. Совпадение позволяет не скачивать тот же архив при каждом Apply.
+	VersionArgs []string
 	// ZIP distinguishes release archives from the default tar.gz format.
 	ZIP bool
 }
@@ -53,6 +56,7 @@ var externalReleases = map[string]externalRelease{
 		},
 		FileInArchive: "xray",
 		Target:        "/usr/local/bin/xray",
+		VersionArgs:   []string{"version"},
 		ZIP:           true,
 	},
 	"dnsproxy": {
@@ -68,6 +72,7 @@ var externalReleases = map[string]externalRelease{
 		},
 		FileInArchive: "dnsproxy",
 		Target:        "/usr/local/bin/dnsproxy",
+		VersionArgs:   []string{"--version"},
 	},
 }
 
