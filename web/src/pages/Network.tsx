@@ -42,8 +42,8 @@ export function NetworkPage({
   return (
     <>
       <div className="page-head">
-        <h1>Интерфейсы и сегменты</h1>
-        <p>Подключение к провайдеру, локальные сети и физические порты</p>
+        <h1>Сеть</h1>
+        <p>Подключение к интернету, локальные сети и физические порты</p>
       </div>
 
       <ProblemsFor problems={problems} prefixes={["wans", "multiwan", "networks", "interfaces"]} />

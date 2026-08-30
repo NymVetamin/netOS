@@ -41,8 +41,8 @@ export function FirewallPage({ config, patch }: { config: any; patch: Patch }) {
   return (
     <>
       <div className="page-head">
-        <h1>Файрволл</h1>
-        <p>Правила проверяются сверху вниз, срабатывает первое подходящее</p>
+        <h1>Защита сети</h1>
+        <p>Правила доступа и перенаправления портов; проверяются сверху вниз</p>
       </div>
 
       {!fw.enabled && (

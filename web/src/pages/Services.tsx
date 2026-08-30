@@ -26,8 +26,8 @@ export function ServicesPage({ config, patch }: { config: any; patch: Patch }) {
   return (
     <>
       <div className="page-head">
-        <h1>DHCP и DNS</h1>
-        <p>Выдача адресов и разрешение имён</p>
+        <h1>Адреса и DNS</h1>
+        <p>Автоматическая настройка устройств и разрешение доменных имён</p>
       </div>
 
       <DHCPSection config={config} patch={patch} providers={dhcpProviders} />

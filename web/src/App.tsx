@@ -32,42 +32,73 @@ type PageID =
   | "history"
   | "diagnostics";
 
-const NAV: { group: string; items: { id: PageID; label: string; icon: string }[] }[] = [
+type IconName = "dashboard" | "clients" | "network" | "routing" | "channels" | "vpn" | "wifi" | "traffic" | "firewall" | "services" | "components" | "system" | "history" | "diagnostics";
+
+const NAV: { group: string; items: { id: PageID; label: string; icon: IconName }[] }[] = [
   {
     group: "Обзор",
     items: [
-      { id: "dashboard", label: "Сводка", icon: "◉" },
-      { id: "clients", label: "Клиенты", icon: "▪" },
+      { id: "dashboard", label: "Сводка", icon: "dashboard" },
+      { id: "clients", label: "Устройства", icon: "clients" },
     ],
   },
   {
     group: "Сеть",
     items: [
-      { id: "network", label: "Интерфейсы и сегменты", icon: "⇄" },
-      { id: "routing", label: "Маршрутизация", icon: "⤳" },
-      { id: "channels", label: "Каналы и политики", icon: "◇" },
-      { id: "vpn-servers", label: "VPN-серверы", icon: "⌁" },
-      { id: "wifi", label: "Wi-Fi", icon: "⌁" },
-      { id: "traffic", label: "Трафик и QoS", icon: "≋" },
-      { id: "firewall", label: "Файрволл", icon: "▣" },
-      { id: "services", label: "DHCP и DNS", icon: "⌘" },
+      { id: "network", label: "Сеть", icon: "network" },
+      { id: "routing", label: "Маршрутизация", icon: "routing" },
+      { id: "channels", label: "Интернет-каналы", icon: "channels" },
+      { id: "vpn-servers", label: "VPN-доступ", icon: "vpn" },
+      { id: "wifi", label: "Wi-Fi", icon: "wifi" },
+      { id: "traffic", label: "Скорость и QoS", icon: "traffic" },
+      { id: "firewall", label: "Защита сети", icon: "firewall" },
+      { id: "services", label: "Адреса и DNS", icon: "services" },
     ],
   },
   {
     group: "Роутер",
     items: [
-      { id: "components", label: "Компоненты", icon: "⊞" },
-      { id: "system", label: "Система", icon: "⚙" },
+      { id: "components", label: "Компоненты", icon: "components" },
+      { id: "system", label: "Система", icon: "system" },
     ],
   },
   {
     group: "Служебное",
     items: [
-      { id: "history", label: "История", icon: "↺" },
-      { id: "diagnostics", label: "Диагностика", icon: "✽" },
+      { id: "history", label: "История", icon: "history" },
+      { id: "diagnostics", label: "Диагностика", icon: "diagnostics" },
     ],
   },
 ];
+
+const ICON_PATHS: Record<IconName, React.ReactNode> = {
+  dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
+  clients: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
+  network: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M10 6.5h4a3.5 3.5 0 0 1 3.5 3.5v4M14 17.5h-4A3.5 3.5 0 0 1 6.5 14v-4"/></>,
+  routing: <><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M8.5 16.5 15.5 8.5M9 6h3a6 6 0 0 1 6 6v3"/></>,
+  channels: <><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="2.5"/><circle cx="16" cy="17" r="2.5"/></>,
+  vpn: <><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></>,
+  wifi: <><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16a6 6 0 0 1 7 0M12 20h.01M2 9a16 16 0 0 1 20 0"/></>,
+  traffic: <><path d="M7 3v18M17 21V3M3 7l4-4 4 4M13 17l4 4 4-4"/></>,
+  firewall: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10ZM8 12h8M12 8v8"/>,
+  services: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.38.35.72.6 1 .3.28.69.43 1.1.4H21v4h-.09a1.7 1.7 0 0 0-1.51.6Z"/></>,
+  components: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></>,
+  system: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l-2.86 2.86A1.7 1.7 0 0 0 15 19.4 1.7 1.7 0 0 0 13.6 21h-3.2A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-2.86-2.86A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3 13.6v-3.2A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l2.86-2.86A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10.4 3h3.2A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l2.86 2.86A1.7 1.7 0 0 0 19.4 9 1.7 1.7 0 0 0 21 10.4v3.2A1.7 1.7 0 0 0 19.4 15Z"/></>,
+  history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></>,
+  diagnostics: <><path d="M4 19v-4M8 19V9M12 19v-7M16 19V5M20 19v-9"/><path d="m3 6 4 2 4-4 4 2 6-4"/></>,
+};
+
+function NavIcon({ name }: { name: IconName }) {
+  return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICON_PATHS[name]}</svg>;
+}
+
+function MenuIcon({ close }: { close: boolean }) {
+  return <svg className="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">{close ? <><path d="m6 6 12 12"/><path d="M18 6 6 18"/></> : <><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></>}</svg>;
+}
+
+function ThemeIcon({ theme }: { theme: string }) {
+  return <svg className="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{theme === "dark" ? <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 6.7 6.7 0 0 0 21 12.8Z"/> : theme === "light" ? <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.41M17.66 6.34l1.41-1.41"/></> : <><circle cx="12" cy="12" r="8"/><path d="M12 4v16a8 8 0 0 0 0-16Z"/></>}</svg>;
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -317,7 +348,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             aria-expanded={mobileNavOpen}
             onClick={() => setMobileNavOpen((open) => !open)}
           >
-            {mobileNavOpen ? "×" : "☰"}
+            <MenuIcon close={mobileNavOpen} />
           </button>
         </div>
 
@@ -329,14 +360,14 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 <button
                   key={item.id}
                   className={`nav-item ${page === item.id ? "active" : ""}`}
+                  aria-label={item.label}
+                  aria-current={page === item.id ? "page" : undefined}
                   onClick={() => {
                     setPage(item.id);
                     setMobileNavOpen(false);
                   }}
                 >
-                  <span className="icon" aria-hidden="true">
-                    {item.icon}
-                  </span>
+                  <span className="icon"><NavIcon name={item.icon} /></span>
                   {item.label}
                 </button>
               ))}
@@ -357,7 +388,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")
               }
             >
-              {theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐"}
+              <ThemeIcon theme={theme} />
             </button>
             <button
               className="btn ghost sm"

@@ -1,7 +1,24 @@
 // Базовые элементы интерфейса. Держим их в одном месте, чтобы страницы
 // занимались данными, а не оформлением.
 
-import { cloneElement, isValidElement, ReactElement, ReactNode, useId } from "react";
+import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useId } from "react";
+
+function labelNestedControls(node: ReactNode, label: string, hintID?: string): ReactNode {
+  return Children.map(node, (child) => {
+    if (!isValidElement(child)) return child;
+    const element = child as ReactElement<any>;
+    if (typeof element.type === "string" && ["input", "select", "textarea"].includes(element.type)) {
+      return cloneElement(element, {
+        "aria-label": element.props["aria-label"] || label,
+        "aria-describedby": element.props["aria-describedby"] || hintID,
+      });
+    }
+    if (element.props.children == null) return element;
+    return cloneElement(element, {
+      children: labelNestedControls(element.props.children, label, hintID),
+    });
+  });
+}
 
 export function Card({
   title,
@@ -77,14 +94,18 @@ export function Field({
   children: ReactNode;
 }) {
   const generatedID = useId();
-  const element = isValidElement(children) ? (children as ReactElement<{ id?: string }>) : null;
+  const labelID = `${generatedID}-label`;
+  const hintID = hint ? `${generatedID}-hint` : undefined;
+  const element = isValidElement(children) ? (children as ReactElement<{ id?: string; "aria-describedby"?: string }>) : null;
   const isControl = element != null && typeof element.type === "string" && ["input", "select", "textarea"].includes(element.type);
   const controlID = isControl ? element.props.id || generatedID : undefined;
   return (
     <div className="field">
-      <label className="field-label" htmlFor={controlID}>{label}</label>
-      {isControl ? cloneElement(element, { id: controlID }) : children}
-      {hint && <div className="hint">{hint}</div>}
+      <label id={labelID} className="field-label" htmlFor={controlID}>{label}</label>
+      {isControl
+        ? cloneElement(element, { id: controlID, "aria-describedby": hintID })
+        : <div className="field-control" role="group" aria-labelledby={labelID} aria-describedby={hintID}>{labelNestedControls(children, label, hintID)}</div>}
+      {hint && <div id={hintID} className="hint">{hint}</div>}
     </div>
   );
 }

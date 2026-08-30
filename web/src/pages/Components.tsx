@@ -17,14 +17,15 @@ const LIVE_POLL_MS = 5000;
 
 export function ComponentsPage({ config, patch }: { config: any; patch: Patch }) {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const [catalogError, setCatalogError] = useState("");
 
   useEffect(() => {
     let alive = true;
     const load = () =>
       api
         .catalog()
-        .then((r) => alive && setCatalog(r))
-        .catch(() => alive && setCatalog((prev) => prev ?? { components: [] }));
+        .then((r) => { if (alive) { setCatalog(r); setCatalogError(""); } })
+        .catch(() => { if (alive) { setCatalogError("Не удалось получить состояние компонентов. Повторная попытка выполняется автоматически."); setCatalog((prev) => prev ?? { components: [] }); } });
     load();
     const timer = window.setInterval(load, LIVE_POLL_MS);
     return () => {
@@ -33,7 +34,7 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
     };
   }, []);
 
-  if (!catalog) return <Spinner />;
+  if (!catalog) return <><div className="page-head"><h1>Компоненты</h1><p>Установленные возможности и системные службы роутера</p></div><Card><div className="loading-state"><Spinner /> Загружаем состояние компонентов…</div></Card></>;
 
   const wanted = new Map<string, boolean>(
     (config.components || []).map((c: any) => [c.id, c.installed]),
@@ -81,8 +82,10 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
     <>
       <div className="page-head">
         <h1>Компоненты</h1>
-        <p>Что установлено на роутере. Ставится только то, что выбрано здесь.</p>
+        <p>Установленные возможности и системные службы роутера</p>
       </div>
+
+      {catalogError && <Notice tone="warn" title="Состояние временно недоступно">{catalogError}</Notice>}
 
       <Notice tone="info" title="Базовая установка минимальна">
         Сразу после установки на машине работают только веб-панель и SSH. Роутер не

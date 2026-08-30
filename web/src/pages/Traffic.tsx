@@ -35,8 +35,8 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
   return (
     <>
       <div className="page-head">
-        <h1>Трафик и QoS</h1>
-        <p>Контроль очередей, скорости и задержки интернет-каналов</p>
+        <h1>Скорость и QoS</h1>
+        <p>Управление скоростью и задержкой интернет-подключений</p>
       </div>
 
       <Card title="Умное управление очередью" subtitle="CAKE не даёт загрузкам и резервным копиям повышать задержку для звонков и игр">
