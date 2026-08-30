@@ -263,7 +263,7 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 			Name:      name,
 			MAC:       readString(base + "/address"),
 			MTU:       int(readInt(base + "/mtu")),
-			Up:        readString(base+"/operstate") == "up",
+			Up:        interfaceIsUp(readString(base+"/operstate"), readString(base+"/flags")),
 			RXBytes:   readInt(base + "/statistics/rx_bytes"),
 			TXBytes:   readInt(base + "/statistics/tx_bytes"),
 			RXPackets: readInt(base + "/statistics/rx_packets"),
@@ -274,6 +274,21 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 		out = append(out, stat)
 	}
 	return out, nil
+}
+
+// interfaceIsUp учитывает TUN/TAP: ядро обычно сообщает им operstate=unknown,
+// даже когда интерфейс административно поднят и передаёт трафик. Флаг IFF_UP
+// в таком случае является точным признаком. Для обычного operstate=down флаг
+// не переопределяем — физический порт без carrier должен остаться «down».
+func interfaceIsUp(operstate, flags string) bool {
+	if operstate == "up" {
+		return true
+	}
+	if operstate != "unknown" {
+		return false
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(flags), 0, 64)
+	return err == nil && value&1 != 0
 }
 
 // Clients сводит аренды и ARP в единый список устройств.
