@@ -27,6 +27,19 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	}
 	ctx := context.Background()
 	runner := system.NewExec()
+	// Installing Debian's strongSwan packages starts the distro service, while
+	// netOS normally disables it in the component phase before this subsystem
+	// runs. Model that phase here and restore a pre-existing service afterwards.
+	stockActive := false
+	if out, err := runner.Run(ctx, "systemctl", "is-active", "strongswan.service"); err == nil && strings.TrimSpace(out) == "active" {
+		stockActive = true
+		if _, err := runner.Run(ctx, "systemctl", "stop", "strongswan.service"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stockActive {
+		t.Cleanup(func() { _, _ = runner.Run(context.Background(), "systemctl", "start", "strongswan.service") })
+	}
 	const namespace = "netos-ike997"
 	if _, err := runner.Run(ctx, "ip", "netns", "add", namespace); err != nil {
 		t.Fatal(err)
@@ -102,7 +115,8 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	var clientLog bytes.Buffer
 	client := exec.Command("ip", "netns", "exec", namespace, "charon-cmd",
 		"--host", "192.0.2.1", "--identity", "integration", "--eap-identity", "integration",
-		"--remote-identity", "netos-ikev2-integration", "--cert", cert, "--profile", "ikev2-eap", "--debug", "1")
+		"--remote-identity", "netos-ikev2-integration", "--cert", cert, "--profile", "ikev2-eap",
+		"--ike-proposal", "aes256gcm16-prfsha384-ecp384", "--esp-proposal", "aes256gcm16-ecp384", "--debug", "1")
 	client.Stdin = strings.NewReader("integration-secret\n")
 	client.Stdout, client.Stderr = &clientLog, &clientLog
 	if err := client.Start(); err != nil {
