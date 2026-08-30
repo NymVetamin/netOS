@@ -49,6 +49,23 @@ func TestCommonHeadersProtectAPIResponses(t *testing.T) {
 	}
 }
 
+func TestSPARejectsNonReadMethods(t *testing.T) {
+	s := &Server{}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodTrace} {
+		t.Run(method, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(method, "/", nil)
+			s.spaHandler().ServeHTTP(w, r)
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+			}
+			if got := w.Header().Get("Allow"); got != "GET, HEAD" {
+				t.Fatalf("Allow = %q", got)
+			}
+		})
+	}
+}
+
 func TestGenerateXrayKeypair(t *testing.T) {
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
