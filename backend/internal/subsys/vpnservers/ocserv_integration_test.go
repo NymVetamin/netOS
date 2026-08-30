@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -150,6 +151,47 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 	}
 	_ = client.Process.Kill()
 	_, _ = client.Process.Wait()
+
+	// Repeat the same real handshake through the netOS outbound-channel
+	// lifecycle, not just the openconnect executable. This verifies the
+	// generated protected unit, expected interface name and policy table.
+	channelRoot, err := os.MkdirTemp("/var/lib", "netos-openconnect-channel-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(channelRoot) })
+	channelSubsystem := channels.New(runner, channelRoot)
+	channelSubsystem.RTTablesPath = filepath.Join(channelRoot, "rt_tables")
+	channel := config.Channel{
+		ID: "integration-openconnect", Index: 997, Name: "Integration OpenConnect",
+		Enabled: true, Type: "openconnect", Mode: "tun", FailMode: "block",
+		Config: map[string]any{
+			"server": "https://192.0.2.1:14443", "username": "integration",
+			"password": "integration-secret", "protocol": "anyconnect",
+			"servercert": pin, "no_system_trust": true, "mtu": 1380,
+		},
+	}
+	channelCfg := config.Default()
+	channelCfg.Components = []config.Component{{ID: "openconnect", Installed: true}}
+	channelCfg.Channels = append(channelCfg.Channels, channel)
+	t.Cleanup(func() { _ = channelSubsystem.Apply(context.Background(), config.Default()) })
+	if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := channelSubsystem.Health(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	channelAddress, err := runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", "tun-ch997")
+	if err != nil || !strings.Contains(channelAddress, "10.98.0.2") {
+		t.Fatalf("netOS OpenConnect channel did not receive its address: %q (%v)", channelAddress, err)
+	}
+	if err := channelSubsystem.Apply(ctx, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat("/etc/systemd/system/netos-openconnect-ch997.service"); !os.IsNotExist(err) {
+		t.Fatalf("OpenConnect channel unit was not removed: %v", err)
+	}
+
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}
