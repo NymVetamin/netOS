@@ -298,7 +298,6 @@ func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
 	}
 }
 
-
 // Резолвер роутера netOS забирает себе, а значит обязан отдать: машина после
 // удаления должна разрешать имена ровно так же, как до установки. Память об
 // исходном состоянии лежит в StateDir, который удаление стирает, — восстановить
@@ -473,5 +472,42 @@ func TestUninstallSkipsComponentUnitsThatWereNeverInstalled(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Предупреждение: systemctl") {
 		t.Fatalf("удаление пожаловалось на systemctl из-за юнитов, которых нет: %s", out.String())
+	}
+}
+
+func TestUninstallStopsAndRemovesDynamicNetworkUnits(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	unitDir := filepath.Join(m.Root, "etc/systemd/system")
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	units := []string{
+		"netos-dhcp-test.service", "netos-pppoe-test.service", "netos-l2tp-test.service",
+		"netos-openconnect-ch12.service", "netos-xray-ch13.service",
+	}
+	for _, unit := range units {
+		if err := os.WriteFile(filepath.Join(unitDir, unit), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var disabled []string
+	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "systemctl" && len(spec.args) > 1 && spec.args[0] == "disable" {
+			disabled = append(disabled, spec.args[len(spec.args)-1])
+		}
+		return nil
+	}
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, unit := range units {
+		if !contains(disabled, unit) {
+			t.Errorf("dynamic unit was not disabled: %s", unit)
+		}
+		if _, err := os.Stat(filepath.Join(unitDir, unit)); !os.IsNotExist(err) {
+			t.Errorf("dynamic unit was not removed: %s (%v)", unit, err)
+		}
 	}
 }

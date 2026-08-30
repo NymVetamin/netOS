@@ -104,6 +104,45 @@ func TestIntegrationWireGuardLifecycle(t *testing.T) {
 	}
 }
 
+func TestIntegrationXrayLifecycle(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root are required")
+	}
+	if _, err := os.Stat("/usr/local/bin/xray"); err != nil {
+		t.Skip("xray is not installed")
+	}
+	root := t.TempDir()
+	s := New(system.NewExec(), root)
+	s.RTTablesPath = filepath.Join(root, "rt_tables")
+	ch := config.Channel{
+		ID: "integration-xray", Index: 996, Name: "Integration Xray", Enabled: true,
+		Type: "xray", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"mtu": 1380, "outbound": map[string]any{"protocol": "freedom", "settings": map[string]any{}}},
+	}
+	cfg := config.Default()
+	cfg.Components = []config.Component{{ID: "xray", Installed: true}}
+	cfg.Channels = append(cfg.Channels, ch)
+	defer s.removeChannel(context.Background(), ownedChannel{Name: InterfaceName(ch), Index: ch.Index, Type: "xray", Unit: xrayUnitName(ch)})
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := s.Runner.Run(context.Background(), "systemctl", "is-active", xrayUnitName(ch)); err != nil || strings.TrimSpace(out) != "active" {
+		t.Fatalf("Xray unit is not active: %q (%v)", out, err)
+	}
+	if err := s.Apply(context.Background(), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if s.linkExists(InterfaceName(ch)) {
+		t.Fatal("Xray TUN interface was not removed")
+	}
+	if _, err := os.Stat(filepath.Join("/etc/systemd/system", xrayUnitName(ch))); !os.IsNotExist(err) {
+		t.Fatalf("Xray unit was not removed: %v", err)
+	}
+}
+
 func TestIntegrationOpenConnectLifecycle(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
 		t.Skip("NETOS_INTEGRATION=1 and root are required")

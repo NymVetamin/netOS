@@ -692,7 +692,10 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	}
 	// Юниты, которых по одному на интерфейс или аплинк, ищем по маске: их
 	// имена зависят от конфигурации, и списком их не перечислить.
-	for _, pattern := range []string{"netos-dhcp-*.service", "netos-pppoe-*.service"} {
+	for _, pattern := range []string{
+		"netos-dhcp-*.service", "netos-pppoe-*.service", "netos-l2tp-*.service",
+		"netos-openconnect-ch*.service", "netos-xray-ch*.service",
+	} {
 		units, _ := filepath.Glob(m.sys("/etc/systemd/system/" + pattern))
 		for _, unit := range units {
 			m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", filepath.Base(unit))

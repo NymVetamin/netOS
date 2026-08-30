@@ -97,3 +97,30 @@ func TestEveryArtifactRenders(t *testing.T) {
 		}
 	}
 }
+
+func TestXrayArtifactFollowsAndRendersChannel(t *testing.T) {
+	cfg := config.Default()
+	if has(ids(Active(cfg)), "xray") {
+		t.Fatal("Xray artifact is active without an enabled channel")
+	}
+	cfg.Channels = append(cfg.Channels, config.Channel{
+		ID: "xray-test", Index: 7, Name: "Xray test", Enabled: true,
+		Type: "xray", Mode: "tun", FailMode: "block",
+		Config: map[string]any{
+			"mtu":      1400,
+			"outbound": map[string]any{"protocol": "freedom", "settings": map[string]any{}},
+		},
+	})
+	if !has(ids(Active(cfg)), "xray") {
+		t.Fatal("enabled Xray channel is absent from diagnostics")
+	}
+	out, err := Render("xray", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tun-ch7", "198.18.0.29/30", `"protocol": "freedom"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered Xray artifact lacks %q:\n%s", want, out)
+		}
+	}
+}

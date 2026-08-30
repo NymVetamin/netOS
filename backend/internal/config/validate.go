@@ -209,6 +209,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала OpenConnect нужен компонент «OpenConnect»")
 		}
+		if channel.Enabled && channel.Type == "xray" && !c.HasComponent("xray") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i),
+				"для канала Xray нужен компонент «Xray»")
+		}
 	}
 	for i, server := range c.VPNServers {
 		if server.Enabled && server.Type == "wireguard" && !c.HasComponent("wireguard") {
@@ -1263,7 +1267,7 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		default:
 			r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
 		}
-		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" {
+		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" {
 			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
 		}
 		if ch.Index < 0 || ch.Index > 9999 || (ch.Type != "direct" && ch.Index == 0) {
@@ -1274,6 +1278,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		}
 		if ch.Type == "openconnect" {
 			c.validateOpenConnectChannel(r, path, ch)
+		}
+		if ch.Type == "xray" {
+			c.validateXrayChannel(r, path, ch)
 		}
 		if ch.Type != "direct" {
 			validateProbe(r, path+".probe", ch.Probe)
@@ -1321,6 +1328,29 @@ func (c *Config) validateChannels(r *ValidationResult) {
 			seen[next.ID] = true
 			cur = next
 		}
+	}
+}
+
+func (c *Config) validateXrayChannel(r *ValidationResult, path string, ch Channel) {
+	if ch.Mode != "tun" {
+		r.errf(path+".mode", "Xray работает в netOS только через безопасный TUN-контур")
+	}
+	xr, err := ch.XrayConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if xr.MTU != 0 && (xr.MTU < 576 || xr.MTU > 9000) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+	protocol, _ := xr.Outbound["protocol"].(string)
+	switch protocol {
+	case "vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "freedom":
+	default:
+		r.errf(path+".config.outbound.protocol", "неподдерживаемый протокол Xray %q", protocol)
+	}
+	if _, ok := xr.Outbound["settings"]; !ok {
+		r.errf(path+".config.outbound.settings", "укажите настройки исходящего подключения Xray")
 	}
 }
 

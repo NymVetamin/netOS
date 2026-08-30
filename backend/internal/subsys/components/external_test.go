@@ -2,6 +2,7 @@ package components
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -9,6 +10,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -37,6 +39,23 @@ func tarGz(t *testing.T, name string, content []byte) []byte {
 		t.Fatal(err)
 	}
 	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func zipArchive(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
@@ -103,8 +122,28 @@ func TestInstallExtractsBinaryFromArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("файл не исполняемый: %v", info.Mode())
+	}
+}
+
+func TestInstallExtractsBinaryFromZIP(t *testing.T) {
+	payload := []byte("xray-binary")
+	archive := zipArchive(t, "nested/xray", payload)
+	original := fetch
+	fetch = func(context.Context, string) ([]byte, error) { return archive, nil }
+	defer func() { fetch = original }()
+	rel := release(t, sum(archive))
+	rel.FileInArchive = "xray"
+	rel.Target = filepath.Join(t.TempDir(), "xray")
+	rel.ZIP = true
+	s := New(nil, quietLogger{})
+	if err := s.installRelease(context.Background(), "xray", rel); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(rel.Target)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("распакован не тот файл: %q (%v)", got, err)
 	}
 }
 

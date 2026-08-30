@@ -32,6 +32,11 @@ type OpenConnectChannelConfig struct {
 	NoSystemTrust bool   `json:"no_system_trust,omitempty"`
 }
 
+type XrayChannelConfig struct {
+	MTU      int            `json:"mtu,omitempty"`
+	Outbound map[string]any `json:"outbound"`
+}
+
 func (c Channel) WireGuardConfig() (WireGuardChannelConfig, error) {
 	var out WireGuardChannelConfig
 	data, err := json.Marshal(c.Config)
@@ -56,6 +61,20 @@ func (c Channel) OpenConnectConfig() (OpenConnectChannelConfig, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return out, fmt.Errorf("параметры OpenConnect: %w", err)
+	}
+	return out, nil
+}
+
+func (c Channel) XrayConfig() (XrayChannelConfig, error) {
+	var out XrayChannelConfig
+	data, err := json.Marshal(c.Config)
+	if err != nil {
+		return out, fmt.Errorf("кодирование параметров Xray: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return out, fmt.Errorf("параметры Xray: %w", err)
 	}
 	return out, nil
 }

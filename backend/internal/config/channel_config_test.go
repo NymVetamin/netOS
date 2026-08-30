@@ -81,6 +81,25 @@ func TestOpenConnectChannelValidation(t *testing.T) {
 	}
 }
 
+func TestXrayChannelValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "xray", Installed: true}}
+	cfg.Channels = append(cfg.Channels, Channel{
+		ID: "xray-test", Index: 3, Name: "Xray", Enabled: true,
+		Type: "xray", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"mtu": 1400, "outbound": map[string]any{"protocol": "freedom", "settings": map[string]any{}}},
+	})
+	for _, p := range cfg.Validate().Problems {
+		if p.Severity == "error" {
+			t.Fatalf("valid Xray channel rejected: %+v", p)
+		}
+	}
+	cfg.Channels[1].Config["outbound"] = map[string]any{"protocol": "unknown", "settings": map[string]any{}}
+	if !problem(t, cfg, "outbound.protocol", "неподдерживаемый") {
+		t.Fatal("unknown Xray protocol accepted")
+	}
+}
+
 func TestPolicyMayUseEnabledWireGuardChannel(t *testing.T) {
 	cfg := Default()
 	cfg.Components = []Component{{ID: "wireguard", Installed: true}}

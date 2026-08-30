@@ -2,6 +2,7 @@ package components
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -35,9 +36,25 @@ type externalRelease struct {
 	FileInArchive string
 	// Target — куда положить исполняемый файл.
 	Target string
+	// ZIP distinguishes release archives from the default tar.gz format.
+	ZIP bool
 }
 
 var externalReleases = map[string]externalRelease{
+	"xray": {
+		Version: "v26.7.28",
+		URL: func(version, goarch string) string {
+			arch := map[string]string{"amd64": "64", "arm64": "arm64-v8a"}[goarch]
+			return fmt.Sprintf("https://github.com/XTLS/Xray-core/releases/download/%s/Xray-linux-%s.zip", version, arch)
+		},
+		SHA256: map[string]string{
+			"amd64": "8195d909f1109b8f3d99eefe401a3c451d7bf4af71f24d3815420f77e5dd2a40",
+			"arm64": "f5698bb218ada3b4022db26fafc39601c5f53b46b19eb76c9616325985807501",
+		},
+		FileInArchive: "xray",
+		Target:        "/usr/local/bin/xray",
+		ZIP:           true,
+	},
 	"dnsproxy": {
 		Version: "v0.84.0",
 		URL: func(version, goarch string) string {
@@ -94,7 +111,12 @@ func (s *Subsystem) installRelease(ctx context.Context, id string, rel externalR
 			"контрольная сумма %s не совпадает: ожидалась %s, получена %s", id, want, got)
 	}
 
-	binary, err := extractFile(archive, rel.FileInArchive)
+	var binary []byte
+	if rel.ZIP {
+		binary, err = extractZIPFile(archive, rel.FileInArchive)
+	} else {
+		binary, err = extractFile(archive, rel.FileInArchive)
+	}
 	if err != nil {
 		return fmt.Errorf("распаковка %s: %w", id, err)
 	}
@@ -114,6 +136,32 @@ func (s *Subsystem) installRelease(ctx context.Context, id string, rel externalR
 	}
 	s.Logger.Infof("установлен %s %s в %s", id, rel.Version, rel.Target)
 	return nil
+}
+
+func extractZIPFile(archive []byte, name string) ([]byte, error) {
+	r, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range r.File {
+		if file.FileInfo().IsDir() || path.Base(file.Name) != name {
+			continue
+		}
+		reader, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(reader, 256<<20))
+		closeErr := reader.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("файл %s в архиве не найден", name)
 }
 
 // extractFile достаёт один файл из tar.gz по базовому имени. Пути внутри

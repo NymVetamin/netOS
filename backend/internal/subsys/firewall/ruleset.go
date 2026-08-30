@@ -460,7 +460,7 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect") {
+		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
 			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE",
 				channels.InterfaceName(ch), "NAT канала «"+ch.Name+"»")
 		}
@@ -578,7 +578,7 @@ func (b *builder) dnsChannelPolicies(cfg *config.Config) {
 	b.line("-A OUTPUT -j CONNMARK --restore-mark")
 	for _, binding := range bindings {
 		ch, ok := channelByID[binding.ChannelID]
-		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect") {
+		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray") {
 			continue
 		}
 		mark := fmt.Sprintf("0x%x", channels.Mark(ch))
@@ -725,7 +725,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			continue
 		}
 		ch, ok := channelByID[rule.channel]
-		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect") {
+		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray") {
 			continue // валидатор не разрешает применить такую конфигурацию
 		}
 		mark := fmt.Sprintf("0x%x", channels.Mark(ch))

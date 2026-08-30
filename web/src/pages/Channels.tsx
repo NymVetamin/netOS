@@ -18,6 +18,9 @@ export function ChannelsPage({ config, patch }: Props) {
   const openconnectInstalled = (config.components || []).some(
     (component: any) => component.id === "openconnect" && component.installed,
   );
+  const xrayInstalled = (config.components || []).some(
+    (component: any) => component.id === "xray" && component.installed,
+  );
 
   function updateChannel(id: string, mutate: (channel: any) => void) {
     patch((draft) => mutate(draft.channels.find((channel: any) => channel.id === id)));
@@ -66,6 +69,20 @@ export function ChannelsPage({ config, patch }: Props) {
     });
   }
 
+  function addXray() {
+    patch((draft) => {
+      const used = new Set((draft.channels || []).map((channel: any) => channel.index));
+      let index = 1;
+      while (used.has(index)) index++;
+      draft.channels.push({
+        id: `xray-${Date.now()}`, index, name: `Xray ${index}`, enabled: false,
+        type: "xray", mode: "tun", fail_mode: "block", fallback: "",
+        probe: { enabled: true, type: "tcp", targets: ["1.1.1.1:443"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
+        config: { mtu: 1400, outbound: { protocol: "vless", settings: { vnext: [] }, streamSettings: { network: "tcp", security: "none" } } },
+      });
+    });
+  }
+
   return (
     <>
       <div className="page-head">
@@ -83,7 +100,7 @@ export function ChannelsPage({ config, patch }: Props) {
       <Card
         title="Каналы выхода"
         subtitle="Прямой выход всегда доступен; WireGuard работает с обязательным kill-switch"
-        actions={<div className="row"><button className="btn" onClick={addWireGuard}>Добавить WireGuard</button><button className="btn" onClick={addOpenConnect}>Добавить OpenConnect</button></div>}
+        actions={<div className="row"><button className="btn" onClick={addWireGuard}>Добавить WireGuard</button><button className="btn" onClick={addOpenConnect}>Добавить OpenConnect</button><button className="btn" onClick={addXray}>Добавить Xray</button></div>}
       >
         {channels.map((channel: any) =>
           channel.type === "direct" ? (
@@ -118,6 +135,16 @@ export function ChannelsPage({ config, patch }: Props) {
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })}
             />
+          ) : channel.type === "xray" ? (
+            <XrayEditor
+              key={channel.id}
+              channel={channel}
+              channels={channels}
+              installed={xrayInstalled}
+              referenced={isChannelReferenced(config, channel.id)}
+              update={(mutate) => updateChannel(channel.id, mutate)}
+              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })}
+            />
           ) : (
             <Notice key={channel.id} tone="warn" title={`Неподдерживаемый канал: ${channel.type || "без типа"}`}>
               Этот сохранённый канал нельзя включить в текущей версии. Удалите его из конфигурации или выберите поддерживаемый тип.
@@ -130,6 +157,104 @@ export function ChannelsPage({ config, patch }: Props) {
       <Policies config={config} patch={patch} policies={policies} />
     </>
   );
+}
+
+function XrayEditor({ channel, channels, installed, referenced, update, remove }: {
+  channel: any; channels: any[]; installed: boolean; referenced: boolean;
+  update: (mutate: (channel: any) => void) => void; remove: () => void;
+}) {
+  const [raw, setRaw] = useState(() => JSON.stringify(channel.config?.outbound || {}, null, 2));
+  const [link, setLink] = useState("");
+  const [error, setError] = useState("");
+  const setOutbound = (outbound: any) => {
+    setRaw(JSON.stringify(outbound, null, 2));
+    update((draft) => { draft.config = draft.config || {}; draft.config.outbound = outbound; });
+  };
+  const importLink = () => {
+    try {
+      setOutbound(parseXrayLink(link.trim()));
+      setLink(""); setError("");
+    } catch (err: any) { setError(err?.message || "Ссылка не распознана"); }
+  };
+  return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
+    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
+      <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "черновик"}</Badge></div>
+      <div className="row"><Switch checked={!!channel.enabled} disabled={!installed || !!error} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
+    </div>
+    {!installed && <Notice tone="info" title="Нужен компонент Xray">Установите проверенную сборку Xray в разделе «Компоненты» перед включением.</Notice>}
+    {error && <Notice tone="warn" title="Конфигурация Xray не разобрана">{error}</Notice>}
+    <div className="form-grid">
+      <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="MTU"><input type="number" min={576} max={9000} value={channel.config?.mtu || 1400} onChange={(e) => update((draft) => { draft.config.mtu = Number(e.target.value); })} /></Field>
+      <Field label="Ссылка подключения" hint="vless://, vmess://, trojan:// или ss://"><div className="row"><input className="mono" value={link} onChange={(e) => setLink(e.target.value)} placeholder="vless://…" /><button type="button" className="btn ghost sm" disabled={!link.trim()} onClick={importLink}>Импорт</button></div></Field>
+      <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => draft.fail_mode = e.target.value)}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
+      {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => draft.fallback = e.target.value)}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
+    </div>
+    <Field label="Outbound Xray (JSON)" hint="Можно использовать любой поддержанный Xray transport: Reality, XTLS, XHTTP, WebSocket, gRPC, mKCP и другие.">
+      <textarea className="mono" style={{ minHeight: 260 }} spellCheck={false} value={raw} onChange={(e) => {
+        const value = e.target.value; setRaw(value);
+        try { const parsed = JSON.parse(value); setError(""); update((draft) => { draft.config.outbound = parsed; }); }
+        catch (err: any) { setError(err.message); }
+      }} />
+    </Field>
+  </form>;
+}
+
+function parseXrayLink(value: string): any {
+  if (value.startsWith("vmess://")) {
+    const data = JSON.parse(decodeBase64(value.slice(8)));
+    const outbound: any = { protocol: "vmess", settings: { vnext: [{ address: data.add, port: Number(data.port), users: [{ id: data.id, alterId: Number(data.aid || 0), security: data.scy || "auto" }] }] } };
+    outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp });
+    return outbound;
+  }
+  if (value.startsWith("ss://") && !value.slice(5).includes("@")) {
+    const decoded = decodeBase64(value.slice(5).split("#")[0]);
+    const at = decoded.lastIndexOf("@");
+    if (at < 1) throw new Error("Некорректная Shadowsocks-ссылка");
+    return shadowsocksOutbound(decoded.slice(0, at), decoded.slice(at + 1));
+  }
+  const url = new URL(value);
+  const port = Number(url.port);
+  if (!url.hostname || !port) throw new Error("В ссылке нет сервера или порта");
+  if (url.protocol === "ss:") {
+    const credentials = decodeBase64(decodeURIComponent(url.username));
+    return shadowsocksOutbound(credentials, `${url.hostname}:${port}`);
+  }
+  const protocol = url.protocol.slice(0, -1);
+  if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan:// и ss://");
+  const user = decodeURIComponent(url.username);
+  const server: any = { address: url.hostname, port };
+  if (protocol === "vless") server.users = [{ id: user, encryption: url.searchParams.get("encryption") || "none", ...(url.searchParams.get("flow") ? { flow: url.searchParams.get("flow") } : {}) }];
+  else server.password = user;
+  const settings = protocol === "vless" ? { vnext: [server] } : { servers: [server] };
+  return { protocol, settings, streamSettings: streamSettings(url.searchParams.get("type") || "tcp", url.searchParams.get("security") || "none", {
+    host: url.searchParams.get("host"), path: url.searchParams.get("path"), sni: url.searchParams.get("sni"),
+    serviceName: url.searchParams.get("serviceName"), fingerprint: url.searchParams.get("fp"),
+    publicKey: url.searchParams.get("pbk"), shortId: url.searchParams.get("sid"), spiderX: url.searchParams.get("spx"),
+  }) };
+}
+
+function streamSettings(network: string, security: string, options: any): any {
+  const out: any = { network, security };
+  if (network === "ws") out.wsSettings = { path: options.path || "/", headers: options.host ? { Host: options.host } : {} };
+  if (network === "grpc") out.grpcSettings = { serviceName: options.serviceName || "" };
+  if (network === "xhttp") out.xhttpSettings = { path: options.path || "/", host: options.host || "" };
+  if (security === "tls") out.tlsSettings = { serverName: options.sni || options.host || "", fingerprint: options.fingerprint || "chrome" };
+  if (security === "reality") out.realitySettings = { serverName: options.sni || "", fingerprint: options.fingerprint || "chrome", publicKey: options.publicKey || "", shortId: options.shortId || "", spiderX: options.spiderX || "" };
+  return out;
+}
+
+function shadowsocksOutbound(credentials: string, endpoint: string): any {
+  const split = credentials.indexOf(":");
+  const lastColon = endpoint.lastIndexOf(":");
+  if (split < 1 || lastColon < 1) throw new Error("Некорректная Shadowsocks-ссылка");
+  return { protocol: "shadowsocks", settings: { servers: [{ method: credentials.slice(0, split), password: credentials.slice(split + 1), address: endpoint.slice(0, lastColon), port: Number(endpoint.slice(lastColon + 1)) }] } };
+}
+
+function decodeBase64(value: string): string {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
 }
 
 function OpenConnectEditor({ channel, channels, installed, referenced, update, remove }: {

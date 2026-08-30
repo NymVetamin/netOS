@@ -74,7 +74,7 @@ func InterfaceName(ch config.Channel) string {
 	switch ch.Type {
 	case "wireguard":
 		return fmt.Sprintf("wg-ch%d", ch.Index)
-	case "openconnect":
+	case "openconnect", "xray":
 		return fmt.Sprintf("tun-ch%d", ch.Index)
 	}
 	return fmt.Sprintf("ch%d", ch.Index)
@@ -86,7 +86,7 @@ func Priority(ch config.Channel) int    { return priorityBase + ch.Index }
 func enabledChannels(cfg *config.Config) []config.Channel {
 	var out []config.Channel
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect") {
+		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
 			out = append(out, ch)
 		}
 	}
@@ -163,6 +163,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		case "openconnect":
 			unit = openConnectUnitName(ch)
 			createdNow, err = s.applyOpenConnect(ctx, ch, cfg.IPv6.Mode == "off")
+		case "xray":
+			unit = xrayUnitName(ch)
+			createdNow, err = s.applyXray(ctx, ch, cfg.IPv6.Mode == "off")
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -370,8 +373,12 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			if err != nil || !strings.Contains(addrs, wg.Address) {
 				return fmt.Errorf("на %s нет адреса %s", name, wg.Address)
 			}
-		} else if ch.Type == "openconnect" {
-			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", openConnectUnitName(ch))
+		} else if ch.Type == "openconnect" || ch.Type == "xray" {
+			unit := openConnectUnitName(ch)
+			if ch.Type == "xray" {
+				unit = xrayUnitName(ch)
+			}
+			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unit)
 			if strings.TrimSpace(active) != "active" {
 				return fmt.Errorf("служба канала %s не работает", ch.Name)
 			}
@@ -437,7 +444,7 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
 }
 
 func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) {
-	if ch.Unit != "" && ch.Type != "openconnect" {
+	if ch.Unit != "" && ch.Type != "openconnect" && ch.Type != "xray" {
 		_, _ = s.Runner.Run(ctx, "systemctl", "disable", ch.Unit)
 		_, _ = s.Runner.Run(ctx, "systemctl", "stop", ch.Unit)
 	}
@@ -450,5 +457,9 @@ func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) {
 	if ch.Type == "openconnect" {
 		placeholder := config.Channel{Index: ch.Index, Type: "openconnect"}
 		s.cleanupOpenConnect(ctx, placeholder)
+	}
+	if ch.Type == "xray" {
+		placeholder := config.Channel{Index: ch.Index, Type: "xray"}
+		s.cleanupXray(ctx, placeholder)
 	}
 }

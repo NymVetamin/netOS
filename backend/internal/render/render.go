@@ -79,6 +79,33 @@ func renderWireGuard(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
+func xrayActive(cfg *config.Config) bool {
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && ch.Type == "xray" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderXray(cfg *config.Config) (string, error) {
+	var b bytes.Buffer
+	for _, ch := range cfg.Channels {
+		if !ch.Enabled || ch.Type != "xray" {
+			continue
+		}
+		text, err := channels.RenderXray(ch)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s (%s) ---\n%s\n", ch.Name, channels.InterfaceName(ch), text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных каналов Xray.\n")
+	}
+	return b.String(), nil
+}
+
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
@@ -99,6 +126,10 @@ var artifacts = []Artifact{
 	{
 		ID: "wireguard", Title: "Конфигурация WireGuard",
 		Active: wireGuardActive, Render: renderWireGuard,
+	},
+	{
+		ID: "xray", Title: "Конфигурация Xray",
+		Active: xrayActive, Render: renderXray,
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",
