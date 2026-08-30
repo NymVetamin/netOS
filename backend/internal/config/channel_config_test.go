@@ -100,6 +100,22 @@ func TestXrayChannelValidation(t *testing.T) {
 	}
 }
 
+func TestPolicyMayUseEnabledXrayChannel(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "xray", Installed: true}}
+	cfg.Channels = append(cfg.Channels, Channel{
+		ID: "xray-test", Index: 3, Name: "Xray", Enabled: true,
+		Type: "xray", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"outbound": map[string]any{"protocol": "freedom", "settings": map[string]any{}}},
+	})
+	cfg.Policies = []Policy{{ID: "web", Name: "Web", Enabled: true, Priority: 10, Channel: "xray-test", Protocol: "tcp", DstPort: "443"}}
+	for _, p := range cfg.Validate().Problems {
+		if p.Severity == "error" {
+			t.Fatalf("valid Xray policy rejected: %+v", p)
+		}
+	}
+}
+
 func TestPolicyMayUseEnabledWireGuardChannel(t *testing.T) {
 	cfg := Default()
 	cfg.Components = []Component{{ID: "wireguard", Installed: true}}

@@ -1774,7 +1774,7 @@ func (c *Config) channelIDs() map[string]bool {
 func (c *Config) usableChannelIDs() map[string]bool {
 	m := map[string]bool{}
 	for _, ch := range c.Channels {
-		if ch.Enabled && (ch.Type == "direct" || ch.Type == "wireguard") {
+		if ch.Enabled && (ch.Type == "direct" || ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
 			m[ch.ID] = true
 		}
 	}
