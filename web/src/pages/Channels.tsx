@@ -15,6 +15,9 @@ export function ChannelsPage({ config, patch }: Props) {
   const wireguardInstalled = (config.components || []).some(
     (component: any) => component.id === "wireguard" && component.installed,
   );
+  const openconnectInstalled = (config.components || []).some(
+    (component: any) => component.id === "openconnect" && component.installed,
+  );
 
   function updateChannel(id: string, mutate: (channel: any) => void) {
     patch((draft) => mutate(draft.channels.find((channel: any) => channel.id === id)));
@@ -49,6 +52,20 @@ export function ChannelsPage({ config, patch }: Props) {
     });
   }
 
+  function addOpenConnect() {
+    patch((draft) => {
+      const used = new Set((draft.channels || []).map((channel: any) => channel.index));
+      let index = 1;
+      while (used.has(index)) index++;
+      draft.channels.push({
+        id: `oc-${Date.now()}`, index, name: `OpenConnect ${index}`, enabled: false,
+        type: "openconnect", mode: "tun", fail_mode: "block", fallback: "",
+        probe: { enabled: true, type: "icmp", targets: ["1.1.1.1"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
+        config: { server: "", username: "", password: "", protocol: "anyconnect", authgroup: "", servercert: "", mtu: 1400, no_dtls: false, no_system_trust: false },
+      });
+    });
+  }
+
   return (
     <>
       <div className="page-head">
@@ -66,11 +83,7 @@ export function ChannelsPage({ config, patch }: Props) {
       <Card
         title="Каналы выхода"
         subtitle="Прямой выход всегда доступен; WireGuard работает с обязательным kill-switch"
-        actions={
-          <button className="btn" onClick={addWireGuard}>
-            Добавить WireGuard
-          </button>
-        }
+        actions={<div className="row"><button className="btn" onClick={addWireGuard}>Добавить WireGuard</button><button className="btn" onClick={addOpenConnect}>Добавить OpenConnect</button></div>}
       >
         {channels.map((channel: any) =>
           channel.type === "direct" ? (
@@ -81,7 +94,7 @@ export function ChannelsPage({ config, patch }: Props) {
               </div>
               <Badge tone="ok">активен</Badge>
             </div>
-          ) : (
+          ) : channel.type === "wireguard" ? (
             <WireGuardEditor
               key={channel.id}
               channel={channel}
@@ -95,6 +108,20 @@ export function ChannelsPage({ config, patch }: Props) {
                 })
               }
             />
+          ) : channel.type === "openconnect" ? (
+            <OpenConnectEditor
+              key={channel.id}
+              channel={channel}
+              channels={channels}
+              installed={openconnectInstalled}
+              referenced={isChannelReferenced(config, channel.id)}
+              update={(mutate) => updateChannel(channel.id, mutate)}
+              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })}
+            />
+          ) : (
+            <Notice key={channel.id} tone="warn" title={`Неподдерживаемый канал: ${channel.type || "без типа"}`}>
+              Этот сохранённый канал нельзя включить в текущей версии. Удалите его из конфигурации или выберите поддерживаемый тип.
+            </Notice>
           ),
         )}
       </Card>
@@ -102,6 +129,46 @@ export function ChannelsPage({ config, patch }: Props) {
       <SegmentDefaults config={config} patch={patch} />
       <Policies config={config} patch={patch} policies={policies} />
     </>
+  );
+}
+
+function OpenConnectEditor({ channel, channels, installed, referenced, update, remove }: {
+  channel: any; channels: any[]; installed: boolean; referenced: boolean;
+  update: (mutate: (channel: any) => void) => void; remove: () => void;
+}) {
+  const cfg = channel.config || {};
+  const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
+  return (
+    <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
+      <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
+        <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "черновик"}</Badge></div>
+        <div className="row"><Switch checked={!!channel.enabled} disabled={!installed} onChange={(enabled) => update((draft) => (draft.enabled = enabled))} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
+      </div>
+      {!installed && <Notice tone="info" title="Нужен компонент OpenConnect">Установите его перед включением канала.</Notice>}
+      <div className="form-grid">
+        <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} /></Field>
+        <Field label="VPN-сервер"><input className="mono" placeholder="https://vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
+        <Field label="Протокол"><select value={cfg.protocol || "anyconnect"} onChange={(e) => setConfig("protocol", e.target.value)}><option value="anyconnect">AnyConnect</option><option value="pulse">Pulse</option><option value="gp">GlobalProtect</option><option value="fortinet">Fortinet</option><option value="f5">F5</option><option value="array">Array</option><option value="nc">Network Connect</option></select></Field>
+        <Field label="Группа / realm"><input value={cfg.authgroup || ""} onChange={(e) => setConfig("authgroup", e.target.value)} /></Field>
+        <Field label="Пользователь"><input autoComplete="off" value={cfg.username || ""} onChange={(e) => setConfig("username", e.target.value)} /></Field>
+        <Field label="Пароль"><input type="password" autoComplete="new-password" value={cfg.password || ""} onChange={(e) => setConfig("password", e.target.value)} /></Field>
+        <Field label="Отпечаток сертификата" hint="Необязательно; pin-sha256:…"><input className="mono" value={cfg.servercert || ""} onChange={(e) => setConfig("servercert", e.target.value)} /></Field>
+        <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
+        <Field label="Транспорт"><Switch checked={!cfg.no_dtls} label="Использовать DTLS" onChange={(enabled) => setConfig("no_dtls", !enabled)} /></Field>
+        <Field label="Доверие TLS"><Switch checked={!cfg.no_system_trust} label="Системные CA" onChange={(enabled) => setConfig("no_system_trust", !enabled)} /></Field>
+        <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => (draft.fail_mode = e.target.value))}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
+        {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => (draft.fallback = e.target.value))}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
+        <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe.enabled = enabled; })} /></Field>
+        {channel.probe?.enabled !== false && <>
+          <Field label="Тип проверки"><select value={channel.probe?.type || "icmp"} onChange={(e) => update((draft) => (draft.probe.type = e.target.value))}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
+          <Field label="Цели"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => (draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean)))} /></Field>
+          <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => (draft.probe.interval = Number(e.target.value)))} /></Field>
+          <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => (draft.probe.timeout = Number(e.target.value)))} /></Field>
+          <Field label="Ошибок до отказа"><input type="number" min={1} value={channel.probe?.fail_threshold || 3} onChange={(e) => update((draft) => (draft.probe.fail_threshold = Number(e.target.value)))} /></Field>
+          <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => (draft.probe.rise_threshold = Number(e.target.value)))} /></Field>
+        </>}
+      </div>
+    </form>
   );
 }
 

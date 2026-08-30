@@ -103,3 +103,48 @@ func TestIntegrationWireGuardLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIntegrationOpenConnectLifecycle(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root are required")
+	}
+	server, password := os.Getenv("NETOS_OC_SERVER"), os.Getenv("NETOS_OC_PASSWORD")
+	if server == "" || password == "" {
+		t.Skip("NETOS_OC_SERVER and NETOS_OC_PASSWORD are required")
+	}
+	if _, err := exec.LookPath("openconnect"); err != nil {
+		t.Skip("openconnect is not installed")
+	}
+	root := t.TempDir()
+	s := New(system.NewExec(), root)
+	s.RTTablesPath = filepath.Join(root, "rt_tables")
+	ch := config.Channel{
+		ID: "integration-oc", Index: 997, Name: "Integration OpenConnect", Enabled: true,
+		Type: "openconnect", Mode: "tun", FailMode: "block",
+		Config: map[string]any{
+			"server": server, "username": "netos-test", "password": password,
+			"protocol": "anyconnect", "servercert": os.Getenv("NETOS_OC_SERVERCERT"),
+			"mtu": 1380, "no_system_trust": true,
+		},
+	}
+	cfg := config.Default()
+	cfg.Components = []config.Component{{ID: "openconnect", Installed: true}}
+	cfg.Channels = append(cfg.Channels, ch)
+	t.Cleanup(func() { _ = s.Apply(context.Background(), config.Default()) })
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	routes, _ := s.Runner.Run(context.Background(), "ip", "-4", "route", "show", "table", "1997")
+	if !strings.Contains(routes, "default dev tun-ch997") || !strings.Contains(routes, "blackhole default") {
+		t.Fatalf("incomplete OpenConnect routing table:\n%s", routes)
+	}
+	if err := s.Apply(context.Background(), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if s.linkExists("tun-ch997") {
+		t.Fatal("OpenConnect interface remained after disable")
+	}
+}

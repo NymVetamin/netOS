@@ -94,6 +94,7 @@ func newTestSubsystem(t *testing.T) (*Subsystem, *channelRunner) {
 	s.RTTablesPath = filepath.Join(root, "rt_tables")
 	s.SysClassNet = filepath.Join(root, "sys", "class", "net")
 	s.ProcSysNet = filepath.Join(root, "proc", "sys", "net")
+	s.UnitDir = filepath.Join(root, "systemd")
 	r := &channelRunner{s: s}
 	s.Runner = r
 	return s, r
@@ -146,12 +147,30 @@ func TestApplyRejectsForeignChannelInterface(t *testing.T) {
 }
 
 func TestWireGuardNumbersAreStable(t *testing.T) {
-	ch := config.Channel{Index: 17}
+	ch := config.Channel{Index: 17, Type: "wireguard"}
 	if got := InterfaceName(ch); got != "wg-ch17" {
 		t.Fatal(got)
 	}
 	if TableNumber(ch) != 1017 || Mark(ch) != 0x1011 || Priority(ch) != 10017 {
 		t.Fatal(fmt.Sprintf("table=%d mark=%x priority=%d", TableNumber(ch), Mark(ch), Priority(ch)))
+	}
+}
+
+func TestOpenConnectArtifactsKeepPasswordOutOfArguments(t *testing.T) {
+	ch := config.Channel{Index: 2, Name: "Office", Type: "openconnect"}
+	oc := config.OpenConnectChannelConfig{Server: "https://vpn.example.com", Username: "alice", Password: "top-secret", Protocol: "anyconnect", MTU: 1380}
+	conf := renderOpenConnect(ch, oc, "/state/script", true)
+	unit := renderOpenConnectUnit(ch, "/state/config", "/state/password")
+	if strings.Contains(conf, oc.Password) || strings.Contains(unit, oc.Password) {
+		t.Fatal("OpenConnect password leaked into config or systemd unit")
+	}
+	for _, want := range []string{"server=https://vpn.example.com", "interface=tun-ch2", "disable-ipv6", "mtu=1380"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("missing %q:\n%s", want, conf)
+		}
+	}
+	if !strings.Contains(unit, "StandardInput=file:/state/password") || !strings.Contains(unit, "--passwd-on-stdin") {
+		t.Fatalf("password is not passed through protected stdin:\n%s", unit)
 	}
 }
 

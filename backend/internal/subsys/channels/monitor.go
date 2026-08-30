@@ -42,7 +42,7 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 		return
 	}
 	wanted := map[string]bool{}
-	for _, ch := range enabledWireGuard(cfg) {
+	for _, ch := range enabledChannels(cfg) {
 		if !ch.Probe.Enabled {
 			continue
 		}

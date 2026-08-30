@@ -62,6 +62,25 @@ func TestWireGuardFailModesAndProbeValidation(t *testing.T) {
 	}
 }
 
+func TestOpenConnectChannelValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "openconnect", Installed: true}}
+	cfg.Channels = append(cfg.Channels, Channel{
+		ID: "office", Index: 2, Name: "Office", Enabled: true,
+		Type: "openconnect", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"server": "https://vpn.example.com", "username": "alice", "password": "secret", "protocol": "anyconnect"},
+	})
+	for _, p := range cfg.Validate().Problems {
+		if p.Severity == "error" {
+			t.Fatalf("valid OpenConnect channel rejected: %+v", p)
+		}
+	}
+	cfg.Channels[1].Config["server"] = "not-a-url"
+	if !problem(t, cfg, "config.server", "https://") {
+		t.Fatal("invalid OpenConnect server accepted")
+	}
+}
+
 func TestPolicyMayUseEnabledWireGuardChannel(t *testing.T) {
 	cfg := Default()
 	cfg.Components = []Component{{ID: "wireguard", Installed: true}}

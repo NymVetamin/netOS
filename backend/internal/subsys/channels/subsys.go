@@ -27,6 +27,8 @@ const (
 type ownedChannel struct {
 	Name  string `json:"name"`
 	Index int    `json:"index"`
+	Type  string `json:"type,omitempty"`
+	Unit  string `json:"unit,omitempty"`
 }
 
 type Subsystem struct {
@@ -35,6 +37,7 @@ type Subsystem struct {
 	RTTablesPath string
 	SysClassNet  string
 	ProcSysNet   string
+	UnitDir      string
 	Logger       Logger
 	Probe        func(context.Context, config.Channel, string) bool
 
@@ -55,6 +58,7 @@ func New(r system.Runner, stateDir string, loggers ...Logger) *Subsystem {
 		RTTablesPath: "/etc/iproute2/rt_tables.d/netos-channels.conf",
 		SysClassNet:  "/sys/class/net",
 		ProcSysNet:   "/proc/sys/net",
+		UnitDir:      "/etc/systemd/system",
 		states:       map[string]*channelState{},
 	}
 	if len(loggers) > 0 {
@@ -66,15 +70,23 @@ func New(r system.Runner, stateDir string, loggers ...Logger) *Subsystem {
 
 func (s *Subsystem) Name() string { return "channels" }
 
-func InterfaceName(ch config.Channel) string { return fmt.Sprintf("wg-ch%d", ch.Index) }
-func TableNumber(ch config.Channel) int      { return tableBase + ch.Index }
-func Mark(ch config.Channel) int             { return markBase + ch.Index }
-func Priority(ch config.Channel) int         { return priorityBase + ch.Index }
+func InterfaceName(ch config.Channel) string {
+	switch ch.Type {
+	case "wireguard":
+		return fmt.Sprintf("wg-ch%d", ch.Index)
+	case "openconnect":
+		return fmt.Sprintf("tun-ch%d", ch.Index)
+	}
+	return fmt.Sprintf("ch%d", ch.Index)
+}
+func TableNumber(ch config.Channel) int { return tableBase + ch.Index }
+func Mark(ch config.Channel) int        { return markBase + ch.Index }
+func Priority(ch config.Channel) int    { return priorityBase + ch.Index }
 
-func enabledWireGuard(cfg *config.Config) []config.Channel {
+func enabledChannels(cfg *config.Config) []config.Channel {
 	var out []config.Channel
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && ch.Type == "wireguard" {
+		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect") {
 			out = append(out, ch)
 		}
 	}
@@ -83,7 +95,7 @@ func enabledWireGuard(cfg *config.Config) []config.Channel {
 }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
-	wanted := enabledWireGuard(new)
+	wanted := enabledChannels(new)
 	if old == nil {
 		var actions []apply.Action
 		for _, ch := range wanted {
@@ -94,7 +106,7 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 		return actions, nil
 	}
 	previous := map[string]config.Channel{}
-	for _, ch := range enabledWireGuard(old) {
+	for _, ch := range enabledChannels(old) {
 		previous[ch.ID] = ch
 	}
 	var actions []apply.Action
@@ -116,7 +128,7 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	wanted := enabledWireGuard(cfg)
+	wanted := enabledChannels(cfg)
 	owned, err := s.readOwned()
 	if err != nil {
 		return err
@@ -143,7 +155,15 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	var created []ownedChannel
 	for _, ch := range wanted {
 		name := InterfaceName(ch)
-		createdNow, err := s.applyWireGuard(ctx, ch, ownedNames[name], cfg.IPv6.Mode == "off")
+		var createdNow bool
+		var unit string
+		switch ch.Type {
+		case "wireguard":
+			createdNow, err = s.applyWireGuard(ctx, ch, ownedNames[name], cfg.IPv6.Mode == "off")
+		case "openconnect":
+			unit = openConnectUnitName(ch)
+			createdNow, err = s.applyOpenConnect(ctx, ch, cfg.IPv6.Mode == "off")
+		}
 		if err != nil {
 			for _, provisional := range created {
 				s.removeChannel(ctx, provisional)
@@ -151,9 +171,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("канал %s: %w", ch.Name, err)
 		}
 		if createdNow {
-			created = append(created, ownedChannel{Name: name, Index: ch.Index})
+			created = append(created, ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit})
 		}
-		nextOwned = append(nextOwned, ownedChannel{Name: name, Index: ch.Index})
+		nextOwned = append(nextOwned, ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit})
 	}
 	if err := s.writeOwned(nextOwned); err != nil {
 		for _, provisional := range created {
@@ -336,18 +356,25 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	for _, ch := range enabledWireGuard(cfg) {
+	for _, ch := range enabledChannels(cfg) {
 		name := InterfaceName(ch)
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
 		}
-		if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
-			return fmt.Errorf("интерфейс %s не принят WireGuard: %w", name, err)
-		}
-		wg, _ := ch.WireGuardConfig()
-		addrs, err := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
-		if err != nil || !strings.Contains(addrs, wg.Address) {
-			return fmt.Errorf("на %s нет адреса %s", name, wg.Address)
+		if ch.Type == "wireguard" {
+			if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
+				return fmt.Errorf("интерфейс %s не принят WireGuard: %w", name, err)
+			}
+			wg, _ := ch.WireGuardConfig()
+			addrs, err := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
+			if err != nil || !strings.Contains(addrs, wg.Address) {
+				return fmt.Errorf("на %s нет адреса %s", name, wg.Address)
+			}
+		} else if ch.Type == "openconnect" {
+			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", openConnectUnitName(ch))
+			if strings.TrimSpace(active) != "active" {
+				return fmt.Errorf("служба канала %s не работает", ch.Name)
+			}
 		}
 		routes, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", fmt.Sprint(TableNumber(ch)))
 		if err != nil || !strings.Contains(routes, "default dev "+name) || !strings.Contains(routes, "blackhole default") {
@@ -410,10 +437,18 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
 }
 
 func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) {
+	if ch.Unit != "" && ch.Type != "openconnect" {
+		_, _ = s.Runner.Run(ctx, "systemctl", "disable", ch.Unit)
+		_, _ = s.Runner.Run(ctx, "systemctl", "stop", ch.Unit)
+	}
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(priorityBase+ch.Index))
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprint(tableBase+ch.Index))
 	if s.linkExists(ch.Name) {
 		_, _ = s.Runner.Run(ctx, "ip", "link", "delete", ch.Name)
 	}
 	_ = os.Remove(filepath.Join(s.StateDir, ch.Name+".conf"))
+	if ch.Type == "openconnect" {
+		placeholder := config.Channel{Index: ch.Index, Type: "openconnect"}
+		s.cleanupOpenConnect(ctx, placeholder)
+	}
 }

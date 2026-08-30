@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strings"
 )
 
@@ -203,6 +204,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		if channel.Enabled && channel.Type == "wireguard" && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала WireGuard нужен компонент «WireGuard»")
+		}
+		if channel.Enabled && channel.Type == "openconnect" && !c.HasComponent("openconnect") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i),
+				"для канала OpenConnect нужен компонент «OpenConnect»")
 		}
 	}
 }
@@ -1252,7 +1257,7 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		default:
 			r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
 		}
-		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" {
+		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" {
 			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
 		}
 		if ch.Index < 0 || ch.Index > 9999 || (ch.Type != "direct" && ch.Index == 0) {
@@ -1260,6 +1265,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		}
 		if ch.Type == "wireguard" {
 			c.validateWireGuardChannel(r, path, ch)
+		}
+		if ch.Type == "openconnect" {
+			c.validateOpenConnectChannel(r, path, ch)
 		}
 		if ch.Type != "direct" {
 			validateProbe(r, path+".probe", ch.Probe)
@@ -1356,6 +1364,46 @@ func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch C
 		r.errf(path+".config.persistent_keepalive", "значение должно быть в диапазоне 0-65535 секунд")
 	}
 	if wg.MTU != 0 && (wg.MTU < 576 || wg.MTU > 9000) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+}
+
+func (c *Config) validateOpenConnectChannel(r *ValidationResult, path string, ch Channel) {
+	if ch.Mode != "tun" {
+		r.errf(path+".mode", "OpenConnect работает только в режиме TUN")
+	}
+	oc, err := ch.OpenConnectConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if oc.Server == "" {
+		r.errf(path+".config.server", "укажите адрес VPN-сервера")
+	} else if parsed, err := url.Parse(oc.Server); err != nil || parsed.Host == "" || parsed.Scheme != "https" {
+		r.errf(path+".config.server", "сервер должен быть URL вида https://vpn.example.com")
+	}
+	if oc.Username == "" {
+		r.errf(path+".config.username", "укажите имя пользователя")
+	}
+	if oc.Password == "" {
+		r.errf(path+".config.password", "укажите пароль")
+	}
+	for field, value := range map[string]string{
+		"username": oc.Username, "password": oc.Password, "authgroup": oc.AuthGroup, "servercert": oc.ServerCert,
+	} {
+		if strings.ContainsAny(value, "\r\n") {
+			r.errf(path+".config."+field, "переводы строк недопустимы")
+		}
+	}
+	if oc.NoSystemTrust && oc.ServerCert == "" {
+		r.errf(path+".config.servercert", "при отключённом системном доверии нужен отпечаток сертификата")
+	}
+	switch oc.Protocol {
+	case "", "anyconnect", "nc", "pulse", "gp", "f5", "fortinet", "array":
+	default:
+		r.errf(path+".config.protocol", "неизвестный протокол OpenConnect %q", oc.Protocol)
+	}
+	if oc.MTU != 0 && (oc.MTU < 576 || oc.MTU > 9000) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
 	}
 }

@@ -55,6 +55,21 @@ func TestClientChannelOverridesNetworkDefault(t *testing.T) {
 	}
 }
 
+func TestOpenConnectUsesTheSamePolicyEngine(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = append(cfg.Channels, config.Channel{ID: "office", Index: 2, Name: "Office", Enabled: true, Type: "openconnect"})
+	cfg.Policies = []config.Policy{{ID: "office-web", Name: "Office web", Enabled: true, Priority: 10, Channel: "office", Protocol: "tcp", DstPort: "443"}}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--set-mark 0x1002", "POSTROUTING -o tun-ch2", "MASQUERADE"} {
+		if !strings.Contains(rules.IPv4, want) {
+			t.Errorf("missing %q:\n%s", want, rules.IPv4)
+		}
+	}
+}
+
 func TestPortRangesUseIptablesSyntax(t *testing.T) {
 	if got := iptablesPortSpec("53,8000-8010"); got != "53,8000:8010" {
 		t.Fatal(got)
