@@ -43,3 +43,12 @@ func TestValidateClientsWarnsWhenFirewallCannotEnforceBlock(t *testing.T) {
 	}
 	t.Fatalf("нет предупреждения о выключенном файрволле: %+v", result.Problems)
 }
+
+func TestNormalizeCanonicalizesClientMAC(t *testing.T) {
+	cfg := Default()
+	cfg.Clients = []Client{{ID: "phone", MAC: "AA-BB-CC-DD-EE-FF"}}
+	cfg.Normalize()
+	if cfg.Clients[0].MAC != "aa:bb:cc:dd:ee:ff" {
+		t.Fatalf("MAC не приведён к канонической форме: %q", cfg.Clients[0].MAC)
+	}
+}

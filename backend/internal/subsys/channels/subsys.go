@@ -19,7 +19,7 @@ import (
 const (
 	tableBase    = 1000
 	markBase     = 0x1000
-	priorityBase = 20000
+	priorityBase = 10000
 )
 
 type ownedChannel struct {
@@ -134,7 +134,13 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		nextOwned = append(nextOwned, ownedChannel{Name: name, Index: ch.Index})
 	}
-	return s.writeOwned(nextOwned)
+	if err := s.writeOwned(nextOwned); err != nil {
+		for _, provisional := range created {
+			s.removeChannel(ctx, provisional)
+		}
+		return err
+	}
+	return nil
 }
 
 func RenderWireGuard(ch config.Channel) (string, error) {

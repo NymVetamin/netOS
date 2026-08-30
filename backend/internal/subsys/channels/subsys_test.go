@@ -55,7 +55,7 @@ func (r *channelRunner) Run(_ context.Context, name string, args ...string) (str
 	case command == "ip -4 rule show":
 		return r.rules, nil
 	case strings.Contains(command, "rule add fwmark 0x1001"):
-		r.rules = "20001: from all fwmark 0x1001 lookup 1001\n"
+		r.rules = "10001: from all fwmark 0x1001 lookup 1001\n"
 	case command == "ip link delete wg-ch1":
 		_ = os.RemoveAll(filepath.Join(r.s.SysClassNet, "wg-ch1"))
 	}
@@ -109,7 +109,7 @@ func TestApplyCreatesWireGuardChannelAndKillSwitch(t *testing.T) {
 		"wg syncconf wg-ch1",
 		"route replace default dev wg-ch1",
 		"route replace blackhole default",
-		"rule add fwmark 0x1001 priority 20001 lookup 1001",
+		"rule add fwmark 0x1001 priority 10001 lookup 1001",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("нет команды %q:\n%s", want, joined)
@@ -145,7 +145,7 @@ func TestWireGuardNumbersAreStable(t *testing.T) {
 	if got := InterfaceName(ch); got != "wg-ch17" {
 		t.Fatal(got)
 	}
-	if TableNumber(ch) != 1017 || Mark(ch) != 0x1011 || Priority(ch) != 20017 {
+	if TableNumber(ch) != 1017 || Mark(ch) != 0x1011 || Priority(ch) != 10017 {
 		t.Fatal(fmt.Sprintf("table=%d mark=%x priority=%d", TableNumber(ch), Mark(ch), Priority(ch)))
 	}
 }

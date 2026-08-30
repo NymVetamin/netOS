@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+)
 
 // Default возвращает конфигурацию, с которой система запускается сразу после
 // установки.
@@ -139,13 +142,13 @@ const (
 	RuleEstablishedFwd = "sys-established-fwd"
 	RuleInvalidIn      = "sys-invalid-in"
 	RuleInvalidFwd     = "sys-invalid-fwd"
-	RuleSSH         = "sys-ssh"
-	RulePanel       = "sys-panel"
-	RuleICMP        = "sys-icmp"
-	RuleDHCP        = "sys-dhcp"
-	RuleDNSUDP      = "sys-dns-udp"
-	RuleDNSTCP      = "sys-dns-tcp"
-	RuleLANOut      = "sys-lan-out"
+	RuleSSH            = "sys-ssh"
+	RulePanel          = "sys-panel"
+	RuleICMP           = "sys-icmp"
+	RuleDHCP           = "sys-dhcp"
+	RuleDNSUDP         = "sys-dns-udp"
+	RuleDNSTCP         = "sys-dns-tcp"
+	RuleLANOut         = "sys-lan-out"
 )
 
 // systemRules возвращает эталонный набор в том порядке, в каком он должен
@@ -293,6 +296,11 @@ func (c *Config) Normalize() {
 	}
 	if c.Components == nil {
 		c.Components = []Component{}
+	}
+	for i := range c.Clients {
+		if hw, err := net.ParseMAC(c.Clients[i].MAC); err == nil && len(hw) == 6 {
+			c.Clients[i].MAC = hw.String()
+		}
 	}
 	// Связи между интерфейсами описываются идентификаторами. Конфигурация с
 	// прежней версии схемы хранит там имена — переводим, иначе мост остался бы

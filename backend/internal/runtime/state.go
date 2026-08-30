@@ -12,6 +12,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -327,6 +328,12 @@ func (c *Collector) Clients(ctx context.Context) ([]Client, error) {
 	for _, cl := range byMAC {
 		out = append(out, *cl)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Online != out[j].Online {
+			return out[i].Online
+		}
+		return out[i].MAC < out[j].MAC
+	})
 	return out, nil
 }
 
