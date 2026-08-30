@@ -25,14 +25,14 @@ tar czf - --exclude='.git' --exclude='node_modules' --exclude='web/dist' . \
     | ssh "$HOST" 'mkdir -p /opt/netos && tar xzf - -C /opt/netos'
 
 echo "→ разрешаю зависимости"
-ssh "$HOST" 'cd /opt/netos/backend && go mod tidy 2>&1 | grep -v "^go: downloading" || true'
+ssh "$HOST" 'export PATH="/usr/local/go/bin:$PATH"; cd /opt/netos/backend && go mod tidy 2>&1 | grep -v "^go: downloading" || true'
 
 echo "→ возвращаю go.mod и go.sum"
 ssh "$HOST" 'cat /opt/netos/backend/go.mod' > backend/go.mod
 ssh "$HOST" 'cat /opt/netos/backend/go.sum' > backend/go.sum
 
 echo "→ сборка"
-if ssh "$HOST" 'cd /opt/netos/backend && go build -ldflags "-X main.version=dev" -o /usr/local/bin/netosd.new ./cmd/netosd && mv -f /usr/local/bin/netosd.new /usr/local/bin/netosd && ln -sfn /usr/local/bin/netosd /usr/local/bin/netos'; then
+if ssh "$HOST" 'export PATH="/usr/local/go/bin:$PATH"; cd /opt/netos/backend && go build -ldflags "-X main.version=dev" -o /usr/local/bin/netosd.new ./cmd/netosd && mv -f /usr/local/bin/netosd.new /usr/local/bin/netosd && ln -sfn /usr/local/bin/netosd /usr/local/bin/netos'; then
     ssh "$HOST" 'echo "   собран netosd: $(ls -lh /usr/local/bin/netosd | awk "{print \$5}")"'
 else
     echo "   СБОРКА НЕ УДАЛАСЬ"
@@ -46,5 +46,5 @@ fi
 
 if [[ " $* " == *" --vet "* ]]; then
     echo "→ go vet"
-    ssh "$HOST" 'cd /opt/netos/backend && go vet ./...' && echo "   чисто"
+    ssh "$HOST" 'export PATH="/usr/local/go/bin:$PATH"; cd /opt/netos/backend && go vet ./...' && echo "   чисто"
 fi
