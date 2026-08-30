@@ -28,6 +28,17 @@ type XrayServerConfig struct {
 	Show           bool     `json:"show,omitempty"`
 }
 
+// OcservServerConfig contains user-visible OpenConnect server options. The
+// certificate is generated and owned by netOS; per-user passwords live on
+// VPNPeer credentials and are hashed before ocserv sees them.
+type OcservServerConfig struct {
+	PublicEndpoint string   `json:"public_endpoint,omitempty"`
+	DNS            []string `json:"dns,omitempty"`
+	Routes         []string `json:"routes,omitempty"`
+	MTU            int      `json:"mtu,omitempty"`
+	Banner         string   `json:"banner,omitempty"`
+}
+
 func (s VPNServer) WireGuardConfig() (WireGuardServerConfig, error) {
 	var out WireGuardServerConfig
 	data, err := json.Marshal(s.Config)
@@ -52,6 +63,20 @@ func (s VPNServer) XrayConfig() (XrayServerConfig, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return out, fmt.Errorf("параметры сервера Xray: %w", err)
+	}
+	return out, nil
+}
+
+func (s VPNServer) OcservConfig() (OcservServerConfig, error) {
+	var out OcservServerConfig
+	data, err := json.Marshal(s.Config)
+	if err != nil {
+		return out, fmt.Errorf("кодирование параметров сервера ocserv: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return out, fmt.Errorf("параметры сервера ocserv: %w", err)
 	}
 	return out, nil
 }

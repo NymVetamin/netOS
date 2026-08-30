@@ -162,6 +162,33 @@ func renderWiFi(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
+func ocservActive(cfg *config.Config) bool {
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "ocserv" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderOcserv(cfg *config.Config) (string, error) {
+	var b bytes.Buffer
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "ocserv" {
+			continue
+		}
+		text, err := vpnservers.RenderOcserv(server, cfg, "/var/lib/netos/generated")
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s (TCP/UDP %d) ---\n%s\n", server.Name, server.Port, text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных серверов OpenConnect.\n")
+	}
+	return b.String(), nil
+}
+
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
@@ -194,6 +221,10 @@ var artifacts = []Artifact{
 	{
 		ID: "hostapd", Title: "Конфигурация Wi-Fi",
 		Active: wifiActive, Render: renderWiFi,
+	},
+	{
+		ID: "ocserv", Title: "Сервер OpenConnect",
+		Active: ocservActive, Render: renderOcserv,
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",

@@ -154,6 +154,7 @@ var Catalog = []ComponentInfo{
 		Description: "Сервер OpenConnect. Маскируется под обычный HTTPS — помогает там, где режут WireGuard и IPsec.",
 		Packages:    []string{"ocserv"},
 		Units:       []string{"ocserv.service"},
+		RunUnits:    []string{"netos-ocserv-srv*.service"},
 		Provides:    []string{"vpn-server"},
 		SizeHint:    "около 4 МБ",
 	},

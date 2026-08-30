@@ -38,11 +38,23 @@ func New(r system.Runner, stateDir string) *Subsystem {
 
 func (s *Subsystem) Name() string { return "vpn-servers" }
 
-func InterfaceName(server config.VPNServer) string { return fmt.Sprintf("wg-srv%d", server.Index) }
+func InterfaceName(server config.VPNServer) string {
+	switch server.Type {
+	case "ocserv":
+		return fmt.Sprintf("vpns%d", server.Index)
+	case "ikev2":
+		return fmt.Sprintf("xfrm-srv%d", server.Index)
+	default:
+		return fmt.Sprintf("wg-srv%d", server.Index)
+	}
+}
 
 func resourceName(server config.VPNServer) string {
 	if server.Type == "xray" {
 		return fmt.Sprintf("xray-srv%d", server.Index)
+	}
+	if server.Type == "ocserv" {
+		return fmt.Sprintf("ocserv-srv%d", server.Index)
 	}
 	return InterfaceName(server)
 }
@@ -50,7 +62,7 @@ func resourceName(server config.VPNServer) string {
 func enabledServers(cfg *config.Config) []config.VPNServer {
 	var out []config.VPNServer
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray") {
+		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray" || server.Type == "ocserv") {
 			out = append(out, server)
 		}
 	}
@@ -113,6 +125,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		case "xray":
 			item.Unit = xrayUnitName(server)
 			createdNow, err = s.applyXray(ctx, cfg, server)
+		case "ocserv":
+			item.Unit = ocservUnitName(server)
+			createdNow, err = s.applyOcserv(ctx, cfg, server)
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -238,6 +253,13 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			}
 			continue
 		}
+		if server.Type == "ocserv" {
+			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ocservUnitName(server))
+			if strings.TrimSpace(active) != "active" {
+				return fmt.Errorf("сервер %s не работает", server.Name)
+			}
+			continue
+		}
 		name := InterfaceName(server)
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
@@ -257,6 +279,10 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 func (s *Subsystem) remove(ctx context.Context, item ownedServer) {
 	if item.Type == "xray" {
 		s.cleanupXray(ctx, config.VPNServer{Index: item.Index, Type: "xray"})
+		return
+	}
+	if item.Type == "ocserv" {
+		s.cleanupOcserv(ctx, config.VPNServer{Index: item.Index, Type: "ocserv"})
 		return
 	}
 	if s.linkExists(item.Name) {

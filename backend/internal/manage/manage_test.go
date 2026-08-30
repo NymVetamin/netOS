@@ -484,7 +484,7 @@ func TestUninstallStopsAndRemovesDynamicNetworkUnits(t *testing.T) {
 	}
 	units := []string{
 		"netos-dhcp-test.service", "netos-pppoe-test.service", "netos-l2tp-test.service",
-		"netos-openconnect-ch12.service", "netos-xray-ch13.service", "netos-xray-srv14.service", "netos-hostapd-test.service",
+		"netos-openconnect-ch12.service", "netos-xray-ch13.service", "netos-xray-srv14.service", "netos-hostapd-test.service", "netos-ocserv-srv15.service",
 	}
 	for _, unit := range units {
 		if err := os.WriteFile(filepath.Join(unitDir, unit), []byte("x"), 0o644); err != nil {

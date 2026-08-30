@@ -101,6 +101,7 @@ func TestViewerPermissions(t *testing.T) {
 		viewerRequest(http.MethodGet, "/api/status"),
 		viewerRequest(http.MethodGet, "/api/routes"),
 		viewerRequest(http.MethodGet, "/api/config"),
+		viewerRequest(http.MethodGet, "/api/vpn-servers/home/certificate"),
 		viewerRequest(http.MethodPost, "/api/logout"),
 		viewerRequest(http.MethodPost, "/api/password"),
 	}

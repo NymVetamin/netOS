@@ -695,7 +695,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	servers := append([]config.VPNServer(nil), cfg.VPNServers...)
 	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 	for _, server := range servers {
-		if !server.Enabled || server.Type != "wireguard" {
+		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv") {
 			continue
 		}
 		peers := append([]config.VPNPeer(nil), server.Peers...)

@@ -115,6 +115,32 @@ func (s *Server) handleXrayKeypair(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"private_key": responsePrivate, "public_key": publicKey})
 }
 
+func (s *Server) handleVPNServerCertificate(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Engine.Current()
+	if cfg == nil {
+		writeError(w, http.StatusNotFound, "конфигурация недоступна")
+		return
+	}
+	for _, server := range cfg.VPNServers {
+		if server.ID != r.PathValue("id") || server.Type != "ocserv" || !server.Enabled {
+			continue
+		}
+		path := fmt.Sprintf("/var/lib/netos/generated/ocserv-srv%d-tls/panel.crt", server.Index)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "сертификат ещё не выпущен")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=netos-openconnect-%d.crt", server.Index))
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
+	writeError(w, http.StatusNotFound, "сервер OpenConnect не найден")
+}
+
 type ctxKey string
 
 const (
@@ -178,6 +204,9 @@ func viewerAllowed(r *http.Request) bool {
 	}
 	if r.Method != http.MethodGet {
 		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/vpn-servers/") && strings.HasSuffix(r.URL.Path, "/certificate") {
+		return true
 	}
 	switch r.URL.Path {
 	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/clients",

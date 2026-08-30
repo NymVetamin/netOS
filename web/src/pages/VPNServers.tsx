@@ -14,37 +14,95 @@ export function VPNServersPage({ config, patch }: Props) {
   const servers = config.vpn_servers || [];
   const wireguardInstalled = (config.components || []).some((item: any) => item.id === "wireguard" && item.installed);
   const xrayInstalled = (config.components || []).some((item: any) => item.id === "xray" && item.installed);
+  const ocservInstalled = (config.components || []).some((item: any) => item.id === "ocserv" && item.installed);
   const [clientSecrets, setClientSecrets] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
-  function addServer(type: "wireguard" | "xray") {
+  function addServer(type: "wireguard" | "xray" | "ocserv") {
     patch((draft) => {
       draft.vpn_servers = draft.vpn_servers || [];
       const used = new Set(draft.vpn_servers.map((item: any) => item.index));
       let index = 1;
       while (used.has(index)) index++;
       const common = { id: `${type}-server-${Date.now()}`, index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
-      draft.vpn_servers.push(type === "wireguard" ? {
+      const server = type === "wireguard" ? {
         ...common, name: `WireGuard ${index}`, port: 51819 + index,
         config: { private_key: "", mtu: 1420, public_endpoint: "", client_dns: [], client_allowed_ips: ["0.0.0.0/0"] },
-      } : {
+      } : type === "xray" ? {
         ...common, name: `VLESS Reality ${index}`, port: 443,
         config: { private_key: "", public_endpoint: "", destination: "www.cloudflare.com:443", server_names: ["www.cloudflare.com"], short_ids: [randomHex(8)], flow: "xtls-rprx-vision" },
-      });
+      } : {
+        ...common, name: `OpenConnect ${index}`, port: 443,
+        config: { public_endpoint: "", dns: [], routes: [], mtu: 1380, banner: "netOS VPN" },
+      };
+      draft.vpn_servers.push(server);
     });
   }
 
   return <>
     <div className="page-head"><h1>VPN-серверы</h1><p>Безопасный удалённый доступ к роутеру и интернету через него</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
-    {!wireguardInstalled && !xrayInstalled && <Notice tone="info" title="Нужен VPN-компонент">Установите WireGuard или Xray в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
-    <Card title="Входящие подключения" subtitle="Каждому клиенту назначается отдельный ключ и канал выхода" actions={<div className="row"><button className="btn ghost" onClick={() => addServer("wireguard")}>+ WireGuard</button><button className="btn" onClick={() => addServer("xray")}>+ VLESS Reality</button></div>}>
+    {!wireguardInstalled && !xrayInstalled && !ocservInstalled && <Notice tone="info" title="Нужен VPN-компонент">Установите WireGuard, Xray или ocserv в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
+    <Card title="Входящие подключения" subtitle="Каждому клиенту назначается отдельный ключ или пароль и канал выхода" actions={<div className="row"><button className="btn ghost" onClick={() => addServer("wireguard")}>+ WireGuard</button><button className="btn ghost" onClick={() => addServer("xray")}>+ Reality</button><button className="btn" onClick={() => addServer("ocserv")}>+ OpenConnect</button></div>}>
       {servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
+        server.type === "ocserv" ? <OcservServer key={server.id} server={server} config={config} installed={ocservInstalled} patch={patch} /> :
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}
     </Card>
   </>;
+}
+
+function OcservServer({ server, config, installed, patch }: any) {
+  const cfg = server.config || {};
+  const channels = (config.channels || []).filter((item: any) => item.enabled);
+  const referenced = (config.policies || []).some((item: any) => item.vpn_server === server.id);
+  const update = (mutate: (item: any) => void) => patch((draft: any) => mutate(draft.vpn_servers.find((item: any) => item.id === server.id)));
+  const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
+  function addPeer() {
+    update((draft) => {
+      const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
+      draft.peers = draft.peers || [];
+      const number = draft.peers.length + 1;
+      draft.peers.push({ id: `peer-${Date.now()}`, name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+    });
+  }
+  return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
+    {!installed && <Notice tone="info" title="Нужен компонент ocserv">Установите ocserv перед включением сервера OpenConnect.</Notice>}
+    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
+      <div className="row"><strong>{server.name}</strong><Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "работает" : "черновик"}</Badge></div>
+      <div className="row"><Switch checked={!!server.enabled} disabled={!installed} label="Включить" onChange={(value) => update((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={server.enabled || referenced} onClick={() => patch((draft: any) => { draft.vpn_servers = draft.vpn_servers.filter((item: any) => item.id !== server.id); })}>Удалить</button></div>
+    </div>
+    <div className="form-grid">
+      <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="Пул адресов" hint="Адрес сервера и маска"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
+      <Field label="TCP/UDP-порт"><input type="number" min={1} max={65535} value={server.port || 443} onChange={(e) => update((draft) => draft.port = Number(e.target.value))} /></Field>
+      <Field label="Публичный адрес" hint="vpn.example.com:443"><input className="mono" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
+      <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1380} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
+      <Field label="DNS для клиентов" hint="По одному IPv4-адресу в строке"><textarea className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.routes || []).join("\n")} onChange={(e) => setConfig("routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <Field label="Приветствие"><input value={cfg.banner || ""} onChange={(e) => setConfig("banner", e.target.value)} /></Field>
+    </div>
+    <Notice tone="info" title="Сертификат сервера">netOS автоматически выпускает отдельный самоподписанный сертификат. После первого применения импортируйте его в доверенные на клиентском устройстве. <button type="button" className="btn ghost sm" disabled={!server.enabled} onClick={() => window.location.assign(`/api/vpn-servers/${encodeURIComponent(server.id)}/certificate`)}>Скачать сертификат</button></Notice>
+    <div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
+    {(server.peers || []).length === 0 ? <Empty>Добавьте пользователя OpenConnect.</Empty> : (server.peers || []).map((peer: any) =>
+      <OcservPeer key={peer.id} peer={peer} channels={channels} update={update} />)}
+  </form>;
+}
+
+function OcservPeer({ peer, channels, update }: any) {
+  const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
+  return <div style={{ borderTop: "1px solid var(--line)", marginTop: "1rem", paddingTop: "1rem" }}>
+    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
+    <div className="form-grid" style={{ marginTop: "0.8rem" }}>
+      <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>
+      <Field label="Пароль" hint="Не меньше 8 символов"><input type="password" autoComplete="new-password" value={peer.credentials?.password || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = e.target.value; })} /></Field>
+      <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
+      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+    </div>
+  </div>;
 }
 
 function XrayServer({ server, config, installed, patch, setError }: any) {

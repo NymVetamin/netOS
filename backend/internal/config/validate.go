@@ -224,6 +224,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
 				"для сервера Xray нужен компонент «Xray»")
 		}
+		if server.Enabled && server.Type == "ocserv" && !c.HasComponent("ocserv") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
+				"для сервера OpenConnect нужен компонент «ocserv»")
+		}
 	}
 }
 
@@ -1535,7 +1539,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			r.errf(path+".index", "индекс VPN-сервера должен быть уникальным числом 1-9999")
 		}
 		indexes[s.Index] = true
-		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" {
+		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" && s.Type != "ocserv" {
 			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
 		}
 		switch s.Type {
@@ -1565,6 +1569,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if s.Type == "xray" {
 			c.validateXrayServer(r, path, s)
 		}
+		if s.Type == "ocserv" {
+			c.validateOcservServer(r, path, s)
+		}
 
 		seenAddr := map[string]bool{}
 		for j, peer := range s.Peers {
@@ -1586,6 +1593,68 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			}
 		}
 	}
+}
+
+func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNServer) {
+	oc, err := s.OcservConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !s.Enabled {
+		return
+	}
+	if s.Port < 1 || s.Port > 65535 {
+		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
+	}
+	if oc.PublicEndpoint != "" {
+		if host, port, err := net.SplitHostPort(oc.PublicEndpoint); err != nil || host == "" || !inPortRange(port) {
+			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:443")
+		}
+	}
+	if oc.MTU != 0 && (oc.MTU < 576 || oc.MTU > 9000) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+	if strings.ContainsAny(oc.Banner, "\r\n\x00") {
+		r.errf(path+".config.banner", "переводы строк и нулевой байт недопустимы")
+	}
+	for i, address := range oc.DNS {
+		if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
+			r.errf(fmt.Sprintf("%s.config.dns[%d]", path, i), "некорректный IPv4-адрес DNS")
+		}
+	}
+	for i, route := range oc.Routes {
+		if prefix, err := netip.ParsePrefix(route); err != nil || !prefix.Addr().Is4() {
+			r.errf(fmt.Sprintf("%s.config.routes[%d]", path, i), "некорректная IPv4-подсеть")
+		}
+	}
+	usernames := map[string]bool{}
+	for i, peer := range s.Peers {
+		username := peer.Credentials["username"]
+		if username == "" || !safeAccountName(username) {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя может содержать только буквы, цифры, точку, дефис и подчёркивание")
+		}
+		if usernames[username] {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя уже используется")
+		}
+		usernames[username] = true
+		if peer.Enabled && len(peer.Credentials["password"]) < 8 {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль должен содержать не меньше 8 символов")
+		}
+	}
+}
+
+func safeAccountName(value string) bool {
+	if value == "." || value == ".." || len(value) > 64 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServer) {
