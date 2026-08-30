@@ -15,10 +15,11 @@ export function VPNServersPage({ config, patch }: Props) {
   const wireguardInstalled = (config.components || []).some((item: any) => item.id === "wireguard" && item.installed);
   const xrayInstalled = (config.components || []).some((item: any) => item.id === "xray" && item.installed);
   const ocservInstalled = (config.components || []).some((item: any) => item.id === "ocserv" && item.installed);
+	const strongswanInstalled = (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
   const [clientSecrets, setClientSecrets] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
-  function addServer(type: "wireguard" | "xray" | "ocserv") {
+	function addServer(type: "wireguard" | "xray" | "ocserv" | "ikev2") {
     patch((draft) => {
       draft.vpn_servers = draft.vpn_servers || [];
       const used = new Set(draft.vpn_servers.map((item: any) => item.index));
@@ -31,9 +32,12 @@ export function VPNServersPage({ config, patch }: Props) {
       } : type === "xray" ? {
         ...common, name: `VLESS Reality ${index}`, port: 443,
         config: { private_key: "", public_endpoint: "", destination: "www.cloudflare.com:443", server_names: ["www.cloudflare.com"], short_ids: [randomHex(8)], flow: "xtls-rprx-vision" },
-      } : {
+		} : type === "ocserv" ? {
         ...common, name: `OpenConnect ${index}`, port: 443,
         config: { public_endpoint: "", dns: [], routes: [], mtu: 1380, banner: "netOS VPN" },
+		} : {
+			...common, name: `IKEv2 ${index}`, port: 500,
+			config: { public_endpoint: "", server_identity: config.system?.hostname || "netos", dns: [], split_routes: [], mtu: 1400 },
       };
       draft.vpn_servers.push(server);
     });
@@ -42,15 +46,53 @@ export function VPNServersPage({ config, patch }: Props) {
   return <>
     <div className="page-head"><h1>VPN-серверы</h1><p>Безопасный удалённый доступ к роутеру и интернету через него</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
-    {!wireguardInstalled && !xrayInstalled && !ocservInstalled && <Notice tone="info" title="Нужен VPN-компонент">Установите WireGuard, Xray или ocserv в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
-    <Card title="Входящие подключения" subtitle="Каждому клиенту назначается отдельный ключ или пароль и канал выхода" actions={<div className="row"><button className="btn ghost" onClick={() => addServer("wireguard")}>+ WireGuard</button><button className="btn ghost" onClick={() => addServer("xray")}>+ Reality</button><button className="btn" onClick={() => addServer("ocserv")}>+ OpenConnect</button></div>}>
+	{!wireguardInstalled && !xrayInstalled && !ocservInstalled && !strongswanInstalled && <Notice tone="info" title="Нужен VPN-компонент">Установите нужный VPN-компонент в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
+	<Card title="Входящие подключения" subtitle="Каждому клиенту назначается отдельный ключ или пароль и канал выхода" actions={<div className="row"><button className="btn ghost" onClick={() => addServer("wireguard")}>+ WireGuard</button><button className="btn ghost" onClick={() => addServer("xray")}>+ Reality</button><button className="btn ghost" onClick={() => addServer("ikev2")}>+ IKEv2</button><button className="btn" onClick={() => addServer("ocserv")}>+ OpenConnect</button></div>}>
       {servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <OcservServer key={server.id} server={server} config={config} installed={ocservInstalled} patch={patch} /> :
+		server.type === "ikev2" ? <IKEv2Server key={server.id} server={server} config={config} installed={strongswanInstalled} patch={patch} /> :
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}
     </Card>
   </>;
+}
+
+function IKEv2Server({ server, config, installed, patch }: any) {
+	const cfg = server.config || {};
+	const channels = (config.channels || []).filter((item: any) => item.enabled);
+	const referenced = (config.policies || []).some((item: any) => item.vpn_server === server.id);
+	const update = (mutate: (item: any) => void) => patch((draft: any) => mutate(draft.vpn_servers.find((item: any) => item.id === server.id)));
+	const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
+	function addPeer() {
+		update((draft) => {
+			const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
+			draft.peers = draft.peers || [];
+			const number = draft.peers.length + 1;
+			draft.peers.push({ id: `peer-${Date.now()}`, name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+		});
+	}
+	return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
+		{!installed && <Notice tone="info" title="Нужен компонент strongSwan">Установите strongSwan перед включением сервера IKEv2.</Notice>}
+		<div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
+			<div className="row"><strong>{server.name}</strong><Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "работает" : "черновик"}</Badge></div>
+			<div className="row"><Switch checked={!!server.enabled} disabled={!installed} label="Включить" onChange={(value) => update((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={server.enabled || referenced} onClick={() => patch((draft: any) => { draft.vpn_servers = draft.vpn_servers.filter((item: any) => item.id !== server.id); })}>Удалить</button></div>
+		</div>
+		<div className="form-grid">
+			<Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
+			<Field label="Пул адресов" hint="Адрес сервера и маска"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
+			<Field label="Публичный адрес" hint="Домен или IP без порта"><input className="mono" placeholder="vpn.example.com" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
+			<Field label="Идентификатор сервера" hint="Должен совпадать с адресом в профиле клиента"><input className="mono" value={cfg.server_identity || ""} onChange={(e) => setConfig("server_identity", e.target.value)} /></Field>
+			<Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+			<Field label="MTU"><input type="number" min={1280} max={9000} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
+			<Field label="DNS для клиентов" hint="По одному IPv4-адресу в строке"><textarea className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+			<Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.split_routes || []).join("\n")} onChange={(e) => setConfig("split_routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+		</div>
+		<Notice tone="info" title="Настройка клиента">Импортируйте сертификат как доверенный корневой, затем создайте IKEv2-подключение к публичному адресу с логином и паролем EAP-MSCHAPv2. <button type="button" className="btn ghost sm" disabled={!server.enabled} onClick={() => window.location.assign(`/api/vpn-servers/${encodeURIComponent(server.id)}/certificate`)}>Скачать сертификат</button></Notice>
+		<div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
+		{(server.peers || []).length === 0 ? <Empty>Добавьте пользователя IKEv2.</Empty> : (server.peers || []).map((peer: any) =>
+			<OcservPeer key={peer.id} peer={peer} channels={channels} update={update} />)}
+	</form>;
 }
 
 function OcservServer({ server, config, installed, patch }: any) {

@@ -44,11 +44,20 @@ func TestIntegrationIptablesAcceptsGeneratedRuleset(t *testing.T) {
 	cfg.Channels = append(cfg.Channels, config.Channel{
 		ID: "wg-test", Index: 99, Name: "Тестовый VPN", Enabled: true, Type: "wireguard",
 	})
+	cfg.VPNServers = []config.VPNServer{{
+		ID: "ike-test", Index: 98, Name: "Тестовый IKEv2", Enabled: true, Type: "ikev2",
+		Subnet: "10.98.0.1/24", Port: 500, DefaultChannel: "wg-test",
+		Peers: []config.VPNPeer{{ID: "phone", Name: "Телефон", Enabled: true, Address: "10.98.0.2", Channel: "wg-test"}},
+	}}
 	cfg.DNS.Upstreams[0].Channel = "wg-test"
 	cfg.Policies = []config.Policy{{
 		ID: "https-vpn", Name: "HTTPS через VPN", Enabled: true, Priority: 100,
 		Channel: "wg-test", Protocol: "tcp", DstPort: "443,8000-8010",
 	}}
+	cfg.Policies = append(cfg.Policies, config.Policy{
+		ID: "ike-peer", Name: "IKEv2-пир", Enabled: true, Priority: 50,
+		Channel: "wg-test", VPNServer: "ike-test", VPNPeer: "phone",
+	})
 
 	rules, err := Build(cfg)
 	if err != nil {

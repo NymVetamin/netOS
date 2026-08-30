@@ -189,6 +189,26 @@ func renderOcserv(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
+func ikev2Active(cfg *config.Config) bool {
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "ikev2" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderIKEv2(cfg *config.Config) (string, error) {
+	var servers []config.VPNServer
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "ikev2" {
+			servers = append(servers, server)
+		}
+	}
+	text, err := vpnservers.RenderIKEv2(servers, cfg)
+	return string(text), err
+}
+
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
@@ -225,6 +245,10 @@ var artifacts = []Artifact{
 	{
 		ID: "ocserv", Title: "Сервер OpenConnect",
 		Active: ocservActive, Render: renderOcserv,
+	},
+	{
+		ID: "strongswan", Title: "Серверы IKEv2",
+		Active: ikev2Active, Render: renderIKEv2,
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",

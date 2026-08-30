@@ -240,6 +240,13 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 
 	// 2. Разбор по зонам: переход в цепочку по интерфейсу.
 	b.line("# --- разбор по зонам ---")
+	// strongSwan 6.0.1 не всегда присваивает входящий XFRM ID трафику
+	// road-warrior. Ядро уже проверило IPsec-политику, поэтому классифицируем
+	// такой трафик до перехода по физическому WAN-интерфейсу.
+	if ikev2ServerEnabled(cfg) && len(zones["vpn"]) > 0 {
+		b.line("-A INPUT -m policy --dir in --pol ipsec -j %s", ChainName("vpn", "IN"))
+		b.line("-A FORWARD -m policy --dir in --pol ipsec -j %s", ChainName("vpn", "FWD"))
+	}
 	for _, c := range chains {
 		for _, iface := range zones[c.zone.Name] {
 			b.line("-A %s %s %s -j %s", c.hook.builtin, c.hook.selector, iface, c.chain)
@@ -294,19 +301,34 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	b.line("COMMIT")
 }
 
+func ikev2ServerEnabled(cfg *config.Config) bool {
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "ikev2" {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 	for _, server := range cfg.VPNServers {
 		if !server.Enabled {
 			continue
 		}
-		protocol := "udp"
-		if server.Type == "xray" {
-			protocol = "tcp"
-		} else if server.Type != "wireguard" {
-			continue
+		comment := truncate("VPN-сервер «"+server.Name+"»", 240)
+		switch server.Type {
+		case "wireguard":
+			b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
+		case "xray":
+			b.line("-A %s -p tcp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
+		case "ocserv":
+			b.line("-A %s -p tcp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
+			b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
+		case "ikev2":
+			b.line("-A %s -p udp --dport 500 -m comment --comment %q -j ACCEPT", chain, comment)
+			b.line("-A %s -p udp --dport 4500 -m comment --comment %q -j ACCEPT", chain, comment)
+			b.line("-A %s -p esp -m comment --comment %q -j ACCEPT", chain, comment)
 		}
-		b.line("-A %s -p %s --dport %d -m comment --comment %q -j ACCEPT",
-			chain, protocol, server.Port, truncate("VPN-сервер «"+server.Name+"»", 240))
 	}
 }
 
@@ -695,7 +717,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	servers := append([]config.VPNServer(nil), cfg.VPNServers...)
 	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 	for _, server := range servers {
-		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv") {
+		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv" && server.Type != "ikev2") {
 			continue
 		}
 		peers := append([]config.VPNPeer(nil), server.Peers...)
@@ -704,15 +726,23 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			if !peer.Enabled || peer.Channel == "" || peer.Channel == "direct" {
 				continue
 			}
+			match := " -i " + vpnservers.InterfaceName(server) + " -s " + peer.Address + "/32"
+			if server.Type == "ikev2" {
+				match = " -s " + peer.Address + "/32 -m policy --dir in --pol ipsec"
+			}
 			rules = append(rules, policyRule{
 				priority: 1_500_000, id: server.ID + "/" + peer.ID,
-				match: " -i " + vpnservers.InterfaceName(server) + " -s " + peer.Address + "/32", channel: peer.Channel,
+				match: match, channel: peer.Channel,
 				comment: "канал VPN-пира «" + peer.Name + "»",
 			})
 		}
 		if server.DefaultChannel != "" && server.DefaultChannel != "direct" {
+			match := " -i " + vpnservers.InterfaceName(server)
+			if server.Type == "ikev2" {
+				match = " -s " + subnetOf(server.Subnet) + " -m policy --dir in --pol ipsec"
+			}
 			rules = append(rules, policyRule{
-				priority: 1_600_000, id: server.ID, match: " -i " + vpnservers.InterfaceName(server),
+				priority: 1_600_000, id: server.ID, match: match,
 				channel: server.DefaultChannel, comment: "канал VPN-сервера «" + server.Name + "»",
 			})
 		}
@@ -760,7 +790,14 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 			if server.ID != p.VPNServer {
 				continue
 			}
-			fmt.Fprintf(&s, " -i %s", vpnservers.InterfaceName(server))
+			if server.Type == "ikev2" {
+				if p.VPNPeer == "" {
+					fmt.Fprintf(&s, " -s %s", subnetOf(server.Subnet))
+				}
+				fmt.Fprint(&s, " -m policy --dir in --pol ipsec")
+			} else {
+				fmt.Fprintf(&s, " -i %s", vpnservers.InterfaceName(server))
+			}
 			if p.VPNPeer != "" {
 				for _, peer := range server.Peers {
 					if peer.ID == p.VPNPeer {

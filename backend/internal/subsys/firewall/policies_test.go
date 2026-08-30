@@ -94,6 +94,25 @@ func TestWireGuardServerPortAndPeerChannel(t *testing.T) {
 	}
 }
 
+func TestOpenConnectAndIKEv2ServerPorts(t *testing.T) {
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "wan0", Name: "eth0", Type: "physical", Enabled: true}}
+	cfg.WANs = []config.WAN{{ID: "wan", Index: 1, Name: "Internet", Interface: "wan0", Enabled: true, Proto: "dhcp"}}
+	cfg.VPNServers = []config.VPNServer{
+		{ID: "oc", Index: 2, Name: "OC", Enabled: true, Type: "ocserv", Port: 4443},
+		{ID: "ike", Index: 3, Name: "IKE", Enabled: true, Type: "ikev2", Port: 500},
+	}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"-p tcp --dport 4443", "-p udp --dport 4443", "-p udp --dport 500", "-p udp --dport 4500", "-p esp"} {
+		if !strings.Contains(rules.IPv4, want) {
+			t.Errorf("нет %q:\n%s", want, rules.IPv4)
+		}
+	}
+}
+
 func TestPortRangesUseIptablesSyntax(t *testing.T) {
 	if got := iptablesPortSpec("53,8000-8010"); got != "53,8000:8010" {
 		t.Fatal(got)

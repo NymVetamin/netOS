@@ -228,6 +228,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
 				"для сервера OpenConnect нужен компонент «ocserv»")
 		}
+		if server.Enabled && server.Type == "ikev2" && !c.HasComponent("strongswan") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
+				"для сервера IKEv2 нужен компонент «strongSwan»")
+		}
 	}
 }
 
@@ -1539,7 +1543,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			r.errf(path+".index", "индекс VPN-сервера должен быть уникальным числом 1-9999")
 		}
 		indexes[s.Index] = true
-		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" && s.Type != "ocserv" {
+		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" && s.Type != "ocserv" && s.Type != "ikev2" {
 			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
 		}
 		switch s.Type {
@@ -1551,7 +1555,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if err != nil || !subnet.Addr().Is4() {
 			r.errf(path+".subnet", "подсеть должна быть в формате 10.9.0.1/24")
 		}
-		if s.Enabled && s.Port != 0 {
+		if s.Enabled && s.Port != 0 && s.Type != "ikev2" {
 			if prev, ok := ports[s.Port]; ok {
 				r.errf(path+".port", "порт %d уже занят сервером %q", s.Port, prev)
 			}
@@ -1572,6 +1576,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if s.Type == "ocserv" {
 			c.validateOcservServer(r, path, s)
 		}
+		if s.Type == "ikev2" {
+			c.validateIKEv2Server(r, path, s)
+		}
 
 		seenAddr := map[string]bool{}
 		for j, peer := range s.Peers {
@@ -1591,6 +1598,59 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			if peer.Channel != "" && !channels[peer.Channel] {
 				r.errf(ppath+".channel", "неизвестный канал %q", peer.Channel)
 			}
+		}
+	}
+}
+
+func (c *Config) validateIKEv2Server(r *ValidationResult, path string, s VPNServer) {
+	ike, err := s.IKEv2Config()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !s.Enabled {
+		return
+	}
+	// IKEv2 always uses the standard UDP ports, independently of the generic
+	// port field retained in the common data model.
+	if s.Port != 0 && s.Port != 500 {
+		r.errf(path+".port", "IKEv2 использует стандартные UDP-порты 500 и 4500")
+	}
+	if ike.PublicEndpoint != "" && net.ParseIP(ike.PublicEndpoint) == nil && !validDNSName(ike.PublicEndpoint) {
+		r.errf(path+".config.public_endpoint", "укажите доменное имя или IP-адрес без порта")
+	}
+	identity := ike.ServerIdentity
+	if identity == "" {
+		identity = ike.PublicEndpoint
+	}
+	if identity == "" || strings.ContainsAny(identity, "\r\n\x00{}#") {
+		r.errf(path+".config.server_identity", "укажите безопасное имя сервера, совпадающее с сертификатом")
+	}
+	if ike.MTU != 0 && (ike.MTU < 1280 || ike.MTU > 9000) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 1280-9000")
+	}
+	for i, address := range ike.DNS {
+		if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
+			r.errf(fmt.Sprintf("%s.config.dns[%d]", path, i), "некорректный IPv4-адрес DNS")
+		}
+	}
+	for i, route := range ike.SplitRoutes {
+		if prefix, err := netip.ParsePrefix(route); err != nil || !prefix.Addr().Is4() {
+			r.errf(fmt.Sprintf("%s.config.split_routes[%d]", path, i), "некорректная IPv4-подсеть")
+		}
+	}
+	usernames := map[string]bool{}
+	for i, peer := range s.Peers {
+		username := peer.Credentials["username"]
+		if username == "" || !safeAccountName(username) {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя может содержать только буквы, цифры, точку, дефис и подчёркивание")
+		}
+		if usernames[username] {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя уже используется")
+		}
+		usernames[username] = true
+		if peer.Enabled && len(peer.Credentials["password"]) < 8 {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль должен содержать не меньше 8 символов")
 		}
 	}
 }
@@ -1655,6 +1715,24 @@ func safeAccountName(value string) bool {
 		return false
 	}
 	return value != ""
+}
+
+func validDNSName(value string) bool {
+	if len(value) == 0 || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, ch := range label {
+			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServer) {

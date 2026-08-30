@@ -26,10 +26,18 @@ import (
 // пользователю: по нему можно убедиться, что браузер соединился именно с
 // роутером, а не с кем-то посередине.
 func EnsureSelfSigned(dir, hostname string) (certPath, keyPath, fingerprint string, err error) {
+	return EnsureSelfSignedForNames(dir, hostname)
+}
+
+// EnsureSelfSignedForNames additionally places public VPN endpoint names or
+// addresses into the certificate SAN extension. Existing certificates are
+// retained only while they cover every requested identity.
+func EnsureSelfSignedForNames(dir, hostname string, names ...string) (certPath, keyPath, fingerprint string, err error) {
 	certPath = filepath.Join(dir, "panel.crt")
 	keyPath = filepath.Join(dir, "panel.key")
 
-	if fp, ok := validExisting(certPath, keyPath); ok {
+	identities := append([]string{hostname}, names...)
+	if fp, ok := validExistingForNames(certPath, keyPath, identities); ok {
 		return certPath, keyPath, fp, nil
 	}
 
@@ -59,6 +67,13 @@ func EnsureSelfSigned(dir, hostname string) (certPath, keyPath, fingerprint stri
 		IsCA:                  true,
 		DNSNames:              []string{hostname, "localhost", hostname + ".lan"},
 		IPAddresses:           localAddresses(),
+	}
+	for _, name := range names {
+		if ip := net.ParseIP(name); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else if name != "" {
+			template.DNSNames = append(template.DNSNames, name)
+		}
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
@@ -103,6 +118,10 @@ func Fingerprint(cert *x509.Certificate) string {
 }
 
 func validExisting(certPath, keyPath string) (string, bool) {
+	return validExistingForNames(certPath, keyPath, nil)
+}
+
+func validExistingForNames(certPath, keyPath string, names []string) (string, bool) {
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
 		return "", false
@@ -120,6 +139,11 @@ func validExisting(certPath, keyPath string) (string, bool) {
 	}
 	if time.Now().After(cert.NotAfter) {
 		return "", false
+	}
+	for _, name := range names {
+		if name != "" && cert.VerifyHostname(name) != nil {
+			return "", false
+		}
 	}
 	return Fingerprint(cert), true
 }

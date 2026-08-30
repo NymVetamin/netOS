@@ -62,7 +62,7 @@ func resourceName(server config.VPNServer) string {
 func enabledServers(cfg *config.Config) []config.VPNServer {
 	var out []config.VPNServer
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray" || server.Type == "ocserv") {
+		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray" || server.Type == "ocserv" || server.Type == "ikev2") {
 			out = append(out, server)
 		}
 	}
@@ -128,6 +128,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		case "ocserv":
 			item.Unit = ocservUnitName(server)
 			createdNow, err = s.applyOcserv(ctx, cfg, server)
+		case "ikev2":
+			item.Unit = ikev2Unit
+			createdNow, err = s.ensureIKEv2Interface(ctx, server, ownedNames[item.Name])
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -139,6 +142,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			created = append(created, item)
 		}
 		nextOwned = append(nextOwned, item)
+	}
+	if err := s.applyIKEv2(ctx, cfg, ikev2Servers(cfg)); err != nil {
+		for _, provisional := range created {
+			s.remove(ctx, provisional)
+		}
+		return fmt.Errorf("сервер IKEv2: %w", err)
 	}
 	if err := s.writeOwned(nextOwned); err != nil {
 		for _, provisional := range created {
@@ -260,6 +269,21 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			}
 			continue
 		}
+		if server.Type == "ikev2" {
+			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2Unit)
+			if strings.TrimSpace(active) != "active" {
+				return fmt.Errorf("сервер %s не работает", server.Name)
+			}
+			name := InterfaceName(server)
+			if !s.linkExists(name) {
+				return fmt.Errorf("интерфейс %s отсутствует", name)
+			}
+			addrs, err := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
+			if err != nil || !strings.Contains(addrs, server.Subnet) {
+				return fmt.Errorf("на %s нет адреса %s", name, server.Subnet)
+			}
+			continue
+		}
 		name := InterfaceName(server)
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
@@ -283,6 +307,12 @@ func (s *Subsystem) remove(ctx context.Context, item ownedServer) {
 	}
 	if item.Type == "ocserv" {
 		s.cleanupOcserv(ctx, config.VPNServer{Index: item.Index, Type: "ocserv"})
+		return
+	}
+	if item.Type == "ikev2" {
+		if s.linkExists(item.Name) {
+			_, _ = s.Runner.Run(ctx, "ip", "link", "delete", item.Name)
+		}
 		return
 	}
 	if s.linkExists(item.Name) {

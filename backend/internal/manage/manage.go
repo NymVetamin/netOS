@@ -698,6 +698,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		"netos-xray-srv*.service",
 		"netos-hostapd-*.service",
 		"netos-ocserv-srv*.service",
+		"netos-strongswan.service",
 	} {
 		units, _ := filepath.Glob(m.sys("/etc/systemd/system/" + pattern))
 		for _, unit := range units {
@@ -974,7 +975,7 @@ func (m *Manager) removeVirtualInterfaces(ctx context.Context) {
 		fmt.Fprintf(m.Err, "Предупреждение: чтение интерфейсов: %v\n", err)
 		return
 	}
-	prefixes := []string{"br-", "vl-", "bond-", "d-", "wg-ch", "tun-ch", "wg-srv"}
+	prefixes := []string{"br-", "vl-", "bond-", "d-", "wg-ch", "tun-ch", "wg-srv", "xfrm-ch", "xfrm-srv"}
 	for _, entry := range entries {
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(entry.Name(), prefix) {
