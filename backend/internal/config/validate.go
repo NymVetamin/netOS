@@ -1709,34 +1709,92 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 
 func (c *Config) validateWiFi(r *ValidationResult) {
 	networks := c.networkIDs()
+	radioIDs := map[string]bool{}
+	devices := map[string]bool{}
 	for i, radio := range c.WiFi {
 		path := fmt.Sprintf("wifi[%d]", i)
-		if radio.Enabled {
-			r.errf(path+".enabled", "управление точкой доступа Wi-Fi ещё не реализовано")
+		if radio.ID == "" || radioIDs[radio.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор радио")
 		}
+		radioIDs[radio.ID] = true
 		if radio.Device == "" {
 			r.errf(path+".device", "не выбрано радиоустройство")
+		} else if len(radio.Device) > 15 || strings.ContainsAny(radio.Device, " /\\\r\n\t") {
+			r.errf(path+".device", "некорректное имя радиоустройства")
+		} else if devices[radio.Device] {
+			r.errf(path+".device", "радиоустройство уже используется")
 		}
-		if radio.Country == "" {
-			r.warnf(path+".country", "не задан код страны — часть каналов будет недоступна")
+		devices[radio.Device] = true
+		switch radio.Band {
+		case "2.4":
+			if radio.Channel < 1 || radio.Channel > 14 {
+				r.errf(path+".channel", "для диапазона 2,4 ГГц нужен канал 1-14")
+			}
+		case "5":
+			if radio.Channel < 32 || radio.Channel > 177 {
+				r.errf(path+".channel", "для диапазона 5 ГГц нужен канал 32-177")
+			}
+		default:
+			r.errf(path+".band", "поддерживаются диапазоны 2,4 и 5 ГГц")
+		}
+		if radio.Width != 20 && radio.Width != 40 && radio.Width != 80 {
+			r.errf(path+".width", "поддерживается ширина канала 20, 40 или 80 МГц")
+		}
+		if radio.Band == "2.4" && radio.Width == 80 {
+			r.errf(path+".width", "80 МГц недоступны в диапазоне 2,4 ГГц")
+		}
+		if len(radio.Country) != 2 || strings.ToUpper(radio.Country) < "AA" || strings.ToUpper(radio.Country) > "ZZ" {
+			r.errf(path+".country", "нужен двухбуквенный код страны")
+		}
+		if radio.TxPower < 0 || radio.TxPower > 40 {
+			r.errf(path+".tx_power", "мощность должна быть в диапазоне 0-40 dBm")
+		}
+		enabledSSIDs := 0
+		ssidIDs := map[string]bool{}
+		ssidNames := map[string]bool{}
+		for _, ssid := range radio.SSIDs {
+			if ssid.Enabled {
+				enabledSSIDs++
+			}
+		}
+		if enabledSSIDs > 1 && len(radio.Device) > 12 {
+			r.errf(path+".device", "имя устройства слишком длинное для нескольких SSID")
+		}
+		if radio.Enabled && enabledSSIDs == 0 {
+			r.errf(path+".ssids", "включите хотя бы одну Wi-Fi-сеть")
 		}
 		for j, s := range radio.SSIDs {
 			spath := fmt.Sprintf("%s.ssids[%d]", path, j)
+			if s.ID == "" || ssidIDs[s.ID] {
+				r.errf(spath+".id", "пустой или повторяющийся идентификатор сети")
+			}
+			ssidIDs[s.ID] = true
 			if s.SSID == "" {
 				r.errf(spath+".ssid", "пустое имя сети")
 			}
-			if len(s.SSID) > 32 {
+			if len([]byte(s.SSID)) > 32 {
 				r.errf(spath+".ssid", "имя сети длиннее 32 байт")
+			}
+			if strings.ContainsAny(s.SSID, "\r\n\x00") || strings.ContainsAny(s.Password, "\r\n\x00") {
+				r.errf(spath, "переводы строк и нулевой байт недопустимы")
+			}
+			if s.Enabled && ssidNames[s.SSID] {
+				r.errf(spath+".ssid", "это имя сети уже используется на радио")
+			}
+			if s.Enabled {
+				ssidNames[s.SSID] = true
 			}
 			if !networks[s.Network] {
 				r.errf(spath+".network", "неизвестный сегмент %q", s.Network)
 			}
 			switch s.Security {
 			case "open":
-				r.warnf(spath+".security", "открытая сеть без шифрования")
+				if s.Enabled {
+					r.warnf(spath+".security", "открытая сеть без шифрования")
+				}
 			case "wpa2", "wpa3", "wpa2/wpa3":
-				if len(s.Password) < 8 {
-					r.errf(spath+".password", "пароль короче 8 символов")
+				if s.Enabled && (len(s.Password) < 8 || len(s.Password) > 63) {
+					r.errf(spath+".password", "пароль должен содержать 8-63 символа")
 				}
 			default:
 				r.errf(spath+".security", "неизвестный режим безопасности %q", s.Security)

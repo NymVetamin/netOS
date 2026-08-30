@@ -22,7 +22,7 @@ func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 	}
 	for _, want := range []string{
 		"channels[1].enabled", "vpn_servers[0].enabled",
-		"wifi[0].enabled", "dns.blocklists[0].enabled",
+		"dns.blocklists[0].enabled",
 	} {
 		if !strings.Contains(got.String(), want) {
 			t.Errorf("нет явного запрета %s:\n%s", want, got.String())

@@ -174,6 +174,7 @@ var Catalog = []ComponentInfo{
 		Description: "Раздача Wi-Fi с беспроводной карты роутера: WPA2 и WPA3, несколько сетей на одном радио.",
 		Packages:    []string{"hostapd", "iw"},
 		Units:       []string{"hostapd.service"},
+		RunUnits:    []string{"netos-hostapd-*.service"},
 		Provides:    []string{"wifi"},
 		SizeHint:    "около 2 МБ",
 	},

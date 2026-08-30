@@ -24,6 +24,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
+	"github.com/netos-router/netos/internal/subsys/wifi"
 )
 
 // Artifact — один сгенерированный файл или набор правил.
@@ -134,6 +135,33 @@ func renderXrayServers(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
+func wifiActive(cfg *config.Config) bool {
+	for _, radio := range cfg.WiFi {
+		if radio.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func renderWiFi(cfg *config.Config) (string, error) {
+	var b bytes.Buffer
+	for _, radio := range cfg.WiFi {
+		if !radio.Enabled {
+			continue
+		}
+		text, err := wifi.RenderRadio(radio, cfg)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s ---\n%s\n", radio.Device, text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных точек доступа Wi-Fi.\n")
+	}
+	return b.String(), nil
+}
+
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
@@ -162,6 +190,10 @@ var artifacts = []Artifact{
 	{
 		ID: "xray-servers", Title: "Входящие серверы Xray",
 		Active: xrayServersActive, Render: renderXrayServers,
+	},
+	{
+		ID: "hostapd", Title: "Конфигурация Wi-Fi",
+		Active: wifiActive, Render: renderWiFi,
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",
