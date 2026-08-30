@@ -21,16 +21,27 @@ export function DiagnosticsPage() {
   const [content, setContent] = useState("");
   const [arp, setArp] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadedTab, setLoadedTab] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const list = await api.renderList();
-      if (cancelled) return;
-      setArtifacts(list);
-      // Первым открывается первый же артефакт — им всегда оказывается то, что
-      // определяет доступность машины: правила iptables.
-      setTab(list.length > 0 ? list[0].id : ROUTES);
+      try {
+        const list = await api.renderList();
+        if (cancelled) return;
+        setArtifacts(list);
+        // Первым открывается первый же артефакт — им всегда оказывается то, что
+        // определяет доступность машины: правила iptables.
+        setLoading(true);
+        setTab(list.length > 0 ? list[0].id : ROUTES);
+      } catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Не удалось загрузить список диагностики");
+          setLoadedTab(ROUTES);
+          setTab(ROUTES);
+        }
+      }
     })();
     return () => {
       cancelled = true;
@@ -41,6 +52,7 @@ export function DiagnosticsPage() {
     if (!tab) return;
     let cancelled = false;
     setLoading(true);
+    setError("");
     (async () => {
       try {
         if (tab === ROUTES) {
@@ -49,13 +61,25 @@ export function DiagnosticsPage() {
             setContent(
               "# таблица маршрутов\n" + r.routes + "\n# правила выбора таблиц\n" + r.rules,
             );
+            setLoadedTab(tab);
           }
         } else if (tab === NEIGHBORS) {
           const r = await api.arp();
-          if (!cancelled) setArp(r.arp || []);
+          if (!cancelled) {
+            setArp(r.arp || []);
+            setLoadedTab(tab);
+          }
         } else {
           const text = await api.render(tab);
-          if (!cancelled) setContent(text);
+          if (!cancelled) {
+            setContent(text);
+            setLoadedTab(tab);
+          }
+        }
+      } catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Не удалось загрузить диагностику");
+          setLoadedTab(tab);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -72,6 +96,17 @@ export function DiagnosticsPage() {
     { id: NEIGHBORS, title: "Таблица соседей" },
   ];
 
+  const selectTab = (id: string) => {
+    if (id === tab) return;
+    // React applies both changes in one update, so stale content cannot appear
+    // under the next tab's title even when the request is slow.
+    setLoading(true);
+    setError("");
+    setTab(id);
+  };
+
+  const pending = loading || loadedTab !== tab;
+
   return (
     <>
       <div className="page-head">
@@ -84,7 +119,7 @@ export function DiagnosticsPage() {
           <button
             key={t.id}
             className={`btn sm ${tab === t.id ? "primary" : ""}`}
-            onClick={() => setTab(t.id)}
+            onClick={() => selectTab(t.id)}
           >
             {t.title}
           </button>
@@ -93,7 +128,11 @@ export function DiagnosticsPage() {
 
       {tab === NEIGHBORS ? (
         <Card title="Таблица соседей" tight>
-          {arp.length === 0 ? (
+          {pending ? (
+            <Empty>Загрузка…</Empty>
+          ) : error ? (
+            <Empty>{error}</Empty>
+          ) : arp.length === 0 ? (
             <Empty>Записей нет</Empty>
           ) : (
             <TableWrap>
@@ -133,7 +172,7 @@ export function DiagnosticsPage() {
               Скопировать
             </button>
           </div>
-          <pre className="output">{loading ? "Загрузка…" : content}</pre>
+          <pre className="output">{pending ? "Загрузка…" : error || content}</pre>
         </div>
       )}
     </>
