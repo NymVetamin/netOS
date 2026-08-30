@@ -24,6 +24,7 @@ import (
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/components"
+	"github.com/netos-router/netos/internal/subsys/ddns"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/hostsettings"
 	"github.com/netos-router/netos/internal/subsys/multiwan"
@@ -112,7 +113,8 @@ func main() {
 	engine := apply.NewEngine(logger, *dryRun)
 	multiWAN := multiwan.New(runner, stateDir, logger)
 	channelMonitor := channels.New(runner, stateDir, logger)
-	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor); err != nil {
+	ddnsController := ddns.New(logger)
+	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController); err != nil {
 		log.Fatalf("регистрация подсистем: %v", err)
 	}
 
@@ -195,6 +197,7 @@ func main() {
 	}
 	go multiWAN.Run(ctx, engine.Current)
 	go channelMonitor.Run(ctx, engine.Current)
+	go ddnsController.Run(ctx, engine.Current)
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
 	// Дальше пароль знает только владелец машины.
@@ -213,6 +216,7 @@ func main() {
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)
+	panel.DDNS = ddnsController
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -367,7 +371,7 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	return cfg, id, nil
 }
 
-func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem) error {
+func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller) error {
 	svc := services.NewManager(runner)
 
 	subsystems := []apply.Subsystem{
@@ -388,6 +392,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		firewall.New(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),
+		ddnsController,
 	}
 	for _, s := range subsystems {
 		if err := engine.Register(s); err != nil {

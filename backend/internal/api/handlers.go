@@ -214,7 +214,7 @@ func viewerAllowed(r *http.Request) bool {
 		return true
 	}
 	switch r.URL.Path {
-	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/clients",
+	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/clients",
 		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes", "/api/audit",
 		"/api/revisions":
 		return true
@@ -601,6 +601,8 @@ func redactConfig(cfg *config.Config) (*config.Config, error) {
 			}
 		}
 	}
+	out.DDNS.Token = ""
+	out.DDNS.Password = ""
 	return &out, nil
 }
 
@@ -624,6 +626,14 @@ func redactSecretValues(values map[string]any) {
 			}
 		}
 	}
+}
+
+func (s *Server) handleDDNSStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.DDNS == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.DDNS.Status())
 }
 
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:

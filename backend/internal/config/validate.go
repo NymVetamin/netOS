@@ -62,8 +62,51 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateVPNServers(r)
 	c.validateWiFi(r)
 	c.validateQoS(r)
+	c.validateDDNS(r)
 
 	return r
+}
+
+func (c *Config) validateDDNS(r *ValidationResult) {
+	if !c.DDNS.Enabled {
+		return
+	}
+	if c.DDNS.Hostname == "" || len(c.DDNS.Hostname) > 253 || strings.ContainsAny(c.DDNS.Hostname, " /:@") {
+		r.errf("ddns.hostname", "укажите корректное доменное имя")
+	}
+	if c.DDNS.Interval < 60 || c.DDNS.Interval > 86400 {
+		r.errf("ddns.interval", "интервал должен быть от 60 до 86400 секунд")
+	}
+	if c.DDNS.AddressSource != "interface" && c.DDNS.AddressSource != "web" {
+		r.errf("ddns.address_source", "неизвестный источник адреса %q", c.DDNS.AddressSource)
+	}
+	if c.DDNS.AddressSource == "interface" {
+		found := false
+		for _, wan := range c.WANs {
+			if wan.ID == c.DDNS.WAN && wan.Enabled {
+				found = true
+			}
+		}
+		if !found {
+			r.errf("ddns.wan", "выберите включённый интернет-канал")
+		}
+	}
+	switch c.DDNS.Provider {
+	case "duckdns":
+		if c.DDNS.Token == "" {
+			r.errf("ddns.token", "для DuckDNS нужен токен")
+		}
+	case "cloudflare":
+		if c.DDNS.Token == "" || c.DDNS.ZoneID == "" || c.DDNS.RecordID == "" {
+			r.errf("ddns", "для Cloudflare нужны API-токен, Zone ID и Record ID")
+		}
+	case "noip":
+		if c.DDNS.Username == "" || c.DDNS.Password == "" {
+			r.errf("ddns", "для No-IP нужны имя пользователя и пароль")
+		}
+	default:
+		r.errf("ddns.provider", "неизвестный провайдер %q", c.DDNS.Provider)
+	}
 }
 
 func (c *Config) validateQoS(r *ValidationResult) {

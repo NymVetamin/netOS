@@ -20,6 +20,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
+	"github.com/netos-router/netos/internal/subsys/ddns"
 	"github.com/netos-router/netos/internal/tlsutil"
 )
 
@@ -47,6 +48,7 @@ type Server struct {
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
 	Components ComponentProbe
+	DDNS       *ddns.Controller
 
 	// draft — конфигурация, которую администратор редактирует, но ещё не
 	// применил.
@@ -132,6 +134,7 @@ func (s *Server) Routes() http.Handler {
 
 	auth("GET /api/catalog", s.handleCatalog)
 	auth("GET /api/status", s.handleStatus)
+	auth("GET /api/ddns/status", s.handleDDNSStatus)
 	auth("GET /api/clients", s.handleClients)
 	auth("GET /api/interfaces", s.handleInterfaces)
 	auth("GET /api/leases", s.handleLeases)

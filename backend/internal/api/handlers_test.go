@@ -68,6 +68,7 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 		Config: map[string]any{"private-key": "server-private", "listen": "0.0.0.0"},
 		Peers:  []config.VPNPeer{{Credentials: map[string]string{"private_key": "peer-private", "public_key": "peer-public"}}},
 	}}
+	cfg.DDNS = config.DDNS{Token: "ddns-token", Password: "ddns-password", Username: "ddns-user"}
 
 	redacted, err := redactConfig(cfg)
 	if err != nil {
@@ -75,6 +76,9 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 	}
 	if redacted.WANs[0].Password != "" || redacted.WiFi[0].SSIDs[0].Password != "" {
 		t.Fatal("viewer получил пароль из конфигурации")
+	}
+	if redacted.DDNS.Token != "" || redacted.DDNS.Password != "" || redacted.DDNS.Username != "ddns-user" {
+		t.Fatal("DDNS secrets were not redacted correctly")
 	}
 	if redacted.Channels[1].Config["private_key"] != "" ||
 		redacted.Channels[1].Config["transport"].(map[string]any)["auth_token"] != "" ||
@@ -90,6 +94,9 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 	if cfg.WANs[0].Password != "wan-secret" || cfg.WiFi[0].SSIDs[0].Password != "wifi-secret" {
 		t.Fatal("редактирование изменило исходную конфигурацию")
 	}
+	if cfg.DDNS.Token != "ddns-token" || cfg.DDNS.Password != "ddns-password" {
+		t.Fatal("redaction mutated source DDNS secrets")
+	}
 	if cfg.Channels[1].Config["private_key"] != "channel-private" ||
 		cfg.VPNServers[0].Peers[0].Credentials["private_key"] != "peer-private" {
 		t.Fatal("редактирование изменило исходные секреты VPN")
@@ -99,6 +106,7 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 func TestViewerPermissions(t *testing.T) {
 	allowed := []*http.Request{
 		viewerRequest(http.MethodGet, "/api/status"),
+		viewerRequest(http.MethodGet, "/api/ddns/status"),
 		viewerRequest(http.MethodGet, "/api/routes"),
 		viewerRequest(http.MethodGet, "/api/config"),
 		viewerRequest(http.MethodGet, "/api/vpn-servers/home/certificate"),

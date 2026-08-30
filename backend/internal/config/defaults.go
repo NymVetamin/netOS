@@ -92,6 +92,7 @@ func defaultConfig() *Config {
 		VPNServers: []VPNServer{},
 		WiFi:       []WiFiRadio{},
 		QoS:        QoS{WANs: []QoSWAN{}},
+		DDNS:       DDNS{AddressSource: "interface", Interval: 300},
 	}
 }
 
@@ -305,6 +306,12 @@ func (c *Config) Normalize() {
 		if c.QoS.WANs[i].Diffserv == "" {
 			c.QoS.WANs[i].Diffserv = "diffserv4"
 		}
+	}
+	if c.DDNS.AddressSource == "" {
+		c.DDNS.AddressSource = "interface"
+	}
+	if c.DDNS.Interval == 0 {
+		c.DDNS.Interval = 300
 	}
 	for i := range c.Clients {
 		if hw, err := net.ParseMAC(c.Clients[i].MAC); err == nil && len(hw) == 6 {

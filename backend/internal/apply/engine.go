@@ -70,6 +70,7 @@ var Order = []string{
 	"firewall",
 	"dhcp",
 	"dns",
+	"ddns",
 	"wifi",
 }
 

@@ -54,6 +54,7 @@ type Config struct {
 	VPNServers []VPNServer `json:"vpn_servers"`
 	WiFi       []WiFiRadio `json:"wifi"`
 	QoS        QoS         `json:"qos"`
+	DDNS       DDNS        `json:"ddns"`
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,21 @@ type QoSWAN struct {
 	UploadKbit   int    `json:"upload_kbit"`
 	DownloadKbit int    `json:"download_kbit"`
 	Diffserv     string `json:"diffserv"` // besteffort | diffserv3 | diffserv4 | diffserv8
+}
+
+// DDNS keeps one public DNS A record in sync with the router address.
+type DDNS struct {
+	Enabled       bool   `json:"enabled"`
+	Provider      string `json:"provider"` // duckdns | cloudflare | noip
+	Hostname      string `json:"hostname"`
+	WAN           string `json:"wan,omitempty"`
+	AddressSource string `json:"address_source"` // interface | web
+	Interval      int    `json:"interval"`       // seconds
+	Token         string `json:"token,omitempty"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
+	ZoneID        string `json:"zone_id,omitempty"`
+	RecordID      string `json:"record_id,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

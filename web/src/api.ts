@@ -193,6 +193,7 @@ export const api = {
 
   catalog: () => request<CatalogResponse>("GET", "/api/catalog"),
   status: () => request<any>("GET", "/api/status"),
+  ddnsStatus: () => request<any>("GET", "/api/ddns/status"),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
   leases: () => request<{ leases: any[] }>("GET", "/api/leases"),
