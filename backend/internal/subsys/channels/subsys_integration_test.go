@@ -66,7 +66,7 @@ func TestIntegrationWireGuardLifecycle(t *testing.T) {
 	state := &channelState{}
 	s.record(context.Background(), cfg, ch, state, false)
 	routes, _ := s.Runner.Run(context.Background(), "ip", "-4", "route", "show", "table", "1999")
-	if strings.Contains(routes, "default dev wg-ch999") || !strings.Contains(routes, "blackhole default") {
+	if !strings.Contains(routes, "default dev wg-ch999") || !strings.Contains(routes, "blackhole default") {
 		t.Fatalf("kill-switch table is unsafe:\n%s", routes)
 	}
 	s.record(context.Background(), cfg, ch, state, true)

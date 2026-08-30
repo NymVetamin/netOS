@@ -118,10 +118,12 @@ func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch conf
 		}
 		return s.ensureRuleTable(ctx, ch, TableNumber(fallback))
 	default: // block
-		table := fmt.Sprint(TableNumber(ch))
-		_, _ = s.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table)
-		_, err := s.Runner.Run(ctx, "ip", "-4", "route", "replace", "blackhole", "default", "metric", "1000", "table", table, "proto", fmt.Sprint(config.RouteProto))
-		return err
+		// The channel table already has a lower-priority blackhole route. Keep
+		// the device route while the interface exists: packets still cannot
+		// fall through to the main WAN, and probes retain a path through which
+		// they can observe recovery. If the interface disappears, Linux removes
+		// its device route and the blackhole becomes active automatically.
+		return s.ensureRoutes(ctx, ch, InterfaceName(ch))
 	}
 }
 
@@ -147,7 +149,7 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 			if splitErr != nil {
 				continue
 			}
-			_, err = s.Runner.Run(ctx, "curl", "--interface", iface, "--silent", "--max-time", fmt.Sprint(timeout), "telnet://"+host+":"+port)
+			err = probeTCP(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second)
 		default:
 			_, err = s.Runner.Run(ctx, "ping", "-4", "-I", iface, "-c", "1", "-W", fmt.Sprint(timeout), target)
 		}

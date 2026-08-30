@@ -185,7 +185,7 @@ func TestMonitorAppliesBlockAndRestoresChannel(t *testing.T) {
 	ch.Probe.RiseThreshold = 1
 	state := &channelState{}
 	s.record(context.Background(), cfg, ch, state, false)
-	if !state.Down || strings.Contains(runner.routes, "default dev wg-ch1") || !strings.Contains(runner.routes, "blackhole default") {
+	if !state.Down || !strings.Contains(runner.routes, "default dev wg-ch1") || !strings.Contains(runner.routes, "blackhole default") {
 		t.Fatalf("kill-switch not applied: down=%v routes=%q", state.Down, runner.routes)
 	}
 	s.record(context.Background(), cfg, ch, state, true)
