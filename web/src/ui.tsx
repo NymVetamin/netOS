@@ -1,7 +1,7 @@
 // Базовые элементы интерфейса. Держим их в одном месте, чтобы страницы
 // занимались данными, а не оформлением.
 
-import { ReactNode } from "react";
+import { cloneElement, isValidElement, ReactElement, ReactNode, useId } from "react";
 
 export function Card({
   title,
@@ -76,10 +76,14 @@ export function Field({
   hint?: string;
   children: ReactNode;
 }) {
+  const generatedID = useId();
+  const element = isValidElement(children) ? (children as ReactElement<{ id?: string }>) : null;
+  const isControl = element != null && typeof element.type === "string" && ["input", "select", "textarea"].includes(element.type);
+  const controlID = isControl ? element.props.id || generatedID : undefined;
   return (
     <div className="field">
-      <label>{label}</label>
-      {children}
+      <label className="field-label" htmlFor={controlID}>{label}</label>
+      {isControl ? cloneElement(element, { id: controlID }) : children}
       {hint && <div className="hint">{hint}</div>}
     </div>
   );
@@ -89,17 +93,20 @@ export function Switch({
   checked,
   onChange,
   label,
+  ariaLabel,
   disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
+  ariaLabel?: string;
   disabled?: boolean;
 }) {
   return (
     <label className="switch">
       <input
         type="checkbox"
+        aria-label={ariaLabel}
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}

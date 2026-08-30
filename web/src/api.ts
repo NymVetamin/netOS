@@ -145,8 +145,11 @@ export const api = {
     return res;
   },
 
-  changePassword: (current: string, next: string) =>
-    request<{ ok: boolean }>("POST", "/api/password", { current, new: next }),
+  async changePassword(current: string, next: string) {
+    const result = await request<{ ok: boolean }>("POST", "/api/password", { current, new: next });
+    csrfToken = null;
+    return result;
+  },
 
   wireGuardKeypair: (privateKey?: string) =>
     request<{ private_key: string; public_key: string }>(

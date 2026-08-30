@@ -444,7 +444,7 @@ tbody tr:hover {
   margin-bottom: 0;
 }
 
-.field label {
+.field-label {
   display: block;
   font-size: 12.5px;
   font-weight: 500;

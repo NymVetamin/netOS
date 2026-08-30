@@ -273,6 +273,8 @@ func (s *Store) revisionWhere(where string, args ...any) (*Revision, error) {
 func (s *Store) ListRevisions(limit int) ([]Revision, error) {
 	if limit <= 0 {
 		limit = 50
+	} else if limit > 1000 {
+		limit = 1000
 	}
 	rows, err := s.db.Query(
 		`SELECT id, created_at, author, comment, state, applied_at FROM revisions ORDER BY id DESC LIMIT ?`, limit)
@@ -364,6 +366,51 @@ func (s *Store) UpdatePassword(username, passwordHash string) error {
 	return err
 }
 
+// UpdatePasswordAndDeleteSessions changes the credential and invalidates all
+// existing sessions atomically, so a database error cannot leave a changed
+// password with old sessions still active (or report a misleading partial
+// failure to the user).
+func (s *Store) UpdatePasswordAndDeleteSessions(username, passwordHash string) ([]string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT token FROM sessions WHERE username = ?`, username)
+	if err != nil {
+		return nil, err
+	}
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	result, err := tx.Exec(`UPDATE users SET password_hash = ? WHERE username = ?`, passwordHash, username)
+	if err != nil {
+		return nil, err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrNotFound
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE username = ?`, username); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
 func (s *Store) TouchLogin(username string) error {
 	_, err := s.db.Exec(`UPDATE users SET last_login = ? WHERE username = ?`, time.Now().Unix(), username)
 	return err
@@ -379,12 +426,73 @@ func (s *Store) CountUsers() (int, error) {
 // Сессии
 // ---------------------------------------------------------------------------
 
-func (s *Store) CreateSession(token, username, sourceIP string, ttl time.Duration) error {
+func (s *Store) CreateSession(token, username, sourceIP string, ttl time.Duration) ([]string, error) {
 	now := time.Now()
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	evicted, err := sessionTokensBefore(tx, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE expires_at < ?`, now.Unix()); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(
 		`INSERT INTO sessions (token, username, created_at, expires_at, source_ip) VALUES (?, ?, ?, ?, ?)`,
-		token, username, now.Unix(), now.Add(ttl).Unix(), sourceIP)
-	return err
+		token, username, now.Unix(), now.Add(ttl).Unix(), sourceIP); err != nil {
+		return nil, err
+	}
+	// A leaked credential must not be able to grow the database forever by
+	// creating valid sessions. Twenty is ample for normal multi-device use.
+	rows, err := tx.Query(`SELECT token FROM sessions WHERE username = ? AND rowid NOT IN (
+		SELECT rowid FROM sessions WHERE username = ? ORDER BY created_at DESC, rowid DESC LIMIT 20
+	)`, username, username)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var staleToken string
+		if err := rows.Scan(&staleToken); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		evicted = append(evicted, staleToken)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, staleToken := range evicted {
+		if _, err := tx.Exec(`DELETE FROM sessions WHERE token = ?`, staleToken); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return evicted, nil
+}
+
+func sessionTokensBefore(tx *sql.Tx, cutoff int64) ([]string, error) {
+	rows, err := tx.Query(`SELECT token FROM sessions WHERE expires_at < ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tokens, nil
 }
 
 // SessionUser возвращает владельца живой сессии. Просроченные сессии не
@@ -411,9 +519,24 @@ func (s *Store) DeleteSession(token string) error {
 	return err
 }
 
-func (s *Store) PruneSessions() error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().Unix())
-	return err
+func (s *Store) PruneSessions() ([]string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	cutoff := time.Now().Unix()
+	tokens, err := sessionTokensBefore(tx, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE expires_at < ?`, cutoff); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return tokens, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -427,9 +550,22 @@ func (s *Store) Audit(e AuditEntry) error {
 	return err
 }
 
+// PruneAudit bounds persistent diagnostics while retaining the newest events.
+func (s *Store) PruneAudit(keep int) error {
+	if keep < 1 {
+		return fmt.Errorf("число сохраняемых записей аудита должно быть положительным")
+	}
+	_, err := s.db.Exec(`DELETE FROM audit WHERE id NOT IN (
+		SELECT id FROM audit ORDER BY id DESC LIMIT ?
+	)`, keep)
+	return err
+}
+
 func (s *Store) ListAudit(limit int) ([]AuditEntry, error) {
 	if limit <= 0 {
 		limit = 100
+	} else if limit > 1000 {
+		limit = 1000
 	}
 	rows, err := s.db.Query(
 		`SELECT id, at, user, action, target, detail, source_ip, success FROM audit ORDER BY id DESC LIMIT ?`, limit)

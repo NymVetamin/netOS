@@ -103,6 +103,7 @@ export function Clients({
                           </Badge>
                           <input
                             type="text"
+                            aria-label={`Имя устройства ${c.mac}`}
                             style={{ width: 150 }}
                             placeholder={c.hostname || "без имени"}
                             defaultValue={cfgClient?.name || ""}
@@ -128,6 +129,7 @@ export function Clients({
                       <td className="faint">{lease ? formatTime(lease.expires) : "—"}</td>
                       <td>
                         <select
+                          aria-label={`Канал для устройства ${c.mac}`}
                           value={cfgClient?.channel || ""}
                           onChange={(e) => updateClient(c.mac, { channel: e.target.value })}
                         >
@@ -138,7 +140,7 @@ export function Clients({
                         </select>
                       </td>
                       <td>
-                        <select value={cfgClient?.network || ""} onChange={(e) => updateClient(c.mac, { network: e.target.value })}>
+                        <select aria-label={`Сегмент для устройства ${c.mac}`} value={cfgClient?.network || ""} onChange={(e) => updateClient(c.mac, { network: e.target.value })}>
                           <option value="">— не выбран —</option>
                           {(config.networks || []).filter((network: any) => network.enabled).map((network: any) => (
                             <option key={network.id} value={network.id}>{network.name || network.id}</option>

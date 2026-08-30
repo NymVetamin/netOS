@@ -148,6 +148,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       <Switch
                         checked={r.enabled}
                         label=""
+                        ariaLabel={`Статический маршрут ${r.destination || idx + 1} включён`}
                         onChange={(v) => patch((d) => (d.routing.static[idx].enabled = v))}
                       />
                     </td>
@@ -396,6 +397,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         <Switch
                           checked={r.enabled}
                           label=""
+                          ariaLabel={`Правило маршрутизации ${i + 1} включено`}
                           onChange={(v) => patch((d) => (d.routing.rules[i].enabled = v))}
                         />
                       </td>

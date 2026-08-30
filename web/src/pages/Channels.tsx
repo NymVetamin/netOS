@@ -451,13 +451,13 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
             <tbody>
               {policies.map((policy: any) => (
                 <tr key={policy.id}>
-                  <td><input type="checkbox" checked={!!policy.enabled} onChange={(e) => updatePolicy(patch, policy.id, "enabled", e.target.checked)} /></td>
-                  <td><input type="number" style={{ width: 85 }} value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></td>
-                  <td><input value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></td>
-                  <td><input className="mono" placeholder="IP/CIDR" value={policy.src_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_ip", e.target.value)} /></td>
-                  <td><input className="mono" placeholder="IP/CIDR" value={policy.dst_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_ip", e.target.value)} /></td>
-                  <td><div className="row"><select value={policy.protocol || "any"} onChange={(e) => updatePolicy(patch, policy.id, "protocol", e.target.value)}><option value="any">any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select><input className="mono" style={{ width: 90 }} placeholder="порт" value={policy.dst_port || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_port", e.target.value)} /></div></td>
-                  <td><select value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
+                  <td><input aria-label={`Политика ${policy.name || policy.id} включена`} type="checkbox" checked={!!policy.enabled} onChange={(e) => updatePolicy(patch, policy.id, "enabled", e.target.checked)} /></td>
+                  <td><input aria-label={`Приоритет политики ${policy.name || policy.id}`} type="number" style={{ width: 85 }} value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></td>
+                  <td><input aria-label="Название политики" value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></td>
+                  <td><input aria-label={`IP источника политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.src_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_ip", e.target.value)} /></td>
+                  <td><input aria-label={`IP назначения политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.dst_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_ip", e.target.value)} /></td>
+                  <td><div className="row"><select aria-label={`Протокол политики ${policy.name || policy.id}`} value={policy.protocol || "any"} onChange={(e) => updatePolicy(patch, policy.id, "protocol", e.target.value)}><option value="any">any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select><input aria-label={`Порт назначения политики ${policy.name || policy.id}`} className="mono" style={{ width: 90 }} placeholder="порт" value={policy.dst_port || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_port", e.target.value)} /></div></td>
+                  <td><select aria-label={`Канал политики ${policy.name || policy.id}`} value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
                   <td><button className="btn ghost sm" onClick={() => patch((draft) => { draft.policies = draft.policies.filter((item: any) => item.id !== policy.id); })}>Убрать</button></td>
                 </tr>
               ))}
@@ -466,8 +466,8 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
         </TableWrap>
       )}
       <div className="row policy-add-row" style={{ marginTop: "1rem" }}>
-        <input placeholder="Название новой политики" value={name} onChange={(e) => setName(e.target.value)} />
-        <select value={channel} onChange={(e) => setChannel(e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+        <input aria-label="Название новой политики" placeholder="Название новой политики" value={name} onChange={(e) => setName(e.target.value)} />
+        <select aria-label="Канал новой политики" value={channel} onChange={(e) => setChannel(e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
         <button className="btn primary" disabled={!name.trim()} onClick={() => {
           patch((draft) => {
             const priority = Math.max(0, ...(draft.policies || []).map((item: any) => item.priority || 0)) + 100;

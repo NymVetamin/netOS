@@ -198,6 +198,35 @@ func TestUpdateTakesInstallerFromRequestedTag(t *testing.T) {
 	}
 }
 
+func TestLatestUpdatePinsInstallerToResolvedReleaseTag(t *testing.T) {
+	m, _ := testManager()
+	m.Version = "v1.2.2"
+	m.Output = func(_ context.Context, _ string, args ...string) (string, error) {
+		if contains(args, "https://github.com/NymVetamin/netOS/releases/latest") {
+			return "https://github.com/NymVetamin/netOS/releases/tag/v1.2.4", nil
+		}
+		return "", nil
+	}
+	var fetched []string
+	var installer command
+	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "curl" {
+			fetched = append(fetched, spec.args[len(spec.args)-1])
+		}
+		if spec.name == "bash" {
+			installer = spec
+		}
+		return nil
+	}
+	if err := m.Execute(context.Background(), []string{"update"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "https://raw.githubusercontent.com/NymVetamin/netOS/v1.2.4/install.sh"
+	if !contains(fetched, want) || !contains(installer.env, "NETOS_VERSION=v1.2.4") {
+		t.Fatalf("latest не закреплён за тегом: fetched=%v env=%v", fetched, installer.env)
+	}
+}
+
 func TestRemovePolicyRulesOnlyTouchesNetOSRange(t *testing.T) {
 	m, _ := testManager()
 	m.Output = func(context.Context, string, ...string) (string, error) {

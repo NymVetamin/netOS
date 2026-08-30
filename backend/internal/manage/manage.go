@@ -3,12 +3,15 @@
 package manage
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -317,7 +320,15 @@ complete -F _netos netos
 `
 
 func (m *Manager) install(ctx context.Context, version string, force bool) error {
-	name := version
+	fromSource := os.Getenv("NETOS_FROM_SOURCE") == "1"
+	resolvedVersion := version
+	if !fromSource && (resolvedVersion == "" || resolvedVersion == "latest") {
+		resolvedVersion = m.latestVersion(ctx)
+		if resolvedVersion == "" {
+			return fmt.Errorf("не удалось определить тег последнего релиза; повторите позже или укажите версию явно")
+		}
+	}
+	name := resolvedVersion
 	if name == "" {
 		name = "latest"
 	}
@@ -327,10 +338,7 @@ func (m *Manager) install(ctx context.Context, version string, force bool) error
 	// заранее, но только когда есть с чем сравнивать: у сборки из исходников
 	// версия «dev» и она не сопоставима с тегом релиза.
 	if !force && m.Version != "" && m.Version != "dev" {
-		target := version
-		if target == "" || target == "latest" {
-			target = m.latestVersion(ctx)
-		}
+		target := resolvedVersion
 		if target != "" && sameVersion(target, m.Version) {
 			fmt.Fprintf(m.Out, "netOS %s — это уже установленная версия, обновлять нечего.\n",
 				displayVersion(m.Version))
@@ -349,8 +357,7 @@ func (m *Manager) install(ctx context.Context, version string, force bool) error
 	// администратор просил обновиться, а не запускать сборочный конвейер на
 	// работающем роутере. Поэтому отсутствие релиза — отказ с объяснением, а
 	// сборка включается явно.
-	fromSource := os.Getenv("NETOS_FROM_SOURCE") == "1"
-	if _, err := m.Output(ctx, "curl", "-4", "-fsSIL", "--retry", "2", releaseURL(version)); err != nil {
+	if _, err := m.Output(ctx, "curl", "-4", "-fsSIL", "--retry", "2", releaseURL(resolvedVersion)); err != nil {
 		if !fromSource {
 			return fmt.Errorf("готового релиза %s нет. Укажите существующую версию "+
 				"или соберите из исходников явно: NETOS_FROM_SOURCE=1 netos update", name)
@@ -367,13 +374,13 @@ func (m *Manager) install(ctx context.Context, version string, force bool) error
 	defer os.Remove(path)
 
 	fmt.Fprintln(m.Out, "Загружаю установщик netOS…")
-	if err := m.run(ctx, "curl", "-4", "-fsSL", "--retry", "3", "-o", path, installerURL(version)); err != nil {
+	if err := m.run(ctx, "curl", "-4", "-fsSL", "--retry", "3", "-o", path, installerURL(resolvedVersion)); err != nil {
 		return fmt.Errorf("не удалось загрузить установщик версии %s: %w", name, err)
 	}
 
 	var env []string
-	if version != "" {
-		env = append(env, "NETOS_VERSION="+version)
+	if resolvedVersion != "" {
+		env = append(env, "NETOS_VERSION="+resolvedVersion)
 	}
 	if fromSource {
 		env = append(env, "NETOS_FROM_SOURCE=1")
@@ -602,6 +609,9 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 			selected = entries[n-1].path
 		}
 	}
+	if err := validateBackupArchive(selected); err != nil {
+		return fmt.Errorf("небезопасная или повреждённая резервная копия: %w", err)
+	}
 
 	if !yes && !m.confirm(fmt.Sprintf(
 		"Текущая конфигурация, история и учётные записи будут заменены содержимым %s. Продолжить?",
@@ -642,6 +652,75 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	fmt.Fprintf(m.Out, "Состояние до восстановления сохранено: %s\n", safety)
 	fmt.Fprintln(m.Out, "Конфигурация из копии применена при запуске службы: netos status")
 	return nil
+}
+
+const (
+	maxBackupEntries = 100_000
+	maxBackupBytes   = int64(2 << 30)
+)
+
+// validateBackupArchive ensures that root extraction cannot escape the three
+// directories owned by netOS. Links and special files are intentionally
+// rejected: they are unnecessary in a netOS backup and can redirect later tar
+// entries to arbitrary paths.
+func validateBackupArchive(filename string) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	var entries int
+	var total int64
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		entries++
+		if entries > maxBackupEntries {
+			return fmt.Errorf("слишком много файлов")
+		}
+		name := strings.TrimPrefix(h.Name, "./")
+		// GNU tar (которым backup и создаётся) завершает имена каталогов
+		// слешем. Для обычных файлов такой суффикс остаётся недопустимым.
+		if h.Typeflag == tar.TypeDir {
+			name = strings.TrimSuffix(name, "/")
+		}
+		clean := path.Clean(name)
+		if clean == "." || clean != name || path.IsAbs(name) || strings.HasPrefix(clean, "../") || !backupPathAllowed(clean) {
+			return fmt.Errorf("недопустимый путь %q", h.Name)
+		}
+		switch h.Typeflag {
+		case tar.TypeReg, tar.TypeRegA:
+			if h.Size < 0 || total > maxBackupBytes-h.Size {
+				return fmt.Errorf("распакованный объём превышает предел")
+			}
+			total += h.Size
+		case tar.TypeDir:
+		default:
+			return fmt.Errorf("недопустимый тип файла для %q", h.Name)
+		}
+	}
+	return nil
+}
+
+func backupPathAllowed(name string) bool {
+	for _, root := range []string{"var/lib/netos", "etc/netos", "var/log/netos"} {
+		if name == root || strings.HasPrefix(name, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func humanSize(n int64) string {
@@ -826,6 +905,12 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 	args := append([]string{"-C", string(filepath.Separator), "-czf", path}, sources...)
 	if err := m.run(ctx, "tar", args...); err != nil {
 		return "", fmt.Errorf("резервное копирование: %w", err)
+	}
+	// Архив содержит базу с хэшами паролей, bearer-сессиями и секретами
+	// сетей. Права каталога уже 0700, но сам файл также должен оставаться
+	// закрытым при переносе или ошибочном изменении прав родителя.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", fmt.Errorf("права резервной копии: %w", err)
 	}
 	return path, nil
 }

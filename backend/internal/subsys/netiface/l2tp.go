@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -26,11 +27,13 @@ import (
 func l2tpUnitName(wanID string) string { return "netos-l2tp-" + wanID + ".service" }
 
 func l2tpConfPath(wanID string) string {
-	return filepath.Join(pppoeConfDir, "l2tp-"+wanID+".conf")
+	// The path is embedded in a Linux systemd unit even when tests or release
+	// tooling run on another OS, so it must always use forward slashes.
+	return path.Join(pppoeConfDir, "l2tp-"+wanID+".conf")
 }
 
 func l2tpPPPPath(wanID string) string {
-	return filepath.Join(pppoeConfDir, "l2tp-"+wanID+".ppp")
+	return path.Join(pppoeConfDir, "l2tp-"+wanID+".ppp")
 }
 
 // maxRedials — число попыток перезвона, которого хватит навсегда: при

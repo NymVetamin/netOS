@@ -672,6 +672,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                 <td>
                   <input
                     type="number"
+                    aria-label={`MTU интерфейса ${i.name}`}
                     style={{ width: 90 }}
                     value={i.mtu || 0}
                     onChange={(e) => patch((d) => (d.interfaces[idx].mtu = Number(e.target.value)))}
@@ -681,6 +682,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                   <Switch
                     checked={i.enabled}
                     label=""
+                    ariaLabel={`Интерфейс ${i.name || idx + 1} включён`}
                     onChange={(v) => patch((d) => (d.interfaces[idx].enabled = v))}
                   />
                 </td>

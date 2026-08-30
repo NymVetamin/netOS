@@ -92,10 +92,19 @@ func TestL2TPDialsUpAgainstRealConcentrator(t *testing.T) {
 	})
 
 	t.Run("маршрут по умолчанию получил заданную метрику", func(t *testing.T) {
-		out, _ := exec.Command("ip", "-4", "route", "show", "default", "dev", iface).Output()
-		if !strings.Contains(string(out), "metric 4100") {
-			t.Fatalf("метрика туннеля не применилась:\n%s", out)
+		// Адрес появляется в netlink чуть раньше, чем pppd успевает поставить
+		// маршрут. Это нормальная асинхронная граница IPCP, а не отсутствие
+		// маршрута, поэтому ждём завершённое состояние, а не один снимок.
+		deadline := time.Now().Add(3 * time.Second)
+		var out []byte
+		for time.Now().Before(deadline) {
+			out, _ = exec.Command("ip", "-4", "route", "show", "default", "dev", iface).Output()
+			if strings.Contains(string(out), "metric 4100") {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
+		t.Fatalf("метрика туннеля не применилась:\n%s", out)
 	})
 
 	t.Run("MTU учитывает накладные расходы туннеля", func(t *testing.T) {

@@ -29,10 +29,13 @@ func newAuthedServer(t *testing.T) (*Server, *http.Cookie, string) {
 	if _, err := st.CreateUser("admin", hash, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateSession("session-token", "admin", "127.0.0.1", time.Hour); err != nil {
+	if _, err := st.CreateSession("session-token", "admin", "127.0.0.1", time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{Store: st, csrfTokens: map[string]string{"session-token": "csrf-token"}}
+	s := &Server{
+		Store: st, csrfTokens: map[string]string{"session-token": "csrf-token"},
+		loginFails: map[string]*failCounter{}, loginSlots: make(chan struct{}, maxConcurrentLogins),
+	}
 	return s, &http.Cookie{Name: sessionCookie, Value: "session-token"}, "csrf-token"
 }
 
@@ -101,5 +104,35 @@ func TestLoginResponseHasNoMustChange(t *testing.T) {
 	}
 	if _, ok := got["must_change"]; ok {
 		t.Fatalf("сервер всё ещё отдаёт must_change: %v", got)
+	}
+}
+
+func TestPasswordChangeRevokesAllUserSessions(t *testing.T) {
+	s, cookie, csrf := newAuthedServer(t)
+	if _, err := s.Store.CreateSession("other-session", "admin", "192.0.2.1", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	s.csrfTokens["other-session"] = "other-csrf"
+
+	body := `{"current":"initial-password-123","new":"new-password-456"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/password", strings.NewReader(body))
+	req.AddCookie(cookie)
+	req.Header.Set(csrfHeader, csrf)
+	w := httptest.NewRecorder()
+	s.requireAuth(s.handleChangePassword).ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("password change failed: %d %s", w.Code, w.Body.String())
+	}
+	for _, token := range []string{"session-token", "other-session"} {
+		if _, err := s.Store.SessionUser(token); err == nil {
+			t.Fatalf("session %q remained valid", token)
+		}
+		if _, ok := s.csrfTokens[token]; ok {
+			t.Fatalf("CSRF state for %q remained in memory", token)
+		}
+	}
+	setCookies := w.Result().Cookies()
+	if len(setCookies) == 0 || setCookies[0].Name != sessionCookie || setCookies[0].MaxAge >= 0 {
+		t.Fatalf("session cookie was not expired: %#v", setCookies)
 	}
 }

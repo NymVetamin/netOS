@@ -152,7 +152,9 @@ func (u *SystemResolver) capture(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		state.Kind, state.Target = "symlink", target
+		// Symlink targets are persisted as Linux paths because this state belongs
+		// to a Linux appliance. ToSlash also keeps cross-platform tests honest.
+		state.Kind, state.Target = "symlink", filepath.ToSlash(target)
 	default:
 		content, err := os.ReadFile(path)
 		if err != nil {

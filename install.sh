@@ -150,7 +150,7 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
 
     SRC=$(mktemp -d)
     trap 'rm -rf "$SRC"' EXIT
-    GO_VERSION="1.25.0"
+    GO_VERSION="1.27.0"
     GO_ARCHIVE="$SRC/go.tar.gz"
     GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz"
     info "загружаю Go $GO_VERSION"
@@ -210,16 +210,16 @@ else
         die "не удалось загрузить бинарник. Соберите из исходников: NETOS_FROM_SOURCE=1 $0"
     fi
 
-    # Контрольная сумма публикуется рядом с бинарником. Её отсутствие не
-    # блокирует установку, но о непроверенной загрузке предупреждаем.
-    if curl -4 -fsSL --retry 2 -o "$TMP.sha256" "$URL.sha256" 2>/dev/null; then
-        EXPECTED=$(awk '{print $1}' "$TMP.sha256")
-        ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
-        [ "$EXPECTED" = "$ACTUAL" ] || die "контрольная сумма не совпадает — загрузка повреждена"
-        ok "контрольная сумма проверена"
-    else
-        warn "контрольная сумма недоступна, пропускаю проверку"
-    fi
+    # Непроверенный root-бинарник запускать нельзя. Release workflow всегда
+    # публикует сумму рядом с артефактом; её отсутствие означает неполный или
+    # недоверенный релиз, а не повод ослабить проверку.
+    curl -4 -fsSL --retry 2 -o "$TMP.sha256" "$URL.sha256" \
+        || die "контрольная сумма бинарника недоступна — установка отменена"
+    EXPECTED=$(awk 'NR == 1 && $1 ~ /^[0-9a-fA-F]{64}$/ {print tolower($1)}' "$TMP.sha256")
+    [ -n "$EXPECTED" ] || die "файл контрольной суммы имеет неверный формат"
+    ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
+    [ "$EXPECTED" = "$ACTUAL" ] || die "контрольная сумма не совпадает — загрузка повреждена"
+    ok "контрольная сумма проверена"
 
     CANDIDATE="$TMP"
 fi
@@ -264,6 +264,13 @@ RestartSec=3
 # поэтому изоляция ограничена тем, что не мешает работе.
 ProtectHome=true
 PrivateTmp=true
+NoNewPrivileges=true
+LockPersonality=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+UMask=0077
 LimitNOFILE=65536
 
 [Install]

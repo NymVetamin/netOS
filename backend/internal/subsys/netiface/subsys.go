@@ -575,6 +575,19 @@ func (s *WAN) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
+	// Fail before looking at host interfaces. Besides producing a useful error
+	// on incomplete/test systems, this prevents an unsupported enabled uplink
+	// from being silently skipped merely because its link is currently absent.
+	for _, w := range cfg.WANs {
+		if !w.Enabled {
+			continue
+		}
+		switch w.Proto {
+		case "static", "dhcp", "pppoe", "l2tp":
+		default:
+			return fmt.Errorf("аплинк %s: неизвестный тип подключения %q", w.Name, w.Proto)
+		}
+	}
 	ifaceName := map[string]string{}
 	for _, i := range cfg.Interfaces {
 		ifaceName[i.ID] = i.Name

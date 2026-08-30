@@ -1,10 +1,13 @@
 package runtime
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -31,10 +34,13 @@ type TrafficHistory struct {
 	Collect  func() ([]InterfaceStat, error)
 	Now      func() time.Time
 
-	mu     sync.RWMutex
-	points []TrafficPoint
-	last   *TrafficPoint
+	mu          sync.RWMutex
+	points      []TrafficPoint
+	last        *TrafficPoint
+	lastCompact time.Time
 }
+
+const maxTrafficHistoryBytes = 64 << 20
 
 func NewTrafficHistory(path string, collector *Collector) *TrafficHistory {
 	return &TrafficHistory{
@@ -83,7 +89,11 @@ func (h *TrafficHistory) sample() {
 	h.points = append(h.points, point)
 	h.last = &point
 	h.pruneLocked(now.Add(-h.Retain))
-	_ = h.saveLocked()
+	if h.lastCompact.IsZero() || now.Sub(h.lastCompact) >= 24*time.Hour {
+		_ = h.compactLocked(now)
+	} else {
+		_ = h.appendLocked(point)
+	}
 }
 
 func (h *TrafficHistory) Points(since time.Time, names []string) []TrafficPoint {
@@ -119,16 +129,40 @@ func (h *TrafficHistory) pruneLocked(before time.Time) {
 }
 
 func (h *TrafficHistory) load() error {
-	data, err := os.ReadFile(h.Path)
+	info, err := os.Stat(h.Path)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if info.Size() > maxTrafficHistoryBytes {
+		return fmt.Errorf("история трафика слишком велика: %d байт", info.Size())
+	}
+	data, err := os.ReadFile(h.Path)
+	if err != nil {
+		return err
+	}
 	var points []TrafficPoint
-	if err := json.Unmarshal(data, &points); err != nil {
-		return fmt.Errorf("разбор истории трафика: %w", err)
+	legacy := len(bytes.TrimSpace(data)) > 0 && bytes.TrimSpace(data)[0] == '['
+	if legacy {
+		// Compatibility with the original JSON-array persistence format.
+		if err := json.Unmarshal(data, &points); err != nil {
+			return fmt.Errorf("разбор истории трафика: %w", err)
+		}
+	} else {
+		scanner := bufio.NewScanner(bytes.NewReader(data))
+		scanner.Buffer(make([]byte, 64<<10), 4<<20)
+		for scanner.Scan() {
+			var point TrafficPoint
+			if err := json.Unmarshal(scanner.Bytes(), &point); err != nil {
+				return fmt.Errorf("разбор истории трафика: %w", err)
+			}
+			points = append(points, point)
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("чтение истории трафика: %w", err)
+		}
 	}
 	sort.Slice(points, func(i, j int) bool { return points[i].At.Before(points[j].At) })
 	h.mu.Lock()
@@ -142,10 +176,32 @@ func (h *TrafficHistory) load() error {
 	return nil
 }
 
-func (h *TrafficHistory) saveLocked() error {
-	data, err := json.Marshal(h.points)
+func (h *TrafficHistory) appendLocked(point TrafficPoint) error {
+	if err := os.MkdirAll(filepath.Dir(h.Path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(h.Path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
-	return system.WriteFileAtomic(h.Path, append(data, '\n'), 0o600)
+	if err := json.NewEncoder(f).Encode(point); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func (h *TrafficHistory) compactLocked(now time.Time) error {
+	var data bytes.Buffer
+	enc := json.NewEncoder(&data)
+	for _, point := range h.points {
+		if err := enc.Encode(point); err != nil {
+			return err
+		}
+	}
+	if err := system.WriteFileAtomic(h.Path, data.Bytes(), 0o600); err != nil {
+		return err
+	}
+	h.lastCompact = now
+	return nil
 }

@@ -264,10 +264,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"слишком много неудачных попыток, повторите через %d секунд", int(wait.Seconds()))
 		return
 	}
+	if s.loginSlots == nil {
+		s.loginSlots = make(chan struct{}, maxConcurrentLogins)
+	}
+	select {
+	case s.loginSlots <- struct{}{}:
+		defer func() { <-s.loginSlots }()
+	default:
+		writeError(w, http.StatusTooManyRequests, "сервер занят проверкой учётных данных, повторите попытку")
+		return
+	}
 
 	var req loginRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
+		return
+	}
+	if len(req.Username) == 0 || len(req.Username) > 64 || len(req.Password) == 0 || len(req.Password) > maxPasswordBytes {
+		s.recordLoginFailure(ip)
+		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
 		return
 	}
 
@@ -303,12 +318,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "не удалось создать сессию")
 		return
 	}
-	if err := s.Store.CreateSession(token, user.Username, ip, sessionTTL); err != nil {
+	evicted, err := s.Store.CreateSession(token, user.Username, ip, sessionTTL)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "не удалось сохранить сессию")
 		return
 	}
 
 	s.csrfMu.Lock()
+	for _, staleToken := range evicted {
+		delete(s.csrfTokens, staleToken)
+	}
 	s.csrfTokens[token] = csrf
 	s.csrfMu.Unlock()
 
@@ -393,7 +412,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
-	if len(req.New) < 10 {
+	if len(req.New) < 10 || len(req.New) > maxPasswordBytes {
 		writeError(w, http.StatusBadRequest, "пароль должен быть не короче 10 символов")
 		return
 	}
@@ -414,10 +433,20 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "не удалось обработать пароль")
 		return
 	}
-	if err := s.Store.UpdatePassword(username, hash); err != nil {
+	revoked, err := s.Store.UpdatePasswordAndDeleteSessions(username, hash)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "не удалось сохранить пароль")
 		return
 	}
+	s.csrfMu.Lock()
+	for _, token := range revoked {
+		delete(s.csrfTokens, token)
+	}
+	s.csrfMu.Unlock()
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
+	})
 	// Пароль сменён — файл с данными первого запуска больше не нужен и не
 	// должен лежать на диске.
 	_ = os.Remove(initialCredentialsPath)

@@ -68,6 +68,7 @@ type Server struct {
 	// loginFails считает неудачные попытки входа по адресу источника.
 	loginMu    sync.Mutex
 	loginFails map[string]*failCounter
+	loginSlots chan struct{}
 
 	httpServer *http.Server
 }
@@ -79,8 +80,9 @@ type failCounter struct {
 }
 
 const (
-	loginFailureTTL = 30 * time.Minute
-	maxLoginSources = 4096
+	loginFailureTTL     = 30 * time.Minute
+	maxLoginSources     = 4096
+	maxConcurrentLogins = 2
 )
 
 type Logger interface {
@@ -97,6 +99,7 @@ func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, lo
 		Logger:       logger,
 		csrfTokens:   map[string]string{},
 		loginFails:   map[string]*failCounter{},
+		loginSlots:   make(chan struct{}, maxConcurrentLogins),
 		draftVersion: 1,
 	}
 }
@@ -193,6 +196,11 @@ func (s *Server) withCommonHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -214,6 +222,10 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		Addr:              addr,
 		Handler:           s.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      15 * time.Minute,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 		ErrorLog:          log.New(logWriter{s.Logger}, "", 0),
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
@@ -250,11 +262,21 @@ func (s *Server) pruneLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.pruneLoginFailures(time.Now())
-			if err := s.Store.PruneSessions(); err != nil {
+			expired, err := s.Store.PruneSessions()
+			if err != nil {
 				s.Logger.Warnf("уборка сессий: %v", err)
+			} else if len(expired) > 0 {
+				s.csrfMu.Lock()
+				for _, token := range expired {
+					delete(s.csrfTokens, token)
+				}
+				s.csrfMu.Unlock()
 			}
 			if err := s.Store.PruneRevisions(50); err != nil {
 				s.Logger.Warnf("уборка ревизий: %v", err)
+			}
+			if err := s.Store.PruneAudit(10_000); err != nil {
+				s.Logger.Warnf("уборка журнала аудита: %v", err)
 			}
 		}
 	}

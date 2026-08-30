@@ -2,6 +2,9 @@ package api
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,6 +18,24 @@ func TestLoginFailuresExpire(t *testing.T) {
 	}
 	if len(s.loginFails) != 0 {
 		t.Fatal("устаревшая запись не удалена")
+	}
+}
+
+func TestLoginRejectsOversizedPasswordBeforeHashing(t *testing.T) {
+	s, _, _ := newAuthedServer(t)
+	body := `{"username":"admin","password":"` + strings.Repeat("x", maxPasswordBytes+1) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleLogin(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestVerifyPasswordRejectsHostileParameters(t *testing.T) {
+	encoded := "$argon2id$v=19$m=4294967295,t=2,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if VerifyPassword("password", encoded) {
+		t.Fatal("hostile Argon2 parameters were accepted")
 	}
 }
 

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	stdruntime "runtime"
@@ -43,6 +44,29 @@ func TestTrafficHistoryRatesResetAndPersistence(t *testing.T) {
 	}
 	if len(loaded.Points(time.Time{}, nil)) != 3 {
 		t.Fatal("persisted points were not loaded")
+	}
+}
+
+func TestTrafficHistoryMigratesLegacyArrayWithoutRewritingEverySample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "traffic.json")
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	legacy, _ := json.Marshal([]TrafficPoint{{At: now.Add(-time.Minute), Interfaces: map[string]TrafficRate{"eth0": {RXBytes: 1}}}})
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := &TrafficHistory{Path: path, Retain: time.Hour, Now: func() time.Time { return now }, Collect: func() ([]InterfaceStat, error) {
+		return []InterfaceStat{{Name: "eth0", RXBytes: 2}}, nil
+	}}
+	if err := h.load(); err != nil {
+		t.Fatal(err)
+	}
+	h.sample()
+	loaded := &TrafficHistory{Path: path, Retain: time.Hour, Now: func() time.Time { return now }}
+	if err := loaded.load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(loaded.Points(time.Time{}, nil)); got != 2 {
+		t.Fatalf("точек после миграции %d, ожидалось 2", got)
 	}
 }
 

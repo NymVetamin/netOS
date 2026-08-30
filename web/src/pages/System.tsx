@@ -28,10 +28,12 @@ export function SystemPage({
   config,
   patch,
   session,
+  onSessionEnded,
 }: {
   config: any;
   patch: Patch;
   session: Session;
+  onSessionEnded: () => void;
 }) {
   return (
     <>
@@ -171,7 +173,7 @@ export function SystemPage({
       </Card>
 
       {session.role === "admin" && <MaintenancePanel />}
-      <ChangePassword username={session.username} />
+      <ChangePassword username={session.username} onSessionEnded={onSessionEnded} />
     </>
   );
 }
@@ -250,7 +252,7 @@ function MaintenancePanel() {
           Текущие настройки, история и учётные записи будут заменены. Перед восстановлением автоматически создастся страховочная копия.
         </Notice>
         <div className="row wrap" style={{ marginTop: ".7rem" }}>
-          <input style={{ maxWidth: 220 }} placeholder="Введите RESTORE" value={restoreConfirm} onChange={(e) => setRestoreConfirm(e.target.value)} />
+          <input aria-label="Подтверждение восстановления" style={{ maxWidth: 220 }} placeholder="Введите RESTORE" value={restoreConfirm} onChange={(e) => setRestoreConfirm(e.target.value)} />
           <button className="btn danger" disabled={busy || restoreConfirm !== "RESTORE"} onClick={() => action(() => api.restoreBackup(restoreName, restoreConfirm), "Восстановление запланировано")}>Восстановить</button>
           <button className="btn ghost" onClick={() => setRestoreName("")}>Отмена</button>
         </div>
@@ -260,8 +262,8 @@ function MaintenancePanel() {
         <strong>Обновление netOS</strong>
         <div className="faint" style={{ fontSize: 12.5, margin: ".25rem 0 .7rem" }}>Перед обновлением установщик сохраняет данные; укажите latest или тег релиза, например v0.06.</div>
         <div className="row wrap">
-          <input style={{ maxWidth: 160 }} value={version} onChange={(e) => setVersion(e.target.value.trim())} />
-          <input style={{ maxWidth: 220 }} placeholder="Введите UPDATE" value={updateConfirm} onChange={(e) => setUpdateConfirm(e.target.value)} />
+          <input aria-label="Версия netOS для обновления" style={{ maxWidth: 160 }} value={version} onChange={(e) => setVersion(e.target.value.trim())} />
+          <input aria-label="Подтверждение обновления" style={{ maxWidth: 220 }} placeholder="Введите UPDATE" value={updateConfirm} onChange={(e) => setUpdateConfirm(e.target.value)} />
           <button className="btn" disabled={busy || running || updateConfirm !== "UPDATE" || !version} onClick={() => action(() => api.updateSystem(version, updateConfirm), "Обновление запланировано")}>Обновить</button>
         </div>
       </div>
@@ -269,7 +271,7 @@ function MaintenancePanel() {
   );
 }
 
-function ChangePassword({ username }: { username: string }) {
+function ChangePassword({ username, onSessionEnded }: { username: string; onSessionEnded: () => void }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -287,10 +289,11 @@ function ChangePassword({ username }: { username: string }) {
     setMsg("");
     try {
       await api.changePassword(current, next);
-      setMsg("Пароль изменён");
+	  setMsg("Пароль изменён. Все сеансы завершены — войдите с новым паролем.");
       setCurrent("");
       setNext("");
       setRepeat("");
+	  window.setTimeout(onSessionEnded, 900);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -301,7 +304,7 @@ function ChangePassword({ username }: { username: string }) {
   return (
     <Card title="Пароль администратора">
       <form onSubmit={submit}>
-        <input className="sr-only" name="username" autoComplete="username" value={username} readOnly />
+        <input aria-label="Имя пользователя" className="sr-only" name="username" autoComplete="username" value={username} readOnly />
         <div className="form-grid">
           <Field label="Текущий пароль">
             <input

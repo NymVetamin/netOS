@@ -299,6 +299,7 @@ function DNSSection({
                     <td>
                       <input
                         type="text"
+                        aria-label={`Адрес DNS-сервера ${idx + 1}`}
                         className="mono"
                         style={{ width: 240 }}
                         value={u.address}
@@ -309,6 +310,7 @@ function DNSSection({
                     </td>
                     <td>
                       <select
+                        aria-label={`Тип DNS-сервера ${idx + 1}`}
                         value={u.type}
                         onChange={(e) => patch((d) => (d.dns.upstreams[idx].type = e.target.value))}
                       >
@@ -319,13 +321,14 @@ function DNSSection({
                       </select>
                     </td>
                     <td>
-                      <select value={u.channel || "direct"} onChange={(e) => patch((d) => (d.dns.upstreams[idx].channel = e.target.value))}>
+                      <select aria-label={`Канал DNS-сервера ${idx + 1}`} value={u.channel || "direct"} onChange={(e) => patch((d) => (d.dns.upstreams[idx].channel = e.target.value))}>
                         {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
                       </select>
                     </td>
                     <td>
                       <input
                         type="text"
+                        aria-label={`Комментарий DNS-сервера ${idx + 1}`}
                         value={u.comment || ""}
                         onChange={(e) =>
                           patch((d) => (d.dns.upstreams[idx].comment = e.target.value))
@@ -336,6 +339,7 @@ function DNSSection({
                       <Switch
                         checked={u.enabled}
                         label=""
+                        ariaLabel={`DNS-сервер ${u.address || idx + 1} включён`}
                         onChange={(v) => patch((d) => (d.dns.upstreams[idx].enabled = v))}
                       />
                     </td>
@@ -387,15 +391,15 @@ function DNSSection({
               <tbody>
                 {config.dns.split_rules.map((rule: any, idx: number) => (
                   <tr key={rule.id}>
-                    <td><textarea className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></td>
-                    <td><select value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
+                    <td><textarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></td>
+                    <td><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
                       <option value="">Выберите сервер</option>
                       {(config.dns?.upstreams || []).filter((up: any) => up.enabled).map((up: any) => <option key={up.id} value={up.id}>{up.comment || up.address}</option>)}
                     </select></td>
-                    <td><select value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
+                    <td><select aria-label={`Канал правила Split-DNS ${idx + 1}`} value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
                       {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
                     </select></td>
-                    <td><Switch checked={!!rule.enabled} label="" onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} /></td>
+                    <td><Switch checked={!!rule.enabled} label="" ariaLabel={`Правило Split-DNS ${idx + 1} включено`} onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} /></td>
                     <td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.split_rules = d.dns.split_rules.filter((item: any) => item.id !== rule.id); })}>Убрать</button></td>
                   </tr>
                 ))}

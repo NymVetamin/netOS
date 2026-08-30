@@ -47,6 +47,7 @@ func (r *ValidationResult) HasErrors() bool {
 func (c *Config) Validate() *ValidationResult {
 	r := &ValidationResult{}
 
+	c.validateObjectIDs(r)
 	c.validateSystem(r)
 	c.validateComponents(r)
 	c.validateInterfaces(r)
@@ -65,6 +66,81 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateDDNS(r)
 
 	return r
+}
+
+// validateObjectIDs applies one conservative syntax to identifiers that are
+// reused in generated configuration, firewall comments, state keys, URLs and
+// sometimes file/unit names.
+func (c *Config) validateObjectIDs(r *ValidationResult) {
+	check := func(path, value string) {
+		if value != "" && !safeObjectID(value) {
+			r.errf(path, "идентификатор может содержать только буквы, цифры, точку, дефис и подчёркивание")
+		}
+	}
+	for i, v := range c.Interfaces {
+		check(fmt.Sprintf("interfaces[%d].id", i), v.ID)
+	}
+	for i, v := range c.Networks {
+		check(fmt.Sprintf("networks[%d].id", i), v.ID)
+	}
+	for i, v := range c.WANs {
+		check(fmt.Sprintf("wans[%d].id", i), v.ID)
+	}
+	for i, v := range c.Routing.Static {
+		check(fmt.Sprintf("routing.static[%d].id", i), v.ID)
+	}
+	for i, v := range c.Routing.Tables {
+		check(fmt.Sprintf("routing.tables[%d].id", i), v.ID)
+		check(fmt.Sprintf("routing.tables[%d].name", i), v.Name)
+	}
+	for i, v := range c.Routing.Rules {
+		check(fmt.Sprintf("routing.rules[%d].id", i), v.ID)
+	}
+	for i, v := range c.Firewall.Zones {
+		check(fmt.Sprintf("firewall.zones[%d].name", i), v.Name)
+	}
+	for i, v := range c.Firewall.Rules {
+		check(fmt.Sprintf("firewall.rules[%d].id", i), v.ID)
+	}
+	for i, v := range c.Firewall.NAT {
+		check(fmt.Sprintf("firewall.nat[%d].id", i), v.ID)
+	}
+	for i, v := range c.DHCP.Reservations {
+		check(fmt.Sprintf("dhcp.reservations[%d].id", i), v.ID)
+	}
+	for i, v := range c.DNS.Upstreams {
+		check(fmt.Sprintf("dns.upstreams[%d].id", i), v.ID)
+	}
+	for i, v := range c.DNS.StaticRecords {
+		check(fmt.Sprintf("dns.static_records[%d].id", i), v.ID)
+	}
+	for i, v := range c.DNS.SplitRules {
+		check(fmt.Sprintf("dns.split_rules[%d].id", i), v.ID)
+	}
+	for i, v := range c.DNS.Blocklists {
+		check(fmt.Sprintf("dns.blocklists[%d].id", i), v.ID)
+	}
+	for i, v := range c.Clients {
+		check(fmt.Sprintf("clients[%d].id", i), v.ID)
+	}
+	for i, v := range c.Channels {
+		check(fmt.Sprintf("channels[%d].id", i), v.ID)
+	}
+	for i, v := range c.Policies {
+		check(fmt.Sprintf("policies[%d].id", i), v.ID)
+	}
+	for i, v := range c.VPNServers {
+		check(fmt.Sprintf("vpn_servers[%d].id", i), v.ID)
+		for j, peer := range v.Peers {
+			check(fmt.Sprintf("vpn_servers[%d].peers[%d].id", i, j), peer.ID)
+		}
+	}
+	for i, v := range c.WiFi {
+		check(fmt.Sprintf("wifi[%d].id", i), v.ID)
+		for j, ssid := range v.SSIDs {
+			check(fmt.Sprintf("wifi[%d].ssids[%d].id", i, j), ssid.ID)
+		}
+	}
 }
 
 func (c *Config) validateDDNS(r *ValidationResult) {
@@ -205,6 +281,11 @@ func (c *Config) validateClients(r *ValidationResult) {
 func (c *Config) validateSystem(r *ValidationResult) {
 	if c.System.Hostname == "" {
 		r.errf("system.hostname", "имя хоста не может быть пустым")
+	} else if !validDNSName(c.System.Hostname) {
+		r.errf("system.hostname", "имя хоста должно быть корректным DNS-именем")
+	}
+	if !validTimezone(c.System.Timezone) {
+		r.errf("system.timezone", "некорректный часовой пояс")
 	}
 	if p := c.System.Panel.Port; p < 1 || p > 65535 {
 		r.errf("system.panel.port", "порт панели вне диапазона 1-65535")
@@ -227,9 +308,7 @@ func (c *Config) validateSystem(r *ValidationResult) {
 	switch c.System.Panel.TLS.Mode {
 	case "selfsigned":
 	case "custom":
-		if c.System.Panel.TLS.CertFile == "" || c.System.Panel.TLS.KeyFile == "" {
-			r.errf("system.panel.tls", "для своего сертификата нужны пути к сертификату и ключу")
-		}
+		r.errf("system.panel.tls.mode", "пользовательский TLS-сертификат ещё не поддерживается")
 	case "acme":
 		r.errf("system.panel.tls.mode", "автоматический выпуск сертификата ACME ещё не реализован")
 	default:
@@ -530,6 +609,9 @@ func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]stri
 	}
 	for i, w := range c.WANs {
 		path := fmt.Sprintf("wans[%d]", i)
+		if len(w.Username) > 256 || len(w.Password) > 1024 || strings.ContainsAny(w.Username+w.Password, "\r\n\x00") {
+			r.errf(path, "логин и пароль не должны содержать переводы строк или нулевой байт")
+		}
 		iface, ok := byID[w.Interface]
 		if !ok {
 			continue // об этом сообщает validateWANs
@@ -720,6 +802,8 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		case "l2tp":
 			if w.Server == "" {
 				r.errf(path+".server", "укажите адрес сервера L2TP")
+			} else if net.ParseIP(w.Server) == nil && !validDNSName(w.Server) {
+				r.errf(path+".server", "укажите корректный IP-адрес или DNS-имя сервера L2TP")
 			}
 			if w.Username == "" {
 				r.errf(path+".username", "для L2TP нужен логин")
@@ -1817,6 +1901,34 @@ func validDNSName(value string) bool {
 			}
 			return false
 		}
+	}
+	return true
+}
+
+func safeObjectID(value string) bool {
+	if value == "" || value == "." || value == ".." || len(value) > 64 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validTimezone(value string) bool {
+	if value == "" || len(value) > 128 || strings.HasPrefix(value, "/") || strings.Contains(value, "..") {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '/' || ch == '_' || ch == '+' || ch == '-' {
+			continue
+		}
+		return false
 	}
 	return true
 }

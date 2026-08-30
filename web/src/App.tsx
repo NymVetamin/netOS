@@ -227,6 +227,15 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     localStorage.setItem("netos-theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNavOpen]);
+
   // flush отправляет накопленные правки. Ответ обновляет только список
   // замечаний: сама конфигурация остаётся той, что в браузере, иначе текст,
   // набранный за время запроса, потерялся бы.
@@ -342,7 +351,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           <div className="row" style={{ gap: "0.25rem" }}>
             <button
               className="btn ghost sm"
-              title="Тема оформления"
+              aria-label={`Тема оформления: ${theme === "dark" ? "тёмная" : theme === "light" ? "светлая" : "системная"}`}
+              title="Сменить тему оформления"
               onClick={() =>
                 setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")
               }
@@ -408,7 +418,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "firewall" && <FirewallPage config={cfg} patch={patch} />}
               {page === "components" && <ComponentsPage config={cfg} patch={patch} />}
               {page === "system" && (
-                <SystemPage config={cfg} patch={patch} session={session} />
+                <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} />
               )}
               {page === "history" && <HistoryPage onRestored={reload} />}
               {page === "diagnostics" && <DiagnosticsPage />}

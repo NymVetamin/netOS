@@ -14,15 +14,17 @@ import (
 // Параметры Argon2id. Подобраны так, чтобы проверка пароля занимала заметное
 // время даже на слабом процессоре роутера, но не мешала входу.
 const (
-	argonTime    = 2
-	argonMemory  = 64 * 1024 // 64 МБ
-	argonThreads = 2
-	argonKeyLen  = 32
-	saltLen      = 16
+	argonTime        = 2
+	argonMemory      = 64 * 1024 // 64 МБ
+	argonThreads     = 2
+	argonKeyLen      = 32
+	saltLen          = 16
+	maxPasswordBytes = 1024
+	maxArgonMemory   = 128 * 1024
 
-	sessionTTL      = 12 * time.Hour
-	sessionCookie   = "netos_session"
-	csrfHeader      = "X-NetOS-CSRF"
+	sessionTTL    = 12 * time.Hour
+	sessionCookie = "netos_session"
+	csrfHeader    = "X-NetOS-CSRF"
 )
 
 // HashPassword возвращает строку вида
@@ -42,6 +44,9 @@ func HashPassword(password string) (string, error) {
 
 // VerifyPassword сравнивает пароль с сохранённым хэшем за постоянное время.
 func VerifyPassword(password, encoded string) bool {
+	if len(password) > maxPasswordBytes {
+		return false
+	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false
@@ -58,13 +63,18 @@ func VerifyPassword(password, encoded string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &timeCost, &threads); err != nil {
 		return false
 	}
+	// The parameters are stored in the database. Treat a restored or corrupted
+	// database as untrusted: otherwise one login could request gigabytes of RAM.
+	if memory < 8*1024 || memory > maxArgonMemory || timeCost < 1 || timeCost > 10 || threads < 1 || threads > 16 {
+		return false
+	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) < 8 || len(salt) > 64 {
 		return false
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
+	if err != nil || len(want) < 16 || len(want) > 64 {
 		return false
 	}
 

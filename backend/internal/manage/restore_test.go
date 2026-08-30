@@ -1,13 +1,75 @@
 package manage
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func writeTestBackup(t *testing.T, entries []tar.Header) string {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for i := range entries {
+		h := entries[i]
+		if err := tw.WriteHeader(&h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag == tar.TypeReg && h.Size > 0 {
+			if _, err := tw.Write(bytes.Repeat([]byte{'x'}, int(h.Size))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(t.TempDir(), "backup.tar.gz")
+	if err := os.WriteFile(name, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func TestBackupArchiveValidationRejectsTraversalAndLinks(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header tar.Header
+	}{
+		{"traversal", tar.Header{Name: "var/lib/netos/../../../etc/shadow", Mode: 0o600, Size: 1, Typeflag: tar.TypeReg}},
+		{"absolute", tar.Header{Name: "/etc/shadow", Mode: 0o600, Size: 1, Typeflag: tar.TypeReg}},
+		{"symlink", tar.Header{Name: "var/lib/netos/link", Linkname: "/etc", Mode: 0o777, Typeflag: tar.TypeSymlink}},
+		{"foreign", tar.Header{Name: "etc/systemd/system/evil.service", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateBackupArchive(writeTestBackup(t, []tar.Header{tc.header})); err == nil {
+				t.Fatal("unsafe archive was accepted")
+			}
+		})
+	}
+}
+
+func TestBackupArchiveValidationAcceptsOwnedFiles(t *testing.T) {
+	name := writeTestBackup(t, []tar.Header{
+		{Name: "var/lib/netos/", Mode: 0o700, Typeflag: tar.TypeDir},
+		{Name: "var/lib/netos/netos.db", Mode: 0o600, Size: 4, Typeflag: tar.TypeReg},
+		{Name: "etc/netos/tls/panel.crt", Mode: 0o644, Size: 4, Typeflag: tar.TypeReg},
+	})
+	if err := validateBackupArchive(name); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // Обновление до версии, которая уже стоит, — это несколько минут загрузки и
 // перезапуск службы ради нулевого результата. Проверка должна быть настоящей,
@@ -156,8 +218,12 @@ func TestRestoreUnpacksChosenBackup(t *testing.T) {
 	}
 	older := filepath.Join(m.BackupDir, "netos-backup-20260101-000000.tar.gz")
 	newer := filepath.Join(m.BackupDir, "netos-reset-20260202-000000.tar.gz")
+	valid, err := os.ReadFile(writeTestBackup(t, []tar.Header{{Name: "var/lib/netos/netos.db", Mode: 0o600, Size: 1, Typeflag: tar.TypeReg}}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{older, newer} {
-		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		if err := os.WriteFile(path, valid, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -197,7 +263,11 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 		t.Fatal(err)
 	}
 	backup := filepath.Join(m.BackupDir, "netos-backup-20260101-000000.tar.gz")
-	if err := os.WriteFile(backup, []byte("x"), 0o600); err != nil {
+	valid, err := os.ReadFile(writeTestBackup(t, []tar.Header{{Name: "var/lib/netos/netos.db", Mode: 0o600, Size: 1, Typeflag: tar.TypeReg}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backup, valid, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Архивировать нечего, если каталогов состояния нет: tar в этом случае не
@@ -214,6 +284,13 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 		switch {
 		case contains(spec.args, "-czf"):
 			order = append(order, "backup")
+			for i, arg := range spec.args {
+				if arg == "-czf" && i+1 < len(spec.args) {
+					if err := os.WriteFile(spec.args[i+1], []byte("mock archive"), 0o666); err != nil {
+						return err
+					}
+				}
+			}
 		case contains(spec.args, "-xzf"):
 			order = append(order, "restore")
 		}
@@ -224,6 +301,19 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 	}
 	if len(order) != 2 || order[0] != "backup" || order[1] != "restore" {
 		t.Fatalf("состояние до восстановления не сохранено первым: %v", order)
+	}
+	if runtime.GOOS != "windows" {
+		matches, _ := filepath.Glob(filepath.Join(m.BackupDir, "netos-before-restore-*.tar.gz"))
+		if len(matches) != 1 {
+			t.Fatalf("страховочная копия не найдена: %v", matches)
+		}
+		info, err := os.Stat(matches[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("права страховочной копии: %v", info.Mode().Perm())
+		}
 	}
 }
 

@@ -122,7 +122,12 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
                       )}
                     </div>
                   </div>
-                  <Switch checked={on} label="" onChange={(v) => toggle(c.id, v)} />
+                  <Switch
+                    checked={on}
+                    label=""
+                    ariaLabel={`Компонент ${c.title || c.id} включён`}
+                    onChange={(v) => toggle(c.id, v)}
+                  />
                 </div>
               );
             })}

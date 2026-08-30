@@ -389,6 +389,7 @@ function RuleRow({
           <Switch
             checked={rule.enabled}
             label=""
+            ariaLabel={`Правило ${rule.name || index + 1} включено`}
             onChange={(v) => patch((d) => (d.firewall.rules[index].enabled = v))}
           />
         </td>
@@ -539,6 +540,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   <td>
                     <input
                       type="text"
+                      aria-label="Название правила NAT"
                       style={{ width: 180 }}
                       value={n.name}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].name = e.target.value))}
@@ -551,6 +553,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   </td>
                   <td>
                     <select
+                      aria-label="Исходящий интерфейс правила NAT"
                       value={n.interface || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].interface = e.target.value))}
                     >
@@ -565,6 +568,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   <td>
                     <input
                       type="text"
+                      aria-label="Источник правила NAT"
                       className="mono"
                       style={{ width: 150 }}
                       placeholder="от кого угодно"
@@ -575,6 +579,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   <td>
                     <input
                       type="text"
+                      aria-label="Адрес подмены правила NAT"
                       className="mono"
                       style={{ width: 160 }}
                       placeholder="адрес интерфейса"
@@ -586,6 +591,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                     <Switch
                       checked={n.enabled}
                       label=""
+                      ariaLabel={`Правило NAT ${n.name || i + 1} включено`}
                       onChange={(v) => patch((d) => (d.firewall.nat[i].enabled = v))}
                     />
                   </td>
@@ -718,6 +724,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                     <Switch
                       checked={n.enabled}
                       label=""
+                      ariaLabel={`Проброс порта ${n.name || i + 1} включён`}
                       onChange={(v) => patch((d) => (d.firewall.nat[i].enabled = v))}
                     />
                   </td>

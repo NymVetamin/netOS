@@ -164,7 +164,7 @@ func TestSystemResolverGivesResolvConfBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("симлинк не восстановлен: %v", err)
 	}
-	if target != "../run/systemd/resolve/stub-resolv.conf" {
+	if filepath.ToSlash(target) != "../run/systemd/resolve/stub-resolv.conf" {
 		t.Errorf("восстановлена не та цель: %s", target)
 	}
 	if !r.did("systemctl enable --now systemd-resolved.service") {

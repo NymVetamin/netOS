@@ -33,6 +33,22 @@ func TestGenerateWireGuardKeypair(t *testing.T) {
 	}
 }
 
+func TestCommonHeadersProtectAPIResponses(t *testing.T) {
+	s := &Server{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	s.withCommonHeaders(http.HandlerFunc(s.handlePing)).ServeHTTP(w, r)
+	for name, want := range map[string]string{
+		"Cache-Control":             "no-store",
+		"Strict-Transport-Security": "max-age=31536000",
+		"X-Frame-Options":           "DENY",
+	} {
+		if got := w.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestGenerateXrayKeypair(t *testing.T) {
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
