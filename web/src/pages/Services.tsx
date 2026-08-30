@@ -287,6 +287,7 @@ function DNSSection({
                 <tr>
                   <th>Адрес</th>
                   <th>Тип</th>
+                  <th>Канал</th>
                   <th>Комментарий</th>
                   <th>Вкл.</th>
                   <th />
@@ -318,6 +319,11 @@ function DNSSection({
                       </select>
                     </td>
                     <td>
+                      <select value={u.channel || "direct"} onChange={(e) => patch((d) => (d.dns.upstreams[idx].channel = e.target.value))}>
+                        {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                      </select>
+                    </td>
+                    <td>
                       <input
                         type="text"
                         value={u.comment || ""}
@@ -336,6 +342,7 @@ function DNSSection({
                     <td style={{ textAlign: "right" }}>
                       <button
                         className="btn ghost sm"
+                        disabled={(config.dns?.split_rules || []).some((rule: any) => rule.upstream === u.id)}
                         onClick={() =>
                           patch((d) => {
                             d.dns.upstreams = d.dns.upstreams.filter((x: any) => x.id !== u.id);
@@ -361,6 +368,7 @@ function DNSSection({
                   id: "up-" + Date.now(),
                   type: "plain",
                   address: "",
+                  channel: "direct",
                   enabled: true,
                 });
               })
@@ -368,6 +376,38 @@ function DNSSection({
           >
             Добавить апстрим
           </button>
+        </div>
+      </Card>
+
+      <Card title="Split-DNS" subtitle="Отдельные домены — через отдельный DNS-сервер и, при необходимости, VPN-канал" tight>
+        {(config.dns?.split_rules || []).length === 0 ? <Empty>Раздельных правил DNS нет</Empty> : (
+          <TableWrap>
+            <table>
+              <thead><tr><th>Домены</th><th>Апстрим</th><th>Канал</th><th>Вкл.</th><th /></tr></thead>
+              <tbody>
+                {config.dns.split_rules.map((rule: any, idx: number) => (
+                  <tr key={rule.id}>
+                    <td><textarea className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></td>
+                    <td><select value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
+                      <option value="">Выберите сервер</option>
+                      {(config.dns?.upstreams || []).filter((up: any) => up.enabled).map((up: any) => <option key={up.id} value={up.id}>{up.comment || up.address}</option>)}
+                    </select></td>
+                    <td><select value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
+                      {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                    </select></td>
+                    <td><Switch checked={!!rule.enabled} label="" onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} /></td>
+                    <td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.split_rules = d.dns.split_rules.filter((item: any) => item.id !== rule.id); })}>Убрать</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+        <div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+          <button className="btn" onClick={() => patch((d) => {
+            d.dns.split_rules = d.dns.split_rules || [];
+            d.dns.split_rules.push({ id: "split-" + Date.now(), domains: [], upstream: "", channel: "direct", enabled: false });
+          })}>Добавить правило</button>
         </div>
       </Card>
     </>

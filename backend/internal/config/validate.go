@@ -1119,13 +1119,16 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 	}
 
-	channels := c.channelIDs()
+	channels := c.usableChannelIDs()
 	upstreams := map[string]bool{}
+	upstreamByID := map[string]Upstream{}
+	channelOwner := map[string]string{}
 	secure := 0
 
 	for i, u := range c.DNS.Upstreams {
 		path := fmt.Sprintf("dns.upstreams[%d]", i)
 		upstreams[u.ID] = true
+		upstreamByID[u.ID] = u
 		switch u.Type {
 		case "plain":
 		case "dot", "doh", "doq":
@@ -1148,8 +1151,13 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 		if u.Channel != "" && !channels[u.Channel] {
 			r.errf(path+".channel", "неизвестный канал %q", u.Channel)
-		} else if u.Channel != "" && u.Channel != "direct" {
-			r.errf(path+".channel", "привязка DNS-апстрима к каналу ещё не реализована")
+		} else if u.Channel != "" {
+			channelOwner[u.ID] = u.Channel
+			if u.Channel != "direct" {
+				if _, err := DNSUpstreamEndpoints(u); err != nil {
+					r.errf(path+".address", "%v", err)
+				}
+			}
 		}
 	}
 
@@ -1198,8 +1206,23 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 		if rule.Channel != "" && !channels[rule.Channel] {
 			r.errf(path+".channel", "неизвестный канал %q", rule.Channel)
-		} else if rule.Enabled && rule.Channel != "" && rule.Channel != "direct" {
-			r.errf(path+".channel", "привязка split-DNS к каналу ещё не реализована")
+		} else if rule.Enabled && rule.Channel != "" {
+			if rule.Upstream == "" {
+				r.errf(path+".upstream", "для привязки split-DNS к каналу нужен отдельный апстрим")
+				continue
+			}
+			if previous := channelOwner[rule.Upstream]; previous != "" && previous != rule.Channel {
+				r.errf(path+".channel", "апстрим уже привязан к каналу %q; один DNS-сервер нельзя одновременно маршрутизировать через разные каналы", previous)
+				continue
+			}
+			channelOwner[rule.Upstream] = rule.Channel
+			if rule.Channel != "direct" {
+				if up, ok := upstreamByID[rule.Upstream]; ok {
+					if _, err := DNSUpstreamEndpoints(up); err != nil {
+						r.errf(path+".upstream", "%v", err)
+					}
+				}
+			}
 		}
 	}
 	for i, blocklist := range c.DNS.Blocklists {

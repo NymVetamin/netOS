@@ -44,6 +44,7 @@ func TestIntegrationIptablesAcceptsGeneratedRuleset(t *testing.T) {
 	cfg.Channels = append(cfg.Channels, config.Channel{
 		ID: "wg-test", Index: 99, Name: "Тестовый VPN", Enabled: true, Type: "wireguard",
 	})
+	cfg.DNS.Upstreams[0].Channel = "wg-test"
 	cfg.Policies = []config.Policy{{
 		ID: "https-vpn", Name: "HTTPS через VPN", Enabled: true, Priority: 100,
 		Channel: "wg-test", Protocol: "tcp", DstPort: "443,8000-8010",

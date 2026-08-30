@@ -535,6 +535,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
 	b.channelPolicies(cfg)
+	b.dnsChannelPolicies(cfg)
 	b.multiWANPolicies(cfg)
 
 	for _, z := range cfg.Firewall.Zones {
@@ -548,6 +549,28 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+func (b *builder) dnsChannelPolicies(cfg *config.Config) {
+	channelByID := map[string]config.Channel{}
+	for _, ch := range cfg.Channels {
+		channelByID[ch.ID] = ch
+	}
+	bindings := cfg.DNSChannelBindings()
+	if len(bindings) == 0 {
+		return
+	}
+	b.line("-A OUTPUT -j CONNMARK --restore-mark")
+	for _, binding := range bindings {
+		ch, ok := channelByID[binding.ChannelID]
+		if !ok || !ch.Enabled || ch.Type != "wireguard" {
+			continue
+		}
+		mark := fmt.Sprintf("0x%x", channels.Mark(ch))
+		comment := fmt.Sprintf("DNS %s через %s", binding.UpstreamID, ch.Name)
+		b.line("-A OUTPUT -m mark --mark 0 -d %s -p %s --dport %d -m comment --comment %q -j MARK --set-mark %s", binding.Address, binding.Protocol, binding.Port, truncate(comment, 240), mark)
+		b.line("-A OUTPUT -m mark --mark %s -d %s -p %s --dport %d -j CONNMARK --save-mark", mark, binding.Address, binding.Protocol, binding.Port)
+	}
 }
 
 func (b *builder) multiWANPolicies(cfg *config.Config) {
