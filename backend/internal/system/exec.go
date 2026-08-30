@@ -105,6 +105,32 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmpName, path)
 }
 
+// CleanupAtomicTemps removes incomplete files left when a process was killed
+// between CreateTemp and rename. It deliberately ignores directories and
+// symlinks even when their names match the private temporary-file prefix.
+func CleanupAtomicTemps(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".tmp-") || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 // FileChanged сообщает, отличается ли содержимое файла от данных. Позволяет
 // не дёргать перезапуск демона, если конфиг не изменился.
 func FileChanged(path string, data []byte) bool {

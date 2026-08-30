@@ -87,6 +87,11 @@ func main() {
 			log.Printf("  $ %s %v", name, args)
 		}
 	}
+	for _, dir := range []string{filepath.Dir(*dbPath), stateDir} {
+		if err := system.CleanupAtomicTemps(dir); err != nil {
+			logger.Warnf("уборка незавершённых временных файлов в %s: %v", dir, err)
+		}
+	}
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
