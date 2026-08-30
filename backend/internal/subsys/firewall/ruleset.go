@@ -216,6 +216,11 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		b.line(":%s - [0:0]", c.chain)
 	}
 
+	// Заблокированный клиент не должен сохранить доступ по уже установленному
+	// соединению или обойти запрет статическим IP. Поэтому эти правила стоят
+	// раньше системного ESTABLISHED и дополняют отказ DHCP-сервера в аренде.
+	b.blockedClients(cfg)
+
 	// 1. Правила без привязки к зоне — прямо во встроенных цепочках.
 	b.line("# --- правила без привязки к зоне ---")
 	for _, h := range hooks {
@@ -281,6 +286,34 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+func (b *builder) blockedClients(cfg *config.Config) {
+	type blockedClient struct {
+		mac  string
+		name string
+	}
+	var clients []blockedClient
+	for _, client := range cfg.Clients {
+		if client.Blocked && client.MAC != "" {
+			clients = append(clients, blockedClient{mac: strings.ToLower(client.MAC), name: client.Name})
+		}
+	}
+	sort.Slice(clients, func(i, j int) bool { return clients[i].mac < clients[j].mac })
+	if len(clients) == 0 {
+		return
+	}
+	b.line("# --- заблокированные клиенты ---")
+	for _, client := range clients {
+		comment := "заблокирован клиент " + client.mac
+		if client.name != "" {
+			comment = "заблокирован клиент " + client.name
+		}
+		for _, chain := range []string{"INPUT", "FORWARD"} {
+			b.line("-A %s -m mac --mac-source %s -m comment --comment %q -j DROP",
+				chain, client.mac, truncate(comment, 240))
+		}
+	}
 }
 
 // emitRule печатает одну строку правила.

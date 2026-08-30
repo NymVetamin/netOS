@@ -53,12 +53,64 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateFirewall(r)
 	c.validateDHCP(r)
 	c.validateDNS(r)
+	c.validateClients(r)
 	c.validateChannels(r)
 	c.validatePolicies(r)
 	c.validateVPNServers(r)
 	c.validateWiFi(r)
 
 	return r
+}
+
+func (c *Config) validateClients(r *ValidationResult) {
+	ids := map[string]int{}
+	macs := map[string]int{}
+	channels := c.channelIDs()
+	networks := c.networkIDs()
+	blocked := 0
+
+	for i, client := range c.Clients {
+		path := fmt.Sprintf("clients[%d]", i)
+		if client.ID == "" {
+			r.errf(path+".id", "пустой идентификатор клиента")
+		} else if prev, ok := ids[client.ID]; ok {
+			r.errf(path+".id", "идентификатор уже занят клиентом clients[%d]", prev)
+		} else {
+			ids[client.ID] = i
+		}
+
+		hw, err := net.ParseMAC(client.MAC)
+		if err != nil || len(hw) != 6 {
+			r.errf(path+".mac", "некорректный MAC-адрес")
+		} else {
+			mac := strings.ToLower(hw.String())
+			if prev, ok := macs[mac]; ok {
+				r.errf(path+".mac", "MAC-адрес уже указан у клиента clients[%d]", prev)
+			} else {
+				macs[mac] = i
+			}
+		}
+
+		if client.Network != "" && !networks[client.Network] {
+			r.errf(path+".network", "неизвестный сегмент %q", client.Network)
+		}
+		if client.Channel != "" && !channels[client.Channel] {
+			r.errf(path+".channel", "неизвестный канал %q", client.Channel)
+		}
+		if client.DownKbit < 0 {
+			r.errf(path+".down_kbit", "скорость не может быть отрицательной")
+		}
+		if client.UpKbit < 0 {
+			r.errf(path+".up_kbit", "скорость не может быть отрицательной")
+		}
+		if client.Blocked {
+			blocked++
+		}
+	}
+
+	if blocked > 0 && !c.Firewall.Enabled {
+		r.warnf("clients", "файрволл выключен: блокировку %d клиент(ов) можно обойти статическим IP", blocked)
+	}
 }
 
 func (c *Config) validateSystem(r *ValidationResult) {
