@@ -17,6 +17,7 @@ package firewall
 
 import (
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 
@@ -901,25 +902,11 @@ func addressOf(cidr string) string {
 }
 
 func subnetOf(cidr string) string {
-	addr, maskStr, ok := strings.Cut(cidr, "/")
-	if !ok {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil || !prefix.Addr().Is4() {
 		return cidr
 	}
-	var o [4]int
-	if n, _ := fmt.Sscanf(addr, "%d.%d.%d.%d", &o[0], &o[1], &o[2], &o[3]); n != 4 {
-		return cidr
-	}
-	var bits int
-	if _, err := fmt.Sscanf(maskStr, "%d", &bits); err != nil || bits < 0 || bits > 32 {
-		return cidr
-	}
-	value := uint32(o[0])<<24 | uint32(o[1])<<16 | uint32(o[2])<<8 | uint32(o[3])
-	mask := uint32(0xffffffff) << (32 - bits)
-	if bits == 0 {
-		mask = 0
-	}
-	n := value & mask
-	return fmt.Sprintf("%d.%d.%d.%d/%d", n>>24&0xff, n>>16&0xff, n>>8&0xff, n&0xff, bits)
+	return prefix.Masked().String()
 }
 
 func truncate(s string, max int) string {
