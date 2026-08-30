@@ -90,17 +90,10 @@ export function ChannelsPage({ config, patch }: Props) {
         <p>Выбор выхода в интернет для сегментов, устройств и отдельных потоков</p>
       </div>
 
-      {!wireguardInstalled && (
-        <Notice tone="info" title="Нужен компонент WireGuard">
-          Перед включением туннеля установите WireGuard в разделе «Компоненты».
-          Черновик канала можно заполнить заранее.
-        </Notice>
-      )}
-
       <Card
         title="Каналы выхода"
-        subtitle="Прямой выход всегда доступен; WireGuard работает с обязательным kill-switch"
-        actions={<div className="row"><button className="btn" onClick={addWireGuard}>Добавить WireGuard</button><button className="btn" onClick={addOpenConnect}>Добавить OpenConnect</button><button className="btn" onClick={addXray}>Добавить Xray</button></div>}
+        subtitle="Прямой выход всегда доступен; VPN-каналы защищены настраиваемым kill-switch"
+        actions={<div className="row channel-add-actions"><button className="btn" onClick={addWireGuard}>WireGuard</button><button className="btn" onClick={addOpenConnect}>OpenConnect</button><button className="btn" onClick={addXray}>Xray</button></div>}
       >
         {channels.map((channel: any) =>
           channel.type === "direct" ? (
@@ -189,6 +182,15 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
       <Field label="Ссылка подключения" hint="vless://, vmess://, trojan:// или ss://"><div className="row"><input className="mono" value={link} onChange={(e) => setLink(e.target.value)} placeholder="vless://…" /><button type="button" className="btn ghost sm" disabled={!link.trim()} onClick={importLink}>Импорт</button></div></Field>
       <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => draft.fail_mode = e.target.value)}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
       {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => draft.fallback = e.target.value)}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
+      <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe = draft.probe || {}; draft.probe.enabled = enabled; })} /></Field>
+      {channel.probe?.enabled !== false && <>
+        <Field label="Тип проверки"><select value={channel.probe?.type || "tcp"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
+        <Field label="Цели" hint="По одной в строке"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+        <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => draft.probe.interval = Number(e.target.value))} /></Field>
+        <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => draft.probe.timeout = Number(e.target.value))} /></Field>
+        <Field label="Ошибок до отказа"><input type="number" min={1} value={channel.probe?.fail_threshold || 3} onChange={(e) => update((draft) => draft.probe.fail_threshold = Number(e.target.value))} /></Field>
+        <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => draft.probe.rise_threshold = Number(e.target.value))} /></Field>
+      </>}
     </div>
     <Field label="Outbound Xray (JSON)" hint="Можно использовать любой поддержанный Xray transport: Reality, XTLS, XHTTP, WebSocket, gRPC, mKCP и другие.">
       <textarea className="mono" style={{ minHeight: 260 }} spellCheck={false} value={raw} onChange={(e) => {
@@ -463,7 +465,7 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
           </table>
         </TableWrap>
       )}
-      <div className="row" style={{ marginTop: "1rem" }}>
+      <div className="row policy-add-row" style={{ marginTop: "1rem" }}>
         <input placeholder="Название новой политики" value={name} onChange={(e) => setName(e.target.value)} />
         <select value={channel} onChange={(e) => setChannel(e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
         <button className="btn primary" disabled={!name.trim()} onClick={() => {

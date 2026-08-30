@@ -178,6 +178,7 @@ const SAVE_DELAY_MS = 500;
 
 function Shell({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const [page, setPage] = useState<PageID>("dashboard");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [cfg, setCfg] = useState<any>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -287,13 +288,22 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={`sidebar ${mobileNavOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-head">
           <span className="mark">nO</span>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 600 }}>netOS</div>
             <div className="host">{cfg?.system?.hostname || "…"}</div>
           </div>
+          <button
+            type="button"
+            className="btn ghost mobile-nav-toggle"
+            aria-label={mobileNavOpen ? "Закрыть меню" : "Открыть меню"}
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen((open) => !open)}
+          >
+            {mobileNavOpen ? "×" : "☰"}
+          </button>
         </div>
 
         <nav className="nav">
@@ -304,7 +314,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 <button
                   key={item.id}
                   className={`nav-item ${page === item.id ? "active" : ""}`}
-                  onClick={() => setPage(item.id)}
+                  onClick={() => {
+                    setPage(item.id);
+                    setMobileNavOpen(false);
+                  }}
                 >
                   <span className="icon" aria-hidden="true">
                     {item.icon}

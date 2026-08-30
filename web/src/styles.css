@@ -186,6 +186,14 @@ code, pre {
   gap: 0.6rem;
 }
 
+.mobile-nav-toggle {
+  display: none;
+  margin-left: auto;
+  min-width: 40px;
+  font-size: 20px;
+  line-height: 1;
+}
+
 .sidebar-head .mark {
   width: 28px;
   height: 28px;
@@ -775,19 +783,62 @@ pre.output {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+  .mobile-nav-toggle {
+    display: inline-flex;
+  }
   .nav {
-    display: flex;
-    flex-wrap: wrap;
+    display: none;
+    padding: 0.5rem 0.75rem 0.75rem;
+  }
+  .sidebar.mobile-open .nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.25rem;
+  }
+  .sidebar.mobile-open .nav > div {
+    display: contents;
   }
   .nav-group-title {
     display: none;
+  }
+  .sidebar-foot {
+    display: none;
+  }
+  .sidebar.mobile-open .sidebar-foot {
+    display: flex;
+  }
+  .card-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .card-head > .row,
+  .card-head .channel-add-actions {
+    flex-wrap: wrap;
+  }
+  .card-head .channel-add-actions .btn {
+    flex: 1 1 8rem;
+  }
+  .policy-add-row {
+    align-items: stretch;
+    flex-direction: column;
   }
   .applybar {
     left: 0;
   }
   .page {
     padding: 1.1rem 1rem 6rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .sidebar.mobile-open .nav {
+    grid-template-columns: 1fr;
+  }
+  .page-head h1 {
+    font-size: 20px;
+  }
+  .card-body {
+    padding: 1rem;
   }
 }
 
