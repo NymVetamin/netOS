@@ -78,7 +78,10 @@ func VerifyPassword(password, encoded string) bool {
 		return false
 	}
 
-	got := argon2.IDKey([]byte(password), salt, timeCost, memory, threads, uint32(len(want)))
+	// len(want) is proven to be in [16, 64] immediately above, so narrowing to
+	// uint32 cannot overflow. Keep the check next to the conversion.
+	keyLen := uint32(len(want)) // #nosec G115 -- bounded to 16..64 above
+	got := argon2.IDKey([]byte(password), salt, timeCost, memory, threads, keyLen)
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 

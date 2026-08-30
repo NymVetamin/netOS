@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -39,12 +41,36 @@ func TestMaintenanceBackupPathsAndSchedule(t *testing.T) {
 	if _, err := m.BackupPath("../netos-backup-20260830-120000.tar.gz"); err == nil {
 		t.Fatal("path traversal was accepted")
 	}
+	file, err := m.OpenBackup(filepath.Base(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(file)
+	_ = file.Close()
+	if err != nil || string(data) != "archive" {
+		t.Fatalf("opened backup = %q, err=%v", data, err)
+	}
+	if runtime.GOOS != "windows" {
+		link := filepath.Join(dir, "netos-link.tar.gz")
+		if err := os.Symlink(good, link); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.OpenBackup(filepath.Base(link)); err == nil {
+			t.Fatal("backup symlink was accepted")
+		}
+	}
 	if err := m.Schedule(context.Background(), "restore", filepath.Base(good)); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(runner.commands, "\n")
 	if !strings.Contains(joined, "systemd-run --quiet --unit=netos-maintenance --on-active=2s") || !strings.Contains(joined, good+" --yes") {
 		t.Fatalf("unexpected schedule:\n%s", joined)
+	}
+	if err := m.DeleteBackup(filepath.Base(good)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(good); !os.IsNotExist(err) {
+		t.Fatalf("backup still exists after delete: %v", err)
 	}
 }
 

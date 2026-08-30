@@ -240,6 +240,9 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		return fmt.Errorf("не удалось занять порт %d: %w", cfg.System.Panel.Port, err)
 	}
 
+	// The shutdown context must remain usable after the parent has been
+	// cancelled; deriving it from ctx would cancel Shutdown immediately.
+	// #nosec G118 -- this goroutine is bounded by ctx and a five-second timeout.
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

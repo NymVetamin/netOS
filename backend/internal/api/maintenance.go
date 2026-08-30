@@ -57,15 +57,60 @@ func (m *Maintenance) BackupPath(name string) (string, error) {
 	if !validBackupName(name) {
 		return "", fmt.Errorf("некорректное имя резервной копии")
 	}
-	path := filepath.Join(m.BackupDir, name)
-	info, err := os.Lstat(path)
+	root, err := os.OpenRoot(m.BackupDir)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
 	if err != nil {
 		return "", err
 	}
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("резервная копия не является обычным файлом")
 	}
-	return path, nil
+	return filepath.Join(m.BackupDir, name), nil
+}
+
+// OpenBackup opens a validated regular backup relative to a directory handle,
+// so request data is never interpreted as an unrestricted filesystem path.
+func (m *Maintenance) OpenBackup(name string) (*os.File, error) {
+	if !validBackupName(name) {
+		return nil, fmt.Errorf("некорректное имя резервной копии")
+	}
+	root, err := os.OpenRoot(m.BackupDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("резервная копия не является обычным файлом")
+	}
+	return root.Open(name)
+}
+
+// DeleteBackup removes only a validated regular file beneath BackupDir.
+func (m *Maintenance) DeleteBackup(name string) error {
+	if !validBackupName(name) {
+		return fmt.Errorf("некорректное имя резервной копии")
+	}
+	root, err := os.OpenRoot(m.BackupDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("резервная копия не является обычным файлом")
+	}
+	return root.Remove(name)
 }
 
 var versionPattern = regexp.MustCompile(`^(?:latest|v?[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)$`)

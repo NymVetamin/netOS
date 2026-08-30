@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -716,14 +715,21 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
 		return
 	}
-	path, err := s.Maintenance.BackupPath(r.PathValue("name"))
+	name := r.PathValue("name")
+	file, err := s.Maintenance.OpenBackup(name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "резервная копия не найдена")
 		return
 	}
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(path)))
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "%v", err)
+		return
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	w.Header().Set("Content-Type", "application/gzip")
-	http.ServeFile(w, r, path)
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }
 
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
@@ -735,16 +741,12 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
 		return
 	}
-	path, err := s.Maintenance.BackupPath(r.PathValue("name"))
-	if err != nil {
+	name := r.PathValue("name")
+	if err := s.Maintenance.DeleteBackup(name); err != nil {
 		writeError(w, http.StatusNotFound, "резервная копия не найдена")
 		return
 	}
-	if err := os.Remove(path); err != nil {
-		writeError(w, http.StatusInternalServerError, "%v", err)
-		return
-	}
-	_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: "backup-delete", Target: filepath.Base(path), Success: true})
+	_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: "backup-delete", Target: name, Success: true})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
