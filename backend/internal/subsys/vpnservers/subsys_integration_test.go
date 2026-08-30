@@ -34,6 +34,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	serverName := fmt.Sprintf("wg-srv%d", serverIndex)
 	cleanup := func() {
 		_, _ = runner.Run(ctx, "iptables", "-D", "INPUT", "-i", hostVeth, "-p", "udp", "--dport", "51997", "-j", "ACCEPT")
+		_, _ = runner.Run(ctx, "iptables", "-D", "INPUT", "-i", serverName, "-p", "icmp", "-j", "ACCEPT")
 		_, _ = runner.Run(ctx, "ip", "netns", "delete", netns)
 		_, _ = runner.Run(ctx, "ip", "link", "delete", hostVeth)
 		_, _ = runner.Run(ctx, "ip", "link", "delete", serverName)
@@ -70,6 +71,9 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	mustRunVPN(t, runner, "ip", "addr", "add", "192.0.2.1/30", "dev", hostVeth)
 	mustRunVPN(t, runner, "ip", "link", "set", hostVeth, "up")
 	mustRunVPN(t, runner, "iptables", "-I", "INPUT", "1", "-i", hostVeth, "-p", "udp", "--dport", "51997", "-j", "ACCEPT")
+	// In production the firewall subsystem permits traffic from an enabled VPN
+	// server interface. This isolated subsystem test must model that rule itself.
+	mustRunVPN(t, runner, "iptables", "-I", "INPUT", "1", "-i", serverName, "-p", "icmp", "-j", "ACCEPT")
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "set", "lo", "up")
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "addr", "add", "192.0.2.2/30", "dev", clientVeth)
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "set", clientVeth, "up")

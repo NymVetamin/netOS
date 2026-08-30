@@ -161,13 +161,19 @@ func runIPerf(t *testing.T, ctx context.Context, namespace string, reverse bool)
 	defer cancel()
 	// The server lives in the client namespace. The control connection therefore
 	// starts from the router and is not rejected by the production INPUT policy.
-	server := exec.CommandContext(runCtx, "ip", "netns", "exec", namespace, "iperf3", "-s", "-1", "-B", "192.0.2.2")
+	port := "5201"
+	if reverse {
+		// A separate listener avoids a race with the one-shot server from the
+		// previous direction while its TCP socket is still being released.
+		port = "5202"
+	}
+	server := exec.CommandContext(runCtx, "ip", "netns", "exec", namespace, "iperf3", "-s", "-1", "-B", "192.0.2.2", "-p", port)
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = server.Process.Kill() })
 	time.Sleep(250 * time.Millisecond)
-	args := []string{"-c", "192.0.2.2", "-t", "3", "-J"}
+	args := []string{"-c", "192.0.2.2", "-p", port, "-t", "3", "-J"}
 	if reverse {
 		args = append(args, "-R")
 	}

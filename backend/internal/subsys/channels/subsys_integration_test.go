@@ -87,6 +87,7 @@ func TestIntegrationWireGuardLifecycle(t *testing.T) {
 	backup := ch
 	backup.ID = "backup"
 	backup.Index = 998
+	defer s.removeChannel(context.Background(), ownedChannel{Name: InterfaceName(backup), Index: backup.Index})
 	cfg.Channels = append(cfg.Channels, backup)
 	ch.FailMode = "fallback"
 	ch.Fallback = "backup"
