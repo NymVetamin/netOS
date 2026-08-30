@@ -112,7 +112,14 @@ func TestIntegrationXrayLifecycle(t *testing.T) {
 	if _, err := os.Stat("/usr/local/bin/xray"); err != nil {
 		t.Skip("xray is not installed")
 	}
-	root := t.TempDir()
+	// The generated systemd unit has PrivateTmp=true, so a config below the
+	// process-private /tmp is deliberately invisible to Xray. Keep this
+	// integration fixture in the same persistent state tree production uses.
+	root, err := os.MkdirTemp("/var/lib/netos", "integration-xray-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	s := New(system.NewExec(), root)
 	s.RTTablesPath = filepath.Join(root, "rt_tables")
 	ch := config.Channel{
