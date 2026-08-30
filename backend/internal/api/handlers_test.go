@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,26 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestGenerateWireGuardKeypair(t *testing.T) {
+	privateKey, publicKey, err := generateWireGuardKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"private": privateKey, "public": publicKey} {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil || len(decoded) != 32 {
+			t.Fatalf("%s key is invalid: %q (%v)", name, value, err)
+		}
+	}
+	if privateKey == publicKey {
+		t.Fatal("private and public keys are identical")
+	}
+	derived, err := wireGuardPublicKey(privateKey)
+	if err != nil || derived != publicKey {
+		t.Fatalf("public key derivation mismatch: %q, %v", derived, err)
+	}
+}
 
 func viewerRequest(method, path string) *http.Request {
 	return &http.Request{Method: method, URL: &url.URL{Path: path}}
@@ -24,7 +45,7 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 	}})
 	cfg.VPNServers = []config.VPNServer{{
 		Config: map[string]any{"private-key": "server-private", "listen": "0.0.0.0"},
-		Peers: []config.VPNPeer{{Credentials: map[string]string{"private_key": "peer-private", "public_key": "peer-public"}}},
+		Peers:  []config.VPNPeer{{Credentials: map[string]string{"private_key": "peer-private", "public_key": "peer-public"}}},
 	}}
 
 	redacted, err := redactConfig(cfg)

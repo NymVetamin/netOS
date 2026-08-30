@@ -148,6 +148,11 @@ export const api = {
   changePassword: (current: string, next: string) =>
     request<{ ok: boolean }>("POST", "/api/password", { current, new: next }),
 
+  wireGuardKeypair: (privateKey?: string) =>
+    request<{ private_key: string; public_key: string }>(
+      "POST", "/api/wireguard/keypair", privateKey ? { private_key: privateKey } : undefined,
+    ),
+
   async getConfig() {
     const res = await request<ConfigResponse>("GET", "/api/config");
     draftVersion = res.draft_version;

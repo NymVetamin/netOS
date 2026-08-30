@@ -70,6 +70,30 @@ func TestOpenConnectUsesTheSamePolicyEngine(t *testing.T) {
 	}
 }
 
+func TestWireGuardServerPortAndPeerChannel(t *testing.T) {
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "wan0", Name: "eth0", Type: "physical", Enabled: true}}
+	cfg.WANs = []config.WAN{{ID: "wan", Index: 1, Name: "Internet", Interface: "wan0", Enabled: true, Proto: "dhcp"}}
+	cfg.Channels = append(cfg.Channels, config.Channel{ID: "privacy", Index: 4, Name: "Privacy", Enabled: true, Type: "wireguard"})
+	cfg.VPNServers = []config.VPNServer{{
+		ID: "remote", Index: 3, Name: "Remote access", Enabled: true, Type: "wireguard", Port: 51823,
+		DefaultChannel: "direct",
+		Peers:          []config.VPNPeer{{ID: "phone", Name: "Phone", Enabled: true, Address: "10.23.0.2", Channel: "privacy"}},
+	}}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"-p udp --dport 51823", "VPN-сервер «Remote access»",
+		"-i wg-srv3 -s 10.23.0.2/32", "--set-mark 0x1004", "канал VPN-пира «Phone»",
+	} {
+		if !strings.Contains(rules.IPv4, want) {
+			t.Errorf("нет %q:\n%s", want, rules.IPv4)
+		}
+	}
+}
+
 func TestPortRangesUseIptablesSyntax(t *testing.T) {
 	if got := iptablesPortSpec("53,8000-8010"); got != "53,8000:8010" {
 		t.Fatal(got)

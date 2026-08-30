@@ -32,6 +32,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/routing"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
+	"github.com/netos-router/netos/internal/subsys/vpnservers"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -379,6 +380,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		netconf.New(runner, logger),
 		routing.New(runner),
 		channelMonitor,
+		vpnservers.New(runner, stateDir),
 		firewall.New(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),

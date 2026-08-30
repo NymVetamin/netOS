@@ -3,9 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -17,6 +21,54 @@ import (
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/store"
 )
+
+func generateWireGuardKeypair() (privateKey, publicKey string, err error) {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	return base64.StdEncoding.EncodeToString(key.Bytes()),
+		base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+}
+
+func wireGuardPublicKey(privateKey string) (string, error) {
+	decoded, err := base64.StdEncoding.DecodeString(privateKey)
+	if err != nil || len(decoded) != 32 {
+		return "", errors.New("некорректный закрытый ключ WireGuard")
+	}
+	key, err := ecdh.X25519().NewPrivateKey(decoded)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+}
+
+func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PrivateKey string `json:"private_key"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "некорректный запрос")
+			return
+		}
+	}
+	privateKey, publicKey, err := "", "", error(nil)
+	responsePrivate := ""
+	if input.PrivateKey == "" {
+		privateKey, publicKey, err = generateWireGuardKeypair()
+		responsePrivate = privateKey
+	} else {
+		privateKey = input.PrivateKey
+		publicKey, err = wireGuardPublicKey(privateKey)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось сгенерировать ключи WireGuard")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"private_key": responsePrivate, "public_key": publicKey})
+}
 
 type ctxKey string
 
@@ -120,9 +172,9 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Username   string `json:"username"`
-	Role       string `json:"role"`
-	CSRFToken  string `json:"csrf_token"`
+	Username  string `json:"username"`
+	Role      string `json:"role"`
+	CSRFToken string `json:"csrf_token"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

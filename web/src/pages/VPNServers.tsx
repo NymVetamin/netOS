@@ -1,0 +1,120 @@
+import { useState } from "react";
+import { api } from "../api";
+import { Badge, Card, Empty, Field, Notice, Switch } from "../ui";
+
+type Props = { config: any; patch: (mutate: (draft: any) => void) => void };
+
+export function VPNServersPage({ config, patch }: Props) {
+  const servers = config.vpn_servers || [];
+  const installed = (config.components || []).some((item: any) => item.id === "wireguard" && item.installed);
+  const [clientSecrets, setClientSecrets] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+
+  function addServer() {
+    patch((draft) => {
+      draft.vpn_servers = draft.vpn_servers || [];
+      const used = new Set(draft.vpn_servers.map((item: any) => item.index));
+      let index = 1;
+      while (used.has(index)) index++;
+      draft.vpn_servers.push({
+        id: `wg-server-${Date.now()}`, index, name: `WireGuard ${index}`, enabled: false,
+        type: "wireguard", subnet: `10.${8 + index}.0.1/24`, port: 51819 + index,
+        default_channel: "direct", peers: [],
+        config: { private_key: "", mtu: 1420, public_endpoint: "", client_dns: [], client_allowed_ips: ["0.0.0.0/0"] },
+      });
+    });
+  }
+
+  return <>
+    <div className="page-head"><h1>VPN-серверы</h1><p>Безопасный удалённый доступ к роутеру и интернету через него</p></div>
+    {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
+    {!installed && <Notice tone="info" title="Нужен компонент WireGuard">Установите WireGuard в разделе «Компоненты» перед включением сервера. Черновик можно подготовить заранее.</Notice>}
+    <Card title="Входящие подключения" subtitle="Каждому клиенту назначается отдельный адрес, ключ и канал выхода" actions={<button className="btn" onClick={addServer}>Добавить WireGuard</button>}>
+      {servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : servers.map((server: any) =>
+        server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={installed} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
+          <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}
+    </Card>
+  </>;
+}
+
+function WireGuardServer({ server, config, installed, patch, clientSecrets, setClientSecrets, setError }: any) {
+  const cfg = server.config || {};
+  const channels = (config.channels || []).filter((item: any) => item.enabled);
+  const referenced = (config.policies || []).some((item: any) => item.vpn_server === server.id);
+  const update = (mutate: (item: any) => void) => patch((draft: any) => mutate(draft.vpn_servers.find((item: any) => item.id === server.id)));
+  const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
+
+  async function generateServerKey() {
+    setError("");
+    try {
+      const pair = await api.wireGuardKeypair();
+      setConfig("private_key", pair.private_key);
+    } catch (err: any) { setError(err?.message || "Генерация ключа завершилась ошибкой"); }
+  }
+
+  function addPeer() {
+    update((draft) => {
+      const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
+      const used = new Set((draft.peers || []).map((peer: any) => peer.address));
+      let host = 2;
+      while (used.has(`${prefix}.${host}`) && host < 255) host++;
+      draft.peers = draft.peers || [];
+      draft.peers.push({ id: `peer-${Date.now()}`, name: `Устройство ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${host}`, channel: "", credentials: { public_key: "", preshared_key: "" }, comment: "" });
+    });
+  }
+
+  return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
+    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
+      <div className="row"><strong>{server.name}</strong><Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "работает" : "черновик"}</Badge></div>
+      <div className="row"><Switch checked={!!server.enabled} disabled={!installed} label="Включить" onChange={(value) => update((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={server.enabled || referenced} onClick={() => patch((draft: any) => { draft.vpn_servers = draft.vpn_servers.filter((item: any) => item.id !== server.id); })}>Удалить</button></div>
+    </div>
+    <div className="form-grid">
+      <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="Адрес сервера в VPN" hint="Например, 10.9.0.1/24"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
+      <Field label="UDP-порт"><input type="number" min={1} max={65535} value={server.port || 51820} onChange={(e) => update((draft) => draft.port = Number(e.target.value))} /></Field>
+      <Field label="Публичный адрес" hint="Домен или IP роутера с портом"><input className="mono" placeholder="vpn.example.com:51820" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
+      <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
+      <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="DNS для клиентов" hint="По одному адресу в строке"><textarea className="mono" value={(cfg.client_dns || []).join("\n")} onChange={(e) => setConfig("client_dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <Field label="Маршруты клиента" hint="0.0.0.0/0 — весь интернет через VPN"><textarea className="mono" value={(cfg.client_allowed_ips || ["0.0.0.0/0"]).join("\n")} onChange={(e) => setConfig("client_allowed_ips", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <Field label="Закрытый ключ сервера" hint="Хранится в конфигурации с правами 0600"><div className="row"><input className="mono" type="password" autoComplete="new-password" value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={generateServerKey}>Сгенерировать</button></div></Field>
+    </div>
+    <div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Клиенты</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить устройство</button></div>
+    {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер.</Empty> : (server.peers || []).map((peer: any) =>
+      <PeerEditor key={peer.id} server={server} peer={peer} channels={channels} update={update} clientPrivate={clientSecrets[peer.id]} setClientPrivate={(value: string) => setClientSecrets((old: any) => ({ ...old, [peer.id]: value }))} setError={setError} />)}
+  </form>;
+}
+
+function PeerEditor({ server, peer, channels, update, clientPrivate, setClientPrivate, setError }: any) {
+  const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
+  async function generateClient() {
+    setError("");
+    try {
+      const pair = await api.wireGuardKeypair();
+      edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = pair.public_key; });
+      setClientPrivate(pair.private_key);
+    } catch (err: any) { setError(err?.message || "Генерация ключа завершилась ошибкой"); }
+  }
+  async function download() {
+    if (!clientPrivate) { setError("Закрытый ключ клиента не хранится на роутере. Сгенерируйте новую пару ключей для этого устройства."); return; }
+    if (!server.config?.public_endpoint) { setError("Сначала укажите публичный адрес VPN-сервера."); return; }
+    try {
+      const serverPair = await api.wireGuardKeypair(server.config.private_key);
+      const dns = (server.config.client_dns || []).length ? `DNS = ${server.config.client_dns.join(", ")}\n` : "";
+      const allowed = (server.config.client_allowed_ips || []).length ? server.config.client_allowed_ips : ["0.0.0.0/0"];
+      const body = `[Interface]\nPrivateKey = ${clientPrivate}\nAddress = ${peer.address}/32\n${dns}\n[Peer]\nPublicKey = ${serverPair.public_key}\nEndpoint = ${server.config.public_endpoint}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = 25\n`;
+      const url = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
+      const link = document.createElement("a"); link.href = url; link.download = `${peer.name || peer.id}.conf`; link.click(); URL.revokeObjectURL(url);
+    } catch (err: any) { setError(err?.message || "Не удалось создать конфигурацию клиента"); }
+  }
+  return <div style={{ borderTop: "1px solid var(--line)", marginTop: "1rem", paddingTop: "1rem" }}>
+    <div className="row" style={{ justifyContent: "space-between" }}><div className="row"><strong>{peer.name}</strong>{clientPrivate && <Badge tone="accent">ключ готов — скачайте сейчас</Badge>}</div><div className="row"><Switch checked={!!peer.enabled} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
+    <div className="form-grid" style={{ marginTop: "0.8rem" }}>
+      <Field label="Устройство"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
+      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Публичный ключ клиента"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; })} /></Field>
+    </div>
+    <div className="row"><button type="button" className="btn ghost sm" onClick={generateClient}>Новая пара ключей</button><button type="button" className="btn sm" disabled={!clientPrivate} onClick={download}>Скачать конфигурацию</button></div>
+  </div>;
+}

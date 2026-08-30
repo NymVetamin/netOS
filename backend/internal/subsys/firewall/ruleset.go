@@ -23,6 +23,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/multiwan"
+	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
 
 // Ruleset — сгенерированный набор правил.
@@ -276,6 +277,9 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		if c.hook.flow == "forward" && c.zone.Name == "wan" {
 			b.portForwardAccept(cfg, c.chain)
 		}
+		if c.hook.flow == "in" && c.zone.Name == "wan" {
+			b.vpnServerAccept(cfg, c.chain)
+		}
 
 		// Политика зоны завершает вход и форвард. Для исхода политика общая и
 		// задана в самой цепочке OUTPUT, поэтому здесь просто возвращаемся.
@@ -288,6 +292,16 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "wireguard" {
+			continue
+		}
+		b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT",
+			chain, server.Port, truncate("VPN-сервер «"+server.Name+"»", 240))
+	}
 }
 
 func (b *builder) blockedClients(cfg *config.Config) {
@@ -316,6 +330,7 @@ func (b *builder) blockedClients(cfg *config.Config) {
 				chain, client.mac, truncate(comment, 240))
 		}
 	}
+
 }
 
 // emitRule печатает одну строку правила.
@@ -659,6 +674,32 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 		})
 	}
 
+	servers := append([]config.VPNServer(nil), cfg.VPNServers...)
+	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
+	for _, server := range servers {
+		if !server.Enabled || server.Type != "wireguard" {
+			continue
+		}
+		peers := append([]config.VPNPeer(nil), server.Peers...)
+		sort.Slice(peers, func(i, j int) bool { return peers[i].ID < peers[j].ID })
+		for _, peer := range peers {
+			if !peer.Enabled || peer.Channel == "" || peer.Channel == "direct" {
+				continue
+			}
+			rules = append(rules, policyRule{
+				priority: 1_500_000, id: server.ID + "/" + peer.ID,
+				match: " -i " + vpnservers.InterfaceName(server) + " -s " + peer.Address + "/32", channel: peer.Channel,
+				comment: "канал VPN-пира «" + peer.Name + "»",
+			})
+		}
+		if server.DefaultChannel != "" && server.DefaultChannel != "direct" {
+			rules = append(rules, policyRule{
+				priority: 1_600_000, id: server.ID, match: " -i " + vpnservers.InterfaceName(server),
+				channel: server.DefaultChannel, comment: "канал VPN-сервера «" + server.Name + "»",
+			})
+		}
+	}
+
 	networks := append([]config.Network(nil), cfg.Networks...)
 	sort.Slice(networks, func(i, j int) bool { return networks[i].ID < networks[j].ID })
 	for _, network := range networks {
@@ -696,6 +737,23 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 
 func policySelectors(cfg *config.Config, p config.Policy) string {
 	var s strings.Builder
+	if p.VPNServer != "" {
+		for _, server := range cfg.VPNServers {
+			if server.ID != p.VPNServer {
+				continue
+			}
+			fmt.Fprintf(&s, " -i %s", vpnservers.InterfaceName(server))
+			if p.VPNPeer != "" {
+				for _, peer := range server.Peers {
+					if peer.ID == p.VPNPeer {
+						fmt.Fprintf(&s, " -s %s/32", peer.Address)
+						break
+					}
+				}
+			}
+			break
+		}
+	}
 	if p.Network != "" {
 		for _, network := range cfg.Networks {
 			if network.ID == p.Network {

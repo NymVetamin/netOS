@@ -8,7 +8,7 @@ import (
 func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 	cfg := Default()
 	cfg.Channels = append(cfg.Channels, Channel{ID: "xray", Index: 1, Name: "VPN", Enabled: true, Type: "xray", Mode: "tun", FailMode: "block"})
-	cfg.VPNServers = []VPNServer{{ID: "srv", Name: "server", Type: "wireguard", Enabled: true, Subnet: "10.9.0.1/24"}}
+	cfg.VPNServers = []VPNServer{{ID: "srv", Name: "server", Type: "ocserv", Enabled: true, Subnet: "10.9.0.1/24"}}
 	cfg.WiFi = []WiFiRadio{{ID: "radio", Device: "wlan0", Enabled: true, Country: "RU"}}
 	cfg.DNS.Blocklists = []Blocklist{{ID: "ads", Enabled: true}}
 

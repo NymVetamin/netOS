@@ -210,6 +210,12 @@ func (c *Config) validateComponents(r *ValidationResult) {
 				"для канала OpenConnect нужен компонент «OpenConnect»")
 		}
 	}
+	for i, server := range c.VPNServers {
+		if server.Enabled && server.Type == "wireguard" && !c.HasComponent("wireguard") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
+				"для сервера WireGuard нужен компонент «WireGuard»")
+		}
+	}
 }
 
 func (c *Config) validateInterfaces(r *ValidationResult) {
@@ -1330,18 +1336,9 @@ func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch C
 	if prefix, err := netip.ParsePrefix(wg.Address); err != nil || !prefix.Addr().Is4() {
 		r.errf(path+".config.address", "нужен IPv4-адрес туннеля с маской")
 	}
-	validateWGKey := func(field, value string, optional bool) {
-		if optional && value == "" {
-			return
-		}
-		decoded, err := base64.StdEncoding.DecodeString(value)
-		if err != nil || len(decoded) != 32 {
-			r.errf(path+".config."+field, "ключ WireGuard должен быть base64 от 32 байт")
-		}
-	}
-	validateWGKey("private_key", wg.PrivateKey, false)
-	validateWGKey("peer_public_key", wg.PeerPublicKey, false)
-	validateWGKey("preshared_key", wg.PresharedKey, true)
+	validateWGKey(r, path+".config.private_key", wg.PrivateKey, false)
+	validateWGKey(r, path+".config.peer_public_key", wg.PeerPublicKey, false)
+	validateWGKey(r, path+".config.preshared_key", wg.PresharedKey, true)
 	if host, port, err := net.SplitHostPort(wg.Endpoint); err != nil || host == "" || !inPortRange(port) {
 		r.errf(path+".config.endpoint", "endpoint должен быть в формате host:port")
 	}
@@ -1365,6 +1362,16 @@ func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch C
 	}
 	if wg.MTU != 0 && (wg.MTU < 576 || wg.MTU > 9000) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+}
+
+func validateWGKey(r *ValidationResult, path, value string, optional bool) {
+	if optional && value == "" {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || len(decoded) != 32 {
+		r.errf(path, "ключ WireGuard должен быть base64 от 32 байт")
 	}
 }
 
@@ -1412,8 +1419,13 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 	channels := c.usableChannelIDs()
 	networks := c.networkIDs()
 	servers := map[string]bool{}
+	serverPeers := map[string]map[string]bool{}
 	for _, s := range c.VPNServers {
 		servers[s.ID] = true
+		serverPeers[s.ID] = map[string]bool{}
+		for _, peer := range s.Peers {
+			serverPeers[s.ID][peer.ID] = true
+		}
 	}
 
 	ids := map[string]bool{}
@@ -1432,8 +1444,10 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 		if p.VPNServer != "" && !servers[p.VPNServer] {
 			r.errf(path+".vpn_server", "неизвестный VPN-сервер %q", p.VPNServer)
 		}
-		if p.Enabled && (p.VPNServer != "" || p.VPNPeer != "") {
-			r.errf(path, "выбор трафика по VPN-серверу или VPN-пиру ещё не реализован")
+		if p.VPNPeer != "" && p.VPNServer == "" {
+			r.errf(path+".vpn_peer", "для выбора VPN-пира сначала укажите VPN-сервер")
+		} else if p.VPNPeer != "" && !serverPeers[p.VPNServer][p.VPNPeer] {
+			r.errf(path+".vpn_peer", "неизвестный VPN-пир %q", p.VPNPeer)
 		}
 		if p.Enabled && len(p.Domains) > 0 {
 			r.errf(path+".domains", "выбор трафика по доменам ещё не реализован")
@@ -1462,11 +1476,21 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 }
 
 func (c *Config) validateVPNServers(r *ValidationResult) {
-	channels := c.channelIDs()
+	channels := c.usableChannelIDs()
 	ports := map[int]string{}
+	ids := map[string]bool{}
+	indexes := map[int]bool{}
 	for i, s := range c.VPNServers {
 		path := fmt.Sprintf("vpn_servers[%d]", i)
-		if s.Enabled {
+		if s.ID == "" || ids[s.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор VPN-сервера")
+		}
+		ids[s.ID] = true
+		if s.Index < 1 || s.Index > 9999 || indexes[s.Index] {
+			r.errf(path+".index", "индекс VPN-сервера должен быть уникальным числом 1-9999")
+		}
+		indexes[s.Index] = true
+		if s.Enabled && s.Type != "wireguard" {
 			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
 		}
 		switch s.Type {
@@ -1475,7 +1499,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			r.errf(path+".type", "неизвестный тип VPN-сервера %q", s.Type)
 		}
 		subnet, err := netip.ParsePrefix(s.Subnet)
-		if err != nil {
+		if err != nil || !subnet.Addr().Is4() {
 			r.errf(path+".subnet", "подсеть должна быть в формате 10.9.0.1/24")
 		}
 		if s.Enabled && s.Port != 0 {
@@ -1489,6 +1513,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 		if s.DefaultChannel != "" && !channels[s.DefaultChannel] {
 			r.errf(path+".default_channel", "неизвестный канал %q", s.DefaultChannel)
+		}
+		if s.Type == "wireguard" {
+			c.validateWireGuardServer(r, path, s)
 		}
 
 		seenAddr := map[string]bool{}
@@ -1509,6 +1536,59 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			if peer.Channel != "" && !channels[peer.Channel] {
 				r.errf(ppath+".channel", "неизвестный канал %q", peer.Channel)
 			}
+		}
+	}
+}
+
+func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPNServer) {
+	wg, err := s.WireGuardConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	validateWGKey(r, path+".config.private_key", wg.PrivateKey, false)
+	if wg.MTU != 0 && (wg.MTU < 576 || wg.MTU > 9000) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+	if wg.PublicEndpoint != "" {
+		if host, port, err := net.SplitHostPort(wg.PublicEndpoint); err != nil || host == "" || !inPortRange(port) {
+			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:51820")
+		}
+	}
+	for i, address := range wg.ClientDNS {
+		if parsed := net.ParseIP(address); parsed == nil {
+			r.errf(fmt.Sprintf("%s.config.client_dns[%d]", path, i), "некорректный адрес DNS-сервера")
+		}
+	}
+	for i, cidr := range wg.ClientAllowedIPs {
+		if prefix, err := netip.ParsePrefix(cidr); err != nil || !prefix.Addr().Is4() {
+			r.errf(fmt.Sprintf("%s.config.client_allowed_ips[%d]", path, i), "некорректная IPv4-подсеть")
+		}
+	}
+	if len(wg.ClientAllowedIPs) == 0 {
+		r.errf(path+".config.client_allowed_ips", "укажите хотя бы одну подсеть для клиентов")
+	}
+	if s.Port < 1 || s.Port > 65535 {
+		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
+	}
+	serverPrefix, prefixErr := netip.ParsePrefix(s.Subnet)
+	seenKeys := map[string]bool{}
+	seenIDs := map[string]bool{}
+	for i, peer := range s.Peers {
+		ppath := fmt.Sprintf("%s.peers[%d]", path, i)
+		if peer.ID == "" || seenIDs[peer.ID] {
+			r.errf(ppath+".id", "пустой или повторяющийся идентификатор пира")
+		}
+		seenIDs[peer.ID] = true
+		publicKey := peer.Credentials["public_key"]
+		validateWGKey(r, ppath+".credentials.public_key", publicKey, false)
+		if publicKey != "" && seenKeys[publicKey] {
+			r.errf(ppath+".credentials.public_key", "этот публичный ключ уже назначен другому пиру")
+		}
+		seenKeys[publicKey] = true
+		validateWGKey(r, ppath+".credentials.preshared_key", peer.Credentials["preshared_key"], true)
+		if addr, err := netip.ParseAddr(peer.Address); err == nil && prefixErr == nil && addr == serverPrefix.Addr() {
+			r.errf(ppath+".address", "адрес сервера нельзя назначить клиенту")
 		}
 	}
 }

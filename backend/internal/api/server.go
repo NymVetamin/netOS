@@ -113,6 +113,7 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/logout", s.handleLogout)
 	auth("GET /api/session", s.handleSession)
 	auth("POST /api/password", s.handleChangePassword)
+	auth("POST /api/wireguard/keypair", s.handleWireGuardKeypair)
 
 	auth("GET /api/config", s.handleGetConfig)
 	auth("PUT /api/config", s.handleSaveConfig)
