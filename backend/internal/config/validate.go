@@ -135,6 +135,17 @@ func (c *Config) validateSystem(r *ValidationResult) {
 	if c.IPv6.Mode != "off" && c.IPv6.Mode != "passthrough" {
 		r.errf("ipv6.mode", "неизвестный режим %q", c.IPv6.Mode)
 	}
+	switch c.System.Panel.TLS.Mode {
+	case "selfsigned":
+	case "custom":
+		if c.System.Panel.TLS.CertFile == "" || c.System.Panel.TLS.KeyFile == "" {
+			r.errf("system.panel.tls", "для своего сертификата нужны пути к сертификату и ключу")
+		}
+	case "acme":
+		r.errf("system.panel.tls.mode", "автоматический выпуск сертификата ACME ещё не реализован")
+	default:
+		r.errf("system.panel.tls.mode", "неизвестный режим TLS %q", c.System.Panel.TLS.Mode)
+	}
 }
 
 // validateComponents следит, чтобы выбранные службы были установлены. Без
@@ -611,6 +622,9 @@ func (c *Config) validateWANs(r *ValidationResult) {
 	if enabled > 1 && !c.MultiWAN.Enabled {
 		r.warnf("multiwan.enabled",
 			"включено несколько аплинков, но Multi-WAN выключен — использоваться будет только один")
+	}
+	if enabled > 1 && c.MultiWAN.Enabled {
+		r.errf("multiwan.enabled", "автоматическое переключение и балансировка Multi-WAN ещё не реализованы")
 	}
 }
 
@@ -1107,6 +1121,12 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			r.errf(path+".channel", "неизвестный канал %q", rule.Channel)
 		}
 	}
+	for i, blocklist := range c.DNS.Blocklists {
+		if blocklist.Enabled {
+			r.errf(fmt.Sprintf("dns.blocklists[%d].enabled", i),
+				"загрузка и применение списков блокировки ещё не реализованы")
+		}
+	}
 }
 
 func (c *Config) validateChannels(r *ValidationResult) {
@@ -1127,6 +1147,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		case "direct", "wireguard", "xray", "openconnect", "l2tp", "ikev2":
 		default:
 			r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
+		}
+		if ch.Enabled && ch.Type != "direct" {
+			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
 		}
 		switch ch.Mode {
 		case "tun", "tproxy", "socks":
@@ -1180,6 +1203,9 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 
 	for i, p := range c.Policies {
 		path := fmt.Sprintf("policies[%d]", i)
+		if p.Enabled {
+			r.errf(path+".enabled", "применение политик выбора канала ещё не реализовано")
+		}
 		if !channels[p.Channel] {
 			r.errf(path+".channel", "политика ссылается на несуществующий канал %q", p.Channel)
 		}
@@ -1209,6 +1235,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 	ports := map[int]string{}
 	for i, s := range c.VPNServers {
 		path := fmt.Sprintf("vpn_servers[%d]", i)
+		if s.Enabled {
+			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
+		}
 		switch s.Type {
 		case "wireguard", "ikev2", "ocserv", "xray":
 		default:
@@ -1257,6 +1286,9 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 	networks := c.networkIDs()
 	for i, radio := range c.WiFi {
 		path := fmt.Sprintf("wifi[%d]", i)
+		if radio.Enabled {
+			r.errf(path+".enabled", "управление точкой доступа Wi-Fi ещё не реализовано")
+		}
 		if radio.Device == "" {
 			r.errf(path+".device", "не выбрано радиоустройство")
 		}

@@ -71,7 +71,13 @@ type Server struct {
 type failCounter struct {
 	count int
 	until time.Time
+	last  time.Time
 }
+
+const (
+	loginFailureTTL = 30 * time.Minute
+	maxLoginSources = 4096
+)
 
 type Logger interface {
 	Infof(format string, args ...any)
@@ -227,6 +233,7 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			s.pruneLoginFailures(time.Now())
 			if err := s.Store.PruneSessions(); err != nil {
 				s.Logger.Warnf("уборка сессий: %v", err)
 			}

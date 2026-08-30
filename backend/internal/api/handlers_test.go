@@ -18,6 +18,14 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 	cfg := config.Default()
 	cfg.WANs = []config.WAN{{Password: "wan-secret"}}
 	cfg.WiFi = []config.WiFiRadio{{SSIDs: []config.WiFiSSID{{Password: "wifi-secret"}}}}
+	cfg.Channels = append(cfg.Channels, config.Channel{Config: map[string]any{
+		"private_key": "channel-private", "endpoint": "vpn.example:51820",
+		"transport": map[string]any{"auth_token": "nested-token"},
+	}})
+	cfg.VPNServers = []config.VPNServer{{
+		Config: map[string]any{"private-key": "server-private", "listen": "0.0.0.0"},
+		Peers: []config.VPNPeer{{Credentials: map[string]string{"private_key": "peer-private", "public_key": "peer-public"}}},
+	}}
 
 	redacted, err := redactConfig(cfg)
 	if err != nil {
@@ -26,8 +34,23 @@ func TestViewerConfigIsRedacted(t *testing.T) {
 	if redacted.WANs[0].Password != "" || redacted.WiFi[0].SSIDs[0].Password != "" {
 		t.Fatal("viewer получил пароль из конфигурации")
 	}
+	if redacted.Channels[1].Config["private_key"] != "" ||
+		redacted.Channels[1].Config["transport"].(map[string]any)["auth_token"] != "" ||
+		redacted.VPNServers[0].Config["private-key"] != "" {
+		t.Fatal("viewer получил секрет из конфигурации VPN")
+	}
+	if redacted.VPNServers[0].Peers[0].Credentials["public_key"] != "" {
+		t.Fatal("viewer получил учётные данные VPN-клиента")
+	}
+	if redacted.Channels[1].Config["endpoint"] == "" || redacted.VPNServers[0].Config["listen"] == "" {
+		t.Fatal("редактирование скрыло несекретные параметры")
+	}
 	if cfg.WANs[0].Password != "wan-secret" || cfg.WiFi[0].SSIDs[0].Password != "wifi-secret" {
 		t.Fatal("редактирование изменило исходную конфигурацию")
+	}
+	if cfg.Channels[1].Config["private_key"] != "channel-private" ||
+		cfg.VPNServers[0].Peers[0].Credentials["private_key"] != "peer-private" {
+		t.Fatal("редактирование изменило исходные секреты VPN")
 	}
 }
 

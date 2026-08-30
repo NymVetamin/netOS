@@ -304,7 +304,15 @@ func (s *Server) loginBlocked(ip string) (time.Duration, bool) {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	f, ok := s.loginFails[ip]
-	if !ok || time.Now().After(f.until) {
+	now := time.Now()
+	if !ok {
+		return 0, false
+	}
+	if now.Sub(f.last) > loginFailureTTL {
+		delete(s.loginFails, ip)
+		return 0, false
+	}
+	if now.After(f.until) {
 		return 0, false
 	}
 	return time.Until(f.until), true
@@ -315,18 +323,47 @@ func (s *Server) loginBlocked(ip string) (time.Duration, bool) {
 func (s *Server) recordLoginFailure(ip string) {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
+	now := time.Now()
 	f, ok := s.loginFails[ip]
-	if !ok {
+	if !ok || now.Sub(f.last) > loginFailureTTL {
+		if !ok && len(s.loginFails) >= maxLoginSources {
+			s.evictOldestLoginFailure()
+		}
 		f = &failCounter{}
 		s.loginFails[ip] = f
 	}
+	f.last = now
 	f.count++
 	if f.count > 5 {
 		delay := time.Duration(f.count-5) * 10 * time.Second
 		if delay > time.Minute {
 			delay = time.Minute
 		}
-		f.until = time.Now().Add(delay)
+		f.until = now.Add(delay)
+	}
+}
+
+func (s *Server) evictOldestLoginFailure() {
+	var oldestIP string
+	var oldest time.Time
+	for ip, counter := range s.loginFails {
+		if oldestIP == "" || counter.last.Before(oldest) {
+			oldestIP = ip
+			oldest = counter.last
+		}
+	}
+	if oldestIP != "" {
+		delete(s.loginFails, oldestIP)
+	}
+}
+
+func (s *Server) pruneLoginFailures(now time.Time) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	for ip, counter := range s.loginFails {
+		if now.Sub(counter.last) > loginFailureTTL {
+			delete(s.loginFails, ip)
+		}
 	}
 }
 
@@ -422,7 +459,40 @@ func redactConfig(cfg *config.Config) (*config.Config, error) {
 			out.WiFi[i].SSIDs[j].Password = ""
 		}
 	}
+	for i := range out.Channels {
+		redactSecretValues(out.Channels[i].Config)
+	}
+	for i := range out.VPNServers {
+		redactSecretValues(out.VPNServers[i].Config)
+		for j := range out.VPNServers[i].Peers {
+			for key := range out.VPNServers[i].Peers[j].Credentials {
+				out.VPNServers[i].Peers[j].Credentials[key] = ""
+			}
+		}
+	}
 	return &out, nil
+}
+
+func redactSecretValues(values map[string]any) {
+	for key, value := range values {
+		normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(key))
+		if strings.Contains(normalized, "password") || strings.Contains(normalized, "secret") ||
+			strings.Contains(normalized, "private_key") || strings.Contains(normalized, "preshared_key") ||
+			strings.Contains(normalized, "token") {
+			values[key] = ""
+			continue
+		}
+		switch nested := value.(type) {
+		case map[string]any:
+			redactSecretValues(nested)
+		case []any:
+			for _, item := range nested {
+				if object, ok := item.(map[string]any); ok {
+					redactSecretValues(object)
+				}
+			}
+		}
+	}
 }
 
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:
