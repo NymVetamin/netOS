@@ -46,7 +46,7 @@ export function NetworkPage({
         <p>Подключение к провайдеру, локальные сети и физические порты</p>
       </div>
 
-      <ProblemsFor problems={problems} prefixes={["wans", "networks", "interfaces"]} />
+      <ProblemsFor problems={problems} prefixes={["wans", "multiwan", "networks", "interfaces"]} />
 
       <UplinkSection config={config} patch={patch} />
       <SegmentSection config={config} patch={patch} />
@@ -61,6 +61,26 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
   const wans: any[] = config.wans || [];
 
   return (
+    <>
+    <Card title="Multi-WAN" subtitle="Автоматическое переключение на резервный аплинк">
+      <div className="form-grid">
+        <Field label="Режим">
+          <Switch
+            checked={!!config.multiwan?.enabled}
+            disabled={wans.filter((wan) => wan.enabled).length < 2}
+            onChange={(enabled) => patch((draft) => {
+              draft.multiwan = draft.multiwan || { mode: "failover", sticky_connections: true };
+              draft.multiwan.enabled = enabled;
+            })}
+            label="Включить failover"
+          />
+        </Field>
+        <Field label="Соединения" hint="Установленные соединения не перескакивают между аплинками">
+          <Switch checked={config.multiwan?.sticky_connections !== false} disabled label="Закреплять до завершения" onChange={() => {}} />
+        </Field>
+      </div>
+      {wans.filter((wan) => wan.enabled).length < 2 && <div className="hint">Включите минимум два подключения.</div>}
+    </Card>
     <Card
       title="Подключение к интернету"
       subtitle="Как роутер выходит наружу"
@@ -78,6 +98,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                 proto: "dhcp",
                 metric: 100 + d.wans.length,
                 weight: 1,
+                probe: { enabled: true, type: "icmp", targets: ["1.1.1.1", "8.8.8.8"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
               });
             })
           }
@@ -137,6 +158,29 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                     </select>
                   </Field>
                 </div>
+                {config.multiwan?.enabled && (
+                  <div className="form-grid">
+                    <Field label="Проверка доступности">
+                      <select value={w.probe?.type || "icmp"} onChange={(e) => patch((d) => {
+                        d.wans[idx].probe = d.wans[idx].probe || {};
+                        d.wans[idx].probe.type = e.target.value;
+                        d.wans[idx].probe.enabled = true;
+                      })}>
+                        <option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option>
+                      </select>
+                    </Field>
+                    <Field label="Цели" hint="Через запятую: IP, host:port или URL">
+                      <input className="mono" value={(w.probe?.targets || []).join(", ")} onChange={(e) => patch((d) => {
+                        d.wans[idx].probe = d.wans[idx].probe || {};
+                        d.wans[idx].probe.targets = e.target.value.split(",").map((v) => v.trim()).filter(Boolean);
+                      })} />
+                    </Field>
+                    <Field label="Интервал, сек"><input type="number" min={1} max={3600} value={w.probe?.interval || 10} onChange={(e) => patch((d) => (d.wans[idx].probe.interval = Number(e.target.value)))} /></Field>
+                    <Field label="Таймаут, сек"><input type="number" min={1} max={60} value={w.probe?.timeout || 3} onChange={(e) => patch((d) => (d.wans[idx].probe.timeout = Number(e.target.value)))} /></Field>
+                    <Field label="Ошибок до переключения"><input type="number" min={1} max={100} value={w.probe?.fail_threshold || 3} onChange={(e) => patch((d) => (d.wans[idx].probe.fail_threshold = Number(e.target.value)))} /></Field>
+                    <Field label="Успехов до возврата"><input type="number" min={1} max={100} value={w.probe?.rise_threshold || 2} onChange={(e) => patch((d) => (d.wans[idx].probe.rise_threshold = Number(e.target.value)))} /></Field>
+                  </div>
+                )}
 
                 <div className="field">
                   <label>Тип подключения</label>
@@ -292,6 +336,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
         </div>
       )}
     </Card>
+    </>
   );
 }
 

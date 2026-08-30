@@ -622,6 +622,7 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		default:
 			r.errf(path+".proto", "неизвестный тип подключения %q", w.Proto)
 		}
+		validateProbe(r, path+".probe", w.Probe)
 	}
 	if enabled == 0 && len(c.Networks) > 0 {
 		r.warnf("wans", "нет ни одного включённого аплинка — выхода в интернет не будет")
@@ -630,8 +631,61 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		r.warnf("multiwan.enabled",
 			"включено несколько аплинков, но Multi-WAN выключен — использоваться будет только один")
 	}
-	if enabled > 1 && c.MultiWAN.Enabled {
-		r.errf("multiwan.enabled", "автоматическое переключение и балансировка Multi-WAN ещё не реализованы")
+	if c.MultiWAN.Enabled {
+		if enabled < 2 {
+			r.warnf("multiwan.enabled", "для Multi-WAN нужно хотя бы два включённых аплинка")
+		}
+		switch c.MultiWAN.Mode {
+		case "failover":
+		case "balance":
+			r.errf("multiwan.mode", "балансировка Multi-WAN ещё не реализована; доступен failover")
+		default:
+			r.errf("multiwan.mode", "неизвестный режим Multi-WAN %q", c.MultiWAN.Mode)
+		}
+	}
+}
+
+func validateProbe(r *ValidationResult, path string, p Probe) {
+	if !p.Enabled {
+		return
+	}
+	switch p.Type {
+	case "icmp", "tcp", "http":
+	default:
+		r.errf(path+".type", "неизвестный тип проверки %q", p.Type)
+	}
+	if len(p.Targets) == 0 {
+		r.errf(path+".targets", "нужна хотя бы одна цель проверки")
+	}
+	for i, target := range p.Targets {
+		targetPath := fmt.Sprintf("%s.targets[%d]", path, i)
+		switch p.Type {
+		case "icmp":
+			if net.ParseIP(target) == nil {
+				r.errf(targetPath, "для ICMP нужен IP-адрес")
+			}
+		case "tcp":
+			host, port, err := net.SplitHostPort(target)
+			if err != nil || host == "" || !inPortRange(port) {
+				r.errf(targetPath, "цель TCP должна быть в формате host:port")
+			}
+		case "http":
+			if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+				r.errf(targetPath, "цель HTTP должна начинаться с http:// или https://")
+			}
+		}
+	}
+	if p.Interval < 1 || p.Interval > 3600 {
+		r.errf(path+".interval", "интервал должен быть 1-3600 секунд")
+	}
+	if p.Timeout < 1 || p.Timeout > 60 {
+		r.errf(path+".timeout", "таймаут должен быть 1-60 секунд")
+	}
+	if p.FailThreshold < 1 || p.FailThreshold > 100 {
+		r.errf(path+".fail_threshold", "порог отказа должен быть 1-100")
+	}
+	if p.RiseThreshold < 1 || p.RiseThreshold > 100 {
+		r.errf(path+".rise_threshold", "порог восстановления должен быть 1-100")
 	}
 }
 

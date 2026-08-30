@@ -26,6 +26,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/hostsettings"
+	"github.com/netos-router/netos/internal/subsys/multiwan"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/netiface"
 	"github.com/netos-router/netos/internal/subsys/routing"
@@ -106,7 +107,8 @@ func main() {
 	}
 
 	engine := apply.NewEngine(logger, *dryRun)
-	if err := registerSubsystems(engine, runner, logger); err != nil {
+	multiWAN := multiwan.New(runner, stateDir, logger)
+	if err := registerSubsystems(engine, runner, logger, multiWAN); err != nil {
 		log.Fatalf("регистрация подсистем: %v", err)
 	}
 
@@ -187,6 +189,7 @@ func main() {
 		printSummary(cfg)
 		return
 	}
+	go multiWAN.Run(ctx, engine.Current)
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
 	// Дальше пароль знает только владелец машины.
@@ -359,7 +362,7 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	return cfg, id, nil
 }
 
-func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger) error {
+func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller) error {
 	svc := services.NewManager(runner)
 
 	subsystems := []apply.Subsystem{
@@ -370,6 +373,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		netiface.NewInterfaces(runner),
 		netiface.NewNetworks(runner),
 		netiface.NewWAN(runner),
+		multiWAN,
 		netconf.New(runner, logger),
 		routing.New(runner),
 		channels.New(runner, stateDir),
