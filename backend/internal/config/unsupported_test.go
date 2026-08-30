@@ -56,3 +56,18 @@ func TestACMEFailsLoudly(t *testing.T) {
 	}
 	t.Fatalf("ACME молча принят: %+v", result.Problems)
 }
+
+func TestAdGuardHomeIsNotAdvertisedOrAcceptedBeforeImplementation(t *testing.T) {
+	if _, ok := ComponentByID("adguardhome"); ok {
+		t.Fatal("незавершённый AdGuard Home опубликован в каталоге компонентов")
+	}
+	cfg := Default()
+	cfg.DNS.Enabled = true
+	cfg.DNS.Provider = "adguardhome"
+	for _, problem := range cfg.Validate().Problems {
+		if problem.Path == "dns.provider" && problem.Severity == "error" {
+			return
+		}
+	}
+	t.Fatal("незавершённый провайдер AdGuard Home принят конфигурацией")
+}

@@ -98,14 +98,6 @@ var Catalog = []ComponentInfo{
 		RunUnits:    []string{"netos-dnsproxy.service"},
 		External:    true,
 	},
-	{
-		ID: "adguardhome", Title: "AdGuard Home", Group: "DNS",
-		Description: "Шифрованный DNS плюс блокировка рекламы и трекеров, своя статистика запросов.",
-		Provides:    []string{"dns", "dot", "doh", "doq", "adblock"},
-		SizeHint:    "около 40 МБ",
-		External:    true,
-	},
-
 	// --- VPN-клиенты ---
 	{
 		ID: "wireguard", Title: "WireGuard", Group: "VPN",

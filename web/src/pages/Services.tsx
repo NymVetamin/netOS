@@ -13,7 +13,6 @@ const DNS_CAPS: Record<
   // netOS фильтрует AAAA в unbound через respip-теги для loopback и локальных сегментов.
   unbound: { dot: true, doh: false, doq: false, filterAAAA: true },
   dnsproxy: { dot: true, doh: true, doq: true, filterAAAA: true },
-  adguardhome: { dot: true, doh: true, doq: true, filterAAAA: true },
 };
 
 // Порт, на который уходит dnsmasq, когда 53 занимает другой резолвер.
@@ -21,7 +20,7 @@ const DNS_CAPS: Record<
 const DNSMASQ_LOCAL_PORT = 5354;
 
 export function ServicesPage({ config, patch }: { config: any; patch: Patch }) {
-  const dnsProviders = installedProviders(config, ["dnsmasq", "unbound", "dnsproxy", "adguardhome"]);
+  const dnsProviders = installedProviders(config, ["dnsmasq", "unbound", "dnsproxy"]);
   const dhcpProviders = installedProviders(config, ["dnsmasq", "isc-dhcp-server", "kea"]);
 
   return (
@@ -153,8 +152,8 @@ function DNSSection({
     return (
       <Card title="Разрешение имён" subtitle="DNS-резолвер">
         <Notice tone="warn" title="Резолвер не установлен">
-          Установите dnsmasq, Unbound, dnsproxy или AdGuard Home в разделе «Компоненты».
-          Для шифрованного DNS (DoT, DoH) подойдут последние три.
+          Установите dnsmasq, Unbound или dnsproxy в разделе «Компоненты».
+          Для шифрованного DNS (DoT, DoH) подойдут последние два.
         </Notice>
       </Card>
     );
@@ -216,8 +215,8 @@ function DNSSection({
         {cantEncrypt && (
           <div style={{ marginTop: "1rem" }}>
             <Notice tone="warn" title="Выбранный резолвер не умеет шифровать запросы">
-              Настроено шифрованных апстримов: {encrypted.length}. Установите dnsproxy или
-              AdGuard Home, либо оставьте только обычные.
+              Настроено шифрованных апстримов: {encrypted.length}. Установите dnsproxy
+              либо оставьте только обычные.
             </Notice>
           </div>
         )}
@@ -226,8 +225,7 @@ function DNSSection({
           <div style={{ marginTop: "1rem" }}>
             <Notice tone="warn" title="Выбранный резолвер не фильтрует AAAA">
               В настройках IPv6 фильтр AAAA включён, но unbound вырезать эти записи не
-              умеет — клиенты будут их получать. Вырезать AAAA умеют dnsmasq, dnsproxy и
-              AdGuard Home.
+              умеет — клиенты будут их получать. Вырезать AAAA умеют dnsmasq и dnsproxy.
             </Notice>
           </div>
         )}

@@ -1311,7 +1311,7 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 func (c *Config) validateDNS(r *ValidationResult) {
 	if c.DNS.Provider != "" {
 		switch c.DNS.Provider {
-		case "dnsmasq", "unbound", "dnsproxy", "adguardhome":
+		case "dnsmasq", "unbound", "dnsproxy":
 		default:
 			r.errf("dns.provider", "неизвестный резолвер %q", c.DNS.Provider)
 		}
@@ -1335,7 +1335,7 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			}
 			if c.DNS.Enabled && c.DNS.Provider == "dnsmasq" {
 				r.errf(path+".type",
-					"dnsmasq не умеет %s — выберите unbound, dnsproxy или AdGuard Home",
+					"dnsmasq не умеет %s — выберите unbound или dnsproxy",
 					strings.ToUpper(u.Type))
 			}
 			if u.Type != "dot" && c.DNS.Enabled && c.DNS.Provider == "unbound" {

@@ -145,7 +145,7 @@ func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentIn
 		return s.installRelease(ctx, info.ID, rel)
 	}
 	switch info.ID {
-	case "xray", "adguardhome":
+	case "xray":
 		return fmt.Errorf("установка компонента %s появится вместе с поддержкой самого компонента", info.Title)
 	}
 	return fmt.Errorf("неизвестный внешний компонент %s", info.ID)

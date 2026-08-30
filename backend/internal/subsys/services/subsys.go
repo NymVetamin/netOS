@@ -74,9 +74,6 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 			if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" {
 				need["dnsmasq"] = true
 			}
-		case "adguardhome":
-			// Ставится не из apt, а отдельным установщиком — обрабатывается
-			// подсистемой adguardhome.
 		}
 	}
 	if len(need) == 0 {
@@ -316,8 +313,6 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 		if err := s.M.Dnsproxy.Apply(ctx, cfg); err != nil {
 			return err
 		}
-	case "adguardhome":
-		return fmt.Errorf("провайдер AdGuard Home появится в следующей фазе")
 	}
 	// Резолвер роутера переключается последним — после того, как выбранный
 	// демон уже поднят и проверен. Обратный порядок оставил бы машину без имён
