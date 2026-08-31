@@ -55,6 +55,11 @@ const (
 	// waitOnlineDropIn снимает требование к состоянию линка, которое netOS
 	// сделал невыполнимым. 99 — чтобы применяться после чужих drop-in.
 	waitOnlineDropIn = "/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"
+	// networkdOwnershipDropIn запрещает networkd удалять глобальные маршруты
+	// и policy rules, которыми владеет netOS. KeepConfiguration в .network
+	// защищает состояние конкретного линка, но не глобальные ip rule и таблицы
+	// каналов: обычный networkctl reload стирал их при живом Xray/WireGuard.
+	networkdOwnershipDropIn = "/etc/systemd/networkd.conf.d/99-netos.conf"
 	// nmConfPath отбирает интерфейсы у NetworkManager.
 	//
 	// systemd-networkd — не единственный, кто настраивает сеть в Debian и
@@ -103,7 +108,7 @@ func (s *Subsystem) Name() string { return "netconf" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	if old != nil && old.System.NetworkBackend == new.System.NetworkBackend &&
-		render(old) == render(new) {
+		render(old) == render(new) && !s.backendServicesDrift(context.Background(), new.System.NetworkBackend) {
 		return nil, nil
 	}
 
@@ -134,6 +139,9 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	backend := cfg.System.NetworkBackend
+	if err := s.syncNetworkdOwnership(ctx); err != nil {
+		return err
+	}
 
 	// NetworkManager отстраняется во всех режимах. Какой бы механизм ни
 	// описывал сеть — netOS, ifupdown или networkd, — интерфейсы принадлежат
@@ -168,20 +176,62 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	return s.applyNetOS(ctx, cfg)
 }
 
+// syncNetworkdOwnership закрепляет границу владения с systemd-networkd.
+//
+// KeepConfiguration=yes действует на адреса и маршруты конкретного линка.
+// Policy-routing rules и отдельные таблицы каналов глобальны, поэтому при
+// reload networkd считал их чужими и удалял. netOS — единый владелец этих
+// объектов; networkd должен управлять только тем, что создал сам.
+func (s *Subsystem) syncNetworkdOwnership(ctx context.Context) error {
+	if !s.unitPresent(ctx, "systemd-networkd.service") {
+		return removeFile(networkdOwnershipDropIn)
+	}
+	content := []byte(renderNetworkdOwnershipConf())
+	if !system.FileChanged(networkdOwnershipDropIn, content) {
+		return nil
+	}
+	if err := system.WriteFileAtomic(networkdOwnershipDropIn, content, 0o644); err != nil {
+		return fmt.Errorf("граница владения systemd-networkd: %w", err)
+	}
+	if s.unitActive(ctx, "systemd-networkd.service") {
+		// networkctl reload перечитывает .network/.netdev, но не глобальный
+		// networkd.conf: проверено на systemd 257 — опции владения оставались
+		// прежними и следующий reload всё равно удалял ip rule. Перезапуск нужен
+		// только один раз, когда drop-in создан или действительно изменился.
+		if _, err := s.Runner.Run(ctx, "systemctl", "restart", "systemd-networkd.service"); err != nil {
+			return fmt.Errorf("перезапуск systemd-networkd: %w", err)
+		}
+	}
+	return nil
+}
+
+func renderNetworkdOwnershipConf() string {
+	return `# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.
+# Маршруты и policy-routing rules, не созданные networkd, принадлежат netOS.
+[Network]
+ManageForeignRoutes=no
+ManageForeignRoutingPolicyRules=no
+`
+}
+
 // applyNetOS отбирает интерфейсы netOS у остальных механизмов настройки сети.
 func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
-	s.warnAboutIfupdown(ctx, cfg)
-
 	// Отбирать нечего, если механизма нет или он не работает.
 	if !s.unitPresent(ctx, "systemd-networkd.service") ||
 		!s.unitActive(ctx, "systemd-networkd.service") {
-		return s.syncWaitOnline(ctx, false)
+		if err := s.syncWaitOnline(ctx, false); err != nil {
+			return err
+		}
+		return s.activateBackend(ctx, "netos")
 	}
 
 	if err := s.syncNetworkdFiles(ctx, passiveFiles(cfg)); err != nil {
 		return err
 	}
-	return s.syncWaitOnline(ctx, true)
+	if err := s.syncWaitOnline(ctx, true); err != nil {
+		return err
+	}
+	return s.activateBackend(ctx, "netos")
 }
 
 // syncWaitOnline снимает с ожидания сети требование, которое netOS сделал
@@ -306,17 +356,79 @@ func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error
 		return err
 	}
 	content := []byte(renderIfupdown(cfg))
-	if !system.FileChanged(ifupdownPath, content) {
-		return nil
+	if system.FileChanged(ifupdownPath, content) {
+		if err := system.WriteFileAtomic(ifupdownPath, content, 0o644); err != nil {
+			return err
+		}
 	}
-	return system.WriteFileAtomic(ifupdownPath, content, 0o644)
+	return s.activateBackend(ctx, "ifupdown")
 }
 
 func (s *Subsystem) applyNetworkd(ctx context.Context, cfg *config.Config) error {
 	if err := s.requireUnit(ctx, "systemd-networkd.service", "systemd-networkd"); err != nil {
 		return err
 	}
-	return s.syncNetworkdFiles(ctx, renderNetworkd(cfg))
+	if err := s.syncNetworkdFiles(ctx, renderNetworkd(cfg)); err != nil {
+		return err
+	}
+	return s.activateBackend(ctx, "networkd")
+}
+
+// activateBackend makes the selected boot-time network owner real. Merely
+// writing its configuration is not enough: two enabled managers race after a
+// reboot and can add duplicate addresses, DHCP leases and default routes.
+func (s *Subsystem) activateBackend(ctx context.Context, backend string) error {
+	systemd := system.NewSystemd(s.Runner)
+	if backend == "ifupdown" {
+		if _, err := s.Runner.Run(ctx, "systemctl", "enable", "networking.service"); err != nil {
+			return fmt.Errorf("включение networking.service: %w", err)
+		}
+		if _, err := s.Runner.Run(ctx, "systemctl", "start", "networking.service"); err != nil {
+			return fmt.Errorf("запуск networking.service: %w", err)
+		}
+		if err := s.disableNetworkd(ctx); err != nil {
+			return fmt.Errorf("остановка systemd-networkd: %w", err)
+		}
+		return nil
+	}
+
+	if s.unitPresent(ctx, "systemd-networkd.service") {
+		for _, unit := range []string{"systemd-networkd.service", "systemd-networkd.socket"} {
+			if _, err := s.Runner.Run(ctx, "systemctl", "unmask", unit); err != nil {
+				return fmt.Errorf("снятие блокировки %s: %w", unit, err)
+			}
+		}
+		if _, err := s.Runner.Run(ctx, "systemctl", "enable", "systemd-networkd.service"); err != nil {
+			return fmt.Errorf("включение systemd-networkd: %w", err)
+		}
+		if _, err := s.Runner.Run(ctx, "systemctl", "start", "systemd-networkd.service"); err != nil {
+			return fmt.Errorf("запуск systemd-networkd: %w", err)
+		}
+	}
+	if err := systemd.Disable(ctx, "networking.service"); err != nil {
+		return fmt.Errorf("остановка networking.service: %w", err)
+	}
+	return nil
+}
+
+// disableNetworkd uses a persistent mask, because netplan's generator can
+// recreate a runtime enablement on every daemon-reload. Its socket is masked
+// too; otherwise stopping the service immediately activates it again.
+func (s *Subsystem) disableNetworkd(ctx context.Context) error {
+	for _, unit := range []string{"systemd-networkd.service", "systemd-networkd.socket"} {
+		if _, err := s.Runner.Run(ctx, "systemctl", "mask", unit); err != nil {
+			return err
+		}
+	}
+	for _, unit := range []string{"systemd-networkd.socket", "systemd-networkd.service"} {
+		if _, err := s.Runner.Run(ctx, "systemctl", "stop", unit); err != nil {
+			return err
+		}
+	}
+	if s.unitActive(ctx, "systemd-networkd.service") || s.unitActive(ctx, "systemd-networkd.socket") {
+		return fmt.Errorf("служба или socket продолжают работать после остановки")
+	}
+	return nil
 }
 
 // syncNetworkdFiles приводит наш набор файлов в /etc/systemd/network к
@@ -587,10 +699,33 @@ func (s *Subsystem) unitActive(ctx context.Context, unit string) bool {
 	return strings.TrimSpace(out) == "active"
 }
 
-// Health ничего не проверяет: живое состояние сети приводят в порядок
-// подсистемы interfaces, networks и wan, и именно их проверки поймают, если
-// адрес после передачи управления не вернулся.
-func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error { return nil }
+func (s *Subsystem) backendServicesDrift(ctx context.Context, backend string) bool {
+	networkdPresent := s.unitPresent(ctx, "systemd-networkd.service")
+	networkingPresent := s.unitPresent(ctx, "networking.service")
+	networkdSocketPresent := s.unitPresent(ctx, "systemd-networkd.socket")
+	if backend == "ifupdown" {
+		return !networkingPresent || !s.unitActive(ctx, "networking.service") ||
+			!s.unitEnabled(ctx, "networking.service") ||
+			(networkdPresent && (s.unitActive(ctx, "systemd-networkd.service") ||
+				s.unitEnabled(ctx, "systemd-networkd.service"))) ||
+			(networkdSocketPresent && (s.unitActive(ctx, "systemd-networkd.socket") ||
+				s.unitEnabled(ctx, "systemd-networkd.socket")))
+	}
+	return (networkdPresent && (!s.unitActive(ctx, "systemd-networkd.service") ||
+		!s.unitEnabled(ctx, "systemd-networkd.service"))) ||
+		(networkingPresent && (s.unitActive(ctx, "networking.service") ||
+			s.unitEnabled(ctx, "networking.service")))
+}
+
+// Health checks ownership as well as addressing. The latter is verified by
+// interfaces, networks and wan; this subsystem makes sure a second manager
+// cannot silently add another lease or default route after apply or reboot.
+func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
+	if !s.backendServicesDrift(ctx, cfg.System.NetworkBackend) {
+		return nil
+	}
+	return fmt.Errorf("службы настройки сети не соответствуют режиму %q", cfg.System.NetworkBackend)
+}
 
 // render — общий отпечаток конфигурации для сравнения в Plan.
 func render(cfg *config.Config) string {

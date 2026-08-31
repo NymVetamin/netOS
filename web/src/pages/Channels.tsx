@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
 type Props = {
@@ -32,7 +33,7 @@ export function ChannelsPage({ config, patch }: Props) {
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: `wg-${Date.now()}`,
+        id: newID("wg"),
         index,
         name: `WireGuard ${index}`,
         enabled: false,
@@ -61,7 +62,7 @@ export function ChannelsPage({ config, patch }: Props) {
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: `oc-${Date.now()}`, index, name: `OpenConnect ${index}`, enabled: false,
+        id: newID("oc"), index, name: `OpenConnect ${index}`, enabled: false,
         type: "openconnect", mode: "tun", fail_mode: "block", fallback: "",
         probe: { enabled: true, type: "icmp", targets: ["1.1.1.1"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: { server: "", username: "", password: "", protocol: "anyconnect", authgroup: "", servercert: "", mtu: 1400, no_dtls: false, no_system_trust: false },
@@ -75,7 +76,7 @@ export function ChannelsPage({ config, patch }: Props) {
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: `xray-${Date.now()}`, index, name: `Xray ${index}`, enabled: false,
+        id: newID("xray"), index, name: `Xray ${index}`, enabled: false,
         type: "xray", mode: "tun", fail_mode: "block", fallback: "",
         probe: { enabled: true, type: "tcp", targets: ["1.1.1.1:443"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: { mtu: 1400, outbound: { protocol: "vless", settings: { vnext: [] }, streamSettings: { network: "tcp", security: "none" } } },
@@ -472,7 +473,7 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
           patch((draft) => {
             const priority = Math.max(0, ...(draft.policies || []).map((item: any) => item.priority || 0)) + 100;
             draft.policies = draft.policies || [];
-            draft.policies.push({ id: `policy-${Date.now()}`, name: name.trim(), enabled: false, priority, channel, src_ip: "", src_mac: "", network: "", vpn_server: "", vpn_peer: "", protocol: "any", dst_port: "", dst_ip: "", domains: [], comment: "" });
+            draft.policies.push({ id: newID("policy"), name: name.trim(), enabled: false, priority, channel, src_ip: "", src_mac: "", network: "", vpn_server: "", vpn_peer: "", protocol: "any", dst_port: "", dst_ip: "", domains: [], comment: "" });
           });
           setName("");
         }}>Добавить</button>

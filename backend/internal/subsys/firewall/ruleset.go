@@ -423,7 +423,11 @@ func selectors(r config.FirewallRule) string {
 	var s strings.Builder
 
 	if r.Interface != "" {
-		fmt.Fprintf(&s, " -i %s", r.Interface)
+		if r.Flow == "out" {
+			fmt.Fprintf(&s, " -o %s", r.Interface)
+		} else {
+			fmt.Fprintf(&s, " -i %s", r.Interface)
+		}
 	}
 	if r.Protocol != "" && r.Protocol != "any" {
 		fmt.Fprintf(&s, " -p %s", r.Protocol)

@@ -79,6 +79,9 @@ export type Session = {
 
 let csrfToken: string | null = null;
 let draftVersion: number | null = null;
+// Last configuration known to be active (not merely a draft). It lets an open
+// tab distinguish a harmless backend restart from a genuine concurrent edit.
+let lastCleanConfigJSON: string | null = null;
 
 export class ApiError extends Error {
   status: number;
@@ -101,12 +104,26 @@ async function request<T>(
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (csrfToken && method !== "GET") headers["X-NetOS-CSRF"] = csrfToken;
 
-  const res = await fetch(path, {
-    method,
-    headers,
-    credentials: "same-origin",
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const encodedBody = body === undefined ? undefined : JSON.stringify(body);
+  const send = () => fetch(path, { method, headers, credentials: "same-origin", body: encodedBody });
+  let res = await send();
+
+  // Сессии хранятся в SQLite и переживают перезапуск netosd, а CSRF-токены
+  // намеренно остаются только в памяти процесса. Поэтому уже открытая вкладка
+  // после обновления backend получает 403 с устаревшим токеном. Один раз
+  // подтверждаем ту же HttpOnly-сессию и повторяем исходный запрос; повторный
+  // 403 возвращается вызывающему коду как обычно и права это не расширяет.
+  if (res.status === 403 && method !== "GET" && path !== "/api/login") {
+    const refreshed = await fetch("/api/session", { credentials: "same-origin" });
+    if (refreshed.ok) {
+      const session = await refreshed.json() as Session;
+      if (session.csrf_token) {
+        csrfToken = session.csrf_token;
+        headers["X-NetOS-CSRF"] = csrfToken;
+        res = await send();
+      }
+    }
+  }
 
   const text = await res.text();
   const isJSON = res.headers.get("content-type")?.includes("application/json");
@@ -164,14 +181,37 @@ export const api = {
   async getConfig() {
     const res = await request<ConfigResponse>("GET", "/api/config");
     draftVersion = res.draft_version;
+    if (!res.dirty && !res.pending_confirmation) {
+      lastCleanConfigJSON = JSON.stringify(res.config);
+    }
     return res;
   },
   async saveConfig(config: any) {
     if (draftVersion === null) throw new ApiError(409, "Сначала обновите конфигурацию");
-    const res = await request<ConfigResponse>("PUT", "/api/config", config, {
-      "If-Match": String(draftVersion),
-    });
+    let res: ConfigResponse;
+    try {
+      res = await request<ConfigResponse>("PUT", "/api/config", config, {
+        "If-Match": String(draftVersion),
+      });
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 409 || lastCleanConfigJSON === null) throw err;
+
+      // A backup, update or manual service restart recreates the in-memory
+      // draft counter. Retry only when no server-side draft/pending apply exists
+      // and the active tree is exactly the one this tab started from.
+      const fresh = await request<ConfigResponse>("GET", "/api/config");
+      if (fresh.dirty || fresh.pending_confirmation || JSON.stringify(fresh.config) !== lastCleanConfigJSON) {
+        throw err;
+      }
+      draftVersion = fresh.draft_version;
+      res = await request<ConfigResponse>("PUT", "/api/config", config, {
+        "If-Match": String(draftVersion),
+      });
+    }
     draftVersion = res.draft_version;
+    if (!res.dirty && !res.pending_confirmation) {
+      lastCleanConfigJSON = JSON.stringify(res.config);
+    }
     return res;
   },
   async discardDraft() {

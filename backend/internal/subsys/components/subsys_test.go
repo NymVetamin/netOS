@@ -15,13 +15,14 @@ func (testLogger) Infof(string, ...any)  {}
 func (testLogger) Warnf(string, ...any)  {}
 func (testLogger) Errorf(string, ...any) {}
 
-type removalFailureRunner struct{}
+type removalFailureRunner struct{ aptArgs []string }
 
-func (r *removalFailureRunner) Run(_ context.Context, name string, _ ...string) (string, error) {
+func (r *removalFailureRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	if name == "dpkg-query" {
 		return "install ok installed", nil
 	}
 	if name == "apt-get" {
+		r.aptArgs = append([]string(nil), args...)
 		return "", errors.New("purge failed")
 	}
 	return "", nil
@@ -41,6 +42,29 @@ func (r *componentRunner) RunInput(ctx context.Context, _ string, name string, a
 	return r.Run(ctx, name, args...)
 }
 
+type packageStateRunner map[string]bool
+
+func (r packageStateRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	if name == "dpkg-query" && len(args) > 0 && r[args[len(args)-1]] {
+		return "install ok installed", nil
+	}
+	return "", errors.New("not installed")
+}
+
+func (r packageStateRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+func TestComponentStateDistinguishesPartialInstallation(t *testing.T) {
+	s := New(packageStateRunner{"first": true}, testLogger{})
+	anyInstalled, allInstalled := s.componentState(context.Background(), config.ComponentInfo{
+		ID: "partial", Packages: []string{"first", "second"},
+	})
+	if !anyInstalled || allInstalled {
+		t.Fatalf("partial state lost: any=%v all=%v", anyInstalled, allInstalled)
+	}
+}
+
 func TestRemoveDoesNotPurgeEssentialPackage(t *testing.T) {
 	runner := &componentRunner{}
 	s := New(runner, nil)
@@ -56,12 +80,25 @@ func TestRemoveDoesNotPurgeEssentialPackage(t *testing.T) {
 }
 
 func TestApplyReportsRemovalFailure(t *testing.T) {
-	s := New(&removalFailureRunner{}, testLogger{})
+	runner := &removalFailureRunner{}
+	s := New(runner, testLogger{})
 	cfg := &config.Config{Components: []config.Component{{ID: "dnsmasq", Installed: false}}}
 	err := s.Apply(context.Background(), cfg)
 	if err == nil || !strings.Contains(err.Error(), "удалить dnsmasq") {
 		t.Fatalf("ошибка удаления потеряна: %v", err)
 	}
+	if !containsArgument(runner.aptArgs, "--autoremove") {
+		t.Fatalf("dependencies would remain after purge: %v", runner.aptArgs)
+	}
+}
+
+func containsArgument(args []string, wanted string) bool {
+	for _, arg := range args {
+		if arg == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 // Компонент, у которого пакет тянет за собой запускаемую службу, обязан

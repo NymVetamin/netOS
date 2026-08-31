@@ -2,12 +2,15 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Problem — одна найденная проблема конфигурации. Path указывает на поле в
@@ -147,7 +150,7 @@ func (c *Config) validateDDNS(r *ValidationResult) {
 	if !c.DDNS.Enabled {
 		return
 	}
-	if c.DDNS.Hostname == "" || len(c.DDNS.Hostname) > 253 || strings.ContainsAny(c.DDNS.Hostname, " /:@") {
+	if !validDNSName(c.DDNS.Hostname) || unsafeConfigText(c.DDNS.Hostname) {
 		r.errf("ddns.hostname", "укажите корректное доменное имя")
 	}
 	if c.DDNS.Interval < 60 || c.DDNS.Interval > 86400 {
@@ -169,20 +172,37 @@ func (c *Config) validateDDNS(r *ValidationResult) {
 	}
 	switch c.DDNS.Provider {
 	case "duckdns":
-		if c.DDNS.Token == "" {
+		if invalidDDNSSecret(c.DDNS.Token) {
 			r.errf("ddns.token", "для DuckDNS нужен токен")
 		}
 	case "cloudflare":
-		if c.DDNS.Token == "" || c.DDNS.ZoneID == "" || c.DDNS.RecordID == "" {
+		if invalidDDNSSecret(c.DDNS.Token) || invalidDDNSIdentifier(c.DDNS.ZoneID) || invalidDDNSIdentifier(c.DDNS.RecordID) {
 			r.errf("ddns", "для Cloudflare нужны API-токен, Zone ID и Record ID")
 		}
 	case "noip":
-		if c.DDNS.Username == "" || c.DDNS.Password == "" {
+		if invalidDDNSSecret(c.DDNS.Username) || strings.Contains(c.DDNS.Username, ":") || invalidDDNSSecret(c.DDNS.Password) {
 			r.errf("ddns", "для No-IP нужны имя пользователя и пароль")
 		}
 	default:
 		r.errf("ddns.provider", "неизвестный провайдер %q", c.DDNS.Provider)
 	}
+}
+
+func invalidDDNSSecret(value string) bool {
+	return value == "" || len(value) > 1024 || unsafeConfigText(value)
+}
+
+func invalidDDNSIdentifier(value string) bool {
+	if value == "" || len(value) > 256 || unsafeConfigText(value) {
+		return true
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (c *Config) validateQoS(r *ValidationResult) {
@@ -287,13 +307,32 @@ func (c *Config) validateSystem(r *ValidationResult) {
 	if !validTimezone(c.System.Timezone) {
 		r.errf("system.timezone", "некорректный часовой пояс")
 	}
+	if c.System.NTP.Enabled && len(c.System.NTP.Servers) == 0 {
+		r.errf("system.ntp.servers", "укажите хотя бы один сервер времени")
+	}
+	if len(c.System.NTP.Servers) > 8 {
+		r.errf("system.ntp.servers", "можно указать не больше 8 серверов времени")
+	}
+	ntpServers := map[string]bool{}
+	for i, server := range c.System.NTP.Servers {
+		path := fmt.Sprintf("system.ntp.servers[%d]", i)
+		if _, err := netip.ParseAddr(server); err != nil && !validDNSName(server) {
+			r.errf(path, "сервер времени должен быть DNS-именем или IP-адресом")
+		} else if ntpServers[strings.ToLower(server)] {
+			r.errf(path, "сервер времени указан повторно")
+		}
+		ntpServers[strings.ToLower(server)] = true
+	}
 	if p := c.System.Panel.Port; p < 1 || p > 65535 {
 		r.errf("system.panel.port", "порт панели вне диапазона 1-65535")
 	}
 	if c.DNS.Enabled && c.System.Panel.Port == c.DNS.Port {
 		r.errf("system.panel.port", "порт панели совпадает с портом DNS")
 	}
-	if c.System.Panel.CommitTimeout < 15 {
+	if c.System.Panel.CommitTimeout < 1 || c.System.Panel.CommitTimeout > 86400 {
+		r.errf("system.panel.commit_timeout",
+			"время подтверждения должно быть в диапазоне 1-86400 секунд")
+	} else if c.System.Panel.CommitTimeout < 15 {
 		r.warnf("system.panel.commit_timeout",
 			"меньше 15 секунд может не хватить, чтобы подтвердить изменения")
 	}
@@ -319,10 +358,14 @@ func (c *Config) validateSystem(r *ValidationResult) {
 // validateComponents следит, чтобы выбранные службы были установлены. Без
 // этого пользователь включит DHCP, а применение упадёт на отсутствующем пакете.
 func (c *Config) validateComponents(r *ValidationResult) {
+	seen := make(map[string]bool, len(c.Components))
 	for i, comp := range c.Components {
 		if _, ok := ComponentByID(comp.ID); !ok {
 			r.errf(fmt.Sprintf("components[%d].id", i), "неизвестный компонент %q", comp.ID)
+		} else if seen[comp.ID] {
+			r.errf(fmt.Sprintf("components[%d].id", i), "компонент %q указан повторно", comp.ID)
 		}
+		seen[comp.ID] = true
 	}
 
 	if c.DHCP.Enabled {
@@ -692,11 +735,11 @@ func (c *Config) validatePool(r *ValidationResult, path string, n Network, prefi
 	}
 	start, errS := netip.ParseAddr(p.Start)
 	end, errE := netip.ParseAddr(p.End)
-	if errS != nil {
+	if errS != nil || !start.Is4() {
 		r.errf(path+".dhcp_pool.start", "некорректный адрес начала пула")
 		return
 	}
-	if errE != nil {
+	if errE != nil || !end.Is4() {
 		r.errf(path+".dhcp_pool.end", "некорректный адрес конца пула")
 		return
 	}
@@ -709,12 +752,62 @@ func (c *Config) validatePool(r *ValidationResult, path string, n Network, prefi
 	if start.Compare(end) > 0 {
 		r.errf(path+".dhcp_pool", "начало пула больше конца")
 	}
-	if prefix.Addr() == start || prefix.Addr() == end {
+	if start.Compare(prefix.Addr()) <= 0 && end.Compare(prefix.Addr()) >= 0 {
 		r.errf(path+".dhcp_pool", "пул включает адрес самого роутера")
+	}
+	network := prefix.Masked().Addr()
+	broadcast := ipv4Broadcast(prefix)
+	if start.Compare(network) <= 0 || end.Compare(broadcast) >= 0 {
+		r.errf(path+".dhcp_pool", "пул не должен включать адрес сети или широковещательный адрес")
 	}
 	if p.LeaseTime < 120 {
 		r.warnf(path+".dhcp_pool.lease_time", "слишком короткое время аренды")
 	}
+	if p.LeaseTime < 1 || p.LeaseTime > 31_536_000 {
+		r.errf(path+".dhcp_pool.lease_time", "время аренды должно быть от 1 секунды до 365 дней")
+	}
+	for i, raw := range p.DNSServers {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil || !addr.Is4() {
+			r.errf(fmt.Sprintf("%s.dhcp_pool.dns_servers[%d]", path, i), "нужен корректный IPv4-адрес DNS-сервера")
+		}
+	}
+	if p.Gateway != "" {
+		addr, err := netip.ParseAddr(p.Gateway)
+		if err != nil || !addr.Is4() {
+			r.errf(path+".dhcp_pool.gateway", "нужен корректный IPv4-адрес шлюза")
+		} else if !prefix.Contains(addr) {
+			r.errf(path+".dhcp_pool.gateway", "шлюз должен принадлежать подсети сегмента")
+		}
+	}
+	if p.Domain != "" && !validDNSName(p.Domain) {
+		r.errf(path+".dhcp_pool.domain", "нужно корректное DNS-имя домена")
+	}
+	for code, value := range p.Options {
+		optionPath := path + ".dhcp_pool.options[" + strconv.Quote(code) + "]"
+		n, err := strconv.Atoi(code)
+		if err != nil || n < 1 || n > 254 {
+			r.errf(optionPath, "код DHCP-опции должен быть числом от 1 до 254")
+		}
+		if unsafeConfigText(value) {
+			r.errf(optionPath, "переводы строк и управляющие символы недопустимы")
+		}
+	}
+}
+
+func ipv4Broadcast(prefix netip.Prefix) netip.Addr {
+	bytes := prefix.Masked().Addr().As4()
+	network := binary.BigEndian.Uint32(bytes[:])
+	bits := prefix.Bits()
+	var hostMask uint32
+	if bits == 0 {
+		hostMask = ^uint32(0)
+	} else {
+		hostMask = ^uint32(0) >> bits
+	}
+	var out [4]byte
+	binary.BigEndian.PutUint32(out[:], network|hostMask)
+	return netip.AddrFrom4(out)
 }
 
 func (c *Config) validateWANs(r *ValidationResult) {
@@ -764,6 +857,9 @@ func (c *Config) validateWANs(r *ValidationResult) {
 					claimMetric(path, w.Metric+10, w.Name+" (сеть провайдера)")
 				}
 			}
+		}
+		if w.MTU != 0 && (w.MTU < 576 || w.MTU > 9216) {
+			r.errf(path+".mtu", "MTU вне разумного диапазона 576-9216")
 		}
 		switch w.Proto {
 		case "dhcp":
@@ -928,6 +1024,11 @@ func (c *Config) validateRouting(r *ValidationResult) {
 
 	for i, route := range c.Routing.Static {
 		path := fmt.Sprintf("routing.static[%d]", i)
+		switch route.Type {
+		case "", "unicast", "blackhole", "unreachable", "prohibit":
+		default:
+			r.errf(path+".type", "неизвестный тип маршрута %q", route.Type)
+		}
 		if route.Destination != "default" {
 			if _, err := netip.ParsePrefix(route.Destination); err != nil {
 				if _, err := netip.ParseAddr(route.Destination); err != nil {
@@ -942,6 +1043,12 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		}
 		if route.Gateway == "" && route.Interface == "" && route.Type == "" {
 			r.errf(path, "укажите шлюз, интерфейс или тип маршрута")
+		}
+		if route.Interface != "" && !ValidInterfaceName(route.Interface) {
+			r.errf(path+".interface", "некорректное имя интерфейса")
+		}
+		if route.Metric < 0 {
+			r.errf(path+".metric", "метрика не может быть отрицательной")
 		}
 		if route.Table != "" && !tables[route.Table] {
 			r.errf(path+".table", "неизвестная таблица %q", route.Table)
@@ -966,7 +1073,29 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		priorities[rule.Priority] = rule.Name
 		validateCIDR(r, path+".from", rule.From)
 		validateCIDR(r, path+".to", rule.To)
+		if rule.FwMark != "" && !validFwMark(rule.FwMark) {
+			r.errf(path+".fwmark", "метка должна быть 32-битным числом, при необходимости с маской: например 0x10/0xff")
+		}
+		if rule.Interface != "" && !ValidInterfaceName(rule.Interface) {
+			r.errf(path+".interface", "некорректное имя входного интерфейса")
+		}
 	}
+}
+
+func validFwMark(value string) bool {
+	parts := strings.Split(value, "/")
+	if len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 32); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Config) validateFirewall(r *ValidationResult) {
@@ -1010,6 +1139,27 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		default:
 			r.errf(path+".flow", "недопустимое направление %q", rule.Flow)
 		}
+		switch rule.Protocol {
+		case "", "any", "tcp", "udp", "icmp":
+		default:
+			r.errf(path+".protocol", "неподдерживаемый протокол %q", rule.Protocol)
+		}
+		if rule.Interface != "" && !ValidInterfaceName(rule.Interface) {
+			r.errf(path+".interface", "некорректное имя интерфейса")
+		}
+		if rule.ConnState != "" {
+			allowedStates := map[string]bool{"new": true, "established": true, "related": true, "invalid": true}
+			seenStates := map[string]bool{}
+			for _, state := range strings.Split(strings.ToLower(rule.ConnState), ",") {
+				state = strings.TrimSpace(state)
+				if !allowedStates[state] || seenStates[state] {
+					r.errf(path+".conn_state", "состояния соединения: new, established, related, invalid; без повторов")
+					break
+				}
+				seenStates[state] = true
+			}
+		}
+		validateSchedule(r, path+".schedule", rule.Schedule)
 		if rule.Zone != "global" && !zones[rule.Zone] {
 			r.errf(path+".zone", "неизвестная зона %q", rule.Zone)
 		}
@@ -1049,12 +1199,14 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		case "source":
 			if n.Interface == "" {
 				r.errf(path+".interface", "не выбран интерфейс, на выходе через который подменять адрес")
+			} else if !ValidInterfaceName(n.Interface) {
+				r.errf(path+".interface", "некорректное имя интерфейса")
 			} else if !ifaceNames[n.Interface] {
 				r.warnf(path+".interface", "интерфейс %q не описан в конфигурации", n.Interface)
 			}
 			validateCIDR(r, path+".source", n.Source)
 			if n.ToSource != "" {
-				if _, err := netip.ParseAddr(n.ToSource); err != nil {
+				if addr, err := netip.ParseAddr(n.ToSource); err != nil || !addr.Is4() {
 					r.errf(path+".to_source", "некорректный адрес подмены")
 				}
 			}
@@ -1064,7 +1216,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 			}
 			validatePortSpec(r, path+".ext_port", n.ExtPort)
 			validatePortSpec(r, path+".dest_port", n.DestPort)
-			if _, err := netip.ParseAddr(n.DestIP); err != nil {
+			if addr, err := netip.ParseAddr(n.DestIP); err != nil || !addr.Is4() {
 				r.errf(path+".dest_ip", "некорректный адрес назначения")
 			}
 			validateCIDR(r, path+".allow_from", n.AllowFrom)
@@ -1277,9 +1429,14 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 	networks := c.networkIDs()
 	seenMAC := map[string]bool{}
 	seenIP := map[string]bool{}
+	seenID := map[string]bool{}
 
 	for i, res := range c.DHCP.Reservations {
 		path := fmt.Sprintf("dhcp.reservations[%d]", i)
+		if res.ID == "" || seenID[res.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор привязки")
+		}
+		seenID[res.ID] = true
 		mac, err := net.ParseMAC(res.MAC)
 		if err != nil {
 			r.errf(path+".mac", "некорректный MAC-адрес")
@@ -1291,7 +1448,7 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 			seenMAC[key] = true
 		}
 		addr, err := netip.ParseAddr(res.IP)
-		if err != nil {
+		if err != nil || !addr.Is4() {
 			r.errf(path+".ip", "некорректный IP-адрес")
 		} else {
 			if seenIP[res.IP] {
@@ -1305,6 +1462,9 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 		if !networks[res.Network] {
 			r.errf(path+".network", "неизвестный сегмент %q", res.Network)
 		}
+		if res.Hostname != "" && !validDNSName(res.Hostname) {
+			r.errf(path+".hostname", "имя устройства должно быть корректным DNS-именем")
+		}
 	}
 }
 
@@ -1316,15 +1476,34 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			r.errf("dns.provider", "неизвестный резолвер %q", c.DNS.Provider)
 		}
 	}
+	if c.DNS.Port < 1 || c.DNS.Port > 65535 {
+		r.errf("dns.port", "порт DNS вне диапазона 1-65535")
+	}
+	if c.DNS.CacheSize < 0 || c.DNS.CacheSize > 1_000_000 {
+		r.errf("dns.cache_size", "размер кэша должен быть от 0 до 1000000 записей")
+	}
+	if c.DNS.LocalDomain != "" && !validDNSName(c.DNS.LocalDomain) {
+		r.errf("dns.local_domain", "нужно корректное DNS-имя локального домена")
+	}
+	for i, raw := range c.DNS.Bootstrap {
+		if err := validateDNSBootstrap(raw); err != nil {
+			r.errf(fmt.Sprintf("dns.bootstrap[%d]", i), "%v", err)
+		}
+	}
 
 	channels := c.usableChannelIDs()
 	upstreams := map[string]bool{}
 	upstreamByID := map[string]Upstream{}
 	channelOwner := map[string]string{}
 	secure := 0
+	upstreamIDs := map[string]bool{}
 
 	for i, u := range c.DNS.Upstreams {
 		path := fmt.Sprintf("dns.upstreams[%d]", i)
+		if u.ID == "" || upstreamIDs[u.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор апстрима")
+		}
+		upstreamIDs[u.ID] = true
 		upstreams[u.ID] = true
 		upstreamByID[u.ID] = u
 		switch u.Type {
@@ -1346,6 +1525,8 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 		if u.Address == "" {
 			r.errf(path+".address", "пустой адрес апстрима")
+		} else if err := validateDNSUpstreamAddress(c.DNS.Provider, u); err != nil {
+			r.errf(path+".address", "%v", err)
 		}
 		if u.Channel != "" && !channels[u.Channel] {
 			r.errf(path+".channel", "неизвестный канал %q", u.Channel)
@@ -1356,6 +1537,22 @@ func (c *Config) validateDNS(r *ValidationResult) {
 					r.errf(path+".address", "%v", err)
 				}
 			}
+		}
+	}
+
+	recordIDs := map[string]bool{}
+	for i, record := range c.DNS.StaticRecords {
+		path := fmt.Sprintf("dns.static_records[%d]", i)
+		if record.ID == "" || recordIDs[record.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор записи")
+		}
+		recordIDs[record.ID] = true
+		validateDNSRecord(r, path, record)
+		if c.DNS.Enabled && c.DNS.Provider == "dnsproxy" && record.Type != "A" {
+			r.errf(path+".type", "dnsproxy поддерживает локально только A-записи; выберите dnsmasq или unbound")
+		}
+		if c.DNS.Enabled && c.DNS.Provider == "dnsmasq" && record.Type == "TXT" && strings.Contains(record.Value, ",") {
+			r.errf(path+".value", "TXT-запись dnsmasq не должна содержать запятые")
 		}
 	}
 
@@ -1386,13 +1583,31 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			"имена клиентов, выданные по DHCP, разрешаться не будут: отдать их резолверу умеет только dnsmasq — выберите его сервером DHCP или задавайте имена вручную в записях DNS")
 	}
 
+	splitIDs := map[string]bool{}
 	for i, rule := range c.DNS.SplitRules {
 		path := fmt.Sprintf("dns.split_rules[%d]", i)
+		if rule.ID == "" || splitIDs[rule.ID] {
+			r.errf(path+".id", "пустой или повторяющийся идентификатор правила")
+		}
+		splitIDs[rule.ID] = true
 		if len(rule.Domains) == 0 {
 			r.errf(path+".domains", "правило без доменов")
 		}
+		seenDomains := map[string]bool{}
+		for j, raw := range rule.Domains {
+			domain := strings.Trim(raw, ".")
+			domainPath := fmt.Sprintf("%s.domains[%d]", path, j)
+			if domain == "" || !validDNSName(domain) || unsafeConfigText(raw) {
+				r.errf(domainPath, "нужно корректное DNS-имя домена")
+			} else if seenDomains[strings.ToLower(domain)] {
+				r.errf(domainPath, "домен уже указан в этом правиле")
+			}
+			seenDomains[strings.ToLower(domain)] = true
+		}
 		if rule.Upstream != "" && !upstreams[rule.Upstream] {
 			r.errf(path+".upstream", "неизвестный апстрим %q", rule.Upstream)
+		} else if rule.Enabled && rule.Upstream != "" && !upstreamByID[rule.Upstream].Enabled {
+			r.errf(path+".upstream", "выбранный апстрим выключен")
 		}
 		if rule.Channel != "" && !channels[rule.Channel] {
 			r.errf(path+".channel", "неизвестный канал %q", rule.Channel)
@@ -1420,6 +1635,167 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			r.errf(fmt.Sprintf("dns.blocklists[%d].enabled", i),
 				"загрузка и применение списков блокировки ещё не реализованы")
 		}
+	}
+}
+
+func unsafeConfigText(value string) bool {
+	if strings.TrimSpace(value) != value {
+		return true
+	}
+	for _, ch := range value {
+		if ch == 0 || ch == '\r' || ch == '\n' || ch < 0x20 || ch == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func validateDNSBootstrap(raw string) error {
+	if raw == "" || unsafeConfigText(raw) {
+		return fmt.Errorf("нужен буквальный IPv4-адрес bootstrap-сервера")
+	}
+	host, port := raw, ""
+	if h, p, err := net.SplitHostPort(raw); err == nil {
+		host, port = h, p
+	} else if strings.Count(raw, ":") > 0 {
+		return fmt.Errorf("bootstrap-сервер нужно указать как IPv4 или IPv4:порт")
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil || !addr.Is4() {
+		return fmt.Errorf("нужен буквальный IPv4-адрес bootstrap-сервера")
+	}
+	if port != "" && !inPortRange(port) {
+		return fmt.Errorf("порт bootstrap-сервера вне диапазона 1-65535")
+	}
+	return nil
+}
+
+func validDNSHost(value string) bool {
+	if addr, err := netip.ParseAddr(strings.Trim(value, "[]")); err == nil {
+		return addr.Is4()
+	}
+	return validDNSName(value)
+}
+
+func validateDNSUpstreamAddress(provider string, up Upstream) error {
+	raw := up.Address
+	if unsafeConfigText(raw) || strings.ContainsAny(raw, "\"'\\") {
+		return fmt.Errorf("адрес содержит недопустимые символы")
+	}
+	if provider == "dnsmasq" {
+		if up.Type != "plain" {
+			return nil // несовместимость типа сообщается отдельно
+		}
+		if strings.Contains(raw, "://") || strings.Contains(raw, "@") {
+			return fmt.Errorf("для dnsmasq используйте адрес вида 1.1.1.1 или 1.1.1.1#5353")
+		}
+		host, port, found := strings.Cut(raw, "#")
+		if !validDNSHost(host) || (found && !inPortRange(port)) || strings.Contains(port, "#") {
+			return fmt.Errorf("некорректный адрес DNS-сервера")
+		}
+		return nil
+	}
+	if provider == "unbound" {
+		if strings.Contains(raw, "://") {
+			return fmt.Errorf("для unbound используйте адрес вида 1.1.1.1@853#dns.example")
+		}
+		endpoint, tlsName, hasTLSName := strings.Cut(raw, "#")
+		host, port, hasPort := strings.Cut(endpoint, "@")
+		if !validDNSHost(host) || (hasPort && !inPortRange(port)) || strings.Contains(port, "@") {
+			return fmt.Errorf("некорректный адрес DNS-сервера")
+		}
+		if hasTLSName && !validDNSName(tlsName) {
+			return fmt.Errorf("некорректное имя сервера для проверки TLS")
+		}
+		return nil
+	}
+
+	// dnsproxy accepts URI endpoints; the short form is normalized by the renderer.
+	value := raw
+	if !strings.Contains(value, "://") {
+		scheme := map[string]string{"plain": "udp", "dot": "tls", "doh": "https", "doq": "quic"}[up.Type]
+		value = scheme + "://" + value
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
+		return fmt.Errorf("некорректный адрес DNS-сервера")
+	}
+	allowed := map[string]map[string]bool{
+		"plain": {"udp": true, "tcp": true}, "dot": {"tls": true},
+		"doh": {"https": true}, "doq": {"quic": true},
+	}
+	if !allowed[up.Type][strings.ToLower(parsed.Scheme)] {
+		return fmt.Errorf("схема адреса не соответствует типу апстрима %s", strings.ToUpper(up.Type))
+	}
+	if !validDNSHost(parsed.Hostname()) {
+		return fmt.Errorf("некорректное имя или адрес DNS-сервера")
+	}
+	if parsed.Port() != "" && !inPortRange(parsed.Port()) {
+		return fmt.Errorf("порт DNS-сервера вне диапазона 1-65535")
+	}
+	if up.Type == "doh" && parsed.Path == "" {
+		return fmt.Errorf("для DoH нужен полный HTTPS URL с путём запроса")
+	}
+	return nil
+}
+
+func validDNSRecordName(value string, allowUnderscore bool) bool {
+	if !allowUnderscore {
+		return validDNSName(value)
+	}
+	if len(value) == 0 || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		trimmed := strings.TrimPrefix(label, "_")
+		if trimmed == "" || !validDNSName(trimmed) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateUintField(value string, min, max int) bool {
+	n, err := strconv.Atoi(value)
+	return err == nil && n >= min && n <= max
+}
+
+func validateDNSRecord(r *ValidationResult, path string, record DNSRecord) {
+	if unsafeConfigText(record.Name) || !validDNSRecordName(record.Name, record.Type == "SRV") {
+		r.errf(path+".name", "некорректное имя DNS-записи")
+	}
+	if unsafeConfigText(record.Value) {
+		r.errf(path+".value", "переводы строк и управляющие символы недопустимы")
+		return
+	}
+	switch record.Type {
+	case "A":
+		addr, err := netip.ParseAddr(record.Value)
+		if err != nil || !addr.Is4() {
+			r.errf(path+".value", "для A-записи нужен IPv4-адрес")
+		}
+	case "CNAME":
+		if !validDNSName(strings.TrimSuffix(record.Value, ".")) {
+			r.errf(path+".value", "для CNAME нужно корректное DNS-имя")
+		}
+	case "TXT":
+		if record.Value == "" || len(record.Value) > 255 {
+			r.errf(path+".value", "TXT-значение должно содержать от 1 до 255 байт")
+		}
+	case "SRV":
+		fields := strings.Fields(record.Value)
+		if len(fields) != 4 || !validateUintField(fields[0], 0, 65535) ||
+			!validateUintField(fields[1], 0, 65535) || !validateUintField(fields[2], 1, 65535) ||
+			!validDNSName(strings.TrimSuffix(fields[3], ".")) {
+			r.errf(path+".value", "SRV задаётся как: приоритет вес порт имя-сервера")
+		}
+	case "MX":
+		fields := strings.Fields(record.Value)
+		if len(fields) != 2 || !validateUintField(fields[0], 0, 65535) || !validDNSName(strings.TrimSuffix(fields[1], ".")) {
+			r.errf(path+".value", "MX задаётся как: приоритет имя-почтового-сервера")
+		}
+	default:
+		r.errf(path+".type", "неподдерживаемый тип DNS-записи %q", record.Type)
 	}
 }
 
@@ -1683,6 +2059,7 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 				r.errf(path+".src_mac", "некорректный MAC-адрес")
 			}
 		}
+		validateSchedule(r, path+".schedule", p.Schedule)
 		if p.SrcIP == "" && p.SrcMAC == "" && p.Network == "" && p.VPNServer == "" &&
 			p.DstIP == "" && p.DstPort == "" && len(p.Domains) == 0 {
 			r.warnf(path, "политика без единого условия перехватит весь трафик")
@@ -1690,13 +2067,58 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 	}
 }
 
+func validateSchedule(r *ValidationResult, path string, schedule *Schedule) {
+	if schedule == nil {
+		return
+	}
+	allowedDays := map[string]bool{"Mon": true, "Tue": true, "Wed": true, "Thu": true, "Fri": true, "Sat": true, "Sun": true}
+	seen := map[string]bool{}
+	for i, day := range schedule.Days {
+		if !allowedDays[day] || seen[day] {
+			r.errf(fmt.Sprintf("%s.days[%d]", path, i), "день должен быть Mon, Tue, Wed, Thu, Fri, Sat или Sun и не повторяться")
+		}
+		seen[day] = true
+	}
+	for field, value := range map[string]string{"time_start": schedule.TimeStart, "time_stop": schedule.TimeStop} {
+		if value == "" {
+			continue
+		}
+		valid := false
+		if len(value) == 5 && value[2] == ':' {
+			_, err := time.Parse("15:04", value)
+			valid = err == nil
+		} else if len(value) == 8 && value[2] == ':' && value[5] == ':' {
+			_, err := time.Parse("15:04:05", value)
+			valid = err == nil
+		}
+		if !valid {
+			r.errf(path+"."+field, "время должно быть в формате ЧЧ:ММ или ЧЧ:ММ:СС")
+		}
+	}
+}
+
 func (c *Config) validateVPNServers(r *ValidationResult) {
 	channels := c.usableChannelIDs()
-	ports := map[int]string{}
+	ports := map[string]string{fmt.Sprintf("tcp/%d", c.System.Panel.Port): "веб-панель"}
+	if c.DNS.Enabled {
+		ports[fmt.Sprintf("tcp/%d", c.DNS.Port)] = "DNS"
+		ports[fmt.Sprintf("udp/%d", c.DNS.Port)] = "DNS"
+	}
+	claimPort := func(path, protocol string, port int, owner string) {
+		key := fmt.Sprintf("%s/%d", protocol, port)
+		if previous := ports[key]; previous != "" {
+			r.errf(path, "%s-порт %d уже занят: %s", strings.ToUpper(protocol), port, previous)
+			return
+		}
+		ports[key] = owner
+	}
 	ids := map[string]bool{}
 	indexes := map[int]bool{}
 	for i, s := range c.VPNServers {
 		path := fmt.Sprintf("vpn_servers[%d]", i)
+		if s.Name == "" || unsafeConfigText(s.Name) {
+			r.errf(path+".name", "название не должно быть пустым или содержать управляющие символы")
+		}
 		if s.ID == "" || ids[s.ID] {
 			r.errf(path+".id", "пустой или повторяющийся идентификатор VPN-сервера")
 		}
@@ -1716,14 +2138,26 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		subnet, err := netip.ParsePrefix(s.Subnet)
 		if err != nil || !subnet.Addr().Is4() {
 			r.errf(path+".subnet", "подсеть должна быть в формате 10.9.0.1/24")
-		}
-		if s.Enabled && s.Port != 0 && s.Type != "ikev2" {
-			if prev, ok := ports[s.Port]; ok {
-				r.errf(path+".port", "порт %d уже занят сервером %q", s.Port, prev)
+		} else {
+			if subnet.Bits() > 30 {
+				r.errf(path+".subnet", "в VPN-подсети должно быть место для сервера и хотя бы одного клиента")
 			}
-			ports[s.Port] = s.Name
-			if s.Port == c.System.Panel.Port {
-				r.errf(path+".port", "порт совпадает с портом веб-панели")
+			if subnet.Addr() == subnet.Masked().Addr() || subnet.Addr() == ipv4Broadcast(subnet) {
+				r.errf(path+".subnet", "укажите адрес VPN-сервера в подсети, а не адрес сети или broadcast")
+			}
+		}
+		if s.Enabled {
+			switch s.Type {
+			case "wireguard":
+				claimPort(path+".port", "udp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
+			case "xray":
+				claimPort(path+".port", "tcp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
+			case "ocserv":
+				claimPort(path+".port", "tcp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
+				claimPort(path+".port", "udp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
+			case "ikev2":
+				claimPort(path+".port", "udp", 500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
+				claimPort(path+".port", "udp", 4500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
 			}
 		}
 		if s.DefaultChannel != "" && !channels[s.DefaultChannel] {
@@ -1743,15 +2177,22 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 
 		seenAddr := map[string]bool{}
+		seenPeerIDs := map[string]bool{}
 		for j, peer := range s.Peers {
 			ppath := fmt.Sprintf("%s.peers[%d]", path, j)
+			if peer.ID == "" || seenPeerIDs[peer.ID] {
+				r.errf(ppath+".id", "пустой или повторяющийся идентификатор клиента")
+			}
+			seenPeerIDs[peer.ID] = true
 			addr, err := netip.ParseAddr(peer.Address)
-			if err != nil {
+			if err != nil || !addr.Is4() {
 				r.errf(ppath+".address", "некорректный адрес")
 				continue
 			}
 			if subnet.IsValid() && !subnet.Contains(addr) {
 				r.errf(ppath+".address", "адрес вне подсети сервера %s", s.Subnet)
+			} else if subnet.IsValid() && (addr == subnet.Addr() || addr == subnet.Masked().Addr() || addr == ipv4Broadcast(subnet)) {
+				r.errf(ppath+".address", "клиенту нельзя назначить адрес сервера, сети или broadcast")
 			}
 			if seenAddr[peer.Address] {
 				r.errf(ppath+".address", "адрес %s уже назначен другому клиенту", peer.Address)
@@ -1785,7 +2226,7 @@ func (c *Config) validateIKEv2Server(r *ValidationResult, path string, s VPNServ
 	if identity == "" {
 		identity = ike.PublicEndpoint
 	}
-	if identity == "" || strings.ContainsAny(identity, "\r\n\x00{}#") {
+	if identity == "" || !validDNSHost(identity) {
 		r.errf(path+".config.server_identity", "укажите безопасное имя сервера, совпадающее с сертификатом")
 	}
 	if ike.MTU != 0 && (ike.MTU < 1280 || ike.MTU > 9000) {
@@ -1814,6 +2255,9 @@ func (c *Config) validateIKEv2Server(r *ValidationResult, path string, s VPNServ
 		if peer.Enabled && len(peer.Credentials["password"]) < 8 {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль должен содержать не меньше 8 символов")
 		}
+		if unsafeConfigText(peer.Credentials["password"]) {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль не должен содержать управляющие символы")
+		}
 	}
 }
 
@@ -1830,7 +2274,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
 	}
 	if oc.PublicEndpoint != "" {
-		if host, port, err := net.SplitHostPort(oc.PublicEndpoint); err != nil || host == "" || !inPortRange(port) {
+		if host, port, err := net.SplitHostPort(oc.PublicEndpoint); err != nil || !validDNSHost(host) || !inPortRange(port) {
 			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:443")
 		}
 	}
@@ -1862,6 +2306,9 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 		usernames[username] = true
 		if peer.Enabled && len(peer.Credentials["password"]) < 8 {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль должен содержать не меньше 8 символов")
+		}
+		if unsafeConfigText(peer.Credentials["password"]) {
+			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль не должен содержать управляющие символы")
 		}
 	}
 }
@@ -1938,20 +2385,30 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 	if err != nil || len(key) != 32 {
 		r.errf(path+".config.private_key", "закрытый ключ Reality должен содержать 32 байта в base64url")
 	}
-	if host, port, err := net.SplitHostPort(xr.Destination); err != nil || host == "" || !inPortRange(port) {
+	if host, port, err := net.SplitHostPort(xr.Destination); err != nil || !validDNSHost(host) || !inPortRange(port) {
 		r.errf(path+".config.destination", "цель маскировки должна быть в формате www.example.com:443")
 	}
 	if xr.PublicEndpoint != "" {
-		if host, port, err := net.SplitHostPort(xr.PublicEndpoint); err != nil || host == "" || !inPortRange(port) {
+		if host, port, err := net.SplitHostPort(xr.PublicEndpoint); err != nil || !validDNSHost(host) || !inPortRange(port) {
 			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:443")
 		}
 	}
 	if len(xr.ServerNames) == 0 {
 		r.errf(path+".config.server_names", "укажите хотя бы одно имя сервера Reality")
 	}
+	serverNames := map[string]bool{}
+	for i, name := range xr.ServerNames {
+		if !validDNSName(name) {
+			r.errf(fmt.Sprintf("%s.config.server_names[%d]", path, i), "некорректное DNS-имя Reality")
+		} else if serverNames[strings.ToLower(name)] {
+			r.errf(fmt.Sprintf("%s.config.server_names[%d]", path, i), "имя Reality указано повторно")
+		}
+		serverNames[strings.ToLower(name)] = true
+	}
 	if len(xr.ShortIDs) == 0 {
 		r.errf(path+".config.short_ids", "укажите хотя бы один short ID Reality")
 	}
+	shortIDs := map[string]bool{}
 	for i, id := range xr.ShortIDs {
 		if len(id) == 0 || len(id) > 16 || len(id)%2 != 0 {
 			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен содержать чётное число hex-символов, не больше 16")
@@ -1960,6 +2417,13 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 		if _, err := hex.DecodeString(id); err != nil {
 			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен быть шестнадцатеричным")
 		}
+		if shortIDs[strings.ToLower(id)] {
+			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID указан повторно")
+		}
+		shortIDs[strings.ToLower(id)] = true
+	}
+	if xr.Flow != "" && xr.Flow != "xtls-rprx-vision" {
+		r.errf(path+".config.flow", "поддерживается только поток xtls-rprx-vision")
 	}
 	if s.Port < 1 || s.Port > 65535 {
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
@@ -2002,7 +2466,7 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
 	}
 	if wg.PublicEndpoint != "" {
-		if host, port, err := net.SplitHostPort(wg.PublicEndpoint); err != nil || host == "" || !inPortRange(port) {
+		if host, port, err := net.SplitHostPort(wg.PublicEndpoint); err != nil || !validDNSHost(host) || !inPortRange(port) {
 			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:51820")
 		}
 	}
@@ -2064,12 +2528,15 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 		devices[radio.Device] = true
 		switch radio.Band {
 		case "2.4":
-			if radio.Channel < 1 || radio.Channel > 14 {
-				r.errf(path+".channel", "для диапазона 2,4 ГГц нужен канал 1-14")
+			// The renderer always enables 802.11n, while channel 14 is an
+			// 802.11b-only special case in Japan. Advertising it would produce a
+			// hostapd configuration that cannot start.
+			if radio.Channel < 1 || radio.Channel > 13 {
+				r.errf(path+".channel", "для диапазона 2,4 ГГц нужен канал 1-13")
 			}
 		case "5":
-			if radio.Channel < 32 || radio.Channel > 177 {
-				r.errf(path+".channel", "для диапазона 5 ГГц нужен канал 32-177")
+			if !valid5GHzPrimaryChannel(radio.Channel) {
+				r.errf(path+".channel", "нужен стандартный первичный канал 5 ГГц")
 			}
 		default:
 			r.errf(path+".band", "поддерживаются диапазоны 2,4 и 5 ГГц")
@@ -2080,7 +2547,10 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 		if radio.Band == "2.4" && radio.Width == 80 {
 			r.errf(path+".width", "80 МГц недоступны в диапазоне 2,4 ГГц")
 		}
-		if len(radio.Country) != 2 || strings.ToUpper(radio.Country) < "AA" || strings.ToUpper(radio.Country) > "ZZ" {
+		if radio.Band == "5" && radio.Width > 20 && !valid5GHzWidePrimaryChannel(radio.Channel) {
+			r.errf(path+".channel", "для ширины 40/80 МГц выберите канал 36-161 из стандартного блока")
+		}
+		if len(radio.Country) != 2 || !asciiLetter(radio.Country[0]) || !asciiLetter(radio.Country[1]) {
 			r.errf(path+".country", "нужен двухбуквенный код страны")
 		}
 		if radio.TxPower < 0 || radio.TxPower > 40 {
@@ -2094,8 +2564,11 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 				enabledSSIDs++
 			}
 		}
-		if enabledSSIDs > 1 && len(radio.Device) > 12 {
-			r.errf(path+".device", "имя устройства слишком длинное для нескольких SSID")
+		if enabledSSIDs > 1 {
+			lastBSS := fmt.Sprintf("%s-n%d", radio.Device, enabledSSIDs-1)
+			if len(lastBSS) > 15 {
+				r.errf(path+".device", "имя устройства слишком длинное для %d Wi-Fi-сетей", enabledSSIDs)
+			}
 		}
 		if radio.Enabled && enabledSSIDs == 0 {
 			r.errf(path+".ssids", "включите хотя бы одну Wi-Fi-сеть")
@@ -2138,6 +2611,23 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 			}
 		}
 	}
+}
+
+func asciiLetter(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+}
+
+func valid5GHzPrimaryChannel(channel int) bool {
+	for _, candidate := range []int{36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165, 169, 173, 177} {
+		if channel == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func valid5GHzWidePrimaryChannel(channel int) bool {
+	return valid5GHzPrimaryChannel(channel) && channel <= 161
 }
 
 // --- вспомогательное ---
@@ -2202,13 +2692,13 @@ func validateCIDR(r *ValidationResult, path, value string) {
 	if value == "" {
 		return
 	}
-	if _, err := netip.ParsePrefix(value); err == nil {
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
 		return
 	}
-	if _, err := netip.ParseAddr(value); err == nil {
+	if addr, err := netip.ParseAddr(value); err == nil && addr.Is4() {
 		return
 	}
-	r.errf(path, "ожидается адрес или подсеть, получено %q", value)
+	r.errf(path, "ожидается IPv4-адрес или подсеть, получено %q", value)
 }
 
 func validatePortSpec(r *ValidationResult, path, value string) {

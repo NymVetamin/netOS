@@ -34,11 +34,8 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 	} else {
 		fmt.Fprintln(&b, "hw_mode=a\nieee80211n=1\nieee80211ac=1")
 	}
-	if radio.Width == 40 {
-		direction := "+"
-		if radio.Band == "2.4" && radio.Channel > 7 {
-			direction = "-"
-		}
+	if radio.Width == 40 || radio.Width == 80 {
+		direction := secondaryChannelDirection(radio.Band, radio.Channel)
 		fmt.Fprintf(&b, "ht_capab=[HT40%s]\n", direction)
 	}
 	if radio.Width == 80 {
@@ -51,6 +48,26 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 		renderSSID(&b, ssid, bridges[ssid.Network])
 	}
 	return []byte(b.String()), nil
+}
+
+func secondaryChannelDirection(band string, channel int) string {
+	if band == "2.4" {
+		if channel > 7 {
+			return "-"
+		}
+		return "+"
+	}
+	// Standard 5 GHz primary channels alternate their secondary channel
+	// above/below inside each 80 MHz block.
+	for _, lower := range []int{40, 48, 56, 64, 104, 112, 120, 128, 136, 144, 153, 161} {
+		if channel == lower {
+			return "-"
+		}
+	}
+	if channel == 165 || channel == 173 {
+		return "-"
+	}
+	return "+"
 }
 
 func renderSSID(b *strings.Builder, ssid config.WiFiSSID, bridge string) {

@@ -2,7 +2,6 @@ package config
 
 import (
 	"strconv"
-	"strings"
 )
 
 // Ссылки между интерфейсами хранятся по идентификатору, а не по имени.
@@ -133,7 +132,11 @@ func ValidInterfaceName(name string) bool {
 	if name == "" || len(name) > maxInterfaceName || name == "." || name == ".." {
 		return false
 	}
-	if strings.ContainsAny(name, " \t/:%") {
+	for _, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' {
+			continue
+		}
 		return false
 	}
 	return true

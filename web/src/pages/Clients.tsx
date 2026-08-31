@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
+import { newID } from "../id";
 import { Badge, Card, Empty, TableWrap } from "../ui";
 
 // Для каждого клиента можно переопределить канал сегмента. Явные политики
@@ -313,7 +314,7 @@ function AddReservation({
           patch((d) => {
             d.dhcp.reservations = d.dhcp.reservations || [];
             d.dhcp.reservations.push({
-              id: "res-" + Date.now(),
+              id: newID("res"),
               enabled: true,
               mac: mac.toLowerCase(),
               ip,

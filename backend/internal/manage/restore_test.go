@@ -181,6 +181,66 @@ func TestResetNoBackupFlagSkipsArchive(t *testing.T) {
 	}
 }
 
+func TestResetRemovesAppliedRuntimeBeforeForgettingConfiguration(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	unit := filepath.Join(m.Root, "etc/systemd/system/netos-xray-ch7.service")
+	link := filepath.Join(m.Root, "sys/class/net/tun-ch7")
+	ownership := filepath.Join(m.Root, "etc/systemd/networkd.conf.d/99-netos.conf")
+	resolv := filepath.Join(m.Root, "etc/resolv.conf")
+	resolvState := filepath.Join(m.StateDir, "resolv-conf.state")
+	for _, path := range []string{unit, ownership} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(link, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(resolvState), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resolv, []byte("nameserver 127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resolvState,
+		[]byte(`{"kind":"file","content":"nameserver 192.0.2.53\n","resolved_enabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var commands []command
+	m.Run = func(_ context.Context, spec command) error {
+		commands = append(commands, spec)
+		return nil
+	}
+	if err := m.Execute(context.Background(), []string{"reset", "--yes", "--no-backup"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{unit, ownership} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("после сброса остался %s", path)
+		}
+	}
+	if data, err := os.ReadFile(resolv); err != nil || string(data) != "nameserver 192.0.2.53\n" {
+		t.Fatalf("системный resolv.conf не восстановлен: %q, %v", data, err)
+	}
+	var stoppedUnit, removedLink bool
+	for _, spec := range commands {
+		if spec.name == "systemctl" && contains(spec.args, "netos-xray-ch7.service") && contains(spec.args, "--now") {
+			stoppedUnit = true
+		}
+		if spec.name == "ip" && contains(spec.args, "delete") && contains(spec.args, "tun-ch7") {
+			removedLink = true
+		}
+	}
+	if !stoppedUnit || !removedLink {
+		t.Fatalf("runtime не снят: unit=%v link=%v commands=%#v", stoppedUnit, removedLink, commands)
+	}
+}
+
 // Администратор стоит перед терминалом ровно затем, чтобы узнать пароль.
 // Отправлять его читать файл — лишний шаг.
 func TestResetPrintsCredentialsOnScreen(t *testing.T) {
@@ -192,7 +252,8 @@ func TestResetPrintsCredentialsOnScreen(t *testing.T) {
 	credentials := filepath.Join(m.StateDir, "initial-credentials")
 	m.Run = func(_ context.Context, spec command) error {
 		// Демон заводит учётную запись при запуске — подделываем этот момент.
-		if spec.name == "systemctl" && len(spec.args) > 0 && spec.args[0] == "start" {
+		if spec.name == "systemctl" && len(spec.args) > 0 &&
+			(spec.args[0] == "start" || spec.args[0] == "enable") {
 			return os.WriteFile(credentials,
 				[]byte("Пользователь:  admin\nПароль:        Sekret123456\n"), 0o600)
 		}

@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -115,9 +116,9 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	// каналов, разрешает адреса VPN-эндпоинтов и ходит за обновлениями.
 	w("interface=lo")
 	w("listen-address=127.0.0.1")
-	w("domain-needed")     // не пересылать наверх имена без домена
-	w("bogus-priv")        // не пересылать обратные запросы для приватных сетей
-	w("no-resolv")         // апстримы задаём сами, /etc/resolv.conf не читаем
+	w("domain-needed") // не пересылать наверх имена без домена
+	w("bogus-priv")    // не пересылать обратные запросы для приватных сетей
+	w("no-resolv")     // апстримы задаём сами, /etc/resolv.conf не читаем
 	w("no-poll")
 	w("cache-size=%d", cfg.DNS.CacheSize)
 
@@ -180,9 +181,18 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		case "TXT":
 			w("txt-record=%s,%s", rec.Name, rec.Value)
 		case "SRV":
-			w("srv-host=%s,%s", rec.Name, rec.Value)
+			// Canonical value is RFC order: priority weight port target.
+			// dnsmasq expects target,port,priority,weight.
+			fields := strings.Fields(rec.Value)
+			if len(fields) == 4 {
+				w("srv-host=%s,%s,%s,%s,%s", rec.Name, fields[3], fields[2], fields[0], fields[1])
+			}
 		case "MX":
-			w("mx-host=%s,%s", rec.Name, rec.Value)
+			// Canonical value is RFC order: priority target; dnsmasq uses target,priority.
+			fields := strings.Fields(rec.Value)
+			if len(fields) == 2 {
+				w("mx-host=%s,%s,%s", rec.Name, fields[1], fields[0])
+			}
 		}
 	}
 	w("")
@@ -309,7 +319,10 @@ func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID m
 // переспрашивать аренды.
 func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
-		return d.Systemd.Disable(ctx, dnsmasqUnit)
+		if err := d.Systemd.Disable(ctx, dnsmasqUnit); err != nil {
+			return err
+		}
+		return removeGenerated(dnsmasqConfPath)
 	}
 
 	content := []byte(d.Render(cfg))
@@ -317,6 +330,9 @@ func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
 
 	if err := system.WriteFileAtomic(dnsmasqConfPath, content, 0o644); err != nil {
 		return err
+	}
+	if err := os.Chmod(dnsmasqLeasePath, 0o600); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("права файла аренд dnsmasq: %w", err)
 	}
 	if err := d.ensureUnit(ctx); err != nil {
 		return err
@@ -348,6 +364,7 @@ ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=` + dnsmasqConfPath
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

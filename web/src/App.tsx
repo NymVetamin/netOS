@@ -353,7 +353,13 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         </div>
 
         <nav className="nav">
-          {NAV.map((group) => (
+          {NAV.map((group) => ({
+            ...group,
+            // Rendered service configurations can contain private keys and
+            // credentials. The API correctly keeps them admin-only, so do not
+            // offer a viewer a page that can only end in 403.
+            items: group.items.filter((item) => session.role === "admin" || item.id !== "diagnostics"),
+          })).filter((group) => group.items.length > 0).map((group) => (
             <div key={group.group}>
               <div className="nav-group-title">{group.group}</div>
               {group.items.map((item) => (
@@ -452,7 +458,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} />
               )}
               {page === "history" && <HistoryPage onRestored={reload} />}
-              {page === "diagnostics" && <DiagnosticsPage />}
+              {page === "diagnostics" && session.role === "admin" && <DiagnosticsPage />}
             </>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -193,7 +194,7 @@ function RuleForm({
   const zones: any[] = config.firewall?.zones || [];
   const [r, setR] = useState<any>(
     initial || {
-      id: "rule-" + Date.now(),
+      id: newID("rule"),
       name: "",
       enabled: true,
       system: false,
@@ -475,7 +476,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
     patch((d) => {
       d.firewall.nat = d.firewall.nat || [];
       const base = {
-        id: "nat-" + Date.now(),
+        id: newID("nat"),
         enabled: true,
         system: false,
         interface: d.interfaces?.[0]?.name || "",

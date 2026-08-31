@@ -28,8 +28,11 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 	if strings.HasPrefix(cmd, "systemctl is-active netos-hostapd-") && r.active {
 		return "active\n", nil
 	}
-	if cmd == "iw dev wlan0 info" && r.active {
-		return "Interface wlan0\n\ttype AP\n\tchannel 36\n", nil
+	if strings.HasPrefix(cmd, "iw dev wlan0 info") && r.active {
+		return "Interface wlan0\n\tssid netOS\n\ttype AP\n\tchannel 36\n", nil
+	}
+	if strings.HasPrefix(cmd, "iw dev wlan0-n1 info") && r.active {
+		return "Interface wlan0-n1\n\tssid netOS Guest\n\ttype AP\n\tchannel 36\n", nil
 	}
 	return "", nil
 }
@@ -62,10 +65,27 @@ func TestRenderRadio(t *testing.T) {
 	for _, want := range []string{
 		"interface=wlan0", "bridge=br0", "ssid=netOS", "wpa_key_mgmt=WPA-PSK SAE",
 		"bss=wlan0-n1", "ssid=netOS Guest", "wpa_key_mgmt=SAE", "ap_isolate=1",
-		"vht_oper_centr_freq_seg0_idx=42",
+		"ht_capab=[HT40+]", "vht_oper_centr_freq_seg0_idx=42",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("render lacks %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestFiveGHzSecondaryDirection(t *testing.T) {
+	cfg := wifiConfig()
+	for _, tc := range []struct {
+		channel int
+		want    string
+	}{{36, "[HT40+]"}, {40, "[HT40-]"}, {44, "[HT40+]"}, {48, "[HT40-]"}} {
+		cfg.WiFi[0].Channel = tc.channel
+		out, err := RenderRadio(cfg.WiFi[0], cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), tc.want) {
+			t.Errorf("channel %d lacks %s:\n%s", tc.channel, tc.want, out)
 		}
 	}
 }

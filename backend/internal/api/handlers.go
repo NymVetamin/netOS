@@ -63,7 +63,11 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 		publicKey, err = wireGuardPublicKey(privateKey)
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "не удалось сгенерировать ключи WireGuard")
+		if input.PrivateKey != "" {
+			writeError(w, http.StatusBadRequest, "некорректный закрытый ключ WireGuard")
+		} else {
+			writeError(w, http.StatusInternalServerError, "не удалось сгенерировать ключи WireGuard")
+		}
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

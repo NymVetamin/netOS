@@ -206,11 +206,14 @@ func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := system.WriteFileAtomic(iscConfPath, content, 0o644); err != nil {
 		return err
 	}
-	lease, err := os.OpenFile(iscLeasePath, os.O_CREATE|os.O_WRONLY, 0o644)
+	lease, err := os.OpenFile(iscLeasePath, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	if err := lease.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(iscLeasePath, 0o600); err != nil {
 		return err
 	}
 	if err := d.ensureUnit(ctx, cfg); err != nil {
@@ -226,7 +229,7 @@ func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 }
 func (d *ISCDHCP) ensureUnit(ctx context.Context, cfg *config.Config) error {
 	args := strings.Join(d.interfaces(cfg), " ")
-	unit := "[Unit]\nDescription=netOS ISC DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nExecStart=/usr/sbin/dhcpd -4 -f -q -cf " + iscConfPath + " -lf " + iscLeasePath + " --no-pid " + args + "\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n"
+	unit := "[Unit]\nDescription=netOS ISC DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nExecStart=/usr/sbin/dhcpd -4 -f -q -cf " + iscConfPath + " -lf " + iscLeasePath + " --no-pid " + args + "\nRestart=always\nRestartSec=2\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
 	path := filepath.Join("/etc/systemd/system", iscUnit)
 	if !system.FileChanged(path, []byte(unit)) {
 		return nil

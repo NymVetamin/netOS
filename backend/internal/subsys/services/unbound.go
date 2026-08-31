@@ -188,7 +188,10 @@ func (u *Unbound) renderStaticRecords(b *strings.Builder, cfg *config.Config) {
 		case "CNAME":
 			w("    local-data: \"%s. CNAME %s.\"", rec.Name, strings.TrimSuffix(rec.Value, "."))
 		case "TXT":
-			w("    local-data: \"%s. TXT %q\"", rec.Name, rec.Value)
+			// Unbound explicitly requires single quotes around local-data that
+			// contains TXT's double-quoted character string.
+			escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `'`, `\'`).Replace(rec.Value)
+			w("    local-data: '%s. TXT \"%s\"'", rec.Name, escaped)
 		case "SRV":
 			w("    local-data: \"%s. SRV %s\"", rec.Name, rec.Value)
 		case "MX":
@@ -325,7 +328,10 @@ func localZones(cfg *config.Config) []string {
 
 func (u *Unbound) Apply(ctx context.Context, cfg *config.Config) error {
 	if !u.Needed(cfg) {
-		return u.Systemd.Disable(ctx, unboundUnit)
+		if err := u.Systemd.Disable(ctx, unboundUnit); err != nil {
+			return err
+		}
+		return removeGenerated(unboundConfPath)
 	}
 
 	content := []byte(u.Render(cfg))

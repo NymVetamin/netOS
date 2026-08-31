@@ -273,6 +273,19 @@ func TestNetworkdKeepsConfigurationMadeByNetOS(t *testing.T) {
 	}
 }
 
+func TestNetworkdDoesNotDeleteGlobalNetOSRoutingState(t *testing.T) {
+	out := renderNetworkdOwnershipConf()
+	for _, want := range []string{
+		"[Network]",
+		"ManageForeignRoutes=no",
+		"ManageForeignRoutingPolicyRules=no",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("networkd может удалить состояние netOS, нет %q:\n%s", want, out)
+		}
+	}
+}
+
 // У каждого режима свой результат, и он не пустой ни в одном из них: даже
 // прямое управление требует сказать systemd-networkd не трогать адресацию.
 func TestEachBackendProducesItsOwnDescription(t *testing.T) {
@@ -326,7 +339,6 @@ func TestNetconfRunsBeforeAddressingSubsystems(t *testing.T) {
 		}
 	}
 }
-
 
 // systemd-networkd — не единственный, кто настраивает сеть в Debian и Ubuntu.
 // На образах с NetworkManager он ведёт себя так же: держит своё представление

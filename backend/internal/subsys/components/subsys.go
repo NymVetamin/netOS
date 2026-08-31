@@ -44,24 +44,21 @@ func (s *Subsystem) Name() string { return "components" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
-
-	previous := map[string]bool{}
-	if old != nil {
-		for _, c := range old.Components {
-			previous[c.ID] = c.Installed
-		}
+	desired := map[string]bool{}
+	for _, component := range new.Components {
+		desired[component.ID] = component.Installed
 	}
 
-	for _, c := range new.Components {
-		info, ok := config.ComponentByID(c.ID)
-		if !ok {
+	for _, info := range config.Catalog {
+		want := desired[info.ID]
+		anyInstalled, allInstalled := s.componentState(context.Background(), info)
+		if info.Essential && !want {
 			continue
 		}
-		was := previous[c.ID]
-		if c.Installed == was {
+		if want && allInstalled || !want && !anyInstalled {
 			continue
 		}
-		if c.Installed {
+		if want {
 			actions = append(actions, apply.Action{
 				Kind: "create", Target: info.Title,
 				Detail: "установка, " + info.SizeHint,
@@ -82,14 +79,22 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 // должна примениться, а о неудаче администратор узнает из журнала и панели.
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	var failures []string
+	desired := map[string]bool{}
+	for _, component := range cfg.Components {
+		desired[component.ID] = component.Installed
+	}
 
-	for _, c := range cfg.Components {
-		info, ok := config.ComponentByID(c.ID)
-		if !ok {
+	for _, info := range config.Catalog {
+		want := desired[info.ID]
+		anyInstalled, allInstalled := s.componentState(ctx, info)
+		if info.Essential && !want {
+			continue
+		}
+		if want && allInstalled || !want && !anyInstalled {
 			continue
 		}
 
-		if c.Installed {
+		if want {
 			if err := s.install(ctx, info); err != nil {
 				s.Logger.Warnf("компонент %s: %v", info.Title, err)
 				failures = append(failures, info.Title)
@@ -106,6 +111,25 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("не удалось изменить компоненты: %s", strings.Join(failures, ", "))
 	}
 	return nil
+}
+
+// componentState distinguishes a complete installation from a partial one.
+// The latter must be completed when selected and fully purged when omitted.
+func (s *Subsystem) componentState(ctx context.Context, info config.ComponentInfo) (anyInstalled, allInstalled bool) {
+	if info.External {
+		installed := externalInstalled(info.ID)
+		return installed, installed
+	}
+	if len(info.Packages) == 0 {
+		return false, false
+	}
+	allInstalled = true
+	for _, pkg := range info.Packages {
+		installed := s.Packages.Installed(ctx, pkg)
+		anyInstalled = anyInstalled || installed
+		allInstalled = allInstalled && installed
+	}
+	return anyInstalled, allInstalled
 }
 
 func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo) error {
@@ -204,7 +228,11 @@ func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error
 		return nil
 	}
 
-	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "purge", "-y"}, present...)
+	// Dependencies installed by apt are marked automatic. Purging only the
+	// top-level package leaves those binaries behind, so the component does not
+	// really disappear and the attack surface remains. Let apt remove automatic
+	// packages that are no longer needed by anything else.
+	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "purge", "--autoremove", "-y"}, present...)
 	if _, err := s.Runner.Run(ctx, "apt-get", args...); err != nil {
 		return err
 	}
@@ -221,21 +249,10 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error { retu
 func (s *Subsystem) Status(ctx context.Context) map[string]bool {
 	out := map[string]bool{}
 	for _, info := range config.Catalog {
-		if info.External {
-			out[info.ID] = externalInstalled(info.ID)
+		if !info.External && len(info.Packages) == 0 {
 			continue
 		}
-		if len(info.Packages) == 0 {
-			continue
-		}
-		present := true
-		for _, p := range info.Packages {
-			if !s.Packages.Installed(ctx, p) {
-				present = false
-				break
-			}
-		}
-		out[info.ID] = present
+		_, out[info.ID] = s.componentState(ctx, info)
 	}
 	return out
 }

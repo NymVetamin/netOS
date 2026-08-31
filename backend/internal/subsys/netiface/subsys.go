@@ -9,6 +9,7 @@ package netiface
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -436,10 +437,13 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 // ---------------------------------------------------------------------------
 
 type Networks struct {
-	Runner system.Runner
+	Runner           system.Runner
+	OwnedAddressPath string
 }
 
-func NewNetworks(r system.Runner) *Networks { return &Networks{Runner: r} }
+func NewNetworks(r system.Runner) *Networks {
+	return &Networks{Runner: r, OwnedAddressPath: "/var/lib/netos/generated/owned-network-addresses.json"}
+}
 
 func (s *Networks) Name() string { return "networks" }
 
@@ -510,6 +514,23 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		wanted[name][n.RouterAddress] = true
 	}
+	owned := make([]ownedWANAddress, 0, len(cfg.Networks))
+	for iface, addrs := range wanted {
+		for addr := range addrs {
+			owned = append(owned, ownedWANAddress{Interface: iface, Address: addr})
+		}
+	}
+	sort.Slice(owned, func(i, j int) bool {
+		if owned[i].Interface == owned[j].Interface {
+			return owned[i].Address < owned[j].Address
+		}
+		return owned[i].Interface < owned[j].Interface
+	})
+	// Persist ownership before touching addresses. If a later subsystem fails,
+	// rollback can then remove every address added during this attempt.
+	if err := s.syncAddressOwnership(ctx, owned); err != nil {
+		return err
+	}
 
 	for iface, addrs := range wanted {
 		current, err := addressesOf(ctx, s.Runner, iface)
@@ -524,15 +545,50 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 				return fmt.Errorf("назначение адреса %s на %s: %w", addr, iface, err)
 			}
 		}
-		// Адреса, которых больше нет в конфигурации, снимаем — иначе после
-		// смены подсети роутер останется доступен и по старому адресу.
-		for addr := range current {
-			if !addrs[addr] {
-				_, _ = s.Runner.Run(ctx, "ip", "addr", "del", addr, "dev", iface)
-			}
-		}
 		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface, "up"); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (s *Networks) syncAddressOwnership(ctx context.Context, wanted []ownedWANAddress) error {
+	var previous []ownedWANAddress
+	if s.OwnedAddressPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.OwnedAddressPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &previous); err != nil {
+			return fmt.Errorf("чтение списка адресов сегментов netOS: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("чтение списка адресов сегментов netOS: %w", err)
+	}
+	encoded, err := json.MarshalIndent(wanted, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := system.WriteFileAtomic(s.OwnedAddressPath, append(encoded, '\n'), 0o600); err != nil {
+		return fmt.Errorf("запись списка адресов сегментов netOS: %w", err)
+	}
+	wantedKeys := map[string]bool{}
+	for _, item := range wanted {
+		wantedKeys[item.Interface+"\x00"+item.Address] = true
+	}
+	for _, item := range previous {
+		if wantedKeys[item.Interface+"\x00"+item.Address] || !linkExists(item.Interface) {
+			continue
+		}
+		current, err := addressesOf(ctx, s.Runner, item.Interface)
+		if err != nil {
+			return err
+		}
+		if !current[item.Address] {
+			continue
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "addr", "del", item.Address, "dev", item.Interface); err != nil {
+			return fmt.Errorf("удаление старого адреса сегмента %s с %s: %w", item.Address, item.Interface, err)
 		}
 	}
 	return nil
@@ -568,6 +624,11 @@ func (s *Networks) Health(ctx context.Context, cfg *config.Config) error {
 
 type WAN struct {
 	Runner system.Runner
+	// OwnedAddressPath persists the exact static addresses assigned by the WAN
+	// subsystem. Physical links are not owned by netOS, so their addresses must
+	// be tracked explicitly to remove them when an uplink is deleted or changes
+	// protocol, including after a netosd restart.
+	OwnedAddressPath string
 	// pppoePrevious хранит конфигурации PPPoE, какими они были до применения:
 	// по ним видно, менялись ли параметры, и живую сессию не приходится рвать
 	// на каждом применении.
@@ -579,7 +640,14 @@ type WAN struct {
 	PPPoePoll    time.Duration
 }
 
-func NewWAN(r system.Runner) *WAN { return &WAN{Runner: r} }
+func NewWAN(r system.Runner) *WAN {
+	return &WAN{Runner: r, OwnedAddressPath: "/var/lib/netos/generated/owned-wan-addresses.json"}
+}
+
+type ownedWANAddress struct {
+	Interface string `json:"interface"`
+	Address   string `json:"address"`
+}
 
 func (s *WAN) Name() string { return "wan" }
 
@@ -627,6 +695,19 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	ifaceName := map[string]string{}
 	for _, i := range cfg.Interfaces {
 		ifaceName[i.ID] = i.Name
+	}
+	wantedAddresses := make([]ownedWANAddress, 0, len(cfg.WANs))
+	for _, w := range cfg.WANs {
+		name := ifaceName[w.Interface]
+		if !w.Enabled || name == "" || w.Address == "" {
+			continue
+		}
+		if w.Proto == "static" || (w.Proto == "l2tp" && w.Underlay == "static") {
+			wantedAddresses = append(wantedAddresses, ownedWANAddress{Interface: name, Address: w.Address})
+		}
+	}
+	if err := s.syncStaticAddressOwnership(ctx, wantedAddresses); err != nil {
+		return err
 	}
 	dhcpWanted := map[string]bool{}
 	pppoeWanted := map[string]bool{}
@@ -678,7 +759,9 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		if w.MTU > 0 {
-			_, _ = s.Runner.Run(ctx, "ip", "link", "set", name, "mtu", fmt.Sprint(w.MTU))
+			if err := s.setWANMTU(ctx, w, name); err != nil {
+				return err
+			}
 		}
 
 		switch w.Proto {
@@ -725,6 +808,45 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	return s.cleanupStaticRoutes(ctx, staticWanted)
+}
+
+func (s *WAN) setWANMTU(ctx context.Context, w config.WAN, name string) error {
+	if _, err := s.Runner.Run(ctx, "ip", "link", "set", name, "mtu", fmt.Sprint(w.MTU)); err != nil {
+		return fmt.Errorf("задать MTU %d для аплинка %s: %w", w.MTU, w.ID, err)
+	}
+	return nil
+}
+
+func (s *WAN) syncStaticAddressOwnership(ctx context.Context, wanted []ownedWANAddress) error {
+	var previous []ownedWANAddress
+	data, err := os.ReadFile(s.OwnedAddressPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &previous); err != nil {
+			return fmt.Errorf("чтение списка адресов WAN netOS: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("чтение списка адресов WAN netOS: %w", err)
+	}
+	wantedKeys := map[string]bool{}
+	for _, item := range wanted {
+		wantedKeys[item.Interface+"\x00"+item.Address] = true
+	}
+	for _, item := range previous {
+		if wantedKeys[item.Interface+"\x00"+item.Address] {
+			continue
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "addr", "del", item.Address, "dev", item.Interface); err != nil {
+			// A removed physical link already removed all of its addresses.
+			if linkExists(item.Interface) {
+				return fmt.Errorf("удаление старого адреса WAN %s с %s: %w", item.Address, item.Interface, err)
+			}
+		}
+	}
+	encoded, err := json.MarshalIndent(wanted, "", "  ")
+	if err != nil {
+		return err
+	}
+	return system.WriteFileAtomic(s.OwnedAddressPath, append(encoded, '\n'), 0o600)
 }
 
 func (s *WAN) cleanupStaticRoutes(ctx context.Context, wanted map[string]bool) error {

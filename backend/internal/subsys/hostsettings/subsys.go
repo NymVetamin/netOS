@@ -4,6 +4,8 @@ package hostsettings
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -12,12 +14,16 @@ import (
 )
 
 type Subsystem struct {
-	Runner  system.Runner
-	Systemd *system.Systemd
+	Runner        system.Runner
+	Systemd       *system.Systemd
+	TimesyncdPath string
 }
 
 func New(r system.Runner) *Subsystem {
-	return &Subsystem{Runner: r, Systemd: system.NewSystemd(r)}
+	return &Subsystem{
+		Runner: r, Systemd: system.NewSystemd(r),
+		TimesyncdPath: "/etc/systemd/timesyncd.conf.d/90-netos.conf",
+	}
 }
 
 // contendingUnits — демоны дистрибутива, которые правят то же, чем владеет
@@ -59,6 +65,15 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	if old.System.Timezone != new.System.Timezone {
 		actions = append(actions, apply.Action{Kind: "update", Target: "часовой пояс", Detail: new.System.Timezone})
 	}
+	if old.System.NTP.Enabled != new.System.NTP.Enabled ||
+		strings.Join(old.System.NTP.Servers, "\x00") != strings.Join(new.System.NTP.Servers, "\x00") ||
+		s.ntpDrift(context.Background(), new) {
+		detail := "синхронизация времени отключается"
+		if new.System.NTP.Enabled {
+			detail = "серверы: " + strings.Join(new.System.NTP.Servers, ", ")
+		}
+		actions = append(actions, apply.Action{Kind: "update", Target: "синхронизация времени", Detail: detail})
+	}
 	return actions, nil
 }
 
@@ -76,7 +91,66 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	if _, err := s.Runner.Run(ctx, "timedatectl", "set-timezone", cfg.System.Timezone); err != nil {
 		return fmt.Errorf("смена часового пояса: %w", err)
 	}
+	return s.applyNTP(ctx, cfg)
+}
+
+func (s *Subsystem) renderNTP(cfg *config.Config) []byte {
+	return []byte("# Сгенерировано netOS. Правки будут перезаписаны.\n[Time]\nNTP=" +
+		strings.Join(cfg.System.NTP.Servers, " ") + "\nFallbackNTP=\n")
+}
+
+func (s *Subsystem) applyNTP(ctx context.Context, cfg *config.Config) error {
+	if !cfg.System.NTP.Enabled {
+		if err := s.Systemd.Disable(ctx, "systemd-timesyncd.service"); err != nil {
+			return fmt.Errorf("отключение синхронизации времени: %w", err)
+		}
+		if err := os.Remove(s.TimesyncdPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление настроек времени: %w", err)
+		}
+		return nil
+	}
+	// netosd runs with UMask=0077. MkdirAll therefore creates a new drop-in
+	// directory as 0700 unless we correct it explicitly, while timesyncd reads
+	// configuration as the unprivileged systemd-timesync user.
+	dir := filepath.Dir(s.TimesyncdPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("каталог настроек времени: %w", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return fmt.Errorf("права каталога настроек времени: %w", err)
+	}
+	if err := system.WriteFileAtomic(s.TimesyncdPath, s.renderNTP(cfg), 0o644); err != nil {
+		return fmt.Errorf("настройка синхронизации времени: %w", err)
+	}
+	if _, err := s.Runner.Run(ctx, "systemctl", "enable", "--now", "systemd-timesyncd.service"); err != nil {
+		return fmt.Errorf("запуск синхронизации времени: %w", err)
+	}
+	if _, err := s.Runner.Run(ctx, "systemctl", "restart", "systemd-timesyncd.service"); err != nil {
+		return fmt.Errorf("перезапуск синхронизации времени: %w", err)
+	}
 	return nil
+}
+
+func (s *Subsystem) ntpDrift(ctx context.Context, cfg *config.Config) bool {
+	active := s.Systemd.IsActive(ctx, "systemd-timesyncd.service")
+	enabled := s.unitEnabled(ctx, "systemd-timesyncd.service")
+	if !cfg.System.NTP.Enabled {
+		_, err := os.Stat(s.TimesyncdPath)
+		return active || enabled || err == nil
+	}
+	return !active || !enabled || system.FileChanged(s.TimesyncdPath, s.renderNTP(cfg))
+}
+
+func (s *Subsystem) unitEnabled(ctx context.Context, unit string) bool {
+	out, err := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSpace(out) {
+	case "enabled", "enabled-runtime", "static", "indirect", "generated", "alias":
+		return true
+	}
+	return false
 }
 
 // Health намеренно не проверяет чужие демоны. Ошибка здесь откатывает всю
@@ -97,6 +171,18 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	if strings.TrimSpace(tz) != cfg.System.Timezone {
 		return fmt.Errorf("часовой пояс не применён")
+	}
+	if s.ntpDrift(ctx, cfg) {
+		return fmt.Errorf("синхронизация времени не соответствует конфигурации")
+	}
+	if cfg.System.NTP.Enabled {
+		servers, err := s.Runner.Run(ctx, "timedatectl", "show-timesync", "--property=SystemNTPServers", "--value")
+		if err != nil {
+			return fmt.Errorf("проверка серверов времени: %w", err)
+		}
+		if strings.Join(strings.Fields(servers), " ") != strings.Join(cfg.System.NTP.Servers, " ") {
+			return fmt.Errorf("systemd-timesyncd не прочитал заданные серверы времени")
+		}
 	}
 	return nil
 }

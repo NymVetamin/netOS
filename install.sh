@@ -294,17 +294,21 @@ if ! systemctl restart netosd; then
 fi
 
 STABLE=0
-for _ in $(seq 1 30); do
+# Простого `systemctl is-active` сразу после restart недостаточно: демон ещё
+# применяет конфигурацию и несовместимый релиз может упасть через несколько
+# секунд. Требуем двадцать секунд непрерывной работы, но даём медленному
+# роутеру до двух минут на первичное применение.
+for _ in $(seq 1 120); do
     if systemctl is-active --quiet netosd; then
         STABLE=$((STABLE + 1))
-        [ "$STABLE" -ge 5 ] && break
+        [ "$STABLE" -ge 20 ] && break
     else
         STABLE=0
     fi
     sleep 1
 done
 
-if ! systemctl is-active --quiet netosd || [ "$STABLE" -lt 5 ]; then
+if ! systemctl is-active --quiet netosd || [ "$STABLE" -lt 20 ]; then
     START_OK=0
 fi
 if [ "$START_OK" = "0" ]; then

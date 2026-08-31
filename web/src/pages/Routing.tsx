@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, RouteEntry } from "../api";
+import { newID } from "../id";
 import { Badge, Card, Empty, Notice, Switch, TableWrap } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -41,7 +42,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 d.routing = d.routing || { static: [], tables: [], rules: [] };
                 d.routing.static = d.routing.static || [];
                 d.routing.static.push({
-                  id: "route-" + Date.now(),
+                  id: newID("route"),
                   name: "Маршрут",
                   enabled: true,
                   destination: "",
@@ -66,6 +67,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 <tr>
                   <th>Название</th>
                   <th>Куда</th>
+                  <th>Тип</th>
                   <th>Через шлюз</th>
                   <th>Или интерфейс</th>
                   <th>Метрика</th>
@@ -98,10 +100,23 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       />
                     </td>
                     <td>
+                      <select
+                        value={r.type || "unicast"}
+                        onChange={(e) => patch((d) => (d.routing.static[idx].type = e.target.value))}
+                        aria-label={`Тип маршрута ${r.name || idx + 1}`}
+                      >
+                        <option value="unicast">Обычный</option>
+                        <option value="blackhole">Отбросить без ответа</option>
+                        <option value="unreachable">Сеть недоступна</option>
+                        <option value="prohibit">Доступ запрещён</option>
+                      </select>
+                    </td>
+                    <td>
                       <input
                         type="text"
                         className="mono"
                         style={{ width: 130 }}
+                        disabled={r.type && r.type !== "unicast"}
                         value={r.gateway || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].gateway = e.target.value))
@@ -113,6 +128,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         type="text"
                         className="mono"
                         style={{ width: 100 }}
+                        disabled={r.type && r.type !== "unicast"}
                         value={r.interface || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].interface = e.target.value))
@@ -188,7 +204,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 d.routing.tables = d.routing.tables || [];
                 const n = d.routing.tables.length + 1;
                 d.routing.tables.push({
-                  id: "table-" + Date.now(),
+                  id: newID("table"),
                   name: "netos-t" + n,
                   number: 100 + n,
                   system: false,
@@ -290,7 +306,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 let priority = 20100;
                 while (used.includes(priority)) priority += 10;
                 d.routing.rules.push({
-                  id: "rule-" + Date.now(),
+                  id: newID("rule"),
                   name: "Правило",
                   enabled: true,
                   priority,

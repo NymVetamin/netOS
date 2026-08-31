@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"time"
 )
 
@@ -98,6 +99,16 @@ var fetch = func(ctx context.Context, url string) ([]byte, error) {
 
 // installRelease скачивает, проверяет и раскладывает внешний компонент.
 func (s *Subsystem) installRelease(ctx context.Context, id string, rel externalRelease) error {
+	// Архив Xray и распакованный бинарник одновременно занимают десятки
+	// мегабайт. Выполняем буферную часть в отдельном кадре, а после его возврата
+	// отдаём освобождённые страницы ОС: на роутере с небольшим объёмом RAM ждать
+	// следующего естественного scavenger-цикла слишком дорого.
+	err := s.installReleaseBuffered(ctx, id, rel)
+	debug.FreeOSMemory()
+	return err
+}
+
+func (s *Subsystem) installReleaseBuffered(ctx context.Context, id string, rel externalRelease) error {
 	want, ok := rel.SHA256[runtime.GOARCH]
 	if !ok {
 		return fmt.Errorf("%s не собирается под архитектуру %s", id, runtime.GOARCH)

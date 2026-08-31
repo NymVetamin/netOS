@@ -151,6 +151,33 @@ func TestDnsmasqStaysSilentWhenItOnlyServesDHCP(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConvertsCanonicalSRVAndMXValues(t *testing.T) {
+	cfg := dnsmasqOwnsDNSConfig()
+	cfg.DNS.StaticRecords = []config.DNSRecord{
+		{ID: "srv", Type: "SRV", Name: "_sip._tcp.lan", Value: "10 20 5060 sip.lan"},
+		{ID: "mx", Type: "MX", Name: "lan", Value: "30 mail.lan"},
+	}
+	out := NewDnsmasq(nil).Render(cfg)
+	for _, want := range []string{
+		"srv-host=_sip._tcp.lan,sip.lan,5060,10,20",
+		"mx-host=lan,mail.lan,30",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("нет преобразованной записи %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestUnboundEscapesTXTInsideLocalData(t *testing.T) {
+	cfg := resolverConfig()
+	cfg.DNS.StaticRecords = []config.DNSRecord{{ID: "txt", Type: "TXT", Name: "text.lan", Value: `hello "router"`}}
+	out := NewUnbound(nil).Render(cfg)
+	want := `local-data: 'text.lan. TXT "hello \"router\""'`
+	if !strings.Contains(out, want) {
+		t.Fatalf("нет корректно экранированной TXT-записи %q:\n%s", want, out)
+	}
+}
+
 func TestReverseZoneRequiresByteAlignedMask(t *testing.T) {
 	if _, err := reverseZoneOf("192.168.10.1/25"); err == nil {
 		t.Fatal("обратная зона построена для маски, не кратной байту")

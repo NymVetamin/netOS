@@ -37,3 +37,29 @@ func TestBalanceRequiresPositiveWeightsAndUniqueIndexes(t *testing.T) {
 		t.Fatal("zero balance weight accepted")
 	}
 }
+
+func TestWANMTUMustBeWithinSupportedRange(t *testing.T) {
+	for _, mtu := range []int{-1, 1, 575, 9217} {
+		cfg := Default()
+		cfg.Interfaces = []Interface{{ID: "if0", Name: "wan0"}}
+		cfg.WANs = []WAN{{
+			ID: "wan1", Index: 1, Name: "WAN", Interface: "if0",
+			Enabled: true, Proto: "dhcp", Metric: 100, MTU: mtu,
+		}}
+		if !problem(t, cfg, "wans[0].mtu", "MTU") {
+			t.Fatalf("unsupported WAN MTU %d accepted", mtu)
+		}
+	}
+
+	for _, mtu := range []int{0, 576, 1500, 9216} {
+		cfg := Default()
+		cfg.Interfaces = []Interface{{ID: "if0", Name: "wan0"}}
+		cfg.WANs = []WAN{{
+			ID: "wan1", Index: 1, Name: "WAN", Interface: "if0",
+			Enabled: true, Proto: "dhcp", Metric: 100, MTU: mtu,
+		}}
+		if problem(t, cfg, "wans[0].mtu", "MTU") {
+			t.Fatalf("supported WAN MTU %d rejected", mtu)
+		}
+	}
+}

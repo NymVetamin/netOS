@@ -184,8 +184,11 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "diagnostics", Title: "Инструменты диагностики", Group: "Дополнительно",
 		Description: "tcpdump, dig, traceroute и mtr — чтобы разбираться с сетью прямо на роутере.",
-		Packages:    []string{"tcpdump", "dnsutils", "traceroute", "mtr-tiny"},
-		SizeHint:    "около 10 МБ",
+		// dnsutils is only a virtual package on current Debian releases, so it
+		// can never be reported as installed or purged by dpkg-query. Track its
+		// concrete provider instead.
+		Packages: []string{"tcpdump", "bind9-dnsutils", "traceroute", "mtr-tiny"},
+		SizeHint: "около 10 МБ",
 	},
 	{
 		ID: "qos", Title: "Ограничение скорости", Group: "Дополнительно",

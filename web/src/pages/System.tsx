@@ -59,6 +59,26 @@ export function SystemPage({
             />
           </Field>
         </div>
+        <div style={{ marginTop: "0.8rem" }}>
+          <Switch
+            checked={config.system?.ntp?.enabled ?? false}
+            label="Синхронизировать время автоматически"
+            onChange={(enabled) => patch((d) => (d.system.ntp.enabled = enabled))}
+          />
+        </div>
+        <div className="form-grid" style={{ marginTop: "0.8rem" }}>
+          <Field label="Серверы времени" hint="До 8 DNS-имён или IP-адресов, через запятую">
+            <input
+              type="text"
+              disabled={!config.system?.ntp?.enabled}
+              value={(config.system?.ntp?.servers || []).join(", ")}
+              placeholder="0.pool.ntp.org, 1.pool.ntp.org"
+              onChange={(e) => patch((d) => {
+                d.system.ntp.servers = e.target.value.split(/[\s,]+/).filter(Boolean);
+              })}
+            />
+          </Field>
+        </div>
       </Card>
 
       <Card
@@ -91,9 +111,9 @@ export function SystemPage({
             <Notice tone="info" title="Интерфейсы переходят под управление netOS">
               systemd-networkd оставляет перечисленные интерфейсы управляемыми, но
               пассивными: не выдаёт им адреса и не спорит за маршруты, а ожидание сети
-              при загрузке не упирается в таймаут. Записи в /etc/network/interfaces
-              перекрыть нельзя — если такие найдутся, netOS предупредит об этом в
-              журнале.
+              при загрузке не упирается в таймаут. Служба networking (ifupdown) в этом
+              режиме отключена, поэтому записи в /etc/network/interfaces не запускают
+              второй сетевой стек параллельно с netOS.
             </Notice>
           ) : (
             <Notice tone="info" title="Что попадёт в сгенерированный файл">
@@ -101,7 +121,8 @@ export function SystemPage({
               системой ещё до старта netOS. Аплинки только поднимаются: их адресами,
               маршрутами и метриками управляет netOS, и второй клиент DHCP на том же
               интерфейсе сломал бы переключение между каналами. Изменения по-прежнему
-              применяются сразу, а не после перезагрузки.
+              применяются сразу, а не после перезагрузки. netOS включает выбранный
+              системный менеджер и отключает конкурирующий.
             </Notice>
           )}
         </div>

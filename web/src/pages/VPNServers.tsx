@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../api";
+import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch } from "../ui";
 
 type Props = { config: any; patch: (mutate: (draft: any) => void) => void };
@@ -60,7 +61,7 @@ export function VPNServersPage({ config, patch }: Props) {
       const used = new Set(draft.vpn_servers.map((item: any) => item.index));
       let index = 1;
       while (used.has(index)) index++;
-      const common = { id: `${type}-server-${Date.now()}`, index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
+      const common = { id: newID(`${type}-server`), index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
       const server = type === "wireguard" ? {
         ...common, name: `WireGuard ${index}`, port: 51819 + index,
         config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: `${window.location.hostname}:${51819 + index}`, client_dns: [], client_allowed_ips: ["0.0.0.0/0"] },
@@ -104,7 +105,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 			const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
 			draft.peers = draft.peers || [];
 			const number = draft.peers.length + 1;
-			draft.peers.push({ id: `peer-${Date.now()}`, name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+			draft.peers.push({ id: newID("peer"), name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
 		});
 	}
 	return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
@@ -141,7 +142,7 @@ function OcservServer({ server, config, installed, patch }: any) {
       const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
       draft.peers = draft.peers || [];
       const number = draft.peers.length + 1;
-      draft.peers.push({ id: `peer-${Date.now()}`, name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+      draft.peers.push({ id: newID("peer"), name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
     });
   }
   return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
@@ -201,7 +202,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
     update((draft) => {
       const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
       draft.peers = draft.peers || [];
-      draft.peers.push({ id: `peer-${Date.now()}`, name: `Устройство ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${draft.peers.length + 2}`, channel: "", credentials: { uuid: crypto.randomUUID() }, comment: "" });
+      draft.peers.push({ id: newID("peer"), name: `Устройство ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${draft.peers.length + 2}`, channel: "", credentials: { uuid: crypto.randomUUID() }, comment: "" });
     });
   }
 

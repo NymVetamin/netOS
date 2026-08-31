@@ -139,15 +139,32 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		ready := false
 		for attempt := 0; attempt < 60; attempt++ {
 			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName(radio))
-			info, err := s.Runner.Run(ctx, "iw", "dev", radio.Device, "info")
-			if strings.TrimSpace(active) == "active" && err == nil && strings.Contains(info, "type AP") && strings.Contains(info, fmt.Sprintf("channel %d", radio.Channel)) {
+			allReady := strings.TrimSpace(active) == "active"
+			bssIndex := 0
+			for _, ssid := range radio.SSIDs {
+				if !ssid.Enabled {
+					continue
+				}
+				device := radio.Device
+				if bssIndex > 0 {
+					device = fmt.Sprintf("%s-n%d", radio.Device, bssIndex)
+				}
+				info, err := s.Runner.Run(ctx, "iw", "dev", device, "info")
+				if err != nil || !strings.Contains(info, "type AP") ||
+					!strings.Contains(info, fmt.Sprintf("channel %d", radio.Channel)) ||
+					!strings.Contains(info, "ssid "+ssid.SSID) {
+					allReady = false
+				}
+				bssIndex++
+			}
+			if allReady {
 				ready = true
 				break
 			}
 			time.Sleep(150 * time.Millisecond)
 		}
 		if !ready {
-			return fmt.Errorf("hostapd не перевёл %s в режим точки доступа", radio.Device)
+			return fmt.Errorf("hostapd не поднял все Wi-Fi-сети на %s", radio.Device)
 		}
 	}
 	return nil

@@ -1,4 +1,5 @@
 import { Badge, Card, Empty, Field, Notice, Switch } from "../ui";
+import { newID } from "../id";
 
 type Props = { config: any; patch: (mutate: (draft: any) => void) => void };
 
@@ -9,7 +10,7 @@ export function WiFiPage({ config, patch }: Props) {
   function addRadio() {
     patch((draft) => {
       draft.wifi = draft.wifi || [];
-      draft.wifi.push({ id: `radio-${Date.now()}`, device: "wlan0", enabled: false, band: "2.4", channel: 6, width: 20, country: "RU", tx_power: 0, ssids: [] });
+      draft.wifi.push({ id: newID("radio"), device: "wlan0", enabled: false, band: "2.4", channel: 6, width: 20, country: "RU", tx_power: 0, ssids: [] });
     });
   }
 
@@ -31,7 +32,7 @@ function RadioEditor({ radio, config, installed, patch }: any) {
   function addSSID() {
     update((draft) => {
       draft.ssids = draft.ssids || [];
-      draft.ssids.push({ id: `ssid-${Date.now()}`, ssid: `netOS ${draft.ssids.length + 1}`, enabled: false, security: "wpa2/wpa3", password: "", network: networks[0]?.id || "", hidden: false, isolate: false });
+      draft.ssids.push({ id: newID("ssid"), ssid: `netOS ${draft.ssids.length + 1}`, enabled: false, security: "wpa2/wpa3", password: "", network: networks[0]?.id || "", hidden: false, isolate: false });
     });
   }
 

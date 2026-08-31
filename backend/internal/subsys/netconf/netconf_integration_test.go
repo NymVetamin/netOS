@@ -3,7 +3,6 @@
 package netconf
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -312,13 +311,20 @@ func TestIntegrationNetOSTakesOverFromNetworkd(t *testing.T) {
 		t.Fatalf("не удалось назначить адрес netOS: %v\n%s", err, out)
 	}
 
-	// И netOS забирает адресацию себе тем же кодом, что и в бою.
-	cfg := config.Default()
-	cfg.System.NetworkBackend = "netos"
-	cfg.Interfaces = []config.Interface{{ID: "if-x", Name: iface, Type: "physical", Enabled: true}}
-	s := New(system.NewExec(), nil)
-	if err := s.Apply(context.Background(), cfg); err != nil {
+	// И netOS забирает адресацию себе тем же сгенерированным описанием, что и
+	// в бою. Полный Apply здесь намеренно не вызывается: netconf владеет всем
+	// набором 05-netos-* и по декларативной модели удалил бы рабочее описание
+	// настоящего аплинка машины, которого нет в тестовой конфигурации. Раньше
+	// именно это происходило: зелёный интеграционный тест оставлял dev-server
+	// под чужим DHCP и без policy-routing правил активного канала.
+	passive := renderPassive(config.Interface{
+		ID: "if-x", Name: iface, Type: "physical", Enabled: true,
+	}, true)
+	if err := system.WriteFileAtomic(managed, []byte(passive), 0o644); err != nil {
 		t.Fatalf("передача управления не удалась: %v", err)
+	}
+	if out, err := exec.Command("networkctl", "reload").CombinedOutput(); err != nil {
+		t.Fatalf("networkctl reload: %v\n%s", err, out)
 	}
 	time.Sleep(3 * time.Second)
 

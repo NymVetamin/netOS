@@ -1,4 +1,5 @@
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { newID } from "../id";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -366,7 +367,7 @@ function DNSSection({
               patch((d) => {
                 d.dns.upstreams = d.dns.upstreams || [];
                 d.dns.upstreams.push({
-                  id: "up-" + Date.now(),
+                  id: newID("up"),
                   type: "plain",
                   address: "",
                   channel: "direct",
@@ -407,7 +408,7 @@ function DNSSection({
         <div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
           <button className="btn" onClick={() => patch((d) => {
             d.dns.split_rules = d.dns.split_rules || [];
-            d.dns.split_rules.push({ id: "split-" + Date.now(), domains: [], upstream: "", channel: "direct", enabled: false });
+            d.dns.split_rules.push({ id: newID("split"), domains: [], upstream: "", channel: "direct", enabled: false });
           })}>Добавить правило</button>
         </div>
       </Card>

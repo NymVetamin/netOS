@@ -91,6 +91,37 @@ func TestNoIPRejectsProviderFailure(t *testing.T) {
 	}
 }
 
+func TestNoIPSuccessfulUpdate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "user" || password != "pass" {
+			t.Error("missing basic auth")
+		}
+		if r.URL.Query().Get("hostname") != "router.example.test" || r.URL.Query().Get("myip") != "192.0.2.4" {
+			t.Errorf("unexpected query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte("good 192.0.2.4"))
+	}))
+	defer server.Close()
+	c := New(nil)
+	c.NoIPEndpoint = server.URL
+	if err := c.update(context.Background(), baseConfig("noip").DDNS, "192.0.2.4"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloudflareRejectsUnsuccessfulResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"success":false}`))
+	}))
+	defer server.Close()
+	c := New(nil)
+	c.CloudEndpoint = server.URL
+	if err := c.update(context.Background(), baseConfig("cloudflare").DDNS, "198.51.100.7"); err == nil {
+		t.Fatal("Cloudflare failure was accepted")
+	}
+}
+
 func TestWebAddressMustBeIPv4(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("not-an-ip")) }))
 	defer server.Close()

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -113,6 +114,25 @@ func (m *Manager) stopUnused(ctx context.Context, cfg *config.Config) error {
 	disable("unbound.service")
 	if len(failures) > 0 {
 		return fmt.Errorf("не удалось остановить неиспользуемые службы: %s", strings.Join(failures, "; "))
+	}
+	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "isc-dhcp-server" {
+		if err := removeGenerated(iscConfPath); err != nil {
+			return err
+		}
+	}
+	if !cfg.DHCP.Enabled || cfg.DHCP.Provider != "kea" {
+		if err := removeGenerated(keaConfPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeGenerated(paths ...string) error {
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление неиспользуемого конфига %s: %w", path, err)
+		}
 	}
 	return nil
 }

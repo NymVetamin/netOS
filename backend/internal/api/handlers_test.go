@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -30,6 +31,17 @@ func TestGenerateWireGuardKeypair(t *testing.T) {
 	derived, err := wireGuardPublicKey(privateKey)
 	if err != nil || derived != publicKey {
 		t.Fatalf("public key derivation mismatch: %q, %v", derived, err)
+	}
+}
+
+func TestWireGuardKeypairRejectsInvalidPrivateKeyAsUserError(t *testing.T) {
+	s := &Server{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/wireguard/keypair",
+		bytes.NewBufferString(`{"private_key":"invalid"}`))
+	s.handleWireGuardKeypair(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 }
 

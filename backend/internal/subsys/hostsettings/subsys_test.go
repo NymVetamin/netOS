@@ -2,6 +2,8 @@ package hostsettings
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,14 +25,27 @@ func (r *hostRunner) Run(_ context.Context, name string, args ...string) (string
 		return "router\n", nil
 	case "timedatectl show --property=Timezone --value":
 		return "Europe/Moscow\n", nil
+	case "timedatectl show-timesync --property=SystemNTPServers --value":
+		return "0.debian.pool.ntp.org 1.debian.pool.ntp.org\n", nil
 	case "systemctl is-active tuned.service":
 		if r.active {
 			return "active\n", nil
 		}
 		return "inactive\n", nil
+	case "systemctl is-active systemd-timesyncd.service":
+		return "active\n", nil
+	case "systemctl is-enabled systemd-timesyncd.service":
+		return "enabled\n", nil
 	default:
 		return "", nil
 	}
+}
+
+func testSubsystem(t *testing.T, runner *hostRunner) *Subsystem {
+	t.Helper()
+	s := New(runner)
+	s.TimesyncdPath = filepath.Join(t.TempDir(), "90-netos.conf")
+	return s
 }
 
 func (r *hostRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
@@ -39,7 +54,7 @@ func (r *hostRunner) RunInput(ctx context.Context, _ string, name string, args .
 
 func TestApplyAndHealthSystemSettings(t *testing.T) {
 	runner := &hostRunner{}
-	s := New(runner)
+	s := testSubsystem(t, runner)
 	cfg := config.Default()
 	cfg.System.Hostname = "router"
 	cfg.System.Timezone = "Europe/Moscow"
@@ -49,6 +64,13 @@ func TestApplyAndHealthSystemSettings(t *testing.T) {
 	if err := s.Health(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(filepath.Dir(s.TimesyncdPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o555 != 0o555 {
+		t.Fatalf("timesyncd cannot traverse its config directory: mode=%v", info.Mode().Perm())
+	}
 	joined := strings.Join(runner.commands, "\n")
 	for _, want := range []string{"hostnamectl set-hostname router", "timedatectl set-timezone Europe/Moscow"} {
 		if !strings.Contains(joined, want) {
@@ -57,14 +79,13 @@ func TestApplyAndHealthSystemSettings(t *testing.T) {
 	}
 }
 
-
 // netOS — единый центр истины на машине: демон дистрибутива, правящий то же,
 // чем владеет netOS, обязан быть погашен. tuned на облачных образах
 // переустанавливает сетевые параметры ядра и откатывает подавление IPv6 на
 // аплинке уже после того, как netOS его применил.
 func TestApplyStopsDaemonsThatOverrideNetOS(t *testing.T) {
 	runner := &hostRunner{}
-	s := New(runner)
+	s := testSubsystem(t, runner)
 	if err := s.Apply(context.Background(), config.Default()); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +107,7 @@ func TestApplyStopsDaemonsThatOverrideNetOS(t *testing.T) {
 // внутри Apply — единственное, что отделяет применённое состояние от гонки.
 func TestContendingDaemonsAreStoppedBeforeHostSettings(t *testing.T) {
 	runner := &hostRunner{}
-	s := New(runner)
+	s := testSubsystem(t, runner)
 	if err := s.Apply(context.Background(), config.Default()); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +129,7 @@ func TestContendingDaemonsAreStoppedBeforeHostSettings(t *testing.T) {
 // план обязан его показать, а не промолчать.
 func TestPlanReportsRunningContendingDaemon(t *testing.T) {
 	runner := &hostRunner{active: true}
-	s := New(runner)
+	s := testSubsystem(t, runner)
 	actions, err := s.Plan(nil, config.Default())
 	if err != nil {
 		t.Fatal(err)

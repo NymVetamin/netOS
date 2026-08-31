@@ -69,8 +69,13 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 	cfg.Interfaces = []config.Interface{{ID: "wifi-bridge", Name: bridge, Type: "bridge", Enabled: true}}
 	cfg.Networks = []config.Network{{ID: "wifi-net", Name: "Wi-Fi test", Interface: "wifi-bridge", RouterAddress: "192.0.2.1/24", Zone: "lan", Enabled: true}}
 	cfg.WiFi = []config.WiFiRadio{{
-		ID: "integration", Device: device, Enabled: true, Band: "2.4", Channel: 1, Width: 20, Country: "US",
-		SSIDs: []config.WiFiSSID{{ID: "test", SSID: "netOS-integration", Enabled: true, Security: "wpa2", Password: "integration-only", Network: "wifi-net"}},
+		ID: "integration", Device: device, Enabled: true, Band: "2.4", Channel: 1, Width: 20, Country: "US", TxPower: 5,
+		SSIDs: []config.WiFiSSID{
+			{ID: "open", SSID: "netOS-open", Enabled: true, Security: "open", Network: "wifi-net"},
+			{ID: "wpa2", SSID: "netOS-wpa2", Enabled: true, Security: "wpa2", Password: "integration-wpa2", Network: "wifi-net", Hidden: true},
+			{ID: "wpa3", SSID: "netOS-wpa3", Enabled: true, Security: "wpa3", Password: "integration-wpa3", Network: "wifi-net", Isolate: true},
+			{ID: "mixed", SSID: "netOS-mixed", Enabled: true, Security: "wpa2/wpa3", Password: "integration-mixed", Network: "wifi-net"},
+		},
 	}}
 	t.Cleanup(func() { _ = s.Apply(context.Background(), config.Default()) })
 	if result := cfg.Validate(); result.HasErrors() {
@@ -85,6 +90,15 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 	info, err := runner.Run(ctx, "iw", "dev", device, "info")
 	if err != nil || !strings.Contains(info, "type AP") || !strings.Contains(info, "channel 1") {
 		t.Fatalf("radio did not enter AP mode: %q (%v)", info, err)
+	}
+	allInterfaces, err := runner.Run(ctx, "iw", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, name := range []string{device, device + "-n1", device + "-n2", device + "-n3"} {
+		if !strings.Contains(allInterfaces, "Interface "+name+"\n") {
+			t.Fatalf("BSS %d (%s) is not present: %q", index, name, allInterfaces)
+		}
 	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)

@@ -202,7 +202,10 @@ func withDefaultPort(addr string, port int) string {
 
 func (d *Dnsproxy) Apply(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
-		return d.Systemd.Disable(ctx, dnsproxyUnit)
+		if err := d.Systemd.Disable(ctx, dnsproxyUnit); err != nil {
+			return err
+		}
+		return removeGenerated(dnsproxyConfPath, dnsproxyHostsPath)
 	}
 
 	// dnsproxy ставится подсистемой компонентов, а не apt. Если его выбрали

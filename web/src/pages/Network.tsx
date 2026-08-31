@@ -1,4 +1,5 @@
 import { Problem } from "../api";
+import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -97,7 +98,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
             patch((d) => {
               d.wans = d.wans || [];
               d.wans.push({
-                id: "wan-" + Date.now(),
+                id: newID("wan"),
                 index: Math.max(0, ...d.wans.map((wan: any) => wan.index || 0)) + 1,
                 name: "Аплинк " + (d.wans.length + 1),
                 interface: d.interfaces?.[0]?.id || "",
@@ -382,7 +383,7 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
               d.networks = d.networks || [];
               const n = d.networks.length + 1;
               d.networks.push({
-                id: "net-" + Date.now(),
+                id: newID("net"),
                 name: "Сегмент " + n,
                 interface: d.interfaces?.[0]?.id || "",
                 router_address: `192.168.${10 * n}.1/24`,
@@ -588,7 +589,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
               patch((d) => {
                 d.interfaces = d.interfaces || [];
                 d.interfaces.push({
-                  id: "br-" + Date.now(),
+                  id: newID("br"),
                   name: freeName(d.interfaces, "br"),
                   type: "bridge",
                   members: [],
@@ -614,7 +615,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                 if (!parent) return;
                 const vid = freeVlanID(d, parent.id);
                 d.interfaces.push({
-                  id: "vl-" + Date.now(),
+                  id: newID("vl"),
                   name: vlanName(parent.name, vid),
                   type: "vlan",
                   parent: parent.id,

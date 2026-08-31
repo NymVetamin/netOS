@@ -178,9 +178,9 @@ func TestUpdateBuildsFromSourceWhenAskedExplicitly(t *testing.T) {
 	}
 }
 
-// Установщик берётся из того же тега, что и бинарник: иначе указанная версия
-// ставилась бы сегодняшним скриптом с master.
-func TestUpdateTakesInstallerFromRequestedTag(t *testing.T) {
+// Установщик всегда актуальный: именно он отвечает за безопасный откат старого
+// или несовместимого бинарника. Выбранная версия передаётся отдельно.
+func TestUpdateUsesCurrentInstallerForRequestedTag(t *testing.T) {
 	m, _ := testManager()
 	var fetched []string
 	m.Run = func(_ context.Context, spec command) error {
@@ -192,13 +192,13 @@ func TestUpdateTakesInstallerFromRequestedTag(t *testing.T) {
 	if err := m.Execute(context.Background(), []string{"update", "v0.05"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "https://raw.githubusercontent.com/NymVetamin/netOS/v0.05/install.sh"
+	want := "https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh"
 	if !contains(fetched, want) {
 		t.Fatalf("установщик взят не из тега: %v", fetched)
 	}
 }
 
-func TestLatestUpdatePinsInstallerToResolvedReleaseTag(t *testing.T) {
+func TestLatestUpdatePinsBinaryVersionButUsesCurrentInstaller(t *testing.T) {
 	m, _ := testManager()
 	m.Version = "v1.2.2"
 	m.Output = func(_ context.Context, _ string, args ...string) (string, error) {
@@ -221,7 +221,7 @@ func TestLatestUpdatePinsInstallerToResolvedReleaseTag(t *testing.T) {
 	if err := m.Execute(context.Background(), []string{"update"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "https://raw.githubusercontent.com/NymVetamin/netOS/v1.2.4/install.sh"
+	want := "https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh"
 	if !contains(fetched, want) || !contains(installer.env, "NETOS_VERSION=v1.2.4") {
 		t.Fatalf("latest не закреплён за тегом: fetched=%v env=%v", fetched, installer.env)
 	}
@@ -230,7 +230,7 @@ func TestLatestUpdatePinsInstallerToResolvedReleaseTag(t *testing.T) {
 func TestRemovePolicyRulesOnlyTouchesNetOSRange(t *testing.T) {
 	m, _ := testManager()
 	m.Output = func(context.Context, string, ...string) (string, error) {
-		return "0: from all lookup local\n20100: from 10.0.0.0/8 lookup vpn\n32766: from all lookup main\n", nil
+		return "0: from all lookup local\n10001: from all fwmark 0x1001 lookup 1001\n20100: from 10.0.0.0/8 lookup vpn\n32766: from all lookup main\n", nil
 	}
 	var commands []command
 	m.Run = func(_ context.Context, spec command) error {
@@ -238,7 +238,7 @@ func TestRemovePolicyRulesOnlyTouchesNetOSRange(t *testing.T) {
 		return nil
 	}
 	m.removePolicyRules(context.Background())
-	if len(commands) != 1 || !contains(commands[0].args, "20100") {
+	if len(commands) != 2 || !contains(commands[0].args, "10001") || !contains(commands[1].args, "20100") {
 		t.Fatalf("удалены неверные правила: %#v", commands)
 	}
 }
@@ -303,8 +303,9 @@ func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
 
 	ifupdown := filepath.Join(m.Root, "etc/network/interfaces.d/netos.conf")
 	networkd := filepath.Join(m.Root, "etc/systemd/network/05-netos-br-lan.network")
+	networkdOwnership := filepath.Join(m.Root, "etc/systemd/networkd.conf.d/99-netos.conf")
 	foreign := filepath.Join(m.Root, "etc/systemd/network/10-all.network")
-	for _, path := range []string{ifupdown, networkd, foreign} {
+	for _, path := range []string{ifupdown, networkd, networkdOwnership, foreign} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -316,7 +317,7 @@ func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
 	if err := m.uninstall(context.Background(), true, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{ifupdown, networkd} {
+	for _, path := range []string{ifupdown, networkd, networkdOwnership} {
 		if _, err := os.Stat(path); err == nil {
 			t.Fatalf("после удаления остался %s", path)
 		}

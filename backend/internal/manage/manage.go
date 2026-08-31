@@ -23,18 +23,15 @@ import (
 
 const installerRepo = "NymVetamin/netOS"
 
-// installerURL возвращает ссылку на установщик для запрошенной версии.
+// installerURL возвращает ссылку на актуальный установщик.
 //
-// Скрипт берётся из того же тега, что и бинарник: установщик и релиз
-// развиваются вместе, и «netos update v0.05» с сегодняшним скриптом с master
-// поставил бы прошлую версию сегодняшним способом. Для latest тега нет, там
-// остаётся master.
+// Версию бинарника задаёт NETOS_VERSION. Сам установщик намеренно берётся из
+// master: старый установщик может не уметь безопасно откатить несовместимый
+// бинарник. Это особенно важно при явном выборе старого релиза — обновление не
+// должно оставлять роутер в цикле рестартов только потому, что в том теге ещё не
+// было проверки устойчивого запуска.
 func installerURL(version string) string {
-	ref := "master"
-	if version != "" && version != "latest" {
-		ref = version
-	}
-	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/install.sh", installerRepo, ref)
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/master/install.sh", installerRepo)
 }
 
 // renderableArtifacts перечисляет то, что умеет печатать netosd -render.
@@ -460,6 +457,44 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 		}
 		backup = path
 	}
+	// Сброс обязан убрать не только данные, но и уже применённое состояние.
+	// После удаления БД новый демон больше не знает имён старых каналов,
+	// VPN-серверов и интерфейсов и потому сам удалить их уже не сможет.
+	m.removeComponentUnits(ctx)
+	m.clearNetOSFirewall(ctx)
+	// Локальный DNS сейчас уже остановлен, а его резервное состояние исчезнет
+	// вместе с StateDir. Вернуть системный resolv.conf нужно до удаления данных,
+	// иначе заводской запуск и последующее restore не смогут скачать компоненты.
+	if resolvedWanted, err := services.RestoreSystemResolverFiles(m.Root); err != nil {
+		_ = m.run(ctx, "systemctl", "start", "netosd")
+		return fmt.Errorf("восстановление системного резолвера: %w", err)
+	} else if resolvedWanted {
+		m.quiet(ctx, "systemctl", "enable", "--now", "systemd-resolved.service")
+	}
+	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
+	m.removePolicyRules(ctx)
+	m.removeVirtualInterfaces(ctx)
+	for _, path := range []string{
+		m.sys("/etc/network/interfaces.d/netos.conf"),
+		m.sys("/etc/systemd/networkd.conf.d/99-netos.conf"),
+		m.sys("/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"),
+		m.sys("/etc/NetworkManager/conf.d/99-netos.conf"),
+		m.sys("/etc/sysctl.d/99-netos.conf"),
+		m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
+		m.sys("/etc/systemd/timesyncd.conf.d/90-netos.conf"),
+	} {
+		_ = os.Remove(path)
+	}
+	for _, pattern := range []string{
+		m.sys("/etc/systemd/network/05-netos-*"),
+		m.sys("/etc/systemd/system/netos-*.service.d"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		for _, path := range matches {
+			_ = os.RemoveAll(path)
+		}
+	}
+	m.bestEffort(ctx, "systemctl", "daemon-reload")
 	for _, path := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("удаление %s: %w", path, err)
@@ -474,7 +509,7 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	if err := os.MkdirAll(m.LogDir, 0o755); err != nil {
 		return err
 	}
-	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
+	if err := m.run(ctx, "systemctl", "enable", "--now", "netosd"); err != nil {
 		if backup != "" {
 			return fmt.Errorf("запуск после сброса: %w; резервная копия: %s", err, backup)
 		}
@@ -734,6 +769,26 @@ func humanSize(n int64) string {
 	}
 }
 
+// removeComponentUnits останавливает и удаляет каждый сгенерированный юнит
+// компонента. Одна маска надёжнее списка: новые подсистемы автоматически
+// попадают и в reset, и в uninstall, а сам netosd под неё не подходит.
+func (m *Manager) removeComponentUnits(ctx context.Context) {
+	units, _ := filepath.Glob(m.sys("/etc/systemd/system/netos-*.service"))
+	for _, unit := range units {
+		m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", filepath.Base(unit))
+		_ = os.Remove(unit)
+	}
+}
+
+func (m *Manager) clearNetOSFirewall(ctx context.Context) {
+	clear4 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n" +
+		"*nat\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n" +
+		"*mangle\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n"
+	clear6 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
+	m.bestEffortInput(ctx, clear4, "iptables-restore")
+	m.bestEffortInput(ctx, clear6, "ip6tables-restore")
+}
+
 func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	if !yes && !m.confirm("netOS и применённая им конфигурация будут удалены. Продолжить?") {
 		fmt.Fprintln(m.Out, "Отменено.")
@@ -759,41 +814,11 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	// заметно тормозит. Перечитывание нужно ровно одно — оно идёт ниже, после
 	// удаления файлов юнитов.
 	m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "netosd")
-	// Гасятся только те юниты компонентов, которые действительно заведены.
-	// Компоненты включает администратор, и на машине с одной лишь панелью нет
-	// ни одного из них: отсутствующий юнит — это достигнутая цель, а не сбой,
-	// и systemctl ругался бы на каждый пятью строками подряд.
-	for _, unit := range []string{"netos-dnsmasq.service", "netos-isc-dhcp.service", "netos-kea-dhcp4.service", "netos-unbound.service", "netos-dnsproxy.service"} {
-		if _, err := os.Stat(m.sys("/etc/systemd/system/" + unit)); err != nil {
-			continue
-		}
-		m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", unit)
-	}
-	// Юниты, которых по одному на интерфейс или аплинк, ищем по маске: их
-	// имена зависят от конфигурации, и списком их не перечислить.
-	for _, pattern := range []string{
-		"netos-dhcp-*.service", "netos-pppoe-*.service", "netos-l2tp-*.service",
-		"netos-openconnect-ch*.service", "netos-xray-ch*.service",
-		"netos-xray-srv*.service",
-		"netos-hostapd-*.service",
-		"netos-ocserv-srv*.service",
-		"netos-strongswan.service",
-	} {
-		units, _ := filepath.Glob(m.sys("/etc/systemd/system/" + pattern))
-		for _, unit := range units {
-			m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", filepath.Base(unit))
-			_ = os.Remove(unit)
-		}
-	}
+	m.removeComponentUnits(ctx)
 
 	// netOS владеет полными таблицами firewall, поэтому при удалении оставляет
 	// систему с разрешающими пустыми таблицами, а не с последним DROP ruleset.
-	clear4 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n" +
-		"*nat\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n" +
-		"*mangle\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n"
-	clear6 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
-	m.bestEffortInput(ctx, clear4, "iptables-restore")
-	m.bestEffortInput(ctx, clear6, "ip6tables-restore")
+	m.clearNetOSFirewall(ctx)
 	// Дефолтные маршруты запоминаются до очистки: следующая строка сносит в том
 	// числе маршрут аплинка, и без запаса вернуть его будет неоткуда.
 	savedRoutes := m.captureDefaultRoutes(ctx)
@@ -848,6 +873,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы
 		// машину с описанием сегментов, которых больше никто не создаёт.
 		m.sys("/etc/network/interfaces.d/netos.conf"),
+		m.sys("/etc/systemd/networkd.conf.d/99-netos.conf"),
 		m.sys("/etc/systemd/system/systemd-networkd-wait-online.service.d/99-netos.conf"),
 		// Отстранение NetworkManager снимается вместе с netOS: иначе
 		// интерфейсы остались бы ничьими и после перезагрузки машина не
@@ -1048,7 +1074,9 @@ func (m *Manager) removePolicyRules(ctx context.Context) {
 		if _, err := fmt.Sscanf(strings.TrimSuffix(fields[0], ":"), "%d", &priority); err != nil {
 			continue
 		}
-		if priority >= 20000 && priority <= 29999 {
+		// 10000-19999 принадлежат автоматически создаваемым правилам каналов,
+		// 20000-29999 — пользовательским policy rules из раздела маршрутизации.
+		if priority >= 10000 && priority <= 29999 {
 			m.bestEffort(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(priority))
 		}
 	}
