@@ -21,6 +21,7 @@ npm-debug.log*
 
 # Воспроизводимые QA-артефакты и кэши
 /output/
+audit_*.md
 __pycache__/
 *.pyc
 
