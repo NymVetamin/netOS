@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/netos-router/netos/internal/system"
 )
 
 // TestMain keeps every package test away from the host's real service files.
@@ -25,6 +27,7 @@ func TestMain(m *testing.M) {
 	unboundBlocklistPath = filepath.Join(root, "unbound-blocklist.conf")
 	dnsproxyBlocklistPath = filepath.Join(root, "dnsproxy-blocklist.hosts")
 	systemResolverRoot = root
+	system.PolicyRCPath = filepath.Join(root, "policy-rc.d")
 
 	code := m.Run()
 	if err := os.RemoveAll(root); err != nil && code == 0 {

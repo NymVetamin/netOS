@@ -217,9 +217,10 @@ func (p *Packages) Ensure(ctx context.Context, pkgs ...string) ([]string, error)
 	return missing, nil
 }
 
-// policyRCPath — скрипт, у которого Debian спрашивает разрешения, прежде чем
-// postinst пакета запустит демона. Код возврата 101 означает запрет.
-var policyRCPath = "/usr/sbin/policy-rc.d"
+// PolicyRCPath — скрипт, у которого Debian спрашивает разрешения, прежде чем
+// postinst пакета запустит демона. Путь настраивается, чтобы lifecycle-тесты с
+// fake Runner держали временный запрет внутри своей песочницы.
+var PolicyRCPath = "/usr/sbin/policy-rc.d"
 
 // holdDaemons запрещает запуск демонов на время установки пакета и возвращает
 // функцию, снимающую запрет.
@@ -236,7 +237,7 @@ var policyRCPath = "/usr/sbin/policy-rc.d"
 // Чужой policy-rc.d не трогаем: он принадлежит не нам, и вернуть его на место
 // после подмены надёжно нельзя. Запрет в этом случае просто не ставится.
 func holdDaemons() (func(), error) {
-	if _, err := os.Stat(policyRCPath); err == nil {
+	if _, err := os.Stat(PolicyRCPath); err == nil {
 		return func() {}, nil
 	} else if !os.IsNotExist(err) {
 		return nil, err
@@ -245,8 +246,8 @@ func holdDaemons() (func(), error) {
 		"# Создано netOS на время установки пакета и удаляется сразу после неё.\n" +
 		"# Демонами управляет netOS собственными юнитами.\n" +
 		"exit 101\n"
-	if err := WriteFileAtomic(policyRCPath, []byte(script), 0o755); err != nil {
+	if err := WriteFileAtomic(PolicyRCPath, []byte(script), 0o755); err != nil {
 		return nil, err
 	}
-	return func() { _ = os.Remove(policyRCPath) }, nil
+	return func() { _ = os.Remove(PolicyRCPath) }, nil
 }

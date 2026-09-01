@@ -177,7 +177,9 @@ func TestObservationHandlersDoNotHideCollectorFailures(t *testing.T) {
 }
 
 func TestStatisticsStrictQueryValidationAndFiltering(t *testing.T) {
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	// Keep the fixture inside the handler's real-time query window. A fixed
+	// timestamp eventually falls outside ?hours=1 even when filtering works.
+	now := time.Now().UTC().Truncate(time.Second)
 	history := &netosruntime.TrafficHistory{
 		Path: filepath.Join(t.TempDir(), "traffic.jsonl"), Interval: time.Hour, Retain: 7 * 24 * time.Hour,
 		Now: func() time.Time { return now },

@@ -300,10 +300,10 @@ func (r *packageRunner) RunInput(ctx context.Context, _ string, name string, arg
 
 func withTestPolicyPath(t *testing.T) string {
 	t.Helper()
-	old := policyRCPath
-	policyRCPath = filepath.Join(t.TempDir(), "policy-rc.d")
-	t.Cleanup(func() { policyRCPath = old })
-	return policyRCPath
+	old := PolicyRCPath
+	PolicyRCPath = filepath.Join(t.TempDir(), "policy-rc.d")
+	t.Cleanup(func() { PolicyRCPath = old })
+	return PolicyRCPath
 }
 
 func TestPackagesInstalledEnsureAndPolicyCleanup(t *testing.T) {

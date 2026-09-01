@@ -20,8 +20,20 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
-      # Сборка проходит и без собранного фронтенда: в webdist лежит .gitkeep,
-      # которого достаточно для go:embed. Проверяем именно код.
+      # Backend contract tests inspect the production bundle embedded in the
+      # binary, so a clean checkout must build it before compiling the tests.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: build production bundle for contract tests
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       - name: go vet
         working-directory: backend
         run: go vet ./...
