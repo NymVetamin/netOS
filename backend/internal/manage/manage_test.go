@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ func testManager() (*Manager, *bytes.Buffer) {
 	m.EUID = func() int { return 0 }
 	m.Run = func(context.Context, command) error { return nil }
 	m.Output = func(context.Context, string, ...string) (string, error) { return "", nil }
+	m.RecordRestoreAudit = func(string) error { return nil }
 	// Ожидание дефолтного маршрута опрашивает таблицу раз в секунду. С живым
 	// time.Sleep каждый тест удаления стоил бы два десятка секунд.
 	m.Sleep = func(time.Duration) {}
@@ -122,6 +124,33 @@ func TestMutationRequiresRoot(t *testing.T) {
 	m.EUID = func() int { return 1000 }
 	if err := m.Execute(context.Background(), []string{"update"}); err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("update без root вернул %v", err)
+	}
+}
+
+func TestRecordRestoreAuditPersistsInRestoredDatabase(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	dbPath := m.sys(m.Database)
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(m.BackupDir, "netos-backup-20260901-120000.tar.gz")
+	if err := m.recordRestoreAudit(backup); err != nil {
+		t.Fatal(err)
+	}
+	st, err = store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entries, err := st.ListAudit(10)
+	if err != nil || len(entries) != 1 || entries[0].Action != "restore" ||
+		entries[0].Target != filepath.Base(backup) || !entries[0].Success {
+		t.Fatalf("restore audit=%+v err=%v", entries, err)
 	}
 }
 
@@ -443,6 +472,32 @@ func TestStopDaemonReportsRealFailure(t *testing.T) {
 	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
 	if err := m.stopDaemon(context.Background()); err == nil {
 		t.Fatal("остановка работающей службы провалилась, но ошибка потеряна")
+	}
+}
+
+func TestUninstallRemovesKeaLeaseDataUnlessKept(t *testing.T) {
+	for _, keepData := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keep=%v", keepData), func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			lease := m.sys("/var/lib/kea/netos-leases4.csv")
+			if err := os.MkdirAll(filepath.Dir(lease), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(lease, []byte("192.0.2.50,client.qa.lan\n"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.uninstall(context.Background(), true, keepData); err != nil {
+				t.Fatal(err)
+			}
+			_, err := os.Stat(lease)
+			if keepData && err != nil {
+				t.Fatalf("--keep-data removed Kea leases: %v", err)
+			}
+			if !keepData && !os.IsNotExist(err) {
+				t.Fatalf("full uninstall retained Kea leases: %v", err)
+			}
+		})
 	}
 }
 

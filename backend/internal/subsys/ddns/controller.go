@@ -28,8 +28,8 @@ type Logger interface {
 
 type Status struct {
 	Enabled  bool      `json:"enabled"`
-	LastRun  time.Time `json:"last_run,omitempty"`
-	NextRun  time.Time `json:"next_run,omitempty"`
+	LastRun  time.Time `json:"last_run,omitzero"`
+	NextRun  time.Time `json:"next_run,omitzero"`
 	Address  string    `json:"address,omitempty"`
 	Success  bool      `json:"success"`
 	Message  string    `json:"message,omitempty"`

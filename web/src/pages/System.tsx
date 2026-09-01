@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatBytes, formatTime, Session } from "../api";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
@@ -29,11 +29,13 @@ export function SystemPage({
   patch,
   session,
   onSessionEnded,
+  onConfigReplaced,
 }: {
   config: any;
   patch: Patch;
   session: Session;
   onSessionEnded: () => void;
+  onConfigReplaced: () => Promise<void>;
 }) {
   const currentPanel = config.system?.panel || { port: 8443, commit_timeout: 30, tls: { mode: "selfsigned" } };
   const [panelEndpoint, setPanelEndpoint] = useState<any>({
@@ -270,13 +272,13 @@ export function SystemPage({
         </div>
       </Card>
 
-      {session.role === "admin" && <MaintenancePanel />}
+      {session.role === "admin" && <MaintenancePanel onConfigReplaced={onConfigReplaced} />}
       <ChangePassword username={session.username} onSessionEnded={onSessionEnded} />
     </>
   );
 }
 
-function MaintenancePanel() {
+function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promise<void> }) {
   const [backups, setBackups] = useState<any[]>([]);
   const [status, setStatus] = useState<any>({ state: "idle" });
   const [busy, setBusy] = useState(false);
@@ -286,17 +288,37 @@ function MaintenancePanel() {
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [version, setVersion] = useState("latest");
   const [updateConfirm, setUpdateConfirm] = useState("");
+  const [waitingForRestore, setWaitingForRestore] = useState(false);
+  const restoreObservedRunning = useRef(false);
+  const restoreScheduledAt = useRef(0);
 
   async function load() {
     const [list, live] = await Promise.all([api.backups(), api.maintenanceStatus()]);
     setBackups(list.backups || []);
     setStatus(live);
+    const running = live.state === "active" || live.state === "activating";
+    if (waitingForRestore && running) restoreObservedRunning.current = true;
+    if (waitingForRestore && !running && restoreObservedRunning.current) {
+      restoreObservedRunning.current = false;
+      setWaitingForRestore(false);
+      setRestoreName("");
+      setRestoreConfirm("");
+      setMessage("");
+      await onConfigReplaced();
+    }
   }
   useEffect(() => {
-    load().catch(() => {});
-    const timer = window.setInterval(() => load().catch(() => {}), 5000);
+    const poll = () => load().catch(() => {
+      // Restore restarts netosd. Losing the polling request after the
+      // scheduled unit had time to start is evidence that it is running.
+      if (waitingForRestore && Date.now() - restoreScheduledAt.current > 1500) {
+        restoreObservedRunning.current = true;
+      }
+    });
+    poll();
+    const timer = window.setInterval(poll, waitingForRestore ? 1000 : 5000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [waitingForRestore]);
 
   async function action(run: () => Promise<any>, success: string) {
     setBusy(true);
@@ -351,7 +373,12 @@ function MaintenancePanel() {
         </Notice>
         <div className="row wrap" style={{ marginTop: ".7rem" }}>
           <input aria-label="Подтверждение восстановления" style={{ maxWidth: 220 }} placeholder="Введите RESTORE" value={restoreConfirm} onChange={(e) => setRestoreConfirm(e.target.value)} />
-          <button className="btn danger" disabled={busy || restoreConfirm !== "RESTORE"} onClick={() => action(() => api.restoreBackup(restoreName, restoreConfirm), "Восстановление запланировано")}>Восстановить</button>
+          <button className="btn danger" disabled={busy || restoreConfirm !== "RESTORE"} onClick={() => action(async () => {
+            await api.restoreBackup(restoreName, restoreConfirm);
+            restoreObservedRunning.current = false;
+            restoreScheduledAt.current = Date.now();
+            setWaitingForRestore(true);
+          }, "Восстановление запланировано")}>Восстановить</button>
           <button className="btn ghost" onClick={() => setRestoreName("")}>Отмена</button>
         </div>
       </div>}

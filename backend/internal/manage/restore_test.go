@@ -326,6 +326,11 @@ func TestRestoreUnpacksChosenBackup(t *testing.T) {
 func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	var auditedBackup string
+	m.RecordRestoreAudit = func(backup string) error {
+		auditedBackup = backup
+		return nil
+	}
 	if err := os.MkdirAll(m.BackupDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -374,6 +379,9 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 	}
 	if len(order) != 2 || order[0] != "backup" || order[1] != "restore" {
 		t.Fatalf("состояние до восстановления не сохранено первым: %v", order)
+	}
+	if auditedBackup != backup {
+		t.Fatalf("restore completion audit target=%q, want %q", auditedBackup, backup)
 	}
 	if runtime.GOOS != "windows" {
 		matches, _ := filepath.Glob(filepath.Join(m.BackupDir, "netos-before-restore-*.tar.gz"))

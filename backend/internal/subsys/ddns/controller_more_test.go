@@ -2,6 +2,7 @@ package ddns
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -14,6 +15,17 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestStatusJSONOmitsDatesBeforeFirstAttempt(t *testing.T) {
+	data, err := json.Marshal(Status{Enabled: true, Provider: "duckdns"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "last_run") || strings.Contains(text, "next_run") || strings.Contains(text, "0001-") {
+		t.Fatalf("zero attempt dates leaked into status JSON: %s", text)
+	}
+}
 
 type captureLogger struct {
 	mu    sync.Mutex

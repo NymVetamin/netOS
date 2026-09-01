@@ -1181,6 +1181,10 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "%v", err)
 		return
 	}
+	// New wires the engine callback to do this for both manual and timeout
+	// rollbacks. Keep the handler idempotently safe for tests and embedders that
+	// replace Engine after constructing Server.
+	s.discardDraft()
 	_ = s.Store.Audit(store.AuditEntry{
 		User: userOf(r), Action: "rollback", SourceIP: clientIP(r), Success: true,
 	})

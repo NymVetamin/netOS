@@ -67,6 +67,9 @@ type Manager struct {
 	Run     func(context.Context, command) error
 	Output  func(context.Context, string, ...string) (string, error)
 	Sleep   func(time.Duration)
+	// RecordRestoreAudit appends the completion record after the restored
+	// database has replaced the old one. Tests may replace it with a recorder.
+	RecordRestoreAudit func(string) error
 
 	// Root подставляется перед всеми системными путями. В работе он пуст, а в
 	// тестах указывает на временный каталог: иначе прогон тестов удаления под
@@ -110,7 +113,20 @@ func New(version string) *Manager {
 	}
 	m.Run = m.runOS
 	m.Output = m.outputOS
+	m.RecordRestoreAudit = m.recordRestoreAudit
 	return m
+}
+
+func (m *Manager) recordRestoreAudit(backup string) error {
+	st, err := store.Open(m.sys(m.Database))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return st.Audit(store.AuditEntry{
+		User: "system", Action: "restore", Target: filepath.Base(backup),
+		Detail: "restore completed", Success: true,
+	})
 }
 
 func (m *Manager) Execute(ctx context.Context, args []string) error {
@@ -873,6 +889,9 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	if err := m.waitRuntimeReady(ctx, 240); err != nil {
 		return m.rollbackRestore(ctx, safety, fmt.Errorf("ожидание применения после восстановления: %w", err))
 	}
+	if err := m.RecordRestoreAudit(selected); err != nil {
+		return fmt.Errorf("restore completed, but its audit record was not saved: %w", err)
+	}
 	fmt.Fprintf(m.Out, "Восстановлено из %s\n", filepath.Base(selected))
 	fmt.Fprintf(m.Out, "Состояние до восстановления сохранено: %s\n", safety)
 	fmt.Fprintln(m.Out, "Конфигурация из копии применена при запуске службы: netos status")
@@ -1252,6 +1271,13 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 			if err := os.RemoveAll(path); err != nil {
 				return err
 			}
+		}
+		// Kea's AppArmor profile forces this netOS-owned lease database outside
+		// StateDir. Full uninstall must remove its client data; --keep-data
+		// intentionally preserves it for reinstall.
+		keaLease := m.sys("/var/lib/kea/netos-leases4.csv")
+		if err := os.Remove(keaLease); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove netOS Kea leases %s: %w", keaLease, err)
 		}
 	}
 	if err := os.Remove(m.Binary); err != nil && !os.IsNotExist(err) {

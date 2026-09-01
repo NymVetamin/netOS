@@ -99,7 +99,7 @@ type Logger interface {
 }
 
 func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, logger Logger) *Server {
-	return &Server{
+	s := &Server{
 		Store:             st,
 		Engine:            engine,
 		Collector:         collector,
@@ -113,6 +113,28 @@ func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, lo
 		loginSlots:        make(chan struct{}, maxConcurrentLogins),
 		draftVersion:      1,
 	}
+	if engine != nil {
+		previousRollback := engine.OnRollback
+		engine.OnRollback = func(info apply.RollbackInfo) {
+			if previousRollback != nil {
+				previousRollback(info)
+			}
+			s.discardDraft()
+		}
+	}
+	return s
+}
+
+// discardDraft atomically returns the editor to the active configuration.
+// A successful rollback has already rejected the pending revision, so keeping
+// its exact contents as an immediately re-applicable draft is unsafe.
+func (s *Server) discardDraft() {
+	s.draftMu.Lock()
+	if s.draft != nil {
+		s.draft = nil
+		s.draftVersion++
+	}
+	s.draftMu.Unlock()
 }
 
 // Routes собирает маршрутизацию.

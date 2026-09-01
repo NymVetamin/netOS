@@ -231,6 +231,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   // PUT-запросы выполняются строго по очереди: более старый ответ не должен
   // перезаписать на сервере конфигурацию, отправленную позже.
   const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const syncGeneration = useRef(0);
 
   const applyServerState = useCallback((res: ConfigResponse) => {
     setCfg(res.config);
@@ -241,6 +242,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   }, []);
 
   const reload = useCallback(async () => {
+    syncGeneration.current++;
+    pendingCfg.current = null;
+    window.clearTimeout(saveTimer.current);
     try {
       applyServerState(await api.getConfig());
     } catch (err) {
@@ -276,8 +280,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     pendingCfg.current = null;
 
     const job = saveChain.current.then(async () => {
+      const generation = syncGeneration.current;
       try {
         const res = await api.saveConfig(next);
+        if (generation !== syncGeneration.current) return;
         setProblems(res.problems || []);
         // Черновик, совпавший с применённой конфигурацией, черновиком быть
         // перестаёт: сервер отвечает dirty=false, и полоса применения уходит
@@ -286,6 +292,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         setDirty(res.dirty);
         setSaveError("");
       } catch (err) {
+        if (generation !== syncGeneration.current) return;
         if (err instanceof ApiError) {
           setProblems(err.problems || []);
           setSaveError(err.problems?.length ? "" : err.message);
@@ -455,7 +462,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "firewall" && <FirewallPage config={cfg} patch={patch} />}
               {page === "components" && <ComponentsPage config={cfg} patch={patch} />}
               {page === "system" && (
-                <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} />
+                <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} onConfigReplaced={reload} />
               )}
               {page === "history" && <HistoryPage onRestored={reload} />}
               {page === "diagnostics" && session.role === "admin" && <DiagnosticsPage />}

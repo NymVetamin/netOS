@@ -148,6 +148,22 @@ func TestConfigConfirmAndDisconnectedManualRollback(t *testing.T) {
 	if len(subsystem.applied) < 4 || subsystem.applied[len(subsystem.applied)-1] != "confirmed-router" {
 		t.Fatalf("subsystem lifecycle=%v", subsystem.applied)
 	}
+	if s.draft != nil {
+		t.Fatalf("rollback retained rejected draft: %+v", s.draft)
+	}
+}
+
+func TestNewClearsDraftForTimeoutRollbackCallback(t *testing.T) {
+	engine := apply.NewEngine(&lifecycleLogger{}, true)
+	previousCalled := false
+	engine.OnRollback = func(apply.RollbackInfo) { previousCalled = true }
+	s := New(nil, engine, nil, &lifecycleLogger{})
+	cfg := config.Default()
+	s.draft = cfg
+	engine.OnRollback(apply.RollbackInfo{Reason: "timeout"})
+	if !previousCalled || s.draft != nil || s.draftVersion != 2 {
+		t.Fatalf("previous=%v draft=%+v version=%d", previousCalled, s.draft, s.draftVersion)
+	}
 }
 
 func TestDraftPreconditionAndBusyBranches(t *testing.T) {

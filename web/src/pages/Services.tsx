@@ -182,7 +182,10 @@ function DNSSection({
             onChange={(v) =>
               patch((d) => {
                 d.dns.enabled = v;
-                if (v && !d.dns.provider) d.dns.provider = providers[0];
+                if (v && !d.dns.provider) {
+                  d.dns.provider = providers[0];
+                  if (providers[0] === "dnsmasq") d.dns.dnssec = false;
+                }
               })
             }
           />
@@ -203,6 +206,9 @@ function DNSSection({
                 if (e.target.value !== "unbound") d.dns.advanced_options = "";
               })}
             >
+              <option value="" disabled>
+                — выберите резолвер —
+              </option>
               {providers.map((p) => (
                 <option key={p} value={p}>
                   {p}
