@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -70,7 +71,13 @@ type Server struct {
 	loginFails map[string]*failCounter
 	loginSlots chan struct{}
 
-	httpServer *http.Server
+	httpServer        *http.Server
+	challengeServer   *http.Server
+	Listen            func(network, address string) (net.Listener, error)
+	ACMEFactory       acmeManagerFactory
+	ACMEHTTPAddress   string
+	ACMECheckInterval time.Duration
+	Ready             func() error
 }
 
 type failCounter struct {
@@ -93,14 +100,18 @@ type Logger interface {
 
 func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, logger Logger) *Server {
 	return &Server{
-		Store:        st,
-		Engine:       engine,
-		Collector:    collector,
-		Logger:       logger,
-		csrfTokens:   map[string]string{},
-		loginFails:   map[string]*failCounter{},
-		loginSlots:   make(chan struct{}, maxConcurrentLogins),
-		draftVersion: 1,
+		Store:             st,
+		Engine:            engine,
+		Collector:         collector,
+		Logger:            logger,
+		Listen:            net.Listen,
+		ACMEFactory:       newProductionACMEManager,
+		ACMEHTTPAddress:   ":80",
+		ACMECheckInterval: 6 * time.Hour,
+		csrfTokens:        map[string]string{},
+		loginFails:        map[string]*failCounter{},
+		loginSlots:        make(chan struct{}, maxConcurrentLogins),
+		draftVersion:      1,
 	}
 }
 
@@ -148,6 +159,7 @@ func (s *Server) Routes() http.Handler {
 	auth("DELETE /api/backups/{name}", s.handleDeleteBackup)
 	auth("POST /api/maintenance/restore", s.handleMaintenanceRestore)
 	auth("POST /api/maintenance/update", s.handleMaintenanceUpdate)
+	auth("POST /api/maintenance/panel", s.handleMaintenancePanel)
 	auth("GET /api/clients", s.handleClients)
 	auth("GET /api/interfaces", s.handleInterfaces)
 	auth("GET /api/leases", s.handleLeases)
@@ -212,13 +224,78 @@ func (s *Server) withCommonHeaders(next http.Handler) http.Handler {
 
 // Start поднимает HTTPS-панель.
 func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) error {
-	certPath, keyPath, fingerprint, err := tlsutil.EnsureSelfSigned(tlsDir, cfg.System.Hostname)
-	if err != nil {
-		return fmt.Errorf("подготовка сертификата: %w", err)
-	}
-	if cfg.System.Panel.TLS.Mode == "custom" {
+	var certPath, keyPath, fingerprint string
+	var acmeManager acmeCertificateManager
+	var challengeErr <-chan error
+	var err error
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	switch cfg.System.Panel.TLS.Mode {
+	case "custom":
 		certPath = cfg.System.Panel.TLS.CertFile
 		keyPath = cfg.System.Panel.TLS.KeyFile
+		fingerprint, err = customTLSFingerprint(certPath, keyPath)
+		if err != nil {
+			return fmt.Errorf("проверка пользовательского сертификата: %w", err)
+		}
+	case "acme":
+		factory := s.ACMEFactory
+		if factory == nil {
+			factory = newProductionACMEManager
+		}
+		manager, factoryErr := factory(acmeCacheDir(tlsDir, cfg.System.Panel.TLS.Email), cfg.System.Panel.TLS.Domain, cfg.System.Panel.TLS.Email)
+		if factoryErr != nil {
+			return fmt.Errorf("подготовка ACME: %w", factoryErr)
+		}
+		acmeManager = manager
+		listen := s.Listen
+		if listen == nil {
+			listen = net.Listen
+		}
+		challengeAddress := s.ACMEHTTPAddress
+		if challengeAddress == "" {
+			challengeAddress = ":80"
+		}
+		challengeListener, listenErr := listen("tcp", challengeAddress)
+		if listenErr != nil {
+			return fmt.Errorf("не удалось занять HTTP-порт проверки ACME %s: %w", challengeAddress, listenErr)
+		}
+		s.challengeServer = &http.Server{
+			Addr: challengeAddress, Handler: manager.HTTPHandler(http.HandlerFunc(acmeFallback)),
+			ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+			WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
+			ErrorLog: log.New(logWriter{s.Logger}, "", 0),
+		}
+		challengeDone := make(chan error, 1)
+		go func() {
+			serveErr := s.challengeServer.Serve(challengeListener)
+			if serveErr == http.ErrServerClosed {
+				serveErr = nil
+			}
+			challengeDone <- serveErr
+		}()
+		challengeErr = challengeDone
+		cert, issueErr := prefetchACMECertificateContext(ctx, manager, cfg.System.Panel.TLS.Domain)
+		if issueErr != nil {
+			_ = s.challengeServer.Close()
+			<-challengeDone
+			return issueErr
+		}
+		parsed, parseErr := x509.ParseCertificate(cert.Certificate[0])
+		if parseErr != nil {
+			_ = s.challengeServer.Close()
+			<-challengeDone
+			return fmt.Errorf("разбор сертификата ACME: %w", parseErr)
+		}
+		fingerprint = tlsutil.Fingerprint(parsed)
+		tlsConfig = manager.TLSConfig().Clone()
+		tlsConfig.MinVersion = tls.VersionTLS12
+	case "selfsigned", "":
+		certPath, keyPath, fingerprint, err = tlsutil.EnsureSelfSigned(tlsDir, cfg.System.Hostname)
+		if err != nil {
+			return fmt.Errorf("подготовка сертификата: %w", err)
+		}
+	default:
+		return fmt.Errorf("неизвестный режим TLS %q", cfg.System.Panel.TLS.Mode)
 	}
 	s.Logger.Infof("отпечаток сертификата панели: %s", fingerprint)
 
@@ -232,11 +309,19 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 		ErrorLog:          log.New(logWriter{s.Logger}, "", 0),
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSConfig:         tlsConfig,
 	}
 
-	ln, err := net.Listen("tcp", addr)
+	listen := s.Listen
+	if listen == nil {
+		listen = net.Listen
+	}
+	ln, err := listen("tcp", addr)
 	if err != nil {
+		if s.challengeServer != nil {
+			_ = s.challengeServer.Close()
+			<-challengeErr
+		}
 		return fmt.Errorf("не удалось занять порт %d: %w", cfg.System.Panel.Port, err)
 	}
 
@@ -248,16 +333,139 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.httpServer.Shutdown(shutdownCtx)
+		if s.challengeServer != nil {
+			_ = s.challengeServer.Shutdown(shutdownCtx)
+		}
 	}()
 
 	go s.pruneLoop(ctx)
-
-	s.Logger.Infof("панель доступна на порту %d", cfg.System.Panel.Port)
-	err = s.httpServer.ServeTLS(ln, certPath, keyPath)
-	if err == http.ErrServerClosed {
-		return nil
+	if acmeManager != nil {
+		go s.monitorACMECertificate(ctx, acmeManager, cfg.System.Panel.TLS.Domain, fingerprint)
 	}
-	return err
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveErr := s.httpServer.ServeTLS(ln, certPath, keyPath)
+		if serveErr == http.ErrServerClosed {
+			serveErr = nil
+		}
+		serveDone <- serveErr
+	}()
+	serverName := cfg.System.Hostname
+	if cfg.System.Panel.TLS.Mode == "acme" {
+		serverName = strings.TrimSuffix(strings.ToLower(cfg.System.Panel.TLS.Domain), ".")
+	}
+	if err := waitPanelTLSReady(ctx, cfg.System.Panel.Port, serverName, serveDone); err != nil {
+		_ = s.httpServer.Close()
+		if s.challengeServer != nil {
+			_ = s.challengeServer.Close()
+		}
+		return err
+	}
+	if s.Ready != nil {
+		if err := s.Ready(); err != nil {
+			_ = s.httpServer.Close()
+			if s.challengeServer != nil {
+				_ = s.challengeServer.Close()
+			}
+			return fmt.Errorf("маркер готовности панели: %w", err)
+		}
+	}
+	s.Logger.Infof("панель доступна на порту %d", cfg.System.Panel.Port)
+	if challengeErr == nil {
+		return <-serveDone
+	}
+	select {
+	case err := <-serveDone:
+		return err
+	case err := <-challengeErr:
+		if err == nil && ctx.Err() != nil {
+			return <-serveDone
+		}
+		_ = s.httpServer.Close()
+		return fmt.Errorf("HTTP endpoint ACME остановлен: %w", err)
+	}
+}
+
+func (s *Server) monitorACMECertificate(ctx context.Context, manager acmeCertificateManager, domain, fingerprint string) {
+	interval := s.ACMECheckInterval
+	if interval <= 0 {
+		interval = 6 * time.Hour
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cert, err := prefetchACMECertificateContext(ctx, manager, domain)
+			if err != nil {
+				s.Logger.Errorf("проверка сертификата ACME: %v", err)
+				continue
+			}
+			leaf, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				s.Logger.Errorf("проверка сертификата ACME: разбор X.509: %v", err)
+				continue
+			}
+			current := tlsutil.Fingerprint(leaf)
+			if current != fingerprint {
+				s.Logger.Infof("сертификат ACME обновлён; новый отпечаток: %s; действует до %s", current, leaf.NotAfter.UTC().Format(time.RFC3339))
+				fingerprint = current
+			}
+			if remaining := time.Until(leaf.NotAfter); remaining < 14*24*time.Hour {
+				s.Logger.Warnf("сертификат ACME для %s истекает через %s", domain, remaining.Round(time.Hour))
+			}
+		}
+	}
+}
+
+func waitPanelTLSReady(ctx context.Context, port int, serverName string, serveDone <-chan error) error {
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	transport := &http.Transport{TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS12, ServerName: serverName, InsecureSkipVerify: true, // #nosec G402 -- loopback readiness probe
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 750 * time.Millisecond}
+	url := "https://" + net.JoinHostPort("127.0.0.1", fmt.Sprint(port)) + "/api/ping"
+	for {
+		response, err := client.Get(url)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return nil
+			}
+			err = fmt.Errorf("local /api/ping returned HTTP %d", response.StatusCode)
+		}
+		select {
+		case serveErr := <-serveDone:
+			return fmt.Errorf("панель остановилась до TLS-готовности: %w", serveErr)
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("панель не прошла локальный TLS handshake за 10s: %w", err)
+		case <-ticker.C:
+		}
+	}
+}
+
+func customTLSFingerprint(certPath, keyPath string) (string, error) {
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return "", err
+	}
+	if len(pair.Certificate) == 0 {
+		return "", fmt.Errorf("файл сертификата не содержит X.509 сертификат")
+	}
+	cert, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return "", err
+	}
+	return tlsutil.Fingerprint(cert), nil
 }
 
 // pruneLoop убирает просроченные сессии и лишние ревизии.
@@ -269,24 +477,28 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.pruneLoginFailures(time.Now())
-			expired, err := s.Store.PruneSessions()
-			if err != nil {
-				s.Logger.Warnf("уборка сессий: %v", err)
-			} else if len(expired) > 0 {
-				s.csrfMu.Lock()
-				for _, token := range expired {
-					delete(s.csrfTokens, token)
-				}
-				s.csrfMu.Unlock()
-			}
-			if err := s.Store.PruneRevisions(50); err != nil {
-				s.Logger.Warnf("уборка ревизий: %v", err)
-			}
-			if err := s.Store.PruneAudit(10_000); err != nil {
-				s.Logger.Warnf("уборка журнала аудита: %v", err)
-			}
+			s.pruneOnce()
 		}
+	}
+}
+
+func (s *Server) pruneOnce() {
+	s.pruneLoginFailures(time.Now())
+	expired, err := s.Store.PruneSessions()
+	if err != nil {
+		s.Logger.Warnf("уборка сессий: %v", err)
+	} else if len(expired) > 0 {
+		s.csrfMu.Lock()
+		for _, token := range expired {
+			delete(s.csrfTokens, token)
+		}
+		s.csrfMu.Unlock()
+	}
+	if err := s.Store.PruneRevisions(50); err != nil {
+		s.Logger.Warnf("уборка ревизий: %v", err)
+	}
+	if err := s.Store.PruneAudit(10_000); err != nil {
+		s.Logger.Warnf("уборка журнала аудита: %v", err)
 	}
 }
 
@@ -323,6 +535,7 @@ func writeError(w http.ResponseWriter, status int, format string, args ...any) {
 func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8<<20))
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return err
 	}

@@ -16,7 +16,7 @@
 package config
 
 // Version — версия схемы конфигурации.
-const Version = 2
+const Version = 3
 
 // Собственный протокол маршрутов netOS.
 //
@@ -90,10 +90,12 @@ type Panel struct {
 }
 
 type TLS struct {
-	Mode     string `json:"mode"` // selfsigned | custom | acme
-	CertFile string `json:"cert_file,omitempty"`
-	KeyFile  string `json:"key_file,omitempty"`
-	Domain   string `json:"domain,omitempty"`
+	Mode      string `json:"mode"` // selfsigned | custom | acme
+	CertFile  string `json:"cert_file,omitempty"`
+	KeyFile   string `json:"key_file,omitempty"`
+	Domain    string `json:"domain,omitempty"`
+	Email     string `json:"email,omitempty"`
+	AcceptTOS bool   `json:"accept_tos,omitempty"`
 }
 
 // IPv6Policy управляет подавлением IPv6.
@@ -390,6 +392,9 @@ type FirewallRule struct {
 }
 
 type Schedule struct {
+	// TimeStart and TimeStop are UTC. The iptables kernel-timezone mode is
+	// deliberately not used: its offset is commonly unset and is not kept in
+	// sync with daylight-saving transitions by Linux distributions.
 	Days      []string `json:"days"`
 	TimeStart string   `json:"time_start"`
 	TimeStop  string   `json:"time_stop"`

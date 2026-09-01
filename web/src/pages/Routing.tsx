@@ -82,6 +82,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="text"
+                        aria-label={`Название статического маршрута ${idx + 1}`}
                         style={{ width: 130 }}
                         value={r.name}
                         onChange={(e) => patch((d) => (d.routing.static[idx].name = e.target.value))}
@@ -90,6 +91,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="text"
+                        aria-label={`Назначение статического маршрута ${r.name || idx + 1}`}
                         className="mono"
                         style={{ width: 150 }}
                         placeholder="10.0.0.0/8 или default"
@@ -114,6 +116,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="text"
+                        aria-label={`Шлюз статического маршрута ${r.name || idx + 1}`}
                         className="mono"
                         style={{ width: 130 }}
                         disabled={r.type && r.type !== "unicast"}
@@ -126,6 +129,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="text"
+                        aria-label={`Интерфейс статического маршрута ${r.name || idx + 1}`}
                         className="mono"
                         style={{ width: 100 }}
                         disabled={r.type && r.type !== "unicast"}
@@ -138,6 +142,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="number"
+                        aria-label={`Метрика статического маршрута ${r.name || idx + 1}`}
                         style={{ width: 80 }}
                         value={r.metric || 0}
                         onChange={(e) =>
@@ -147,6 +152,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     </td>
                     <td>
                       <select
+                        aria-label={`Таблица статического маршрута ${r.name || idx + 1}`}
                         value={r.table || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].table = e.target.value))
@@ -237,6 +243,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="text"
+                        aria-label={`Имя таблицы маршрутизации ${idx + 1}`}
                         className="mono"
                         style={{ width: 150 }}
                         value={t.name}
@@ -247,6 +254,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="number"
+                        aria-label={`Номер таблицы маршрутизации ${t.name || idx + 1}`}
                         style={{ width: 90 }}
                         value={t.number}
                         disabled={t.system}
@@ -258,6 +266,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td>
                       <input
                         type="text"
+                        aria-label={`Комментарий таблицы маршрутизации ${t.name || idx + 1}`}
                         value={t.comment || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.tables[idx].comment = e.target.value))
@@ -350,6 +359,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       <td>
                         <input
                           type="number"
+                          aria-label={`Приоритет правила маршрутизации ${r.name || i + 1}`}
                           style={{ width: 90 }}
                           value={r.priority}
                           onChange={(e) =>
@@ -360,6 +370,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       <td>
                         <input
                           type="text"
+                          aria-label={`Название правила маршрутизации ${i + 1}`}
                           style={{ width: 130 }}
                           value={r.name}
                           onChange={(e) => patch((d) => (d.routing.rules[i].name = e.target.value))}
@@ -368,6 +379,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       <td>
                         <input
                           type="text"
+                          aria-label={`Источник правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
                           style={{ width: 140 }}
                           placeholder="любой"
@@ -378,6 +390,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       <td>
                         <input
                           type="text"
+                          aria-label={`Назначение правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
                           style={{ width: 140 }}
                           placeholder="любой"
@@ -388,6 +401,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       <td>
                         <input
                           type="text"
+                          aria-label={`Метка правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
                           style={{ width: 90 }}
                           placeholder="—"
@@ -399,6 +413,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       </td>
                       <td>
                         <select
+                          aria-label={`Таблица правила маршрутизации ${r.name || i + 1}`}
                           value={r.table}
                           onChange={(e) => patch((d) => (d.routing.rules[i].table = e.target.value))}
                         >
@@ -470,7 +485,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
               <tbody>
                 {(live.parsed || []).map((r, i) => (
                   <tr key={i}>
-                    <td className="mono">{r.destination}</td>
+                    <td className="mono">{r.type && r.type !== "unicast" ? `${r.type} ${r.destination}` : r.destination}</td>
                     <td className="mono">{r.gateway || <span className="faint">напрямую</span>}</td>
                     <td className="mono">{r.interface}</td>
                     <td className="mono">{r.metric || <span className="faint">—</span>}</td>

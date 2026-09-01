@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,8 +15,9 @@ import (
 type resolvRunner struct {
 	commands []string
 	// active и enabled — состояние systemd-resolved до вмешательства netOS.
-	active  bool
-	enabled bool
+	active     bool
+	enabled    bool
+	failEnable bool
 }
 
 func (r *resolvRunner) Run(_ context.Context, name string, args ...string) (string, error) {
@@ -39,6 +41,9 @@ func (r *resolvRunner) Run(_ context.Context, name string, args ...string) (stri
 	case strings.HasPrefix(command, "systemctl disable"):
 		r.enabled = false
 	case strings.HasPrefix(command, "systemctl enable --now"):
+		if r.failEnable {
+			return "", fmt.Errorf("injected enable failure")
+		}
 		r.active, r.enabled = true, true
 	}
 	return "", nil
@@ -111,6 +116,9 @@ func TestSystemResolverTakesOverResolvConf(t *testing.T) {
 	if !r.did("systemctl stop systemd-resolved.service") {
 		t.Fatalf("systemd-resolved остался работать: %v", r.commands)
 	}
+	if err := u.Health(context.Background(), resolvConfig()); err != nil {
+		t.Fatalf("healthy captured resolver: %v", err)
+	}
 }
 
 // Повторное применение не должно ни переписывать файл, ни трогать systemd:
@@ -173,6 +181,73 @@ func TestSystemResolverGivesResolvConfBack(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, resolvStatePath)); !os.IsNotExist(err) {
 		t.Error("память об исходном состоянии осталась на диске")
 	}
+	if err := u.Health(context.Background(), off); err != nil {
+		t.Fatalf("released resolver health: %v", err)
+	}
+}
+
+func TestSystemResolverReleaseFailureKeepsRetryState(t *testing.T) {
+	r := &resolvRunner{active: true, enabled: true}
+	u, root := resolvFixture(t, r)
+	if err := u.Apply(context.Background(), resolvConfig()); err != nil {
+		t.Fatal(err)
+	}
+	r.failEnable = true
+	off := resolvConfig()
+	off.DNS.Enabled = false
+	if err := u.Apply(context.Background(), off); err == nil {
+		t.Fatal("failed systemd-resolved enable was ignored")
+	}
+	if _, err := os.Stat(filepath.Join(root, resolvStatePath)); err != nil {
+		t.Fatalf("failed release lost retry state: %v", err)
+	}
+	r.failEnable = false
+	if err := u.Apply(context.Background(), off); err != nil {
+		t.Fatal(err)
+	}
+	if !r.active || !r.enabled {
+		t.Fatal("retry did not restore systemd-resolved")
+	}
+}
+
+func TestSystemResolverHealthDetectsFileAndServiceDrift(t *testing.T) {
+	r := &resolvRunner{active: true, enabled: true}
+	u, root := resolvFixture(t, r)
+	cfg := resolvConfig()
+	if err := u.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "etc/resolv.conf")
+	if err := os.WriteFile(path, []byte("nameserver 9.9.9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Health(context.Background(), cfg); err == nil {
+		t.Fatal("foreign resolver content passed Health")
+	}
+	if err := os.WriteFile(path, []byte(u.Render(cfg)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.active, r.enabled = true, true
+	if err := u.Health(context.Background(), cfg); err == nil {
+		t.Fatal("active systemd-resolved passed captured Health")
+	}
+}
+
+func TestRestoreRejectsUnknownStateKindWithoutDeletingState(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, resolvStatePath)
+	if err := os.MkdirAll(filepath.Dir(state), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state, []byte(`{"kind":"mystery"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RestoreSystemResolverFiles(root); err == nil {
+		t.Fatal("unknown resolver state was accepted")
+	}
+	if _, err := os.Stat(state); err != nil {
+		t.Fatalf("invalid state was deleted: %v", err)
+	}
 }
 
 // Выключенный до netOS systemd-resolved включать обратно нельзя: удаление
@@ -215,5 +290,88 @@ func TestSystemResolverLeavesResolvConfOnNonStandardPort(t *testing.T) {
 	}
 	if r.did("systemctl stop systemd-resolved.service") {
 		t.Errorf("остановили единственный работающий резолвер машины: %v", r.commands)
+	}
+}
+
+func TestRestoreSystemResolverWithoutStateUsesNetworkdLease(t *testing.T) {
+	root := t.TempDir()
+	resolv := filepath.Join(root, "etc/resolv.conf")
+	lease := filepath.Join(root, "run/systemd/netif/leases/2")
+	for _, path := range []string{resolv, lease} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owned := netOSResolvMark + " Правки будут перезаписаны.\nnameserver 127.0.0.1\n"
+	if err := os.WriteFile(resolv, []byte(owned), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lease, []byte("DNS=1.1.1.1 2001:4860:4860::8888 127.0.0.1 invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resolvedWanted, err := RestoreSystemResolverFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedWanted {
+		t.Fatal("без state нельзя утверждать, что systemd-resolved раньше был включён")
+	}
+	content, err := os.ReadFile(resolv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Восстановлено при удалении netOS из DNS, полученных системой.\n" +
+		"nameserver 1.1.1.1\n" +
+		"nameserver 2001:4860:4860::8888\n" +
+		"options edns0\n"
+	if string(content) != want {
+		t.Fatalf("неожиданное восстановление:\n%s", content)
+	}
+}
+
+func TestRestoreSystemResolverWithoutStatePreservesForeignFile(t *testing.T) {
+	root := t.TempDir()
+	resolv := filepath.Join(root, "etc/resolv.conf")
+	if err := os.MkdirAll(filepath.Dir(resolv), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("nameserver 10.20.30.40\n")
+	if err := os.WriteFile(resolv, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RestoreSystemResolverFiles(root); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(resolv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != string(original) {
+		t.Fatalf("изменён чужой resolv.conf: %q", content)
+	}
+}
+
+func TestRestoreSystemResolverWithoutStateRejectsMissingSystemDNS(t *testing.T) {
+	root := t.TempDir()
+	resolv := filepath.Join(root, "etc/resolv.conf")
+	if err := os.MkdirAll(filepath.Dir(resolv), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(netOSResolvMark + " Правки будут перезаписаны.\nnameserver 127.0.0.1\n")
+	if err := os.WriteFile(resolv, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RestoreSystemResolverFiles(root); err == nil {
+		t.Fatal("потеря исходного DNS прошла без ошибки")
+	}
+	content, err := os.ReadFile(resolv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != string(original) {
+		t.Fatalf("файл изменён без достоверного DNS: %q", content)
 	}
 }

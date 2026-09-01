@@ -93,17 +93,30 @@ func (s *Systemd) Disable(ctx context.Context, unit string) error {
 // ненулевым кодом, — поэтому судим по выводу. Пустой вывод означает, что
 // ответа не было: работу в этом случае делаем, а не считаем сделанной.
 func (s *Systemd) alreadyDisabled(ctx context.Context, unit string) bool {
-	active, _ := s.R.Run(ctx, "systemctl", "is-active", unit)
+	active, activeErr := s.R.Run(ctx, "systemctl", "is-active", unit)
+	if activeErr != nil && unitMissing(activeErr) {
+		return true
+	}
 	if strings.TrimSpace(active) != "inactive" {
 		// active, activating, failed — есть что останавливать или сбрасывать.
 		return false
 	}
-	enabled, _ := s.R.Run(ctx, "systemctl", "is-enabled", unit)
+	enabled, enabledErr := s.R.Run(ctx, "systemctl", "is-enabled", unit)
+	if enabledErr != nil && unitMissing(enabledErr) {
+		return true
+	}
 	switch strings.TrimSpace(enabled) {
 	case "disabled", "masked", "masked-runtime", "static", "generated", "transient":
 		return true
 	}
 	return false
+}
+
+// IsDisabled reports whether a unit is both inactive and unable to start on
+// boot. It deliberately uses the same conservative rules as Disable: an
+// unknown state is not accepted as disabled.
+func (s *Systemd) IsDisabled(ctx context.Context, unit string) bool {
+	return s.alreadyDisabled(ctx, unit)
 }
 
 // unitMissing распознаёт отказ из-за отсутствующего юнита.
@@ -114,8 +127,8 @@ func (s *Systemd) alreadyDisabled(ctx context.Context, unit string) bool {
 // всеми: одна пропущенная фраза роняет применение целиком и не даёт netosd
 // запуститься вовсе.
 func unitMissing(err error) bool {
-	msg := err.Error()
-	for _, phrase := range []string{"does not exist", "not loaded", "No such file", "not found"} {
+	msg := strings.ToLower(err.Error())
+	for _, phrase := range []string{"does not exist", "not loaded", "no such file", "not found", "could not be found", "not-found"} {
 		if strings.Contains(msg, phrase) {
 			return true
 		}
@@ -206,7 +219,7 @@ func (p *Packages) Ensure(ctx context.Context, pkgs ...string) ([]string, error)
 
 // policyRCPath — скрипт, у которого Debian спрашивает разрешения, прежде чем
 // postinst пакета запустит демона. Код возврата 101 означает запрет.
-const policyRCPath = "/usr/sbin/policy-rc.d"
+var policyRCPath = "/usr/sbin/policy-rc.d"
 
 // holdDaemons запрещает запуск демонов на время установки пакета и возвращает
 // функцию, снимающую запрет.

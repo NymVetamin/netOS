@@ -22,3 +22,31 @@ func TestMultiWANBalanceMarksAndPersistsConnections(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiWANBalanceCanDisableStickyConnections(t *testing.T) {
+	cfg := config.Default()
+	cfg.MultiWAN.Enabled = true
+	cfg.MultiWAN.Mode = "balance"
+	cfg.MultiWAN.StickyConnections = false
+	cfg.Interfaces = []config.Interface{{ID: "a", Name: "wan0"}, {ID: "b", Name: "wan1"}}
+	cfg.WANs = []config.WAN{
+		{ID: "a", Index: 1, Name: "A", Interface: "a", Enabled: true, Proto: "static", Weight: 1},
+		{ID: "b", Index: 2, Name: "B", Interface: "b", Enabled: true, Proto: "static", Weight: 1},
+	}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rules.IPv4, "-A PREROUTING -j NETOS-MULTIWAN") {
+		t.Fatalf("non-sticky traffic does not enter balance chain:\n%s", rules.IPv4)
+	}
+	for _, forbidden := range []string{
+		"-A PREROUTING -j CONNMARK --restore-mark",
+		"-A NETOS-MULTIWAN -m mark --mark 0x3001 -j CONNMARK --save-mark",
+		"-A NETOS-MULTIWAN -m mark --mark 0x3002 -j CONNMARK --save-mark",
+	} {
+		if strings.Contains(rules.IPv4, forbidden) {
+			t.Errorf("sticky-only rule remains when disabled: %q", forbidden)
+		}
+	}
+}

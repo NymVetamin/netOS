@@ -20,7 +20,7 @@ import (
 // Соединение держит pppd с плагином rp-pppoe: он работает в ядре и не требует
 // отдельного демона поверх. Как и клиент DHCP, каждый аплинк получает свой
 // systemd-юнит, чтобы перезапуск netosd не рвал установленную сессию.
-const pppoeConfDir = "/var/lib/netos/generated"
+var pppoeConfDir = "/var/lib/netos/generated"
 
 // PPPoEInterface возвращает имя интерфейса, который поднимет аплинк.
 //
@@ -124,30 +124,33 @@ func (s *WAN) ensurePPPoE(ctx context.Context, w config.WAN, iface string) error
 	confPath := pppoeConfPath(w.ID)
 	conf := []byte(renderPPPoEConf(w, iface))
 	// 0600: в файле пароль от провайдера.
-	if err := system.WriteFileAtomic(confPath, conf, 0o600); err != nil {
+	confChanged, err := system.WriteFileAtomicIfChanged(confPath, conf, 0o600)
+	if err != nil {
 		return fmt.Errorf("запись конфигурации PPPoE: %w", err)
 	}
 
 	unitName := pppoeUnitName(w.ID)
-	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	unitPath := filepath.Join(systemdUnitDir, unitName)
 	unit := []byte(pppoeUnit(w, iface, confPath))
-	unitChanged := system.FileChanged(unitPath, unit)
+	unitChanged, err := system.WriteFileAtomicIfChanged(unitPath, unit, 0o644)
+	if err != nil {
+		return fmt.Errorf("запись юнита PPPoE: %w", err)
+	}
 	if unitChanged {
-		if err := system.WriteFileAtomic(unitPath, unit, 0o644); err != nil {
-			return fmt.Errorf("запись юнита PPPoE: %w", err)
-		}
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
-		return err
+	if !s.unitEnabled(ctx, unitName) {
+		if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
+			return err
+		}
 	}
 	// Рвать установленную сессию без причины нельзя: переподключение к
 	// провайдеру занимает секунды и меняет внешний адрес. Перезапускаем только
 	// когда изменились параметры или клиент не работает.
-	if !unitChanged && !s.confChanged(confPath, conf) && s.unitActive(ctx, unitName) {
+	if !unitChanged && !confChanged && s.unitActive(ctx, unitName) {
 		return nil
 	}
 	if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
@@ -156,18 +159,17 @@ func (s *WAN) ensurePPPoE(ctx context.Context, w config.WAN, iface string) error
 	return nil
 }
 
-// confChanged сравнивает конфигурацию с уже записанной. Вызывается после
-// записи, поэтому сверяемся со снимком, сделанным до неё.
-func (s *WAN) confChanged(path string, conf []byte) bool {
-	return s.pppoePrevious[path] != string(conf)
-}
-
 func (s *WAN) unitActive(ctx context.Context, unit string) bool {
 	out, err := s.Runner.Run(ctx, "systemctl", "is-active", unit)
 	if err != nil {
 		return false
 	}
 	return strings.TrimSpace(out) == "active"
+}
+
+func (s *WAN) unitEnabled(ctx context.Context, unit string) bool {
+	out, err := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	return err == nil && strings.TrimSpace(out) == "enabled"
 }
 
 func pppoeConfPath(wanID string) string {
@@ -179,7 +181,7 @@ func pppoeUnitName(wanID string) string { return "netos-pppoe-" + wanID + ".serv
 // cleanupPPPoE останавливает и удаляет клиентов аплинков, которых больше нет в
 // конфигурации.
 func (s *WAN) cleanupPPPoE(ctx context.Context, wanted map[string]bool) error {
-	units, err := filepath.Glob("/etc/systemd/system/netos-pppoe-*.service")
+	units, err := filepath.Glob(filepath.Join(systemdUnitDir, "netos-pppoe-*.service"))
 	if err != nil {
 		return err
 	}
@@ -191,7 +193,16 @@ func (s *WAN) cleanupPPPoE(ctx context.Context, wanted map[string]bool) error {
 			continue
 		}
 		// Отсутствующий юнит не ошибка: до него мог не дойти прошлый запуск.
-		_, _ = s.Runner.Run(ctx, "systemctl", "disable", "--now", base)
+		_, stopErr := s.Runner.Run(ctx, "systemctl", "disable", "--now", base)
+		if s.unitActive(ctx, base) {
+			if stopErr != nil {
+				return fmt.Errorf("остановка %s: %w", base, stopErr)
+			}
+			return fmt.Errorf("служба %s осталась активной", base)
+		}
+		if linkExists(PPPoEInterface(id)) {
+			return fmt.Errorf("интерфейс %s остался после остановки %s", PPPoEInterface(id), base)
+		}
 		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("удаление %s: %w", unitPath, err)
 		}
@@ -200,27 +211,26 @@ func (s *WAN) cleanupPPPoE(ctx context.Context, wanted map[string]bool) error {
 		}
 		changed = true
 	}
+	confs, err := filepath.Glob(filepath.Join(pppoeConfDir, "pppoe-*.conf"))
+	if err != nil {
+		return err
+	}
+	for _, confPath := range confs {
+		base := filepath.Base(confPath)
+		id := strings.TrimSuffix(strings.TrimPrefix(base, "pppoe-"), ".conf")
+		if wanted[id] {
+			continue
+		}
+		if err := os.Remove(confPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление %s: %w", confPath, err)
+		}
+	}
 	if changed {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// readPPPoEConfs снимает состояние конфигураций до записи новых, чтобы потом
-// понять, что именно изменилось, и не перезапускать живые сессии зря.
-func (s *WAN) readPPPoEConfs(cfg *config.Config) {
-	s.pppoePrevious = map[string]string{}
-	for _, w := range cfg.WANs {
-		if w.Proto != "pppoe" {
-			continue
-		}
-		path := pppoeConfPath(w.ID)
-		if data, err := os.ReadFile(path); err == nil {
-			s.pppoePrevious[path] = string(data)
-		}
-	}
 }
 
 // waitPPPoE ждёт, пока сессия установится.

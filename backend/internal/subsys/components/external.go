@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -94,7 +95,20 @@ var fetch = func(ctx context.Context, url string) ([]byte, error) {
 	}
 	// Ограничение спасает от бесконечного тела: релизный архив на два порядка
 	// меньше, а качаем мы под root.
-	return io.ReadAll(io.LimitReader(resp.Body, 256<<20))
+	return readExternalData(resp.Body)
+}
+
+var maxExternalBytes int64 = 256 << 20
+
+func readExternalData(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxExternalBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxExternalBytes {
+		return nil, fmt.Errorf("external payload exceeds %d bytes", maxExternalBytes)
+	}
+	return data, nil
 }
 
 // installRelease скачивает, проверяет и раскладывает внешний компонент.
@@ -167,7 +181,7 @@ func extractZIPFile(archive []byte, name string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		data, readErr := io.ReadAll(io.LimitReader(reader, 256<<20))
+		data, readErr := readExternalData(reader)
 		closeErr := reader.Close()
 		if readErr != nil {
 			return nil, readErr
@@ -202,16 +216,62 @@ func extractFile(archive []byte, name string) ([]byte, error) {
 		if header.Typeflag != tar.TypeReg || path.Base(header.Name) != name {
 			continue
 		}
-		return io.ReadAll(io.LimitReader(tr, 256<<20))
+		return readExternalData(tr)
 	}
 }
 
-// externalInstalled сообщает, лежит ли исполняемый файл компонента на месте.
-func externalInstalled(id string) bool {
-	rel, ok := externalReleases[id]
-	if !ok {
+const externalOwnerMark = "netOS external component\n"
+const externalMigrationMark = "netOS external ownership migration v1\n"
+
+func externalOwnerPath(rel externalRelease) string { return rel.Target + ".netos-owned" }
+
+func externalOwned(rel externalRelease) bool {
+	info, err := os.Lstat(externalOwnerPath(rel))
+	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	info, err := os.Stat(rel.Target)
-	return err == nil && !info.IsDir()
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		return false
+	}
+	data, err := os.ReadFile(externalOwnerPath(rel))
+	return err == nil && string(data) == externalOwnerMark
+}
+
+func externalTargetPresent(rel externalRelease) bool {
+	_, err := os.Lstat(rel.Target)
+	return err == nil || !os.IsNotExist(err)
+}
+
+// RemoveOwnedExternal removes only third-party binaries whose adjacent marker
+// proves netOS installed them. It is used by full product uninstall; package
+// components still owns the catalog and therefore remains the single place
+// that decides which external paths are in scope.
+func RemoveOwnedExternal(root string) error {
+	var failures []string
+	for id, rel := range externalReleases {
+		target := rel.Target
+		if root != "" {
+			target = filepath.Join(root, rel.Target)
+		}
+		marker := target + ".netos-owned"
+		data, err := os.ReadFile(marker)
+		if os.IsNotExist(err) || (err == nil && string(data) != externalOwnerMark) {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s marker: %v", id, err))
+			continue
+		}
+		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, fmt.Sprintf("%s binary: %v", id, err))
+			continue
+		}
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, fmt.Sprintf("%s marker cleanup: %v", id, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("удаление внешних компонентов netOS: %s", strings.Join(failures, "; "))
+	}
+	return nil
 }

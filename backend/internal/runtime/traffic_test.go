@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	stdruntime "runtime"
@@ -44,6 +46,51 @@ func TestTrafficHistoryRatesResetAndPersistence(t *testing.T) {
 	}
 	if len(loaded.Points(time.Time{}, nil)) != 3 {
 		t.Fatal("persisted points were not loaded")
+	}
+}
+
+func TestTrafficHistoryConstructorRunAndCollectionFailure(t *testing.T) {
+	collector := NewCollector(&observationRunner{}, "")
+	h := NewTrafficHistory(filepath.Join(t.TempDir(), "traffic.jsonl"), collector)
+	if h.Interval != 30*time.Second || h.Retain != 7*24*time.Hour || h.Collect == nil || h.Now == nil {
+		t.Fatalf("defaults=%+v", h)
+	}
+
+	h.Interval = 5 * time.Millisecond
+	collected := make(chan struct{}, 1)
+	h.Collect = func() ([]InterfaceStat, error) {
+		select {
+		case collected <- struct{}{}:
+		default:
+		}
+		return []InterfaceStat{{Name: "eth0", RXBytes: 1, TXBytes: 2}}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		h.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-collected:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("traffic run did not collect")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("traffic run ignored cancellation")
+	}
+	if len(h.Points(time.Time{}, nil)) == 0 {
+		t.Fatal("traffic run did not retain its sample")
+	}
+
+	before := len(h.Points(time.Time{}, nil))
+	h.Collect = func() ([]InterfaceStat, error) { return nil, errors.New("stats failed") }
+	h.sample()
+	if after := len(h.Points(time.Time{}, nil)); after != before {
+		t.Fatalf("failed collection appended a point: before=%d after=%d", before, after)
 	}
 }
 

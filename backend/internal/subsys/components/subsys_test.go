@@ -3,6 +3,7 @@ package components
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,6 +81,19 @@ func TestRemoveDoesNotPurgeEssentialPackage(t *testing.T) {
 }
 
 func TestApplyReportsRemovalFailure(t *testing.T) {
+	// Apply reconciles every catalog entry, not only the component mentioned by
+	// this test.  Point external releases at the test directory so a root test
+	// run on an installed router can never remove the live Xray or dnsproxy
+	// binaries while exercising an unrelated apt failure.
+	originalReleases := externalReleases
+	isolatedReleases := make(map[string]externalRelease, len(originalReleases))
+	for id, rel := range originalReleases {
+		rel.Target = filepath.Join(t.TempDir(), id)
+		isolatedReleases[id] = rel
+	}
+	externalReleases = isolatedReleases
+	t.Cleanup(func() { externalReleases = originalReleases })
+
 	runner := &removalFailureRunner{}
 	s := New(runner, testLogger{})
 	cfg := &config.Config{Components: []config.Component{{ID: "dnsmasq", Installed: false}}}

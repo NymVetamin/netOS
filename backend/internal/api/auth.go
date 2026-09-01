@@ -14,13 +14,14 @@ import (
 // Параметры Argon2id. Подобраны так, чтобы проверка пароля занимала заметное
 // время даже на слабом процессоре роутера, но не мешала входу.
 const (
-	argonTime        = 2
-	argonMemory      = 64 * 1024 // 64 МБ
-	argonThreads     = 2
-	argonKeyLen      = 32
-	saltLen          = 16
-	maxPasswordBytes = 1024
-	maxArgonMemory   = 128 * 1024
+	argonTime                  = 2
+	argonMemory                = 64 * 1024 // 64 МБ
+	argonThreads               = 2
+	argonKeyLen                = 32
+	saltLen                    = 16
+	maxPasswordBytes           = 1024
+	maxArgonMemory             = 128 * 1024
+	maxGeneratedPasswordLength = 4096
 
 	sessionTTL    = 12 * time.Hour
 	sessionCookie = "netos_session"
@@ -98,6 +99,9 @@ func GenerateToken() (string, error) {
 // установке. Алфавит без символов, которые легко перепутать при чтении с
 // экрана консоли: ноль и O, единица, l и I.
 func GeneratePassword(length int) (string, error) {
+	if length <= 0 || length > maxGeneratedPasswordLength {
+		return "", fmt.Errorf("password length must be between 1 and %d", maxGeneratedPasswordLength)
+	}
 	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {

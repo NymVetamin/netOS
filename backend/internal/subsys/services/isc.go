@@ -14,7 +14,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-const (
+var (
 	iscConfPath  = "/var/lib/netos/generated/dhcpd.conf"
 	iscLeasePath = "/var/lib/netos/dhcpd.leases"
 	iscUnit      = "netos-isc-dhcp.service"
@@ -201,11 +201,6 @@ func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if len(d.interfaces(cfg)) == 0 {
 		return fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")
 	}
-	content := []byte(d.Render(cfg))
-	changed := system.FileChanged(iscConfPath, content)
-	if err := system.WriteFileAtomic(iscConfPath, content, 0o644); err != nil {
-		return err
-	}
 	lease, err := os.OpenFile(iscLeasePath, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -216,11 +211,21 @@ func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := os.Chmod(iscLeasePath, 0o600); err != nil {
 		return err
 	}
-	if err := d.ensureUnit(ctx, cfg); err != nil {
+	content := []byte(d.Render(cfg))
+	if err := validateManagedContent(iscConfPath, content, 0o644, func(path string) error {
+		if _, err := d.Runner.Run(ctx, "dhcpd", "-4", "-t", "-cf", path, "-lf", iscLeasePath); err != nil {
+			return fmt.Errorf("проверка конфигурации ISC DHCP: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
-	if _, err := d.Runner.Run(ctx, "dhcpd", "-4", "-t", "-cf", iscConfPath, "-lf", iscLeasePath); err != nil {
-		return fmt.Errorf("проверка конфигурации ISC DHCP: %w", err)
+	changed, err := writeManagedFile(iscConfPath, content, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := d.ensureUnit(ctx, cfg); err != nil {
+		return err
 	}
 	if !changed && d.Systemd.IsActive(ctx, iscUnit) {
 		return nil
@@ -228,20 +233,35 @@ func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	return d.Systemd.Restart(ctx, iscUnit)
 }
 func (d *ISCDHCP) ensureUnit(ctx context.Context, cfg *config.Config) error {
-	args := strings.Join(d.interfaces(cfg), " ")
-	unit := "[Unit]\nDescription=netOS ISC DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nExecStart=/usr/sbin/dhcpd -4 -f -q -cf " + iscConfPath + " -lf " + iscLeasePath + " --no-pid " + args + "\nRestart=always\nRestartSec=2\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
-	path := filepath.Join("/etc/systemd/system", iscUnit)
-	if !system.FileChanged(path, []byte(unit)) {
-		return nil
-	}
-	if err := system.WriteFileAtomic(path, []byte(unit), 0o644); err != nil {
+	changed, err := writeManagedFile(filepath.Join(systemdUnitDir, iscUnit), []byte(d.unitContent(cfg)), 0o644)
+	if err != nil {
 		return err
+	}
+	if !changed {
+		return nil
 	}
 	return d.Systemd.DaemonReload(ctx)
 }
+
+func (d *ISCDHCP) unitContent(cfg *config.Config) string {
+	args := strings.Join(d.interfaces(cfg), " ")
+	return "[Unit]\nDescription=netOS ISC DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nExecStart=/usr/sbin/dhcpd -4 -f -q -cf " + iscConfPath + " -lf " + iscLeasePath + " --no-pid " + args + "\nRestart=always\nRestartSec=2\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
+}
 func (d *ISCDHCP) Health(ctx context.Context, cfg *config.Config) error {
-	if d.Needed(cfg) && !d.Systemd.IsActive(ctx, iscUnit) {
+	if !d.Needed(cfg) {
+		if d.Systemd.IsActive(ctx, iscUnit) {
+			return fmt.Errorf("ISC DHCP запущен, хотя не выбран")
+		}
+		return generatedAbsent(iscConfPath)
+	}
+	if !d.Systemd.IsActive(ctx, iscUnit) {
 		return fmt.Errorf("ISC DHCP не запущен")
 	}
-	return nil
+	if err := managedFileHealth(iscConfPath, []byte(d.Render(cfg)), 0o644); err != nil {
+		return err
+	}
+	if err := managedFileModeHealth(iscLeasePath, 0o600, true); err != nil {
+		return err
+	}
+	return managedFileHealth(filepath.Join(systemdUnitDir, iscUnit), []byte(d.unitContent(cfg)), 0o644)
 }

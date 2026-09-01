@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
@@ -9,6 +9,11 @@ type Props = {
 
 const enabledChannels = (config: any) =>
   (config.channels || []).filter((channel: any) => channel.enabled);
+
+const POLICY_DAYS = [
+  ["Mon", "Пн"], ["Tue", "Вт"], ["Wed", "Ср"], ["Thu", "Чт"],
+  ["Fri", "Пт"], ["Sat", "Сб"], ["Sun", "Вс"],
+];
 
 export function ChannelsPage({ config, patch }: Props) {
   const channels = config.channels || [];
@@ -451,7 +456,8 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
             <thead><tr><th>Вкл.</th><th>Приоритет</th><th>Название</th><th>Источник</th><th>Назначение</th><th>Протокол / порт</th><th>Канал</th><th /></tr></thead>
             <tbody>
               {policies.map((policy: any) => (
-                <tr key={policy.id}>
+                <Fragment key={policy.id}>
+                <tr>
                   <td><input aria-label={`Политика ${policy.name || policy.id} включена`} type="checkbox" checked={!!policy.enabled} onChange={(e) => updatePolicy(patch, policy.id, "enabled", e.target.checked)} /></td>
                   <td><input aria-label={`Приоритет политики ${policy.name || policy.id}`} type="number" style={{ width: 85 }} value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></td>
                   <td><input aria-label="Название политики" value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></td>
@@ -461,6 +467,60 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
                   <td><select aria-label={`Канал политики ${policy.name || policy.id}`} value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
                   <td><button className="btn ghost sm" onClick={() => patch((draft) => { draft.policies = draft.policies.filter((item: any) => item.id !== policy.id); })}>Убрать</button></td>
                 </tr>
+                <tr>
+                  <td colSpan={8} style={{ background: "var(--surface-2)" }}>
+                    <details className="advanced">
+                      <summary>Все условия и служебные поля</summary>
+                      <div className="form-grid" style={{ marginTop: ".8rem" }}>
+                        <Field label="MAC источника">
+                          <input className="mono" value={policy.src_mac || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_mac", e.target.value)} />
+                        </Field>
+                        <Field label="Сегмент-источник">
+                          <select value={policy.network || ""} onChange={(e) => updatePolicy(patch, policy.id, "network", e.target.value)}>
+                            <option value="">Любой сегмент</option>
+                            {(config.networks || []).map((network: any) => <option key={network.id} value={network.id}>{network.name || network.id}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Входящий VPN-сервер">
+                          <select value={policy.vpn_server || ""} onChange={(e) => {
+                            updatePolicy(patch, policy.id, "vpn_server", e.target.value);
+                            updatePolicy(patch, policy.id, "vpn_peer", "");
+                          }}>
+                            <option value="">Любой / не VPN</option>
+                            {(config.vpn_servers || []).map((server: any) => <option key={server.id} value={server.id}>{server.name || server.id}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="VPN-пир">
+                          <select disabled={!policy.vpn_server} value={policy.vpn_peer || ""} onChange={(e) => updatePolicy(patch, policy.id, "vpn_peer", e.target.value)}>
+                            <option value="">Любой пир</option>
+                            {((config.vpn_servers || []).find((server: any) => server.id === policy.vpn_server)?.peers || []).map((peer: any) => <option key={peer.id} value={peer.id}>{peer.name || peer.id}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Домены политики" hint="По одному домену в строке. DNS-ответы обновляют маршрут автоматически; время жизни записи — до 5 минут.">
+                          <textarea aria-label={`Домены политики ${policy.name || policy.id}`} className="mono" placeholder={"example.com\nsub.example.org"} value={(policy.domains || []).join("\n")} onChange={(e) => updatePolicy(patch, policy.id, "domains", e.target.value.split(/\s+/).filter(Boolean))} />
+                        </Field>
+                        <Field label="Комментарий">
+                          <input value={policy.comment || ""} onChange={(e) => updatePolicy(patch, policy.id, "comment", e.target.value)} />
+                        </Field>
+                      </div>
+                      <div style={{ marginTop: ".8rem" }}>
+                        <Switch checked={!!policy.schedule} label="Ограничить расписанием" onChange={(enabled) => updatePolicy(patch, policy.id, "schedule", enabled ? { days: [], time_start: "", time_stop: "" } : null)} />
+                      </div>
+                      {policy.schedule && <div className="form-grid" style={{ marginTop: ".8rem" }}>
+                        <Field label="Дни недели" hint="Пусто — каждый день">
+                          <div className="row wrap">
+                            {POLICY_DAYS.map(([day, title]) => <label key={day} className="row" style={{ gap: ".25rem" }}>
+                              <input type="checkbox" checked={(policy.schedule.days || []).includes(day)} onChange={(e) => updatePolicyDay(patch, policy.id, day, e.target.checked)} /> {title}
+                            </label>)}
+                          </div>
+                        </Field>
+                        <Field label="Начало"><input type="time" value={policy.schedule.time_start || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_start", e.target.value)} /></Field>
+                        <Field label="Окончание"><input type="time" value={policy.schedule.time_stop || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_stop", e.target.value)} /></Field>
+                      </div>}
+                    </details>
+                  </td>
+                </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -484,6 +544,23 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
 
 function updatePolicy(patch: Props["patch"], id: string, key: string, value: unknown) {
   patch((draft) => { draft.policies.find((policy: any) => policy.id === id)[key] = value; });
+}
+
+function updatePolicySchedule(patch: Props["patch"], id: string, key: string, value: string) {
+  patch((draft) => {
+    const policy = draft.policies.find((item: any) => item.id === id);
+    policy.schedule = policy.schedule || { days: [], time_start: "", time_stop: "" };
+    policy.schedule[key] = value;
+  });
+}
+
+function updatePolicyDay(patch: Props["patch"], id: string, day: string, checked: boolean) {
+  patch((draft) => {
+    const policy = draft.policies.find((item: any) => item.id === id);
+    policy.schedule = policy.schedule || { days: [], time_start: "", time_stop: "" };
+    const days: string[] = policy.schedule.days || [];
+    policy.schedule.days = checked ? [...days, day] : days.filter((item) => item !== day);
+  });
 }
 
 function isChannelReferenced(config: any, id: string) {

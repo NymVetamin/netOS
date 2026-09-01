@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/policy"
 )
 
 func TestChannelPoliciesMarkConnectionsInPriorityOrder(t *testing.T) {
@@ -116,5 +117,19 @@ func TestOpenConnectAndIKEv2ServerPorts(t *testing.T) {
 func TestPortRangesUseIptablesSyntax(t *testing.T) {
 	if got := iptablesPortSpec("53,8000-8010"); got != "53,8000:8010" {
 		t.Fatal(got)
+	}
+}
+
+func TestDomainPolicyMatchesOwnedDestinationIPSet(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = append(cfg.Channels, config.Channel{ID: "wg", Index: 3, Name: "WG", Enabled: true, Type: "wireguard"})
+	cfg.Policies = []config.Policy{{ID: "domains", Name: "Domains", Enabled: true, Priority: 10, Channel: "wg", Domains: []string{"example.com"}}}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-m set --match-set " + policy.IPv4SetName("domains") + " dst"
+	if !strings.Contains(rules.IPv4, want) {
+		t.Fatalf("missing %q:\n%s", want, rules.IPv4)
 	}
 }

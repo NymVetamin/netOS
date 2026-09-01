@@ -9,7 +9,7 @@ import (
 )
 
 func probeTCP(ctx context.Context, _ string, address string, timeout time.Duration) error {
-	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp4", address)
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}

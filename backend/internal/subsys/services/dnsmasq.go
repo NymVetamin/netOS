@@ -18,10 +18,11 @@ import (
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/system"
 )
 
-const (
+var (
 	dnsmasqConfPath  = "/var/lib/netos/generated/dnsmasq.conf"
 	dnsmasqLeasePath = "/var/lib/netos/dnsmasq.leases"
 	dnsmasqUnit      = "netos-dnsmasq.service"
@@ -53,13 +54,13 @@ func NewDnsmasq(r system.Runner) *Dnsmasq {
 func (d *Dnsmasq) Needed(cfg *config.Config) bool {
 	dhcp := cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq"
 	dns := cfg.DNS.Enabled && cfg.DNS.Provider == "dnsmasq"
-	return dhcp || dns
+	return dhcp || dns || hasKernelDomainPolicies(cfg)
 }
 
 // Render собирает конфигурацию dnsmasq целиком.
 func (d *Dnsmasq) Render(cfg *config.Config) string {
 	serveDHCP := cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq"
-	serveDNS := cfg.DNS.Enabled && cfg.DNS.Provider == "dnsmasq"
+	serveDNS := cfg.DNS.Enabled && (cfg.DNS.Provider == "dnsmasq" || hasKernelDomainPolicies(cfg))
 
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
@@ -121,6 +122,12 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	w("no-resolv")     // апстримы задаём сами, /etc/resolv.conf не читаем
 	w("no-poll")
 	w("cache-size=%d", cfg.DNS.CacheSize)
+	domainPolicies := hasKernelDomainPolicies(cfg)
+	policyFrontend := domainPolicies && cfg.DNS.Provider != "dnsmasq"
+	if domainPolicies {
+		w("max-ttl=%d", policy.DomainSetTimeout)
+		w("max-cache-ttl=%d", policy.DomainSetTimeout)
+	}
 
 	if cfg.DNS.LocalDomain != "" {
 		w("local=/%s/", cfg.DNS.LocalDomain)
@@ -139,9 +146,23 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		w("log-queries")
 		w("log-facility=/var/log/netos/dns.log")
 	}
+	if hasEnabledBlocklists(cfg) && cfg.DNS.Provider == "dnsmasq" {
+		w("conf-file=%s", dnsmasqBlocklistPath)
+	}
+	if policyFrontend {
+		w("server=127.0.0.1#%d", policyDNSBackendPort)
+	}
+	if domainPolicies {
+		for _, line := range renderDomainPolicyIPSets(cfg) {
+			w("%s", line)
+		}
+	}
 
 	// Апстримы. Порядок в конфиге определяет порядок опроса.
 	for _, u := range cfg.DNS.Upstreams {
+		if policyFrontend {
+			break
+		}
 		if !u.Enabled {
 			continue
 		}
@@ -159,6 +180,9 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		upstreamByID[u.ID] = u
 	}
 	for _, rule := range cfg.DNS.SplitRules {
+		if policyFrontend {
+			break
+		}
 		if !rule.Enabled || rule.Upstream == "" {
 			continue
 		}
@@ -318,6 +342,10 @@ func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID m
 // изменилось: лишний перезапуск сбрасывает кэш DNS и заставляет клиентов
 // переспрашивать аренды.
 func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
+	return d.ApplyPrepared(ctx, cfg, false)
+}
+
+func (d *Dnsmasq) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRestart bool) error {
 	if !d.Needed(cfg) {
 		if err := d.Systemd.Disable(ctx, dnsmasqUnit); err != nil {
 			return err
@@ -326,9 +354,16 @@ func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 
 	content := []byte(d.Render(cfg))
-	changed := system.FileChanged(dnsmasqConfPath, content)
-
-	if err := system.WriteFileAtomic(dnsmasqConfPath, content, 0o644); err != nil {
+	if err := validateManagedContent(dnsmasqConfPath, content, 0o644, func(path string) error {
+		if _, err := d.Runner.Run(ctx, "dnsmasq", "--test", "--conf-file="+path); err != nil {
+			return fmt.Errorf("проверка конфигурации dnsmasq: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	changed, err := writeManagedFile(dnsmasqConfPath, content, 0o644)
+	if err != nil {
 		return err
 	}
 	if err := os.Chmod(dnsmasqLeasePath, 0o600); err != nil && !os.IsNotExist(err) {
@@ -338,13 +373,7 @@ func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	// Синтаксическую ошибку лучше поймать до перезапуска: иначе демон не
-	// поднимется и сеть останется без DHCP.
-	if _, err := d.Runner.Run(ctx, "dnsmasq", "--test", "--conf-file="+dnsmasqConfPath); err != nil {
-		return fmt.Errorf("проверка конфигурации dnsmasq: %w", err)
-	}
-
-	if !changed && d.Systemd.IsActive(ctx, dnsmasqUnit) {
+	if !forceRestart && !changed && d.Systemd.IsActive(ctx, dnsmasqUnit) {
 		return nil
 	}
 	return d.Systemd.Restart(ctx, dnsmasqUnit)
@@ -353,7 +382,18 @@ func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
 // ensureUnit создаёт systemd-юнит, указывающий на сгенерированный конфиг.
 // Штатный юнит dnsmasq не трогаем, чтобы удаление netOS ничего не сломало.
 func (d *Dnsmasq) ensureUnit(ctx context.Context) error {
-	unit := `[Unit]
+	changed, err := writeManagedFile(filepath.Join(systemdUnitDir, dnsmasqUnit), []byte(dnsmasqUnitContent()), 0o644)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return d.Systemd.DaemonReload(ctx)
+}
+
+func dnsmasqUnitContent() string {
+	return `[Unit]
 Description=netOS dnsmasq (DHCP и DNS)
 After=network.target
 Wants=network.target
@@ -369,24 +409,25 @@ UMask=0077
 [Install]
 WantedBy=multi-user.target
 `
-	path := filepath.Join("/etc/systemd/system", dnsmasqUnit)
-	if !system.FileChanged(path, []byte(unit)) {
-		return nil
-	}
-	if err := system.WriteFileAtomic(path, []byte(unit), 0o644); err != nil {
-		return err
-	}
-	return d.Systemd.DaemonReload(ctx)
 }
 
 func (d *Dnsmasq) Health(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
-		return nil
+		if d.Systemd.IsActive(ctx, dnsmasqUnit) {
+			return fmt.Errorf("dnsmasq запущен, хотя не выбран")
+		}
+		return generatedAbsent(dnsmasqConfPath)
 	}
 	if !d.Systemd.IsActive(ctx, dnsmasqUnit) {
 		return fmt.Errorf("dnsmasq не запущен")
 	}
-	return nil
+	if err := managedFileHealth(dnsmasqConfPath, []byte(d.Render(cfg)), 0o644); err != nil {
+		return err
+	}
+	if err := managedFileModeHealth(dnsmasqLeasePath, 0o600, false); err != nil {
+		return err
+	}
+	return managedFileHealth(filepath.Join(systemdUnitDir, dnsmasqUnit), []byte(dnsmasqUnitContent()), 0o644)
 }
 
 // LeasePath отдаёт путь к файлу аренд, чтобы панель могла их показывать.

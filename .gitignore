@@ -7,12 +7,22 @@
 *.exe
 *.test
 *.out
+*_tests_linux
+*_coverage
+*_cov
+coverage_full
+*.cov
 
 # Node
 /web/node_modules/
 /web/dist/
 npm-debug.log*
 .npm/
+
+# Воспроизводимые QA-артефакты и кэши
+/output/
+__pycache__/
+*.pyc
 
 # Локальные и временные файлы
 *.swp

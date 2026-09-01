@@ -307,7 +307,7 @@ var artifacts = []Artifact{
 // All возвращает каталог целиком — в том числе артефакты, не участвующие в
 // текущей конфигурации: `netos render unbound` обязан отвечать и тогда, когда
 // unbound ещё не выбран, иначе им нельзя было бы воспользоваться при настройке.
-func All() []Artifact { return artifacts }
+func All() []Artifact { return append([]Artifact(nil), artifacts...) }
 
 // Active возвращает только то, что при такой конфигурации действительно
 // работает на машине.

@@ -11,7 +11,12 @@ import (
 )
 
 type hostRunner struct {
-	commands []string
+	commands        []string
+	host            string
+	timezone        string
+	timesyncActive  string
+	timesyncEnabled string
+	ntpServers      string
 	// active подменяет ответ systemctl is-active: так проверяется поведение на
 	// машине, где чужой демон действительно работает.
 	active bool
@@ -22,20 +27,56 @@ func (r *hostRunner) Run(_ context.Context, name string, args ...string) (string
 	r.commands = append(r.commands, command)
 	switch command {
 	case "hostnamectl --static":
-		return "router\n", nil
+		if r.host == "" {
+			return "router\n", nil
+		}
+		return r.host + "\n", nil
+	case "hostnamectl set-hostname router":
+		r.host = "router"
+		return "", nil
 	case "timedatectl show --property=Timezone --value":
-		return "Europe/Moscow\n", nil
+		if r.timezone == "" {
+			return "Europe/Moscow\n", nil
+		}
+		return r.timezone + "\n", nil
+	case "timedatectl set-timezone Europe/Moscow":
+		r.timezone = "Europe/Moscow"
+		return "", nil
 	case "timedatectl show-timesync --property=SystemNTPServers --value":
+		if r.ntpServers != "" {
+			return r.ntpServers + "\n", nil
+		}
 		return "0.debian.pool.ntp.org 1.debian.pool.ntp.org\n", nil
 	case "systemctl is-active tuned.service":
 		if r.active {
 			return "active\n", nil
 		}
 		return "inactive\n", nil
+	case "systemctl is-enabled tuned.service":
+		return "disabled\n", nil
+	case "systemctl stop tuned.service":
+		r.active = false
+		return "", nil
 	case "systemctl is-active systemd-timesyncd.service":
+		if r.timesyncActive != "" {
+			return r.timesyncActive + "\n", nil
+		}
 		return "active\n", nil
 	case "systemctl is-enabled systemd-timesyncd.service":
+		if r.timesyncEnabled != "" {
+			return r.timesyncEnabled + "\n", nil
+		}
 		return "enabled\n", nil
+	case "systemctl enable --now systemd-timesyncd.service":
+		r.timesyncActive = "active"
+		r.timesyncEnabled = "enabled"
+		return "", nil
+	case "systemctl disable systemd-timesyncd.service":
+		r.timesyncEnabled = "disabled"
+		return "", nil
+	case "systemctl stop systemd-timesyncd.service":
+		r.timesyncActive = "inactive"
+		return "", nil
 	default:
 		return "", nil
 	}
@@ -53,7 +94,7 @@ func (r *hostRunner) RunInput(ctx context.Context, _ string, name string, args .
 }
 
 func TestApplyAndHealthSystemSettings(t *testing.T) {
-	runner := &hostRunner{}
+	runner := &hostRunner{host: "old-router", timezone: "UTC"}
 	s := testSubsystem(t, runner)
 	cfg := config.Default()
 	cfg.System.Hostname = "router"
@@ -84,7 +125,7 @@ func TestApplyAndHealthSystemSettings(t *testing.T) {
 // переустанавливает сетевые параметры ядра и откатывает подавление IPv6 на
 // аплинке уже после того, как netOS его применил.
 func TestApplyStopsDaemonsThatOverrideNetOS(t *testing.T) {
-	runner := &hostRunner{}
+	runner := &hostRunner{active: true}
 	s := testSubsystem(t, runner)
 	if err := s.Apply(context.Background(), config.Default()); err != nil {
 		t.Fatal(err)
@@ -106,7 +147,7 @@ func TestApplyStopsDaemonsThatOverrideNetOS(t *testing.T) {
 // Гасить чужой демон надо до подсистем, которые он переопределяет: порядок
 // внутри Apply — единственное, что отделяет применённое состояние от гонки.
 func TestContendingDaemonsAreStoppedBeforeHostSettings(t *testing.T) {
-	runner := &hostRunner{}
+	runner := &hostRunner{active: true}
 	s := testSubsystem(t, runner)
 	if err := s.Apply(context.Background(), config.Default()); err != nil {
 		t.Fatal(err)

@@ -92,13 +92,42 @@ WantedBy=multi-user.target
 `
 }
 
-func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, disableIPv6 bool) (bool, error) {
+func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (created bool, retErr error) {
 	existedBefore := s.linkExists(InterfaceName(ch))
+	if existedBefore && !wasOwned {
+		return false, fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", InterfaceName(ch))
+	}
 	oc, err := ch.OpenConnectConfig()
 	if err != nil {
 		return false, err
 	}
 	confPath, passwordPath, scriptPath, unitPath := s.openConnectPaths(ch)
+	snapshots, err := captureChannelFiles(confPath, passwordPath, scriptPath, unitPath)
+	if err != nil {
+		return false, err
+	}
+	mutated := false
+	defer func() {
+		if retErr == nil || !mutated {
+			return
+		}
+		rollbackCtx := context.Background()
+		if !wasOwned {
+			s.cleanupOpenConnect(rollbackCtx, ch)
+			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(Priority(ch)))
+			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "route", "flush", "table", fmt.Sprint(TableNumber(ch)))
+			if s.linkExists(InterfaceName(ch)) {
+				_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "delete", InterfaceName(ch))
+			}
+			return
+		}
+		if err := restoreChannelFiles(snapshots); err != nil {
+			retErr = fmt.Errorf("%v; rollback OpenConnect: %w", retErr, err)
+			return
+		}
+		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "daemon-reload")
+		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "restart", openConnectUnitName(ch))
+	}()
 	conf := []byte(renderOpenConnect(ch, oc, scriptPath, disableIPv6))
 	password := []byte(oc.Password + "\n")
 	script := []byte(renderOpenConnectScript(oc.MTU))
@@ -113,6 +142,7 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, dis
 		if err := writeFileIfChanged(file.path, file.data, file.perm); err != nil {
 			return false, err
 		}
+		mutated = true
 	}
 	unitName := openConnectUnitName(ch)
 	if changed {
@@ -120,7 +150,7 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, dis
 			return false, err
 		}
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
+	if err := s.ensureUnitEnabled(ctx, unitName); err != nil {
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
@@ -138,22 +168,18 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, dis
 		}
 	}
 	if !s.linkExists(InterfaceName(ch)) {
-		s.cleanupOpenConnect(ctx, ch)
 		return false, fmt.Errorf("OpenConnect не создал интерфейс %s", InterfaceName(ch))
 	}
-	created := !existedBefore
+	created = !existedBefore
 	if disableIPv6 {
 		if err := s.suppressIPv6(InterfaceName(ch)); err != nil {
-			s.cleanupOpenConnect(ctx, ch)
 			return created, err
 		}
 	}
 	if err := s.ensureRoutes(ctx, ch, InterfaceName(ch)); err != nil {
-		s.cleanupOpenConnect(ctx, ch)
 		return created, err
 	}
 	if err := s.ensureRule(ctx, ch); err != nil {
-		s.cleanupOpenConnect(ctx, ch)
 		return created, err
 	}
 	return created, nil

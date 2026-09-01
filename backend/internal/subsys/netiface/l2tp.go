@@ -2,11 +2,13 @@ package netiface
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -171,30 +173,35 @@ func (s *WAN) ensureL2TP(ctx context.Context, w config.WAN, iface string) error 
 
 	ppp := []byte(renderL2TPPPP(w))
 	// 0600: в файле пароль от провайдера.
-	if err := system.WriteFileAtomic(l2tpPPPPath(w.ID), ppp, 0o600); err != nil {
+	pppChanged, err := system.WriteFileAtomicIfChanged(l2tpPPPPath(w.ID), ppp, 0o600)
+	if err != nil {
 		return fmt.Errorf("запись параметров pppd для L2TP: %w", err)
 	}
 	conf := []byte(renderL2TPConf(w))
-	changed := system.FileChanged(l2tpConfPath(w.ID), conf) || s.confChanged(l2tpPPPPath(w.ID), ppp)
-	if err := system.WriteFileAtomic(l2tpConfPath(w.ID), conf, 0o600); err != nil {
+	confChanged, err := system.WriteFileAtomicIfChanged(l2tpConfPath(w.ID), conf, 0o600)
+	if err != nil {
 		return fmt.Errorf("запись конфигурации xl2tpd: %w", err)
 	}
+	changed := pppChanged || confChanged
 
 	unitName := l2tpUnitName(w.ID)
-	unitPath := filepath.Join("/etc/systemd/system", unitName)
+	unitPath := filepath.Join(systemdUnitDir, unitName)
 	unit := []byte(l2tpUnit(w))
-	if system.FileChanged(unitPath, unit) {
-		if err := system.WriteFileAtomic(unitPath, unit, 0o644); err != nil {
-			return fmt.Errorf("запись юнита L2TP: %w", err)
-		}
+	unitChanged, err := system.WriteFileAtomicIfChanged(unitPath, unit, 0o644)
+	if err != nil {
+		return fmt.Errorf("запись юнита L2TP: %w", err)
+	}
+	if unitChanged {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 		changed = true
 	}
 
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
-		return err
+	if !s.unitEnabled(ctx, unitName) {
+		if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
+			return err
+		}
 	}
 	// Рвать установленный туннель без причины нельзя: переподключение занимает
 	// секунды и меняет внешний адрес.
@@ -228,16 +235,154 @@ func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error 
 	if err != nil {
 		return fmt.Errorf("не удалось определить адрес концентратора %s: %w", w.Server, err)
 	}
+	foundIPv4 := false
 	for _, addr := range addrs {
 		ip := net.ParseIP(addr)
 		if ip == nil || ip.To4() == nil {
 			// IPv6 подавляется на всех уровнях, туннель по нему не поднимаем.
 			continue
 		}
-		if _, err := s.Runner.Run(ctx, "ip", "route", "replace", ip.String()+"/32",
+		foundIPv4 = true
+		item := ownedLNSRoute{Destination: ip.String() + "/32", Gateway: gateway, Interface: iface}
+		if err := s.rememberLNSRoute(item); err != nil {
+			return err
+		}
+		if s.lnsRouteWanted == nil {
+			s.lnsRouteWanted = map[string]ownedLNSRoute{}
+		}
+		s.lnsRouteWanted[lnsRouteKey(item)] = item
+		out, showErr := s.Runner.Run(ctx, "ip", "-4", "route", "show", item.Destination)
+		if showErr == nil && routeLineMatches(out, item) {
+			continue
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "route", "replace", item.Destination,
 			"via", gateway, "dev", iface, "proto", fmt.Sprint(config.RouteProto)); err != nil {
 			return fmt.Errorf("маршрут до концентратора %s: %w", ip, err)
 		}
+	}
+	if !foundIPv4 {
+		return fmt.Errorf("для концентратора %s не найден IPv4-адрес", w.Server)
+	}
+	return nil
+}
+
+func lnsRouteKey(item ownedLNSRoute) string {
+	return item.Destination + "\x00" + item.Gateway + "\x00" + item.Interface
+}
+
+func (s *WAN) readOwnedLNSRoutes() ([]ownedLNSRoute, error) {
+	if s.OwnedLNSRoutePath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(s.OwnedLNSRoutePath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("чтение списка маршрутов L2TP netOS: %w", err)
+	}
+	var items []ownedLNSRoute
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("чтение списка маршрутов L2TP netOS: %w", err)
+	}
+	return items, nil
+}
+
+func (s *WAN) writeOwnedLNSRoutes(items []ownedLNSRoute) error {
+	if s.OwnedLNSRoutePath == "" {
+		return nil
+	}
+	sort.Slice(items, func(i, j int) bool { return lnsRouteKey(items[i]) < lnsRouteKey(items[j]) })
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := system.WriteFileAtomicIfChanged(s.OwnedLNSRoutePath, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("запись списка маршрутов L2TP netOS: %w", err)
+	}
+	return nil
+}
+
+func (s *WAN) rememberLNSRoute(item ownedLNSRoute) error {
+	previous, err := s.readOwnedLNSRoutes()
+	if err != nil {
+		return err
+	}
+	byKey := map[string]ownedLNSRoute{lnsRouteKey(item): item}
+	for _, route := range previous {
+		byKey[lnsRouteKey(route)] = route
+	}
+	combined := make([]ownedLNSRoute, 0, len(byKey))
+	for _, route := range byKey {
+		combined = append(combined, route)
+	}
+	return s.writeOwnedLNSRoutes(combined)
+}
+
+func (s *WAN) syncLNSRouteOwnership(ctx context.Context) error {
+	previous, err := s.readOwnedLNSRoutes()
+	if err != nil {
+		return err
+	}
+	for _, item := range previous {
+		if _, wanted := s.lnsRouteWanted[lnsRouteKey(item)]; wanted {
+			continue
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "-4", "route", "del", item.Destination,
+			"via", item.Gateway, "dev", item.Interface, "proto", fmt.Sprint(config.RouteProto)); err != nil {
+			out, showErr := s.Runner.Run(ctx, "ip", "-4", "route", "show", item.Destination)
+			if showErr != nil || routeLineMatches(out, item) {
+				return fmt.Errorf("удаление старого маршрута L2TP %s: %w", item.Destination, err)
+			}
+		}
+	}
+	wanted := make([]ownedLNSRoute, 0, len(s.lnsRouteWanted))
+	for _, item := range s.lnsRouteWanted {
+		wanted = append(wanted, item)
+	}
+	return s.writeOwnedLNSRoutes(wanted)
+}
+
+func routeLineMatches(out string, item ownedLNSRoute) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || (fields[0] != item.Destination && fields[0] != strings.TrimSuffix(item.Destination, "/32")) {
+			continue
+		}
+		via, dev := "", ""
+		for i := 1; i+1 < len(fields); i++ {
+			if fields[i] == "via" {
+				via = fields[i+1]
+			}
+			if fields[i] == "dev" {
+				dev = fields[i+1]
+			}
+		}
+		if via == item.Gateway && dev == item.Interface {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *WAN) healthLNSRoutes(ctx context.Context, w config.WAN, iface string) error {
+	owned, err := s.readOwnedLNSRoutes()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, item := range owned {
+		if item.Interface != iface {
+			continue
+		}
+		found = true
+		out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", item.Destination)
+		if err != nil || !routeLineMatches(out, item) {
+			return fmt.Errorf("аплинк %s: маршрут L2TP до %s через %s dev %s отсутствует", w.Name, item.Destination, item.Gateway, item.Interface)
+		}
+	}
+	if !found {
+		return fmt.Errorf("аплинк %s: не сохранён маршрут L2TP до концентратора %s", w.Name, w.Server)
 	}
 	return nil
 }
@@ -262,7 +407,7 @@ func (s *WAN) underlayGateway(ctx context.Context, iface string) (string, error)
 
 // cleanupL2TP убирает туннели аплинков, которых больше нет в конфигурации.
 func (s *WAN) cleanupL2TP(ctx context.Context, wanted map[string]bool) error {
-	units, err := filepath.Glob("/etc/systemd/system/netos-l2tp-*.service")
+	units, err := filepath.Glob(filepath.Join(systemdUnitDir, "netos-l2tp-*.service"))
 	if err != nil {
 		return err
 	}
@@ -273,7 +418,16 @@ func (s *WAN) cleanupL2TP(ctx context.Context, wanted map[string]bool) error {
 		if wanted[id] {
 			continue
 		}
-		_, _ = s.Runner.Run(ctx, "systemctl", "disable", "--now", base)
+		_, stopErr := s.Runner.Run(ctx, "systemctl", "disable", "--now", base)
+		if s.unitActive(ctx, base) {
+			if stopErr != nil {
+				return fmt.Errorf("остановка %s: %w", base, stopErr)
+			}
+			return fmt.Errorf("служба %s осталась активной", base)
+		}
+		if linkExists(L2TPInterface(id)) {
+			return fmt.Errorf("интерфейс %s остался после остановки %s", L2TPInterface(id), base)
+		}
 		for _, path := range []string{unitPath, l2tpConfPath(id), l2tpPPPPath(id)} {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("удаление %s: %w", path, err)
@@ -281,24 +435,27 @@ func (s *WAN) cleanupL2TP(ctx context.Context, wanted map[string]bool) error {
 		}
 		changed = true
 	}
+	for _, pattern := range []string{"l2tp-*.conf", "l2tp-*.ppp"} {
+		paths, err := filepath.Glob(filepath.Join(pppoeConfDir, pattern))
+		if err != nil {
+			return err
+		}
+		for _, artifactPath := range paths {
+			base := filepath.Base(artifactPath)
+			id := strings.TrimPrefix(base, "l2tp-")
+			id = strings.TrimSuffix(strings.TrimSuffix(id, ".conf"), ".ppp")
+			if wanted[id] {
+				continue
+			}
+			if err := os.Remove(artifactPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("удаление %s: %w", artifactPath, err)
+			}
+		}
+	}
 	if changed {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// readL2TPConfs снимает состояние параметров pppd до записи новых, чтобы не
-// рвать живой туннель, когда ничего не изменилось.
-func (s *WAN) readL2TPConfs(cfg *config.Config) {
-	for _, w := range cfg.WANs {
-		if w.Proto != "l2tp" {
-			continue
-		}
-		path := l2tpPPPPath(w.ID)
-		if data, err := os.ReadFile(path); err == nil {
-			s.pppoePrevious[path] = string(data)
-		}
-	}
 }

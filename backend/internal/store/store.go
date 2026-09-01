@@ -26,6 +26,9 @@ const (
 	StateActive     = "active"
 	StateRolledBack = "rolled_back"
 	StateSuperseded = "superseded"
+	// schemaVersion describes SQLite tables, not the independently versioned
+	// JSON document stored inside revisions.
+	schemaVersion = 2
 )
 
 var ErrNotFound = errors.New("не найдено")
@@ -172,7 +175,7 @@ CREATE TABLE IF NOT EXISTS devices (
 		return err
 	}
 	if count == 0 {
-		_, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, config.Version)
+		_, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion)
 		return err
 	}
 	return nil
@@ -207,19 +210,36 @@ func (s *Store) MarkActive(id int64) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`UPDATE revisions SET state = ? WHERE state = ?`, StateSuperseded, StateActive); err != nil {
+	result, err := tx.Exec(`UPDATE revisions SET state = ?, applied_at = ? WHERE id = ?`,
+		StateActive, time.Now().Unix(), id)
+	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE revisions SET state = ?, applied_at = ? WHERE id = ?`,
-		StateActive, time.Now().Unix(), id); err != nil {
+	if changed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if changed != 1 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(`UPDATE revisions SET state = ? WHERE state = ? AND id != ?`,
+		StateSuperseded, StateActive, id); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) SetRevisionState(id int64, state string) error {
-	_, err := s.db.Exec(`UPDATE revisions SET state = ? WHERE id = ?`, state, id)
-	return err
+	result, err := s.db.Exec(`UPDATE revisions SET state = ? WHERE id = ?`, state, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ActiveRevision возвращает применённую сейчас конфигурацию. Используется при
@@ -371,6 +391,18 @@ func (s *Store) UpdatePassword(username, passwordHash string) error {
 // password with old sessions still active (or report a misleading partial
 // failure to the user).
 func (s *Store) UpdatePasswordAndDeleteSessions(username, passwordHash string) ([]string, error) {
+	return s.updatePasswordAndDeleteSessions(username, passwordHash, false)
+}
+
+// ResetPasswordByRoot performs recovery and its audit record in the same
+// transaction. A full disk or database error therefore cannot change the
+// credential while leaving no durable explanation of who bypassed the normal
+// current-password check.
+func (s *Store) ResetPasswordByRoot(username, passwordHash string) ([]string, error) {
+	return s.updatePasswordAndDeleteSessions(username, passwordHash, true)
+}
+
+func (s *Store) updatePasswordAndDeleteSessions(username, passwordHash string, rootRecovery bool) ([]string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -405,6 +437,15 @@ func (s *Store) UpdatePasswordAndDeleteSessions(username, passwordHash string) (
 	if _, err := tx.Exec(`DELETE FROM sessions WHERE username = ?`, username); err != nil {
 		return nil, err
 	}
+	if rootRecovery {
+		if _, err := tx.Exec(
+			`INSERT INTO audit (at, user, action, target, detail, source_ip, success) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			time.Now().Unix(), "root", "password_reset", username,
+			fmt.Sprintf("root CLI; отозвано сессий: %d", len(tokens)), "local", 1,
+		); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -420,6 +461,36 @@ func (s *Store) CountUsers() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
+}
+
+// SingleUsername supports local root recovery without requiring the operator
+// to remember the panel login name. It refuses to guess when more than one
+// account exists.
+func (s *Store) SingleUsername() (string, error) {
+	rows, err := s.db.Query(`SELECT username FROM users ORDER BY id LIMIT 2`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			return "", err
+		}
+		users = append(users, username)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(users) {
+	case 0:
+		return "", ErrNotFound
+	case 1:
+		return users[0], nil
+	default:
+		return "", fmt.Errorf("найдено несколько пользователей; укажите имя явно")
+	}
 }
 
 // ---------------------------------------------------------------------------

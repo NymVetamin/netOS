@@ -40,6 +40,23 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = runner.Run(context.Background(), "ip", "netns", "delete", namespace) })
+	// ip netns exec bind-mounts files from /etc/netns/<name> over their host
+	// counterparts.  Give the OpenConnect client a private resolv.conf so the
+	// distribution vpnc-script cannot replace the router's live resolver while
+	// the integration tunnel is connected (or leave it replaced after exit).
+	netnsEtc := filepath.Join("/etc/netns", namespace)
+	if _, err := os.Stat(netnsEtc); err == nil {
+		t.Fatalf("refusing to reuse existing %s", netnsEtc)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(netnsEtc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(netnsEtc) })
+	if err := os.WriteFile(filepath.Join(netnsEtc, "resolv.conf"), []byte("nameserver 127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runner.Run(ctx, "ip", "link", "add", "veth-oc998h", "type", "veth", "peer", "name", "veth-oc998c"); err != nil {
 		t.Fatal(err)
 	}

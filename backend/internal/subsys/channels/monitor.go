@@ -108,13 +108,11 @@ func (s *Subsystem) record(ctx context.Context, cfg *config.Config, ch config.Ch
 func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch config.Channel) error {
 	switch ch.FailMode {
 	case "direct":
-		_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(Priority(ch)))
-		return nil
+		return s.removeChannelRule(ctx, ch)
 	case "fallback":
 		fallback, ok := channelByID(cfg, ch.Fallback)
 		if !ok || fallback.Type == "direct" {
-			_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(Priority(ch)))
-			return nil
+			return s.removeChannelRule(ctx, ch)
 		}
 		return s.ensureRuleTable(ctx, ch, TableNumber(fallback))
 	default: // block
@@ -125,6 +123,21 @@ func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch conf
 		// its device route and the blackhole becomes active automatically.
 		return s.ensureRoutes(ctx, ch, InterfaceName(ch))
 	}
+}
+
+func (s *Subsystem) removeChannelRule(ctx context.Context, ch config.Channel) error {
+	priority := fmt.Sprint(Priority(ch))
+	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
+	if err != nil {
+		return fmt.Errorf("чтение правил канала: %w", err)
+	}
+	if !hasRulePriority(out, priority) {
+		return nil
+	}
+	if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority); err != nil {
+		return fmt.Errorf("удаление правила канала: %w", err)
+	}
+	return nil
 }
 
 func (s *Subsystem) restoreChannel(ctx context.Context, ch config.Channel) error {
@@ -151,7 +164,11 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 			}
 			err = probeTCP(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second)
 		default:
-			_, err = s.Runner.Run(ctx, "ping", "-4", "-I", iface, "-c", "1", "-W", fmt.Sprint(timeout), target)
+			family := "-4"
+			if ip := net.ParseIP(target); ip != nil && ip.To4() == nil {
+				family = "-6"
+			}
+			_, err = s.Runner.Run(ctx, "ping", family, "-I", iface, "-c", "1", "-W", fmt.Sprint(timeout), target)
 		}
 		if err == nil {
 			return true

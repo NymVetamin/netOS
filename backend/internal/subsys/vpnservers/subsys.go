@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
+	"github.com/netos-router/netos/internal/tlsutil"
 )
 
 type ownedServer struct {
@@ -22,6 +24,106 @@ type ownedServer struct {
 	Index int    `json:"index"`
 	Type  string `json:"type,omitempty"`
 	Unit  string `json:"unit,omitempty"`
+}
+
+type snapshotEntry struct {
+	rel    string
+	mode   os.FileMode
+	data   []byte
+	link   string
+	isDir  bool
+	isLink bool
+}
+
+type pathSnapshot struct {
+	path    string
+	existed bool
+	entries []snapshotEntry
+}
+
+func capturePaths(paths ...string) ([]pathSnapshot, error) {
+	result := make([]pathSnapshot, 0, len(paths))
+	for _, path := range paths {
+		snapshot := pathSnapshot{path: path}
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			result = append(result, snapshot)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		snapshot.existed = true
+		add := func(fullPath, rel string, info os.FileInfo) error {
+			entry := snapshotEntry{rel: rel, mode: info.Mode(), isDir: info.IsDir()}
+			if info.Mode()&os.ModeSymlink != 0 {
+				entry.isLink = true
+				entry.link, err = os.Readlink(fullPath)
+			} else if !info.IsDir() {
+				entry.data, err = os.ReadFile(fullPath)
+			}
+			if err == nil {
+				snapshot.entries = append(snapshot.entries, entry)
+			}
+			return err
+		}
+		if !info.IsDir() {
+			if err := add(path, ".", info); err != nil {
+				return nil, err
+			}
+		} else if err := filepath.Walk(path, func(current string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			rel, err := filepath.Rel(path, current)
+			if err != nil {
+				return err
+			}
+			return add(current, rel, info)
+		}); err != nil {
+			return nil, err
+		}
+		result = append(result, snapshot)
+	}
+	return result, nil
+}
+
+func restorePaths(snapshots []pathSnapshot) error {
+	for _, snapshot := range snapshots {
+		if err := os.RemoveAll(snapshot.path); err != nil {
+			return err
+		}
+		if !snapshot.existed {
+			continue
+		}
+		for _, entry := range snapshot.entries {
+			target := snapshot.path
+			if entry.rel != "." {
+				target = filepath.Join(snapshot.path, entry.rel)
+			}
+			switch {
+			case entry.isDir:
+				if err := os.MkdirAll(target, entry.mode.Perm()); err != nil {
+					return err
+				}
+			case entry.isLink:
+				if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+					return err
+				}
+				if err := os.Symlink(entry.link, target); err != nil {
+					return err
+				}
+			default:
+				if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+					return err
+				}
+				if err := os.WriteFile(target, entry.data, entry.mode.Perm()); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 type Subsystem struct {
@@ -70,6 +172,35 @@ func enabledServers(cfg *config.Config) []config.VPNServer {
 	return out
 }
 
+func ownedServersFor(servers []config.VPNServer) []ownedServer {
+	items := make([]ownedServer, 0, len(servers))
+	for _, server := range servers {
+		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: server.Type}
+		switch server.Type {
+		case "xray":
+			item.Unit = xrayUnitName(server)
+		case "ocserv":
+			item.Unit = ocservUnitName(server)
+		case "ikev2":
+			item.Unit = ikev2Unit
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func ownedServersEqual(left, right []ownedServer) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	wanted := enabledServers(next)
 	previous := map[string]config.VPNServer{}
@@ -94,6 +225,13 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	for _, server := range previous {
 		actions = append(actions, apply.Action{Kind: "delete", Target: server.Name, Detail: resourceName(server), Disruptive: true})
 	}
+	if old != nil && len(actions) == 0 {
+		if err := s.Health(context.Background(), next); err != nil {
+			actions = append(actions, apply.Action{
+				Kind: "update", Target: "живое состояние VPN-серверов", Detail: err.Error(), Disruptive: true,
+			})
+		}
+	}
 	return actions, nil
 }
 
@@ -103,15 +241,23 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	wantedNames := map[string]bool{}
-	ownedNames := map[string]bool{}
-	for _, server := range wanted {
-		wantedNames[resourceName(server)] = true
+	wantedOwned := map[string]ownedServer{}
+	for _, item := range ownedServersFor(wanted) {
+		wantedOwned[item.Name] = item
 	}
+	retained := map[string]bool{}
+	ikeUnitOwned := false
 	for _, item := range owned {
-		ownedNames[item.Name] = true
-		if !wantedNames[item.Name] {
-			s.remove(ctx, item)
+		if item.Type == "ikev2" && (item.Unit == "" || item.Unit == ikev2Unit) {
+			ikeUnitOwned = true
+		}
+		expected, exists := wantedOwned[item.Name]
+		if exists && item.Type == expected.Type && item.Unit == expected.Unit {
+			retained[item.Name] = true
+			continue
+		}
+		if err := s.remove(ctx, item); err != nil {
+			return fmt.Errorf("удаление старого VPN-сервера %s: %w", item.Name, err)
 		}
 	}
 	var nextOwned []ownedServer
@@ -121,16 +267,16 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		var createdNow bool
 		switch server.Type {
 		case "wireguard":
-			createdNow, err = s.applyWireGuard(ctx, server, ownedNames[item.Name], cfg.IPv6.Mode == "off")
+			createdNow, err = s.applyWireGuard(ctx, server, retained[item.Name], cfg.IPv6.Mode == "off")
 		case "xray":
 			item.Unit = xrayUnitName(server)
-			createdNow, err = s.applyXray(ctx, cfg, server)
+			createdNow, err = s.applyXray(ctx, cfg, server, retained[item.Name])
 		case "ocserv":
 			item.Unit = ocservUnitName(server)
-			createdNow, err = s.applyOcserv(ctx, cfg, server)
+			createdNow, err = s.applyOcserv(ctx, cfg, server, retained[item.Name])
 		case "ikev2":
 			item.Unit = ikev2Unit
-			createdNow, err = s.ensureIKEv2Interface(ctx, server, ownedNames[item.Name])
+			createdNow, err = s.ensureIKEv2Interface(ctx, server, retained[item.Name])
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -143,7 +289,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		nextOwned = append(nextOwned, item)
 	}
-	if err := s.applyIKEv2(ctx, cfg, ikev2Servers(cfg)); err != nil {
+	if err := s.applyIKEv2(ctx, cfg, ikev2Servers(cfg), ikeUnitOwned); err != nil {
 		for _, provisional := range created {
 			s.remove(ctx, provisional)
 		}
@@ -227,21 +373,49 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 	if mtu == 0 {
 		mtu = 1420
 	}
-	if _, err := s.Runner.Run(ctx, "ip", "link", "set", "dev", name, "mtu", fmt.Sprint(mtu), "up"); err != nil {
-		return fail(fmt.Errorf("поднятие интерфейса: %w", err))
-	}
-	if disableIPv6 {
-		path := filepath.Join(s.ProcSysNet, "ipv6", "conf", name, "disable_ipv6")
-		if err := os.WriteFile(path, []byte("1"), 0o644); err != nil && !os.IsNotExist(err) {
-			return fail(fmt.Errorf("подавление IPv6 на %s: %w", name, err))
+	linkOut, linkErr := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
+	up, currentMTU := vpnLinkState(linkOut)
+	if linkErr != nil || !up || currentMTU != mtu {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", "dev", name, "mtu", fmt.Sprint(mtu), "up"); err != nil {
+			return fail(fmt.Errorf("поднятие интерфейса: %w", err))
 		}
+	}
+	desiredIPv6Disable := "0"
+	if disableIPv6 {
+		desiredIPv6Disable = "1"
+	}
+	ipv6Path := filepath.Join(s.ProcSysNet, "ipv6", "conf", name, "disable_ipv6")
+	current, readErr := os.ReadFile(ipv6Path)
+	if readErr == nil && strings.TrimSpace(string(current)) != desiredIPv6Disable {
+		if err := os.WriteFile(ipv6Path, []byte(desiredIPv6Disable), 0o644); err != nil {
+			return fail(fmt.Errorf("настройка IPv6 на %s: %w", name, err))
+		}
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		return fail(fmt.Errorf("чтение настройки IPv6 на %s: %w", name, readErr))
 	}
 	return created, nil
 }
 
+func vpnLinkState(out string) (up bool, mtu int) {
+	fields := strings.Fields(out)
+	for i, field := range fields {
+		if strings.HasPrefix(field, "<") && strings.HasSuffix(field, ">") {
+			for _, flag := range strings.Split(strings.Trim(field, "<>"), ",") {
+				if flag == "UP" {
+					up = true
+				}
+			}
+		}
+		if field == "mtu" && i+1 < len(fields) {
+			_, _ = fmt.Sscan(fields[i+1], &mtu)
+		}
+	}
+	return up, mtu
+}
+
 func (s *Subsystem) ensureAddress(ctx context.Context, name, address string) error {
 	out, _ := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
-	if strings.Contains(out, " inet "+address+" ") || strings.HasSuffix(strings.TrimSpace(out), " inet "+address) {
+	if hasAddress(out, address) {
 		return nil
 	}
 	if _, err := s.Runner.Run(ctx, "ip", "-4", "addr", "flush", "dev", name); err != nil {
@@ -253,34 +427,119 @@ func (s *Subsystem) ensureAddress(ctx context.Context, name, address string) err
 	return nil
 }
 
+func hasAddress(out, address string) bool {
+	for _, field := range strings.Fields(out) {
+		if field == address {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
-	for _, server := range enabledServers(cfg) {
+	wanted := enabledServers(cfg)
+	owned, err := s.readOwned()
+	if err != nil {
+		return err
+	}
+	if !ownedServersEqual(owned, ownedServersFor(wanted)) {
+		return fmt.Errorf("список принадлежащих netOS VPN-серверов расходится с конфигурацией")
+	}
+	ikeChecked := false
+	for _, server := range wanted {
 		if server.Type == "xray" {
-			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", xrayUnitName(server))
-			if strings.TrimSpace(active) != "active" {
+			if err := s.unitActiveEnabled(ctx, xrayUnitName(server)); err != nil {
 				return fmt.Errorf("сервер %s не работает", server.Name)
+			}
+			conf, err := RenderXray(server, cfg)
+			if err != nil {
+				return err
+			}
+			confPath, unitPath := s.xrayPaths(server)
+			if err := healthyFile(confPath, conf, 0o600); err != nil {
+				return err
+			}
+			if err := healthyFile(unitPath, []byte(renderXrayUnit(server, confPath)), 0o644); err != nil {
+				return err
 			}
 			continue
 		}
 		if server.Type == "ocserv" {
-			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ocservUnitName(server))
-			if strings.TrimSpace(active) != "active" {
+			if err := s.unitActiveEnabled(ctx, ocservUnitName(server)); err != nil {
 				return fmt.Errorf("сервер %s не работает", server.Name)
+			}
+			paths := s.ocservPaths(server)
+			conf, err := RenderOcserv(server, cfg, s.StateDir)
+			if err != nil {
+				return err
+			}
+			if err := healthyFile(paths.conf, conf, 0o600); err != nil {
+				return err
+			}
+			if err := healthyFile(paths.unit, []byte(renderOcservUnit(server, paths.conf)), 0o644); err != nil {
+				return err
+			}
+			if err := ocservAuthHealth(paths, server); err != nil {
+				return fmt.Errorf("учётные записи OpenConnect: %w", err)
+			}
+			if _, err := tlsutil.ValidatePairForNames(filepath.Join(paths.tls, "panel.crt"), filepath.Join(paths.tls, "panel.key"), cfg.System.Hostname); err != nil {
+				return fmt.Errorf("TLS OpenConnect: %w", err)
 			}
 			continue
 		}
 		if server.Type == "ikev2" {
-			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2Unit)
-			if strings.TrimSpace(active) != "active" {
+			if err := s.unitActiveEnabled(ctx, ikev2Unit); err != nil {
 				return fmt.Errorf("сервер %s не работает", server.Name)
 			}
 			name := InterfaceName(server)
 			if !s.linkExists(name) {
 				return fmt.Errorf("интерфейс %s отсутствует", name)
 			}
+			ike, err := server.IKEv2Config()
+			if err != nil {
+				return err
+			}
+			expectedMTU := ike.MTU
+			if expectedMTU == 0 {
+				expectedMTU = 1400
+			}
+			linkOut, linkErr := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
+			up, mtu := vpnLinkState(linkOut)
+			if linkErr != nil || !up || mtu != expectedMTU {
+				return fmt.Errorf("интерфейс %s: ожидаются UP и MTU %d", name, expectedMTU)
+			}
 			addrs, err := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
-			if err != nil || !strings.Contains(addrs, server.Subnet) {
+			if err != nil || !hasAddress(addrs, server.Subnet) {
 				return fmt.Errorf("на %s нет адреса %s", name, server.Subnet)
+			}
+			if !ikeChecked {
+				servers := ikev2Servers(cfg)
+				conf, err := RenderIKEv2(servers, cfg)
+				if err != nil {
+					return err
+				}
+				paths := s.ikev2Paths()
+				for _, check := range []struct {
+					path string
+					data []byte
+					mode os.FileMode
+				}{
+					{paths.conf, conf, 0o600},
+					{paths.daemonConf, renderIKEv2DaemonConfig(), 0o600},
+					{paths.unit, renderIKEv2Unit(paths.conf, paths.daemonConf), 0o644},
+				} {
+					if err := healthyFile(check.path, check.data, check.mode); err != nil {
+						return err
+					}
+				}
+				names := []string{cfg.System.Hostname}
+				for _, item := range servers {
+					names = append(names, ikev2Identity(item, cfg))
+				}
+				if _, err := tlsutil.ValidatePairForNames(paths.cert, paths.key, names...); err != nil {
+					return fmt.Errorf("TLS IKEv2: %w", err)
+				}
+				ikeChecked = true
 			}
 			continue
 		}
@@ -288,37 +547,160 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
 		}
+		wg, err := server.WireGuardConfig()
+		if err != nil {
+			return err
+		}
+		expectedMTU := wg.MTU
+		if expectedMTU == 0 {
+			expectedMTU = 1420
+		}
+		linkOut, linkErr := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
+		up, mtu := vpnLinkState(linkOut)
+		if linkErr != nil || !up || mtu != expectedMTU {
+			return fmt.Errorf("интерфейс %s: ожидаются UP и MTU %d", name, expectedMTU)
+		}
+		desiredIPv6Disable := "0"
+		if cfg.IPv6.Mode == "off" {
+			desiredIPv6Disable = "1"
+		}
+		ipv6Path := filepath.Join(s.ProcSysNet, "ipv6", "conf", name, "disable_ipv6")
+		if current, err := os.ReadFile(ipv6Path); err == nil {
+			if strings.TrimSpace(string(current)) != desiredIPv6Disable {
+				return fmt.Errorf("интерфейс %s: disable_ipv6=%s вместо %s", name, strings.TrimSpace(string(current)), desiredIPv6Disable)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("интерфейс %s: чтение disable_ipv6: %w", name, err)
+		}
 		show, err := s.Runner.Run(ctx, "wg", "show", name, "listen-port")
 		if err != nil || strings.TrimSpace(show) != fmt.Sprint(server.Port) {
 			return fmt.Errorf("сервер %s не слушает UDP-порт %d", server.Name, server.Port)
 		}
 		addrs, err := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
-		if err != nil || !strings.Contains(addrs, server.Subnet) {
+		if err != nil || !hasAddress(addrs, server.Subnet) {
 			return fmt.Errorf("на %s нет адреса %s", name, server.Subnet)
+		}
+		conf, err := RenderWireGuard(server)
+		if err != nil {
+			return err
+		}
+		if err := healthyFile(filepath.Join(s.StateDir, name+".conf"), []byte(conf), 0o600); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Subsystem) remove(ctx context.Context, item ownedServer) {
+func healthyFile(path string, expected []byte, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("артефакт VPN %s не является обычным файлом без symlink", path)
+	}
+	if system.FileChanged(path, expected) {
+		return fmt.Errorf("артефакт VPN %s расходится с конфигурацией", path)
+	}
+	if goruntime.GOOS != "windows" && info.Mode().Perm() != mode.Perm() {
+		return fmt.Errorf("права VPN-артефакта %s: %04o, ожидалось %04o", path, info.Mode().Perm(), mode.Perm())
+	}
+	return nil
+}
+
+func (s *Subsystem) ensureUnitEnabled(ctx context.Context, unit string) error {
+	enabled, _ := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	if strings.TrimSpace(enabled) == "enabled" {
+		return nil
+	}
+	_, err := s.Runner.Run(ctx, "systemctl", "enable", unit)
+	return err
+}
+
+func (s *Subsystem) unitActiveEnabled(ctx context.Context, unit string) error {
+	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unit)
+	if strings.TrimSpace(active) != "active" {
+		return fmt.Errorf("служба %s не активна", unit)
+	}
+	enabled, _ := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	if strings.TrimSpace(enabled) != "enabled" {
+		return fmt.Errorf("служба %s не включена", unit)
+	}
+	return nil
+}
+
+func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
 	if item.Type == "xray" {
-		s.cleanupXray(ctx, config.VPNServer{Index: item.Index, Type: "xray"})
-		return
+		server := config.VPNServer{Index: item.Index, Type: "xray"}
+		s.cleanupXray(ctx, server)
+		unitName := item.Unit
+		if unitName == "" {
+			unitName = xrayUnitName(server)
+		}
+		if err := s.verifyUnitStopped(ctx, unitName); err != nil {
+			return err
+		}
+		conf, unit := s.xrayPaths(server)
+		if err := pathsAbsent(conf, unit); err != nil {
+			return err
+		}
+		return nil
 	}
 	if item.Type == "ocserv" {
-		s.cleanupOcserv(ctx, config.VPNServer{Index: item.Index, Type: "ocserv"})
-		return
+		server := config.VPNServer{Index: item.Index, Type: "ocserv"}
+		s.cleanupOcserv(ctx, server)
+		unitName := item.Unit
+		if unitName == "" {
+			unitName = ocservUnitName(server)
+		}
+		if err := s.verifyUnitStopped(ctx, unitName); err != nil {
+			return err
+		}
+		if s.linkExists(InterfaceName(server)) {
+			return fmt.Errorf("интерфейс %s остался в системе", InterfaceName(server))
+		}
+		paths := s.ocservPaths(server)
+		if err := pathsAbsent(paths.conf, paths.passwd, paths.auth, paths.unit, paths.users, paths.tls); err != nil {
+			return err
+		}
+		return nil
 	}
 	if item.Type == "ikev2" {
 		if s.linkExists(item.Name) {
 			_, _ = s.Runner.Run(ctx, "ip", "link", "delete", item.Name)
 		}
-		return
+		if s.linkExists(item.Name) {
+			return fmt.Errorf("интерфейс %s остался в системе", item.Name)
+		}
+		return nil
 	}
 	if s.linkExists(item.Name) {
 		_, _ = s.Runner.Run(ctx, "ip", "link", "delete", item.Name)
 	}
 	_ = os.Remove(filepath.Join(s.StateDir, item.Name+".conf"))
+	if s.linkExists(item.Name) {
+		return fmt.Errorf("интерфейс %s остался в системе", item.Name)
+	}
+	return pathsAbsent(filepath.Join(s.StateDir, item.Name+".conf"))
+}
+
+func (s *Subsystem) verifyUnitStopped(ctx context.Context, unit string) error {
+	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unit)
+	if strings.TrimSpace(active) == "active" {
+		return fmt.Errorf("служба %s осталась активной", unit)
+	}
+	return nil
+}
+
+func pathsAbsent(paths ...string) error {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("артефакт %s остался в системе", path)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Subsystem) linkExists(name string) bool {
@@ -352,10 +734,8 @@ func (s *Subsystem) writeOwned(items []ownedServer) error {
 }
 
 func writeFile(path string, data []byte, mode os.FileMode) error {
-	if system.FileChanged(path, data) {
-		return system.WriteFileAtomic(path, data, mode)
-	}
-	return os.Chmod(path, mode)
+	_, err := system.WriteFileAtomicIfChanged(path, data, mode)
+	return err
 }
 
 func PeerCIDR(peer config.VPNPeer) string {

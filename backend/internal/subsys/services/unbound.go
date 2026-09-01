@@ -6,13 +6,14 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
 
-const (
+var (
 	unboundConfPath = "/var/lib/netos/generated/unbound.conf"
 	unboundUnit     = "netos-unbound.service"
 	// Каталог для root.key: unbound обновляет якорь DNSSEC на месте, поэтому
@@ -58,7 +59,12 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	w("    use-syslog: no")
 	w("    logfile: \"\"")
 
-	w("    port: %d", cfg.DNS.Port)
+	policyBackend := hasKernelDomainPolicies(cfg) && cfg.DNS.Provider == "unbound"
+	port := cfg.DNS.Port
+	if policyBackend {
+		port = policyDNSBackendPort
+	}
+	w("    port: %d", port)
 	w("    do-ip4: yes")
 	w("    do-udp: yes")
 	w("    do-tcp: yes")
@@ -87,6 +93,9 @@ func (u *Unbound) Render(cfg *config.Config) string {
 		renderUnboundAAAAClient(&b, "127.0.0.0/8")
 	}
 	for _, n := range cfg.Networks {
+		if policyBackend {
+			break
+		}
 		if !n.Enabled || n.RouterAddress == "" {
 			continue
 		}
@@ -125,7 +134,7 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	if cfg.DNS.DNSSEC {
 		w("    auto-trust-anchor-file: \"%s\"", unboundAnchorPath)
 	}
-	if cfg.DNS.QueryLog {
+	if cfg.DNS.QueryLog && !policyBackend {
 		w("    log-queries: yes")
 		w("    log-replies: yes")
 	}
@@ -138,6 +147,9 @@ func (u *Unbound) Render(cfg *config.Config) string {
 		if cfg.DNS.LocalDomain != "" {
 			w("    private-domain: \"%s\"", cfg.DNS.LocalDomain)
 		}
+	}
+	if hasEnabledBlocklists(cfg) {
+		w("    include: %q", unboundBlocklistPath)
 	}
 	// Шифрованным апстримам нужен корневой набор сертификатов, иначе проверка
 	// имени сервера DoT провалится.
@@ -224,7 +236,7 @@ func (u *Unbound) renderForwardZones(b *strings.Builder, cfg *config.Config) {
 
 	// Локальные имена знает dnsmasq: он раздаёт адреса и потому единственный
 	// видит, какое имя за каким клиентом закреплено.
-	if localDNSNeeded(cfg) {
+	if backendLocalDNSNeeded(cfg) {
 		for _, zone := range localZones(cfg) {
 			w("forward-zone:")
 			w("    name: \"%s\"", zone)
@@ -327,6 +339,10 @@ func localZones(cfg *config.Config) []string {
 }
 
 func (u *Unbound) Apply(ctx context.Context, cfg *config.Config) error {
+	return u.ApplyPrepared(ctx, cfg, false)
+}
+
+func (u *Unbound) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRestart bool) error {
 	if !u.Needed(cfg) {
 		if err := u.Systemd.Disable(ctx, unboundUnit); err != nil {
 			return err
@@ -335,27 +351,28 @@ func (u *Unbound) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 
 	content := []byte(u.Render(cfg))
-	changed := system.FileChanged(unboundConfPath, content)
-
-	if err := system.WriteFileAtomic(unboundConfPath, content, 0o644); err != nil {
-		return err
-	}
 	if cfg.DNS.DNSSEC {
 		if err := u.ensureTrustAnchor(ctx); err != nil {
 			return err
 		}
 	}
+	if err := validateManagedContent(unboundConfPath, content, 0o644, func(path string) error {
+		if _, err := u.Runner.Run(ctx, "unbound-checkconf", path); err != nil {
+			return fmt.Errorf("проверка конфигурации unbound: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	changed, err := writeManagedFile(unboundConfPath, content, 0o644)
+	if err != nil {
+		return err
+	}
 	if err := u.ensureUnit(ctx); err != nil {
 		return err
 	}
 
-	// Ошибку в конфиге ловим до перезапуска: иначе резолвер не поднимется и
-	// сеть останется без разрешения имён.
-	if _, err := u.Runner.Run(ctx, "unbound-checkconf", unboundConfPath); err != nil {
-		return fmt.Errorf("проверка конфигурации unbound: %w", err)
-	}
-
-	if !changed && u.Systemd.IsActive(ctx, unboundUnit) {
+	if !forceRestart && !changed && u.Systemd.IsActive(ctx, unboundUnit) {
 		return nil
 	}
 	return u.Systemd.Restart(ctx, unboundUnit)
@@ -368,8 +385,18 @@ func (u *Unbound) Apply(ctx context.Context, cfg *config.Config) error {
 // unbound-checkconf откажет с невнятным «does not exist», поэтому объясняем
 // причину сами.
 func (u *Unbound) ensureTrustAnchor(ctx context.Context) error {
+	if err := trustAnchorHealth(unboundAnchorPath); err == nil {
+		return nil
+	}
+	info, statErr := os.Lstat(unboundAnchorPath)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if statErr == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+		return fmt.Errorf("якорь DNSSEC %s небезопасен: нужен обычный файл без symlink", unboundAnchorPath)
+	}
 	_, runErr := u.Runner.Run(ctx, "unbound-anchor", "-a", unboundAnchorPath)
-	if _, err := os.Stat(unboundAnchorPath); err == nil {
+	if err := trustAnchorHealth(unboundAnchorPath); err == nil {
 		return nil
 	}
 	if runErr != nil {
@@ -378,8 +405,36 @@ func (u *Unbound) ensureTrustAnchor(ctx context.Context) error {
 	return fmt.Errorf("якорь DNSSEC не создан: %s не появился", unboundAnchorPath)
 }
 
+func trustAnchorHealth(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s не является обычным файлом без symlink", path)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("%s пуст", path)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s доступен для записи группе или другим пользователям: mode %o", path, info.Mode().Perm())
+	}
+	return nil
+}
+
 func (u *Unbound) ensureUnit(ctx context.Context) error {
-	unit := `[Unit]
+	changed, err := writeManagedFile(filepath.Join(systemdUnitDir, unboundUnit), []byte(unboundUnitContent()), 0o644)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return u.Systemd.DaemonReload(ctx)
+}
+
+func unboundUnitContent() string {
+	return `[Unit]
 Description=netOS unbound (DNS-резолвер)
 After=network.target
 Wants=network.target
@@ -394,22 +449,31 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 `
-	path := filepath.Join("/etc/systemd/system", unboundUnit)
-	if !system.FileChanged(path, []byte(unit)) {
-		return nil
-	}
-	if err := system.WriteFileAtomic(path, []byte(unit), 0o644); err != nil {
-		return err
-	}
-	return u.Systemd.DaemonReload(ctx)
 }
 
 func (u *Unbound) Health(ctx context.Context, cfg *config.Config) error {
 	if !u.Needed(cfg) {
-		return nil
+		if u.Systemd.IsActive(ctx, unboundUnit) {
+			return fmt.Errorf("unbound запущен, хотя не выбран")
+		}
+		return generatedAbsent(unboundConfPath)
 	}
 	if !u.Systemd.IsActive(ctx, unboundUnit) {
 		return fmt.Errorf("unbound не запущен")
+	}
+	if err := managedFileHealth(unboundConfPath, []byte(u.Render(cfg)), 0o644); err != nil {
+		return err
+	}
+	if err := managedFileHealth(filepath.Join(systemdUnitDir, unboundUnit), []byte(unboundUnitContent()), 0o644); err != nil {
+		return err
+	}
+	if cfg.DNS.DNSSEC {
+		if err := trustAnchorHealth(unboundAnchorPath); err != nil {
+			return fmt.Errorf("якорь DNSSEC: %w", err)
+		}
+	}
+	if _, err := u.Runner.Run(ctx, "unbound-checkconf", unboundConfPath); err != nil {
+		return fmt.Errorf("проверка активной конфигурации unbound: %w", err)
 	}
 	return nil
 }

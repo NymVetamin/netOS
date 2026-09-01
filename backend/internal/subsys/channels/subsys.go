@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,143 @@ type ownedChannel struct {
 	Index int    `json:"index"`
 	Type  string `json:"type,omitempty"`
 	Unit  string `json:"unit,omitempty"`
+}
+
+type channelFileSnapshot struct {
+	path    string
+	existed bool
+	data    []byte
+	mode    os.FileMode
+}
+
+type removedChannelSnapshot struct {
+	owned     ownedChannel
+	files     []channelFileSnapshot
+	addresses string
+	link      string
+}
+
+func captureChannelFiles(paths ...string) ([]channelFileSnapshot, error) {
+	snapshots := make([]channelFileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		snapshot := channelFileSnapshot{path: path}
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			snapshots = append(snapshots, snapshot)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("артефакт канала %s не является обычным файлом", path)
+		}
+		snapshot.existed = true
+		snapshot.mode = info.Mode().Perm()
+		snapshot.data, err = os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, nil
+}
+
+func restoreChannelFiles(snapshots []channelFileSnapshot) error {
+	for _, snapshot := range snapshots {
+		if !snapshot.existed {
+			if err := os.Remove(snapshot.path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			continue
+		}
+		if err := system.WriteFileAtomic(snapshot.path, snapshot.data, snapshot.mode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChannel) (removedChannelSnapshot, error) {
+	snapshot := removedChannelSnapshot{owned: owned}
+	var paths []string
+	switch owned.Type {
+	case "openconnect":
+		conf, password, script, unit := s.openConnectPaths(config.Channel{Index: owned.Index})
+		paths = []string{conf, password, script, unit}
+	case "xray":
+		conf, unit := s.xrayPaths(config.Channel{Index: owned.Index})
+		paths = []string{conf, unit}
+	default:
+		paths = []string{filepath.Join(s.StateDir, owned.Name+".conf")}
+		snapshot.addresses, _ = s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", owned.Name)
+		snapshot.link, _ = s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", owned.Name)
+	}
+	var err error
+	snapshot.files, err = captureChannelFiles(paths...)
+	return snapshot, err
+}
+
+func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) error {
+	ctx := context.Background()
+	for i := len(snapshots) - 1; i >= 0; i-- {
+		snapshot := snapshots[i]
+		if err := restoreChannelFiles(snapshot.files); err != nil {
+			return err
+		}
+		owned := snapshot.owned
+		ch := config.Channel{Index: owned.Index, Type: owned.Type}
+		switch owned.Type {
+		case "openconnect", "xray":
+			unit := owned.Unit
+			if unit == "" && owned.Type == "openconnect" {
+				unit = openConnectUnitName(ch)
+			} else if unit == "" {
+				unit = xrayUnitName(ch)
+			}
+			_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
+			if err := s.ensureUnitEnabled(ctx, unit); err != nil {
+				return err
+			}
+			if _, err := s.Runner.Run(ctx, "systemctl", "restart", unit); err != nil {
+				return err
+			}
+			deadline := time.Now().Add(20 * time.Second)
+			for !s.linkExists(owned.Name) && time.Now().Before(deadline) {
+				time.Sleep(250 * time.Millisecond)
+			}
+			if !s.linkExists(owned.Name) {
+				return fmt.Errorf("служба %s не восстановила интерфейс %s", unit, owned.Name)
+			}
+		default:
+			if !s.linkExists(owned.Name) {
+				if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", owned.Name, "type", "wireguard"); err != nil {
+					return err
+				}
+			}
+			conf := filepath.Join(s.StateDir, owned.Name+".conf")
+			if _, err := s.Runner.Run(ctx, "wg", "syncconf", owned.Name, conf); err != nil {
+				return err
+			}
+			addresses := inetAddresses(snapshot.addresses)
+			if len(addresses) > 0 {
+				_, _ = s.Runner.Run(ctx, "ip", "-4", "addr", "flush", "dev", owned.Name)
+				for _, address := range addresses {
+					_, _ = s.Runner.Run(ctx, "ip", "-4", "addr", "add", address, "dev", owned.Name)
+				}
+			}
+			if mtu := linkMTU(snapshot.link); mtu != "" {
+				_, _ = s.Runner.Run(ctx, "ip", "link", "set", "dev", owned.Name, "mtu", mtu, "up")
+			}
+		}
+		if err := s.ensureRoutes(ctx, ch, owned.Name); err != nil {
+			return err
+		}
+		if err := s.ensureRule(ctx, ch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type Subsystem struct {
@@ -122,6 +260,11 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	for _, ch := range previous {
 		actions = append(actions, apply.Action{Kind: "delete", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true})
 	}
+	if len(actions) == 0 {
+		if err := s.Health(context.Background(), new); err != nil {
+			actions = append(actions, apply.Action{Kind: "update", Target: "channels", Detail: err.Error(), Disruptive: true})
+		}
+	}
 	return actions, nil
 }
 
@@ -129,27 +272,63 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wanted := enabledChannels(cfg)
+	if err := preflightChannels(wanted); err != nil {
+		return err
+	}
 	owned, err := s.readOwned()
 	if err != nil {
 		return err
 	}
-	wantedNames := map[string]bool{}
+	tableSnapshot, err := captureChannelFiles(s.RTTablesPath)
+	if err != nil {
+		return err
+	}
+	wantedOwned := map[string]ownedChannel{}
 	for _, ch := range wanted {
-		wantedNames[InterfaceName(ch)] = true
+		name := InterfaceName(ch)
+		unit := ""
+		if ch.Type == "openconnect" {
+			unit = openConnectUnitName(ch)
+		} else if ch.Type == "xray" {
+			unit = xrayUnitName(ch)
+		}
+		wantedOwned[name] = ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit}
+	}
+	retained := map[string]bool{}
+	var removed []removedChannelSnapshot
+	rollbackRemoved := func(cause error) error {
+		var rollbackErrors []string
+		if err := restoreChannelFiles(tableSnapshot); err != nil {
+			rollbackErrors = append(rollbackErrors, "каталог таблиц: "+err.Error())
+		}
+		if len(removed) > 0 {
+			if err := s.restoreRemovedChannels(removed); err != nil {
+				rollbackErrors = append(rollbackErrors, "ранее удалённые каналы: "+err.Error())
+			}
+		}
+		if len(rollbackErrors) > 0 {
+			return fmt.Errorf("%v; восстановление Apply: %s", cause, strings.Join(rollbackErrors, "; "))
+		}
+		return cause
 	}
 	for _, previous := range owned {
-		if wantedNames[previous.Name] {
+		expected, exists := wantedOwned[previous.Name]
+		if exists && previous.Type == expected.Type && previous.Unit == expected.Unit {
+			retained[previous.Name] = true
 			continue
 		}
-		s.removeChannel(ctx, previous)
+		snapshot, err := s.captureRemovedChannel(ctx, previous)
+		if err != nil {
+			return rollbackRemoved(err)
+		}
+		removed = append(removed, snapshot)
+		if err := s.removeChannel(ctx, previous); err != nil {
+			return rollbackRemoved(fmt.Errorf("удаление старого канала %s: %w", previous.Name, err))
+		}
 	}
 
 	if err := s.writeTables(wanted); err != nil {
-		return err
-	}
-	ownedNames := map[string]bool{}
-	for _, previous := range owned {
-		ownedNames[previous.Name] = true
+		return rollbackRemoved(err)
 	}
 	var nextOwned []ownedChannel
 	var created []ownedChannel
@@ -159,19 +338,19 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		var unit string
 		switch ch.Type {
 		case "wireguard":
-			createdNow, err = s.applyWireGuard(ctx, ch, ownedNames[name], cfg.IPv6.Mode == "off")
+			createdNow, err = s.applyWireGuard(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
 		case "openconnect":
 			unit = openConnectUnitName(ch)
-			createdNow, err = s.applyOpenConnect(ctx, ch, cfg.IPv6.Mode == "off")
+			createdNow, err = s.applyOpenConnect(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
 		case "xray":
 			unit = xrayUnitName(ch)
-			createdNow, err = s.applyXray(ctx, ch, cfg.IPv6.Mode == "off")
+			createdNow, err = s.applyXray(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
 		}
 		if err != nil {
 			for _, provisional := range created {
-				s.removeChannel(ctx, provisional)
+				_ = s.removeChannel(ctx, provisional)
 			}
-			return fmt.Errorf("канал %s: %w", ch.Name, err)
+			return rollbackRemoved(fmt.Errorf("канал %s: %w", ch.Name, err))
 		}
 		if createdNow {
 			created = append(created, ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit})
@@ -180,12 +359,30 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	if err := s.writeOwned(nextOwned); err != nil {
 		for _, provisional := range created {
-			s.removeChannel(ctx, provisional)
+			_ = s.removeChannel(ctx, provisional)
 		}
-		return err
+		return rollbackRemoved(err)
 	}
 	s.states = map[string]*channelState{}
 	s.pausedUntil = time.Now().Add(15 * time.Second)
+	return nil
+}
+
+func preflightChannels(channels []config.Channel) error {
+	for _, ch := range channels {
+		var err error
+		switch ch.Type {
+		case "wireguard":
+			_, err = RenderWireGuard(ch)
+		case "openconnect":
+			_, err = ch.OpenConnectConfig()
+		case "xray":
+			_, err = RenderXray(ch)
+		}
+		if err != nil {
+			return fmt.Errorf("канал %s: %w", ch.Name, err)
+		}
+	}
 	return nil
 }
 
@@ -212,15 +409,78 @@ func RenderWireGuard(ch config.Channel) (string, error) {
 	return b.String(), nil
 }
 
-func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (bool, error) {
+func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (created bool, retErr error) {
+	name := InterfaceName(ch)
 	existedBefore := s.linkExists(InterfaceName(ch))
-	err := s.applyWireGuardInner(ctx, ch, wasOwned, disableIPv6)
-	created := !existedBefore && s.linkExists(InterfaceName(ch))
-	if err != nil && created {
-		s.removeChannel(ctx, ownedChannel{Name: InterfaceName(ch), Index: ch.Index})
-		created = false
+	confPath := filepath.Join(s.StateDir, name+".conf")
+	snapshots, err := captureChannelFiles(confPath)
+	if err != nil {
+		return false, err
 	}
-	return created, err
+	oldAddresses, _ := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
+	oldLink, _ := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
+	retErr = s.applyWireGuardInner(ctx, ch, wasOwned, disableIPv6)
+	created = !existedBefore && s.linkExists(name)
+	if retErr == nil {
+		return created, nil
+	}
+	rollbackCtx := context.Background()
+	if !wasOwned {
+		if !existedBefore {
+			_ = s.removeChannel(rollbackCtx, ownedChannel{Name: name, Index: ch.Index})
+			_ = os.Remove(confPath)
+		}
+		return false, retErr
+	}
+	if err := restoreChannelFiles(snapshots); err != nil {
+		return false, fmt.Errorf("%v; rollback WireGuard: %w", retErr, err)
+	}
+	if !s.linkExists(name) {
+		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
+			return false, fmt.Errorf("%v; rollback WireGuard interface: %w", retErr, err)
+		}
+	}
+	if len(snapshots) > 0 && snapshots[0].existed {
+		if _, err := s.Runner.Run(rollbackCtx, "wg", "syncconf", name, confPath); err != nil {
+			return false, fmt.Errorf("%v; rollback WireGuard config: %w", retErr, err)
+		}
+	}
+	addresses := inetAddresses(oldAddresses)
+	if len(addresses) > 0 {
+		_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "addr", "flush", "dev", name)
+		for _, address := range addresses {
+			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "addr", "add", address, "dev", name)
+		}
+	}
+	if mtu := linkMTU(oldLink); mtu != "" {
+		_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "set", "dev", name, "mtu", mtu, "up")
+	}
+	_ = s.ensureRoutes(rollbackCtx, ch, name)
+	_ = s.ensureRule(rollbackCtx, ch)
+	return false, retErr
+}
+
+func inetAddresses(output string) []string {
+	var addresses []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "inet" {
+				addresses = append(addresses, fields[i+1])
+			}
+		}
+	}
+	return addresses
+}
+
+func linkMTU(output string) string {
+	fields := strings.Fields(output)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "mtu" {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) error {
@@ -302,20 +562,44 @@ func (s *Subsystem) ensureAddress(ctx context.Context, name, address string) err
 func (s *Subsystem) ensureRoutes(ctx context.Context, ch config.Channel, name string) error {
 	table := fmt.Sprint(TableNumber(ch))
 	out, _ := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", table)
-	wantDefault := "default dev " + name
-	if !strings.Contains(out, wantDefault) {
+	if !hasDefaultRoute(out, name) {
 		if _, err := s.Runner.Run(ctx, "ip", "-4", "route", "replace", "default", "dev", name,
 			"metric", "100", "table", table, "proto", fmt.Sprint(config.RouteProto)); err != nil {
 			return fmt.Errorf("маршрут канала: %w", err)
 		}
 	}
-	if !strings.Contains(out, "blackhole default") {
+	if !hasBlackholeDefault(out) {
 		if _, err := s.Runner.Run(ctx, "ip", "-4", "route", "replace", "blackhole", "default",
 			"metric", "1000", "table", table, "proto", fmt.Sprint(config.RouteProto)); err != nil {
 			return fmt.Errorf("kill-switch канала: %w", err)
 		}
 	}
 	return nil
+}
+
+func hasDefaultRoute(out, name string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "default" {
+			continue
+		}
+		for i := 1; i+1 < len(fields); i++ {
+			if fields[i] == "dev" && fields[i+1] == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasBlackholeDefault(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "blackhole" && fields[1] == "default" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Subsystem) ensureRule(ctx context.Context, ch config.Channel) error {
@@ -332,18 +616,46 @@ func (s *Subsystem) ensureRuleTable(ctx context.Context, ch config.Channel, look
 		return fmt.Errorf("чтение правил: %w", err)
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), priority+":") &&
-			strings.Contains(line, "fwmark "+mark) &&
-			(strings.Contains(line, "lookup "+table) || strings.Contains(line, "lookup "+tableName)) {
+		if hasChannelRuleLine(line, priority, mark, table, tableName) {
 			return nil
 		}
 	}
-	_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority)
+	if hasRulePriority(out, priority) {
+		if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority); err != nil {
+			return fmt.Errorf("удаление старого правила канала: %w", err)
+		}
+	}
 	if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "add", "fwmark", mark,
 		"priority", priority, "lookup", table); err != nil {
 		return fmt.Errorf("правило канала: %w", err)
 	}
 	return nil
+}
+
+func hasRulePriority(out, priority string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), priority+":") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasChannelRuleLine(line, priority, mark, table, tableName string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(line), priority+":") {
+		return false
+	}
+	fields := strings.Fields(line)
+	foundMark, foundTable := false, false
+	for i := 0; i+1 < len(fields); i++ {
+		switch fields[i] {
+		case "fwmark":
+			foundMark = fields[i+1] == mark
+		case "lookup", "table":
+			foundTable = fields[i+1] == table || fields[i+1] == tableName
+		}
+	}
+	return foundMark && foundTable
 }
 
 func (s *Subsystem) suppressIPv6(name string) error {
@@ -355,11 +667,35 @@ func (s *Subsystem) suppressIPv6(name string) error {
 }
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
+	channels := enabledChannels(cfg)
+	var expectedOwned []ownedChannel
+	for _, ch := range channels {
+		unit := ""
+		if ch.Type == "openconnect" {
+			unit = openConnectUnitName(ch)
+		} else if ch.Type == "xray" {
+			unit = xrayUnitName(ch)
+		}
+		expectedOwned = append(expectedOwned, ownedChannel{Name: InterfaceName(ch), Index: ch.Index, Type: ch.Type, Unit: unit})
+	}
+	owned, err := s.readOwned()
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(owned, expectedOwned) {
+		return fmt.Errorf("список owned-каналов расходится с конфигурацией")
+	}
+	if err := healthyChannelFile(s.RTTablesPath, renderTables(channels), 0o644); err != nil {
+		return err
+	}
+	if len(channels) == 0 {
+		return nil
+	}
 	rules, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return err
 	}
-	for _, ch := range enabledChannels(cfg) {
+	for _, ch := range channels {
 		name := InterfaceName(ch)
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
@@ -368,31 +704,132 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
 				return fmt.Errorf("интерфейс %s не принят WireGuard: %w", name, err)
 			}
-			wg, _ := ch.WireGuardConfig()
+			wg, err := ch.WireGuardConfig()
+			if err != nil {
+				return err
+			}
 			addrs, err := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
-			if err != nil || !strings.Contains(addrs, wg.Address) {
+			if err != nil || !hasExactAddress(addrs, wg.Address) {
 				return fmt.Errorf("на %s нет адреса %s", name, wg.Address)
+			}
+			conf, err := RenderWireGuard(ch)
+			if err != nil {
+				return err
+			}
+			if err := healthyChannelFile(filepath.Join(s.StateDir, name+".conf"), []byte(conf), 0o600); err != nil {
+				return err
 			}
 		} else if ch.Type == "openconnect" || ch.Type == "xray" {
 			unit := openConnectUnitName(ch)
 			if ch.Type == "xray" {
 				unit = xrayUnitName(ch)
 			}
-			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unit)
-			if strings.TrimSpace(active) != "active" {
-				return fmt.Errorf("служба канала %s не работает", ch.Name)
+			if err := s.unitActiveEnabled(ctx, unit); err != nil {
+				return fmt.Errorf("служба канала %s: %w", ch.Name, err)
+			}
+			if ch.Type == "openconnect" {
+				oc, err := ch.OpenConnectConfig()
+				if err != nil {
+					return err
+				}
+				conf, password, script, unitPath := s.openConnectPaths(ch)
+				files := []struct {
+					path string
+					data []byte
+					mode os.FileMode
+				}{
+					{conf, []byte(renderOpenConnect(ch, oc, script, cfg.IPv6.Mode == "off")), 0o600},
+					{password, []byte(oc.Password + "\n"), 0o600},
+					{script, []byte(renderOpenConnectScript(oc.MTU)), 0o700},
+					{unitPath, []byte(renderOpenConnectUnit(ch, conf, password)), 0o644},
+				}
+				for _, file := range files {
+					if err := healthyChannelFile(file.path, file.data, file.mode); err != nil {
+						return err
+					}
+				}
+			} else {
+				conf, unitPath := s.xrayPaths(ch)
+				data, err := RenderXray(ch)
+				if err != nil {
+					return err
+				}
+				if err := healthyChannelFile(conf, data, 0o600); err != nil {
+					return err
+				}
+				if err := healthyChannelFile(unitPath, []byte(renderXrayUnit(ch, conf)), 0o644); err != nil {
+					return err
+				}
 			}
 		}
 		routes, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", fmt.Sprint(TableNumber(ch)))
-		if err != nil || !strings.Contains(routes, "default dev "+name) || !strings.Contains(routes, "blackhole default") {
+		if err != nil || !hasDefaultRoute(routes, name) || !hasBlackholeDefault(routes) {
 			return fmt.Errorf("таблица канала %s неполна", ch.Name)
 		}
-		if !strings.Contains(rules, fmt.Sprintf("%d:", Priority(ch))) ||
-			!strings.Contains(rules, fmt.Sprintf("fwmark 0x%x", Mark(ch))) {
+		priority := fmt.Sprint(Priority(ch))
+		mark := fmt.Sprintf("0x%x", Mark(ch))
+		table := fmt.Sprint(TableNumber(ch))
+		tableName := "netos-ch" + fmt.Sprint(ch.Index)
+		found := false
+		for _, line := range strings.Split(rules, "\n") {
+			if hasChannelRuleLine(line, priority, mark, table, tableName) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return fmt.Errorf("правило fwmark канала %s отсутствует", ch.Name)
 		}
 	}
 	return nil
+}
+
+func hasExactAddress(output, address string) bool {
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "inet" && fields[i+1] == address {
+				count++
+			}
+		}
+	}
+	return count == 1
+}
+
+func healthyChannelFile(path string, expected []byte, mode os.FileMode) error {
+	if system.FileChanged(path, expected) {
+		return fmt.Errorf("артефакт канала %s расходится с конфигурацией", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if goruntime.GOOS != "windows" && info.Mode().Perm() != mode.Perm() {
+		return fmt.Errorf("права артефакта канала %s: %04o, ожидалось %04o", path, info.Mode().Perm(), mode.Perm())
+	}
+	return nil
+}
+
+func (s *Subsystem) unitActiveEnabled(ctx context.Context, unit string) error {
+	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unit)
+	if strings.TrimSpace(active) != "active" {
+		return fmt.Errorf("%s не активна", unit)
+	}
+	enabled, _ := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	if strings.TrimSpace(enabled) != "enabled" {
+		return fmt.Errorf("%s не включена", unit)
+	}
+	return nil
+}
+
+func (s *Subsystem) ensureUnitEnabled(ctx context.Context, unit string) error {
+	enabled, _ := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	if strings.TrimSpace(enabled) == "enabled" {
+		return nil
+	}
+	_, err := s.Runner.Run(ctx, "systemctl", "enable", unit)
+	return err
 }
 
 func (s *Subsystem) linkExists(name string) bool {
@@ -401,12 +838,16 @@ func (s *Subsystem) linkExists(name string) bool {
 }
 
 func (s *Subsystem) writeTables(channels []config.Channel) error {
+	return writeFileIfChanged(s.RTTablesPath, renderTables(channels), 0o644)
+}
+
+func renderTables(channels []config.Channel) []byte {
 	var b strings.Builder
 	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
 	for _, ch := range channels {
 		fmt.Fprintf(&b, "%d\tnetos-ch%d\n", TableNumber(ch), ch.Index)
 	}
-	return writeFileIfChanged(s.RTTablesPath, []byte(b.String()), 0o644)
+	return []byte(b.String())
 }
 
 func (s *Subsystem) ownedPath() string { return filepath.Join(s.StateDir, "owned-channels.json") }
@@ -443,7 +884,7 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
 	return os.Chmod(path, perm)
 }
 
-func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) {
+func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
 	if ch.Unit != "" && ch.Type != "openconnect" && ch.Type != "xray" {
 		_, _ = s.Runner.Run(ctx, "systemctl", "disable", ch.Unit)
 		_, _ = s.Runner.Run(ctx, "systemctl", "stop", ch.Unit)
@@ -462,4 +903,28 @@ func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) {
 		placeholder := config.Channel{Index: ch.Index, Type: "xray"}
 		s.cleanupXray(ctx, placeholder)
 	}
+	if ch.Unit != "" {
+		active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ch.Unit)
+		if strings.TrimSpace(active) == "active" {
+			return fmt.Errorf("служба %s осталась активной", ch.Unit)
+		}
+	}
+	if s.linkExists(ch.Name) {
+		return fmt.Errorf("интерфейс %s остался в системе", ch.Name)
+	}
+	rules, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
+	if err != nil {
+		return fmt.Errorf("проверка удаления правила: %w", err)
+	}
+	if hasRulePriority(rules, fmt.Sprint(priorityBase+ch.Index)) {
+		return fmt.Errorf("правило канала с приоритетом %d осталось", priorityBase+ch.Index)
+	}
+	routes, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", fmt.Sprint(tableBase+ch.Index))
+	if err != nil {
+		return fmt.Errorf("проверка очистки таблицы: %w", err)
+	}
+	if strings.TrimSpace(routes) != "" {
+		return fmt.Errorf("таблица %d не очищена", tableBase+ch.Index)
+	}
+	return nil
 }

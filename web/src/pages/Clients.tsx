@@ -87,6 +87,7 @@ export function Clients({
                   <th>Канал</th>
                   <th>Сегмент</th>
                   <th>Лимит ↓ / ↑, Кбит/с</th>
+                  <th>Комментарий</th>
                   <th>Доступ</th>
                 </tr>
               </thead>
@@ -150,9 +151,18 @@ export function Clients({
                       </td>
                       <td>
                         <div className="row" style={{ minWidth: 190 }}>
-                          <input aria-label="Лимит загрузки" title="Загрузка" type="number" min={0} placeholder="без лимита" style={{ width: 88 }} value={cfgClient?.down_kbit || 0} onChange={(e) => updateClient(c.mac, { down_kbit: Number(e.target.value) })} />
-                          <input aria-label="Лимит отдачи" title="Отдача" type="number" min={0} placeholder="без лимита" style={{ width: 88 }} value={cfgClient?.up_kbit || 0} onChange={(e) => updateClient(c.mac, { up_kbit: Number(e.target.value) })} />
+                          <input aria-label="Лимит загрузки" title="Загрузка, Кбит/с" type="number" min={0} max={10000000} placeholder="без лимита" style={{ width: 88 }} value={cfgClient?.down_kbit || 0} onChange={(e) => updateClient(c.mac, { down_kbit: Number(e.target.value) })} />
+                          <input aria-label="Лимит отдачи" title="Отдача, Кбит/с" type="number" min={0} max={10000000} placeholder="без лимита" style={{ width: 88 }} value={cfgClient?.up_kbit || 0} onChange={(e) => updateClient(c.mac, { up_kbit: Number(e.target.value) })} />
                         </div>
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          aria-label={`Комментарий устройства ${c.mac}`}
+                          style={{ width: 150 }}
+                          value={cfgClient?.comment || ""}
+                          onChange={(e) => updateClient(c.mac, { comment: e.target.value })}
+                        />
                       </td>
                       <td>
                         <button

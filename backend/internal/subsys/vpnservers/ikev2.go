@@ -54,29 +54,30 @@ func ikev2Identity(server config.VPNServer, cfg *config.Config) string {
 }
 
 func ikev2Pool(server config.VPNServer) (string, error) {
-	var addresses []netip.Addr
+	var address netip.Addr
+	enabled := 0
 	for _, peer := range server.Peers {
 		if !peer.Enabled {
 			continue
 		}
-		address, err := netip.ParseAddr(peer.Address)
+		parsed, err := netip.ParseAddr(peer.Address)
 		if err != nil {
 			return "", err
 		}
-		addresses = append(addresses, address)
+		enabled++
+		if enabled > 1 {
+			return "", fmt.Errorf("IKEv2 поддерживает только одного активного пользователя: пакет strongSwan не умеет фиксировать адрес пула за EAP-учётной записью")
+		}
+		address = parsed
 	}
-	if len(addresses) == 0 {
+	if enabled == 0 {
 		prefix, err := netip.ParsePrefix(server.Subnet)
 		if err != nil {
 			return "", err
 		}
 		return prefix.Addr().Next().String(), nil
 	}
-	sort.Slice(addresses, func(i, j int) bool { return addresses[i].Less(addresses[j]) })
-	if addresses[0] == addresses[len(addresses)-1] {
-		return addresses[0].String(), nil
-	}
-	return addresses[0].String() + "-" + addresses[len(addresses)-1].String(), nil
+	return address.String(), nil
 }
 
 // RenderIKEv2 returns one swanctl configuration for all listeners. strongSwan
@@ -225,18 +226,49 @@ func (s *Subsystem) ensureIKEv2Interface(ctx context.Context, server config.VPNS
 	if mtu == 0 {
 		mtu = 1400
 	}
-	if _, err := s.Runner.Run(ctx, "ip", "link", "set", "dev", name, "mtu", fmt.Sprint(mtu), "up"); err != nil {
-		return false, err
+	linkOut, linkErr := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
+	up, currentMTU := vpnLinkState(linkOut)
+	if linkErr != nil || !up || currentMTU != mtu {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", "dev", name, "mtu", fmt.Sprint(mtu), "up"); err != nil {
+			return false, err
+		}
 	}
 	return !existed, nil
 }
 
-func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers []config.VPNServer) error {
+func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers []config.VPNServer, unitWasOwned bool) (retErr error) {
 	paths := s.ikev2Paths()
 	if len(servers) == 0 {
 		s.cleanupIKEv2(ctx)
 		return nil
 	}
+	_, unitStatErr := os.Stat(paths.unit)
+	unitExisted := unitStatErr == nil
+	if unitExisted && !unitWasOwned {
+		return fmt.Errorf("служба %s уже существует и не принадлежит netOS", ikev2Unit)
+	} else if unitStatErr != nil && !os.IsNotExist(unitStatErr) {
+		return unitStatErr
+	}
+	snapshots, err := capturePaths(paths.root, paths.unit)
+	if err != nil {
+		return err
+	}
+	mutated := true
+	defer func() {
+		if retErr == nil || !mutated {
+			return
+		}
+		if !unitExisted {
+			s.cleanupIKEv2(context.Background())
+			return
+		}
+		if err := restorePaths(snapshots); err != nil {
+			retErr = fmt.Errorf("%v; восстановление IKEv2: %w", retErr, err)
+			return
+		}
+		_, _ = s.Runner.Run(context.Background(), "systemctl", "daemon-reload")
+		_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", ikev2Unit)
+	}()
 	for _, dir := range []string{paths.root, filepath.Dir(paths.cert), filepath.Dir(paths.key)} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
@@ -298,7 +330,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 			return err
 		}
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", ikev2Unit); err != nil {
+	if err := s.ensureUnitEnabled(ctx, ikev2Unit); err != nil {
 		return err
 	}
 	if unitChanged || daemonChanged || strings.TrimSpace(active) != "active" {

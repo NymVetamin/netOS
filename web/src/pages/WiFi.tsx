@@ -38,14 +38,14 @@ function RadioEditor({ radio, config, installed, patch }: any) {
 
   return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
     <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
-      <div className="row"><strong>{radio.device || "Новое радио"}</strong><Badge tone={radio.enabled ? "ok" : "neutral"}>{radio.enabled ? "работает" : "черновик"}</Badge></div>
+      <div className="row"><strong>{radio.device || "Новое радио"}</strong><Badge tone={radio.enabled ? "ok" : "neutral"}>{radio.enabled ? "включено" : "черновик"}</Badge></div>
       <div className="row"><Switch checked={!!radio.enabled} disabled={!installed} label="Включить" onChange={(value) => update((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={radio.enabled} onClick={() => patch((draft: any) => { draft.wifi = draft.wifi.filter((item: any) => item.id !== radio.id); })}>Удалить</button></div>
     </div>
     <div className="form-grid">
       <Field label="Устройство" hint="Имя из iw dev, например wlan0"><input className="mono" value={radio.device || ""} onChange={(e) => update((draft) => draft.device = e.target.value)} /></Field>
       <Field label="Страна" hint="Определяет разрешённые частоты"><input className="mono" maxLength={2} value={radio.country || ""} onChange={(e) => update((draft) => draft.country = e.target.value.toUpperCase())} /></Field>
       <Field label="Диапазон"><select value={radio.band || "2.4"} onChange={(e) => update((draft) => { draft.band = e.target.value; draft.channel = e.target.value === "2.4" ? 6 : 36; if (e.target.value === "2.4" && draft.width === 80) draft.width = 40; })}><option value="2.4">2,4 ГГц</option><option value="5">5 ГГц</option></select></Field>
-      <Field label="Канал"><input type="number" min={radio.band === "2.4" ? 1 : 32} max={radio.band === "2.4" ? 14 : 177} value={radio.channel || 1} onChange={(e) => update((draft) => draft.channel = Number(e.target.value))} /></Field>
+      <Field label="Канал"><input type="number" min={radio.band === "2.4" ? 1 : 32} max={radio.band === "2.4" ? 13 : 177} value={radio.channel || 1} onChange={(e) => update((draft) => draft.channel = Number(e.target.value))} /></Field>
       <Field label="Ширина канала"><select value={radio.width || 20} onChange={(e) => update((draft) => draft.width = Number(e.target.value))}><option value={20}>20 МГц</option><option value={40}>40 МГц</option>{radio.band === "5" && <option value={80}>80 МГц</option>}</select></Field>
       <Field label="Мощность" hint="0 — настройка драйвера, иначе dBm"><input type="number" min={0} max={40} value={radio.tx_power || 0} onChange={(e) => update((draft) => draft.tx_power = Number(e.target.value))} /></Field>
     </div>
@@ -63,7 +63,7 @@ function SSIDEditor({ ssid, networks, update }: any) {
       <Field label="Имя сети (SSID)"><input value={ssid.ssid || ""} maxLength={32} onChange={(e) => edit((draft) => draft.ssid = e.target.value)} /></Field>
       <Field label="Сегмент"><select value={ssid.network || ""} onChange={(e) => edit((draft) => draft.network = e.target.value)}><option value="">Выберите сегмент</option>{networks.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Защита"><select value={ssid.security || "wpa2/wpa3"} onChange={(e) => edit((draft) => draft.security = e.target.value)}><option value="wpa2/wpa3">WPA2/WPA3</option><option value="wpa3">WPA3</option><option value="wpa2">WPA2</option><option value="open">Открытая сеть</option></select></Field>
-      {ssid.security !== "open" && <Field label="Пароль" hint="От 8 до 63 символов"><input type="password" autoComplete="new-password" value={ssid.password || ""} onChange={(e) => edit((draft) => draft.password = e.target.value)} /></Field>}
+      {ssid.security !== "open" && <Field label="Пароль" hint="От 8 до 63 символов"><input type="password" minLength={8} maxLength={63} autoComplete="new-password" value={ssid.password || ""} onChange={(e) => edit((draft) => draft.password = e.target.value)} /></Field>}
       <Field label="Дополнительно"><div className="row"><Switch checked={!!ssid.hidden} label="Скрывать SSID" onChange={(value) => edit((draft) => draft.hidden = value)} /><Switch checked={!!ssid.isolate} label="Изолировать клиентов" onChange={(value) => edit((draft) => draft.isolate = value)} /></div></Field>
     </div>
   </div>;

@@ -12,11 +12,20 @@ import (
 type fakeRunner struct {
 	commands []string
 	links    map[string]bool
+	outputs  map[string]string
+	errors   map[string]error
+	cleaned  map[string]bool
 }
 
 func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	command := name + " " + strings.Join(args, " ")
 	f.commands = append(f.commands, command)
+	if err := f.errors[command]; err != nil {
+		return "", err
+	}
+	if output, ok := f.outputs[command]; ok {
+		return output, nil
+	}
 	if name == "ip" && len(args) >= 4 && args[0] == "link" && args[1] == "show" {
 		if f.links[args[3]] {
 			return args[3], nil
@@ -29,8 +38,43 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 	if name == "ip" && len(args) >= 4 && args[0] == "link" && args[1] == "del" {
 		delete(f.links, args[3])
 	}
+	if name == "tc" && len(args) >= 5 && args[0] == "qdisc" && args[1] == "replace" && args[2] == "dev" {
+		if f.cleaned == nil {
+			f.cleaned = map[string]bool{}
+		}
+		f.cleaned[args[3]] = false
+	}
+	if name == "tc" && len(args) >= 5 && args[0] == "qdisc" && args[1] == "del" && args[2] == "dev" {
+		if f.cleaned == nil {
+			f.cleaned = map[string]bool{}
+		}
+		f.cleaned[args[3]] = true
+	}
 	if name == "tc" && len(args) >= 2 && args[0] == "qdisc" && args[1] == "show" {
-		return "qdisc cake 8001: root", nil
+		dev := args[3]
+		if f.cleaned[dev] {
+			return "", nil
+		}
+		switch {
+		case strings.HasPrefix(dev, "ifb-netos-"):
+			return "qdisc cake 8002: root bandwidth 47.5Mbit diffserv4 nat wash ingress", nil
+		case dev == "lan0":
+			return "qdisc htb 1: root default 1\nqdisc ingress ffff: parent ffff:fff1", nil
+		default:
+			return "qdisc cake 8001: root bandwidth 9.5Mbit diffserv4 nat\nqdisc ingress ffff: parent ffff:fff1", nil
+		}
+	}
+	if command == "tc filter show dev eth9 parent ffff:" || command == "tc filter show dev ppp-wan1 parent ffff:" {
+		return "filter pref 49152 u32 mirred egress redirect dev ifb-netos-3", nil
+	}
+	if command == "tc class show dev lan0" {
+		return "class htb 1:1 root rate 10gbit ceil 10gbit\nclass htb 1:10 parent 1:1 rate 5Mbit ceil 5Mbit", nil
+	}
+	if command == "tc filter show dev lan0 parent 1:" {
+		return "filter protocol all pref 100 flower dst_mac aa:bb:cc:dd:ee:ff classid 1:10", nil
+	}
+	if command == "tc filter show dev lan0 parent ffff:" {
+		return "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit", nil
 	}
 	return "", nil
 }

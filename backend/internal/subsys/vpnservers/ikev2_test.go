@@ -16,7 +16,6 @@ func ikev2TestConfig() (*config.Config, config.VPNServer) {
 		Config: map[string]any{"public_endpoint": "vpn.example.test", "server_identity": "vpn.example.test", "dns": []string{"10.40.0.1"}, "split_routes": []string{"10.0.0.0/8"}, "mtu": 1400},
 		Peers: []config.VPNPeer{
 			{ID: "alice", Name: "Alice", Enabled: true, Address: "10.40.0.2", Credentials: map[string]string{"username": "alice", "password": "alice-secret"}},
-			{ID: "bob", Name: "Bob", Enabled: true, Address: "10.40.0.4", Credentials: map[string]string{"username": "bob", "password": "bob-secret"}},
 		},
 	}
 	cfg.VPNServers = []config.VPNServer{server}
@@ -32,7 +31,7 @@ func TestRenderIKEv2(t *testing.T) {
 	text := string(out)
 	for _, want := range []string{
 		"netos-srv4", "pools = netos-srv4", "id = vpn.example.test", "auth = eap-mschapv2",
-		"local_ts = 10.0.0.0/8", "if_id_out = 50004", "addrs = 10.40.0.2-10.40.0.4",
+		"local_ts = 10.0.0.0/8", "if_id_out = 50004", "addrs = 10.40.0.2",
 		"dns = 10.40.0.1", "id = alice", "secret = 0s",
 	} {
 		if !strings.Contains(text, want) {
@@ -41,6 +40,17 @@ func TestRenderIKEv2(t *testing.T) {
 	}
 	if strings.Contains(text, "alice-secret") {
 		t.Fatal("plaintext password leaked into rendered config")
+	}
+}
+
+func TestRenderIKEv2RejectsAmbiguousMultiUserPool(t *testing.T) {
+	cfg, server := ikev2TestConfig()
+	server.Peers = append(server.Peers, config.VPNPeer{
+		ID: "bob", Name: "Bob", Enabled: true, Address: "10.40.0.4",
+		Credentials: map[string]string{"username": "bob", "password": "bob-secret"},
+	})
+	if _, err := RenderIKEv2([]config.VPNServer{server}, cfg); err == nil || !strings.Contains(err.Error(), "только одного активного пользователя") {
+		t.Fatalf("ambiguous IKEv2 pool was accepted: %v", err)
 	}
 }
 

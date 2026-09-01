@@ -97,6 +97,7 @@ export function VPNServersPage({ config, patch }: Props) {
 function IKEv2Server({ server, config, installed, patch }: any) {
 	const cfg = server.config || {};
 	const channels = (config.channels || []).filter((item: any) => item.enabled);
+	const enabledPeers = (server.peers || []).filter((item: any) => item.enabled).length;
 	const referenced = (config.policies || []).some((item: any) => item.vpn_server === server.id);
 	const update = (mutate: (item: any) => void) => patch((draft: any) => mutate(draft.vpn_servers.find((item: any) => item.id === server.id)));
 	const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
@@ -125,9 +126,10 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 			<Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.split_routes || []).join("\n")} onChange={(e) => setConfig("split_routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
 		</div>
 		<Notice tone="info" title="Настройка клиента">Импортируйте сертификат как доверенный корневой, затем создайте IKEv2-подключение к публичному адресу с логином и паролем EAP-MSCHAPv2. <button type="button" className="btn ghost sm" disabled={!server.enabled} onClick={() => window.location.assign(`/api/vpn-servers/${encodeURIComponent(server.id)}/certificate`)}>Скачать сертификат</button></Notice>
+		<Notice tone="warn" title="Один активный пользователь">Пакет strongSwan в Debian не умеет надёжно закреплять адрес встроенного пула за EAP-логином. Чтобы персональный канал и правила firewall не применились к другому человеку, одновременно можно разрешить только одного пользователя IKEv2.</Notice>
 		<div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
 		{(server.peers || []).length === 0 ? <Empty>Добавьте пользователя IKEv2.</Empty> : (server.peers || []).map((peer: any) =>
-			<OcservPeer key={peer.id} peer={peer} channels={channels} update={update} />)}
+			<OcservPeer key={peer.id} peer={peer} channels={channels} update={update} canEnable={peer.enabled || enabledPeers === 0} />)}
 	</form>;
 }
 
@@ -169,16 +171,17 @@ function OcservServer({ server, config, installed, patch }: any) {
   </form>;
 }
 
-function OcservPeer({ peer, channels, update }: any) {
+function OcservPeer({ peer, channels, update, canEnable = true }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   return <div style={{ borderTop: "1px solid var(--line)", marginTop: "1rem", paddingTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
+    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} disabled={!canEnable} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>
       <Field label="Пароль" hint="Не меньше 8 символов"><input type="password" autoComplete="new-password" value={peer.credentials?.password || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = e.target.value; })} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
   </div>;
 }
@@ -220,6 +223,9 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       <Field label="Имена сервера (SNI)" hint="По одному домену в строке"><textarea className="mono" value={(cfg.server_names || []).join("\n")} onChange={(e) => setConfig("server_names", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
       <Field label="Short ID" hint="Чётное число hex-символов, до 16"><textarea className="mono" value={(cfg.short_ids || []).join("\n")} onChange={(e) => setConfig("short_ids", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
       <Field label="Flow"><select value={cfg.flow ?? "xtls-rprx-vision"} onChange={(e) => setConfig("flow", e.target.value)}><option value="xtls-rprx-vision">XTLS Vision</option><option value="">Без flow</option></select></Field>
+      <Field label="Диагностика Reality" hint="Показывать отладочные сведения Reality в журнале Xray">
+        <Switch checked={!!cfg.show} label="Включить show" onChange={(value) => setConfig("show", value)} />
+      </Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Закрытый ключ Reality" hint="Хранится в конфигурации с правами 0600"><div className="row"><input className="mono" type="password" autoComplete="new-password" value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={generateKey}>Сгенерировать</button></div></Field>
     </div>
@@ -249,6 +255,7 @@ function XrayPeerEditor({ server, peer, channels, update, setError }: any) {
       <Field label="Устройство"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="UUID клиента"><div className="row"><input className="mono" value={peer.credentials?.uuid || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = e.target.value; })} /><button type="button" className="btn ghost sm" onClick={() => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = crypto.randomUUID(); })}>Новый</button></div></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
     <button type="button" className="btn sm" onClick={download}>Скачать VLESS-ссылку</button>
   </div>;
@@ -383,6 +390,7 @@ function PeerEditor({ server, peer, channels, update, secret, setSecret, removeS
       <Field label="Название устройства"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
     {secret ? <div className="client-package">
       <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>

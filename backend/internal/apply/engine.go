@@ -68,6 +68,7 @@ var Order = []string{
 	"vpn-servers",
 	"policy",
 	"firewall",
+	"policy-cleanup",
 	"dhcp",
 	"dns",
 	"ddns",
@@ -277,6 +278,9 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
 
+	if cfg == nil {
+		return nil, fmt.Errorf("конфигурация не задана")
+	}
 	if res := cfg.Validate(); res.HasErrors() {
 		return nil, fmt.Errorf("конфигурация не прошла проверку: %d ошибок", len(res.Problems))
 	}
@@ -303,7 +307,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 		if previous != nil {
 			rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			if rbErr := e.run(rollbackCtx, previous); rbErr != nil {
+			if rbErr := e.restore(rollbackCtx, previous); rbErr != nil {
 				return nil, fmt.Errorf("применение не удалось (%w) и откат тоже не удался: %v", err, rbErr)
 			}
 			e.log.Warnf("выполнен откат к предыдущей конфигурации")
@@ -316,7 +320,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 		if previous != nil {
 			rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			if rbErr := e.run(rollbackCtx, previous); rbErr != nil {
+			if rbErr := e.restore(rollbackCtx, previous); rbErr != nil {
 				return nil, fmt.Errorf("проверка не прошла (%w) и откат не удался: %v", err, rbErr)
 			}
 		}
@@ -389,8 +393,11 @@ func (e *Engine) Rollback(ctx context.Context) error {
 	if p == nil {
 		return fmt.Errorf("нечего откатывать")
 	}
-	p.timer.Stop()
-	return e.doRollback(ctx, p, "manual", "откат по команде администратора")
+	err := e.doRollback(ctx, p, "manual", "откат по команде администратора")
+	if err == nil {
+		p.timer.Stop()
+	}
+	return err
 }
 
 // errRollbackObsolete означает, что откатывать уже нечего: администратор успел
@@ -429,7 +436,7 @@ func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, detai
 	}
 	e.mu.Unlock()
 
-	if err := e.run(ctx, p.previous); err != nil {
+	if err := e.restore(ctx, p.previous); err != nil {
 		return err
 	}
 
@@ -453,6 +460,16 @@ func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, detai
 		callback(info)
 	}
 	e.log.Infof("откат выполнен: %s", details)
+	return nil
+}
+
+func (e *Engine) restore(ctx context.Context, cfg *config.Config) error {
+	if err := e.run(ctx, cfg); err != nil {
+		return err
+	}
+	if err := e.health(ctx, cfg); err != nil {
+		return fmt.Errorf("проверка после отката: %w", err)
+	}
 	return nil
 }
 

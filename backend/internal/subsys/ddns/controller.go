@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -44,10 +45,15 @@ type Controller struct {
 	NoIPEndpoint    string
 	AddressEndpoint string
 	ResolveAddress  func(context.Context, *config.Config) (string, error)
+	InterfaceAddrs  func(string) ([]net.Addr, error)
 	Now             func() time.Time
+	TickInterval    time.Duration
 
-	mu     sync.RWMutex
-	status Status
+	mu            sync.RWMutex
+	status        Status
+	configured    config.DDNS
+	configuredSet bool
+	suspended     bool
 }
 
 func New(logger Logger) *Controller {
@@ -59,8 +65,16 @@ func New(logger Logger) *Controller {
 		NoIPEndpoint:    "https://dynupdate.no-ip.com/nic/update",
 		AddressEndpoint: "https://api.ipify.org",
 		Now:             time.Now,
+		TickInterval:    time.Second,
 	}
 	c.ResolveAddress = c.resolveAddress
+	c.InterfaceAddrs = func(name string) ([]net.Addr, error) {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			return nil, err
+		}
+		return iface.Addrs()
+	}
 	return c
 }
 
@@ -86,6 +100,12 @@ func (c *Controller) Plan(old, next *config.Config) ([]apply.Action, error) {
 func (c *Controller) Apply(_ context.Context, cfg *config.Config) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.configuredSet && reflect.DeepEqual(c.configured, cfg.DDNS) {
+		return nil
+	}
+	c.configured = cfg.DDNS
+	c.configuredSet = true
+	c.suspended = false
 	c.status = Status{Enabled: cfg.DDNS.Enabled, Provider: cfg.DDNS.Provider, Hostname: cfg.DDNS.Hostname}
 	return nil
 }
@@ -101,7 +121,11 @@ func (c *Controller) Status() Status {
 }
 
 func (c *Controller) Run(ctx context.Context, current func() *config.Config) {
-	ticker := time.NewTicker(time.Second)
+	interval := c.TickInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -119,35 +143,77 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	}
 	c.mu.RLock()
 	next := c.status.NextRun
+	suspended := c.suspended
 	c.mu.RUnlock()
-	if !next.IsZero() && c.Now().Before(next) {
+	if suspended || (!next.IsZero() && c.Now().Before(next)) {
 		return
-	}
-	address, err := c.ResolveAddress(ctx, cfg)
-	if err == nil {
-		err = c.update(ctx, cfg.DDNS, address)
 	}
 	interval := time.Duration(cfg.DDNS.Interval) * time.Second
 	if interval < time.Minute {
 		interval = time.Minute
 	}
 	now := c.Now()
+	address, err := c.ResolveAddress(ctx, cfg)
+	if err == nil && cfg.DDNS.Provider == "noip" {
+		c.mu.RLock()
+		unchanged := c.status.Success && c.status.Address == address
+		c.mu.RUnlock()
+		if unchanged {
+			c.mu.Lock()
+			if !c.configuredSet || reflect.DeepEqual(c.configured, cfg.DDNS) {
+				c.status.NextRun = now.Add(interval)
+			}
+			c.mu.Unlock()
+			return
+		}
+	}
+	if err == nil {
+		err = c.update(ctx, cfg.DDNS, address)
+	}
+	suspend := false
+	var providerFailure *providerError
+	if errors.As(err, &providerFailure) {
+		suspend = providerFailure.suspend
+		if providerFailure.retryAfter > interval {
+			interval = providerFailure.retryAfter
+		}
+	}
 	status := Status{
 		Enabled: true, LastRun: now, NextRun: now.Add(interval), Address: address,
 		Success: err == nil, Provider: cfg.DDNS.Provider, Hostname: cfg.DDNS.Hostname,
 	}
 	if err != nil {
 		status.Message = err.Error()
-		if c.Logger != nil {
-			c.Logger.Warnf("DDNS %s: %v", cfg.DDNS.Hostname, err)
-		}
-	} else if c.Logger != nil {
-		c.Logger.Infof("DDNS %s обновлён: %s", cfg.DDNS.Hostname, address)
 	}
 	c.mu.Lock()
-	c.status = status
+	// A provider request can outlive a concurrent configuration Apply. Never
+	// let a response for the old credentials/record overwrite the new status.
+	accepted := !c.configuredSet || reflect.DeepEqual(c.configured, cfg.DDNS)
+	if accepted {
+		c.status = status
+		c.suspended = suspend
+		if suspend {
+			c.status.NextRun = time.Time{}
+		}
+	}
 	c.mu.Unlock()
+	if !accepted || c.Logger == nil {
+		return
+	}
+	if err != nil {
+		c.Logger.Warnf("DDNS %s: %v", cfg.DDNS.Hostname, err)
+	} else {
+		c.Logger.Infof("DDNS %s обновлён: %s", cfg.DDNS.Hostname, address)
+	}
 }
+
+type providerError struct {
+	message    string
+	retryAfter time.Duration
+	suspend    bool
+}
+
+func (e *providerError) Error() string { return e.message }
 
 func (c *Controller) resolveAddress(ctx context.Context, cfg *config.Config) (string, error) {
 	if cfg.DDNS.AddressSource == "web" {
@@ -160,7 +226,10 @@ func (c *Controller) resolveAddress(ctx context.Context, cfg *config.Config) (st
 			return "", fmt.Errorf("определение внешнего адреса: %w", err)
 		}
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 128))
+		body, err := readLimited(resp.Body, 128)
+		if err != nil {
+			return "", fmt.Errorf("чтение ответа сервиса адреса: %w", err)
+		}
 		if resp.StatusCode != http.StatusOK {
 			return "", fmt.Errorf("сервис адреса ответил HTTP %d", resp.StatusCode)
 		}
@@ -180,13 +249,9 @@ func (c *Controller) resolveAddress(ctx context.Context, cfg *config.Config) (st
 			name = "ppp-" + wan.ID
 		}
 	}
-	iface, err := net.InterfaceByName(name)
+	addrs, err := c.InterfaceAddrs(name)
 	if err != nil {
 		return "", fmt.Errorf("интерфейс %s: %w", name, err)
-	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return "", err
 	}
 	for _, item := range addrs {
 		ip, _, err := net.ParseCIDR(item.String())
@@ -241,9 +306,18 @@ func (c *Controller) update(ctx context.Context, cfg config.DDNS, address string
 		return fmt.Errorf("запрос к провайдеру: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if cfg.Provider == "noip" {
+			if resp.StatusCode == http.StatusInternalServerError {
+				return &providerError{message: fmt.Sprintf("провайдер ответил HTTP %d", resp.StatusCode), retryAfter: 30 * time.Minute}
+			}
+			return &providerError{message: fmt.Sprintf("провайдер ответил HTTP %d; обновления приостановлены до изменения настройки", resp.StatusCode), suspend: true}
+		}
 		return fmt.Errorf("провайдер ответил HTTP %d", resp.StatusCode)
+	}
+	body, err := readLimited(resp.Body, 4096)
+	if err != nil {
+		return fmt.Errorf("чтение ответа провайдера: %w", err)
 	}
 	text := strings.TrimSpace(string(body))
 	switch cfg.Provider {
@@ -260,8 +334,22 @@ func (c *Controller) update(ctx context.Context, cfg config.DDNS, address string
 		}
 	case "noip":
 		if !strings.HasPrefix(text, "good ") && !strings.HasPrefix(text, "nochg ") {
-			return fmt.Errorf("No-IP отклонил обновление: %s", text)
+			if text == "911" {
+				return &providerError{message: "No-IP временно недоступен: 911", retryAfter: 30 * time.Minute}
+			}
+			return &providerError{message: fmt.Sprintf("No-IP отклонил обновление: %s; обновления приостановлены до изменения настройки", text), suspend: true}
 		}
 	}
 	return nil
+}
+
+func readLimited(reader io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("ответ превышает лимит %d байт", limit)
+	}
+	return body, nil
 }

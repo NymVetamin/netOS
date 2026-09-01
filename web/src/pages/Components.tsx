@@ -21,16 +21,26 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
 
   useEffect(() => {
     let alive = true;
-    const load = () =>
+    let timer: number | undefined;
+    let controller: AbortController | undefined;
+    const load = () => {
+      const requestController = new AbortController();
+      controller = requestController;
+      const timeout = window.setTimeout(() => requestController.abort(), 15_000);
       api
-        .catalog()
+        .catalog(requestController.signal)
         .then((r) => { if (alive) { setCatalog(r); setCatalogError(""); } })
-        .catch(() => { if (alive) { setCatalogError("Не удалось получить состояние компонентов. Повторная попытка выполняется автоматически."); setCatalog((prev) => prev ?? { components: [] }); } });
+        .catch(() => { if (alive) { setCatalogError("Не удалось получить состояние компонентов. Повторная попытка выполняется автоматически."); setCatalog((prev) => prev ?? { components: [] }); } })
+        .finally(() => {
+          window.clearTimeout(timeout);
+          if (alive) timer = window.setTimeout(load, LIVE_POLL_MS);
+        });
+    };
     load();
-    const timer = window.setInterval(load, LIVE_POLL_MS);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      controller?.abort();
+      window.clearTimeout(timer);
     };
   }, []);
 
@@ -39,10 +49,10 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
   const wanted = new Map<string, boolean>(
     (config.components || []).map((c: any) => [c.id, c.installed]),
   );
-  // Что лежит на машине и что на ней работает — разные вопросы, и оба
+  // Что полностью готово на машине и что на ней работает — разные вопросы, и оба
   // отвечаются живой системой, а не конфигурацией: пакет мог не установиться,
   // а установленный демон — быть никем не выбран.
-  const present = catalog.installed || {};
+  const ready = catalog.installed || {};
   const running = catalog.running || {};
 
   const groups = catalog.components.reduce<Record<string, CatalogResponse["components"]>>(
@@ -99,20 +109,21 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
           <div className="stack">
             {items.map((c) => {
               const on = wanted.get(c.id) === true;
-              const onDisk = present[c.id] === true;
+              const isReady = ready[c.id] === true;
               const atWork = running[c.id] === true;
               return (
                 <div key={c.id} className={`component ${on ? "on" : ""}`}>
                   <div className="component-main">
                     <div className="row" style={{ gap: "0.5rem" }}>
                       <strong>{c.title}</strong>
-                      {onDisk && <Badge tone="ok">установлен</Badge>}
+                      {isReady && <Badge tone="ok">готов</Badge>}
                       {atWork && <Badge tone="ok">используется</Badge>}
-                      {/* Выбран, но ещё не установлен: изменение не применено.
-                          Обратного случая — «будет удалён» — здесь нет: базовые
-                          пакеты вроде iproute2 и ppp стоят на машине всегда и
-                          выбранными не числятся, а удалять их netOS не станет. */}
-                      {on && !onDisk && <Badge tone="warn">будет установлен</Badge>}
+                      {/* Желаемое состояние сравнивается с живой машиной. Essential
+                          пакет остаётся частью базовой системы даже при выключенной
+                          функции; обычный установленный компонент будет удалён. */}
+                      {on && !isReady && <Badge tone="warn">будет установлен или исправлен</Badge>}
+                      {!on && isReady && !c.essential && <Badge tone="warn">будет удалён</Badge>}
+                      {!on && isReady && c.essential && <Badge tone="neutral">базовый пакет останется</Badge>}
                       {c.external && <Badge tone="warn">не из репозитория Debian</Badge>}
                     </div>
                     <div className="dim" style={{ marginTop: 2 }}>

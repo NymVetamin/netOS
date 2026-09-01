@@ -23,6 +23,7 @@ export function DiagnosticsPage() {
   const [loading, setLoading] = useState(false);
   const [loadedTab, setLoadedTab] = useState("");
   const [error, setError] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -102,10 +103,33 @@ export function DiagnosticsPage() {
     // under the next tab's title even when the request is slow.
     setLoading(true);
     setError("");
+    setCopyStatus("");
     setTab(id);
   };
 
   const pending = loading || loadedTab !== tab;
+
+  async function copyContent() {
+    setCopyStatus("");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+      } else {
+        throw new Error("Clipboard API недоступен");
+      }
+      setCopyStatus("Скопировано");
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = content;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand("copy");
+      area.remove();
+      setCopyStatus(copied ? "Скопировано" : "Не удалось скопировать");
+    }
+  }
 
   return (
     <>
@@ -168,8 +192,8 @@ export function DiagnosticsPage() {
                 {tab === ROUTES ? "Снято с живой системы" : "Сгенерировано из текущей конфигурации"}
               </div>
             </div>
-            <button className="btn sm" onClick={() => navigator.clipboard?.writeText(content)}>
-              Скопировать
+            <button className="btn sm" onClick={copyContent} disabled={pending || !!error}>
+              {copyStatus || "Скопировать"}
             </button>
           </div>
           <pre className="output">{pending ? "Загрузка…" : error || content}</pre>

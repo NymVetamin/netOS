@@ -11,6 +11,7 @@ type backendUnitRunner struct {
 	present  map[string]bool
 	active   map[string]bool
 	enabled  map[string]bool
+	masked   map[string]bool
 	commands []string
 }
 
@@ -36,6 +37,9 @@ func (r *backendUnitRunner) Run(_ context.Context, name string, args ...string) 
 		}
 		return "inactive\n", fmt.Errorf("inactive")
 	case "is-enabled":
+		if r.masked[unit] {
+			return "masked\n", fmt.Errorf("masked")
+		}
 		if r.enabled[unit] {
 			return "enabled\n", nil
 		}
@@ -47,8 +51,10 @@ func (r *backendUnitRunner) Run(_ context.Context, name string, args ...string) 
 	case "disable":
 		r.enabled[unit] = false
 	case "mask":
+		r.masked[unit] = true
 		r.enabled[unit] = false
 	case "unmask":
+		r.masked[unit] = false
 	case "stop":
 		r.active[unit] = false
 	}
@@ -62,7 +68,7 @@ func (r *backendUnitRunner) RunInput(context.Context, string, string, ...string)
 func newBackendUnitRunner() *backendUnitRunner {
 	return &backendUnitRunner{
 		present: map[string]bool{"networking.service": true, "systemd-networkd.service": true, "systemd-networkd.socket": true},
-		active:  map[string]bool{}, enabled: map[string]bool{},
+		active:  map[string]bool{}, enabled: map[string]bool{}, masked: map[string]bool{},
 	}
 }
 

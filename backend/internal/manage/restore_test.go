@@ -303,6 +303,12 @@ func TestRestoreUnpacksChosenBackup(t *testing.T) {
 		if spec.name == "tar" && contains(spec.args, "-xzf") {
 			unpacked = spec.args[len(spec.args)-1]
 		}
+		if spec.name == "systemctl" && contains(spec.args, "start") {
+			if err := os.MkdirAll(filepath.Dir(m.sys(runtimeReadyPath)), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(m.sys(runtimeReadyPath), []byte("1\n"), 0o644)
+		}
 		return nil
 	}
 	if err := m.Execute(context.Background(), []string{"restore"}); err != nil {
@@ -339,6 +345,12 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 
 	var order []string
 	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "systemctl" && contains(spec.args, "start") {
+			if err := os.MkdirAll(filepath.Dir(m.sys(runtimeReadyPath)), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(m.sys(runtimeReadyPath), []byte("1\n"), 0o644)
+		}
 		if spec.name != "tar" {
 			return nil
 		}

@@ -13,6 +13,29 @@ import (
 	"github.com/netos-router/netos/internal/store"
 )
 
+func TestGeneratePasswordBoundsAndAlphabet(t *testing.T) {
+	for _, length := range []int{-1, 0, maxGeneratedPasswordLength + 1} {
+		if _, err := GeneratePassword(length); err == nil {
+			t.Errorf("GeneratePassword(%d) succeeded", length)
+		}
+	}
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	first, err := GeneratePassword(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := GeneratePassword(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 64 || strings.Trim(first, alphabet) != "" {
+		t.Fatalf("generated password has invalid length or characters: %q", first)
+	}
+	if first == second {
+		t.Fatal("two generated passwords unexpectedly match")
+	}
+}
+
 // newAuthedServer заводит сервер с одним администратором и живой сессией.
 func newAuthedServer(t *testing.T) (*Server, *http.Cookie, string) {
 	t.Helper()

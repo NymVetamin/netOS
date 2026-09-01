@@ -20,11 +20,18 @@ type channelRunner struct {
 	addr     string
 	routes   string
 	rules    string
+	wgConfig []byte
+	failOnce string
+	failed   bool
 }
 
 func (r *channelRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	command := name + " " + strings.Join(args, " ")
 	r.commands = append(r.commands, command)
+	if r.failOnce != "" && !r.failed && strings.Contains(command, r.failOnce) {
+		r.failed = true
+		return "", errors.New("injected failure: " + r.failOnce)
+	}
 	switch {
 	case command == "ip link add name wg-ch1 type wireguard":
 		if err := os.MkdirAll(filepath.Join(r.s.SysClassNet, "wg-ch1"), 0o755); err != nil {
@@ -44,8 +51,19 @@ func (r *channelRunner) Run(_ context.Context, name string, args ...string) (str
 		return "interface: wg-ch1\n", nil
 	case command == "ip -o -4 addr show dev wg-ch1":
 		return r.addr, nil
+	case command == "ip -4 addr flush dev wg-ch1":
+		r.addr = ""
 	case strings.HasPrefix(command, "ip -4 addr add "):
-		r.addr = "7: wg-ch1 inet 10.44.0.2/32 scope global wg-ch1\n"
+		address := args[3]
+		r.addr = "7: wg-ch1 inet " + address + " scope global wg-ch1\n"
+	case command == "ip -o link show dev wg-ch1":
+		return "7: wg-ch1: <POINTOPOINT,UP> mtu 1420 state UNKNOWN\n", nil
+	case strings.HasPrefix(command, "wg syncconf wg-ch1 "):
+		data, err := os.ReadFile(args[len(args)-1])
+		if err != nil {
+			return "", err
+		}
+		r.wgConfig = append([]byte(nil), data...)
 	case command == "ip -4 route show table 1001":
 		return r.routes, nil
 	case strings.Contains(command, "route replace default dev wg-ch1"):

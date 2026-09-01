@@ -10,7 +10,6 @@ func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 	cfg.Channels = append(cfg.Channels, Channel{ID: "xray", Index: 1, Name: "VPN", Enabled: true, Type: "xray", Mode: "tun", FailMode: "block"})
 	cfg.VPNServers = []VPNServer{{ID: "srv", Name: "server", Type: "ocserv", Enabled: true, Subnet: "10.9.0.1/24"}}
 	cfg.WiFi = []WiFiRadio{{ID: "radio", Device: "wlan0", Enabled: true, Country: "RU"}}
-	cfg.DNS.Blocklists = []Blocklist{{ID: "ads", Enabled: true}}
 
 	result := cfg.Validate()
 	var got strings.Builder
@@ -22,7 +21,6 @@ func TestUnimplementedFeaturesFailLoudly(t *testing.T) {
 	}
 	for _, want := range []string{
 		"channels[1].enabled", "vpn_servers[0].enabled",
-		"dns.blocklists[0].enabled",
 	} {
 		if !strings.Contains(got.String(), want) {
 			t.Errorf("нет явного запрета %s:\n%s", want, got.String())
@@ -43,18 +41,6 @@ func TestUnimplementedObjectsMayBeSavedDisabled(t *testing.T) {
 			t.Fatalf("выключенная будущая функция запрещена: %+v", problem)
 		}
 	}
-}
-
-func TestACMEFailsLoudly(t *testing.T) {
-	cfg := Default()
-	cfg.System.Panel.TLS.Mode = "acme"
-	result := cfg.Validate()
-	for _, problem := range result.Problems {
-		if problem.Path == "system.panel.tls.mode" && problem.Severity == "error" {
-			return
-		}
-	}
-	t.Fatalf("ACME молча принят: %+v", result.Problems)
 }
 
 func TestAdGuardHomeIsNotAdvertisedOrAcceptedBeforeImplementation(t *testing.T) {

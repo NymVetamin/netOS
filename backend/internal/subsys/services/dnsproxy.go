@@ -11,7 +11,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-const (
+var (
 	dnsproxyConfPath  = "/var/lib/netos/generated/dnsproxy.yaml"
 	dnsproxyHostsPath = "/var/lib/netos/generated/dnsproxy-hosts"
 	dnsproxyBinary    = "/usr/local/bin/dnsproxy"
@@ -54,18 +54,26 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 	// адресах подряд нельзя, иначе резолвер окажется открыт со стороны аплинка.
 	w("listen-addrs:")
 	w("  - \"127.0.0.1\"")
+	policyBackend := hasKernelDomainPolicies(cfg) && cfg.DNS.Provider == "dnsproxy"
 	for _, n := range cfg.Networks {
+		if policyBackend {
+			break
+		}
 		if !n.Enabled || n.RouterAddress == "" {
 			continue
 		}
 		w("  - %q", addressOf(n.RouterAddress))
 	}
 	w("listen-ports:")
-	w("  - %d", cfg.DNS.Port)
+	if policyBackend {
+		w("  - %d", policyDNSBackendPort)
+	} else {
+		w("  - %d", cfg.DNS.Port)
+	}
 
 	w("upstream:")
 	// Локальная зона уходит в dnsmasq: только он знает имена клиентов.
-	if localDNSNeeded(cfg) {
+	if backendLocalDNSNeeded(cfg) {
 		for _, zone := range localZones(cfg) {
 			w("  - \"[/%s/]127.0.0.1:%d\"", zone, dnsmasqLocalPort)
 		}
@@ -130,7 +138,7 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 		// стартовать с use-private-rdns без апстрима («private rdns
 		// upstreams: no value»), поэтому без dnsmasq не пишем ни того, ни
 		// другого.
-		if localDNSNeeded(cfg) {
+		if backendLocalDNSNeeded(cfg) {
 			w("use-private-rdns: true")
 			w("private-rdns-upstream:")
 			w("  - \"127.0.0.1:%d\"", dnsmasqLocalPort)
@@ -139,14 +147,19 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 	// ANY используют для усиления в атаках отражением, а полезной нагрузки в
 	// нём для клиентов роутера нет.
 	w("refuse-any: true")
-	if cfg.DNS.QueryLog {
+	if cfg.DNS.QueryLog && !policyBackend {
 		w("verbose: true")
 		w("output: %q", "/var/log/netos/dns.log")
 	}
-	if len(cfg.DNS.StaticRecords) > 0 {
+	if len(cfg.DNS.StaticRecords) > 0 || hasEnabledBlocklists(cfg) {
 		w("hosts-file-enabled: true")
 		w("hosts-files:")
-		w("  - %q", dnsproxyHostsPath)
+		if len(cfg.DNS.StaticRecords) > 0 {
+			w("  - %q", dnsproxyHostsPath)
+		}
+		if hasEnabledBlocklists(cfg) {
+			w("  - %q", dnsproxyBlocklistPath)
+		}
 	}
 	return b.String()
 }
@@ -201,6 +214,10 @@ func withDefaultPort(addr string, port int) string {
 }
 
 func (d *Dnsproxy) Apply(ctx context.Context, cfg *config.Config) error {
+	return d.ApplyPrepared(ctx, cfg, false)
+}
+
+func (d *Dnsproxy) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRestart bool) error {
 	if !d.Needed(cfg) {
 		if err := d.Systemd.Disable(ctx, dnsproxyUnit); err != nil {
 			return err
@@ -217,27 +234,40 @@ func (d *Dnsproxy) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 
 	hosts := []byte(d.RenderHosts(cfg))
-	if err := system.WriteFileAtomic(dnsproxyHostsPath, hosts, 0o644); err != nil {
+	hostsChanged, err := writeManagedFile(dnsproxyHostsPath, hosts, 0o644)
+	if err != nil {
 		return err
 	}
 
 	content := []byte(d.Render(cfg))
-	changed := system.FileChanged(dnsproxyConfPath, content) || system.FileChanged(dnsproxyHostsPath, hosts)
-	if err := system.WriteFileAtomic(dnsproxyConfPath, content, 0o644); err != nil {
+	confChanged, err := writeManagedFile(dnsproxyConfPath, content, 0o644)
+	if err != nil {
 		return err
 	}
+	changed := hostsChanged || confChanged
 	if err := d.ensureUnit(ctx); err != nil {
 		return err
 	}
 
-	if !changed && d.Systemd.IsActive(ctx, dnsproxyUnit) {
+	if !forceRestart && !changed && d.Systemd.IsActive(ctx, dnsproxyUnit) {
 		return nil
 	}
 	return d.Systemd.Restart(ctx, dnsproxyUnit)
 }
 
 func (d *Dnsproxy) ensureUnit(ctx context.Context) error {
-	unit := `[Unit]
+	changed, err := writeManagedFile(filepath.Join(systemdUnitDir, dnsproxyUnit), []byte(dnsproxyUnitContent()), 0o644)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return d.Systemd.DaemonReload(ctx)
+}
+
+func dnsproxyUnitContent() string {
+	return `[Unit]
 Description=netOS dnsproxy (шифрованный DNS-резолвер)
 After=network.target
 Wants=network.target
@@ -251,22 +281,29 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 `
-	path := filepath.Join("/etc/systemd/system", dnsproxyUnit)
-	if !system.FileChanged(path, []byte(unit)) {
-		return nil
-	}
-	if err := system.WriteFileAtomic(path, []byte(unit), 0o644); err != nil {
-		return err
-	}
-	return d.Systemd.DaemonReload(ctx)
 }
 
 func (d *Dnsproxy) Health(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
-		return nil
+		if d.Systemd.IsActive(ctx, dnsproxyUnit) {
+			return fmt.Errorf("dnsproxy запущен, хотя не выбран")
+		}
+		if err := generatedAbsent(dnsproxyConfPath); err != nil {
+			return err
+		}
+		return generatedAbsent(dnsproxyHostsPath)
 	}
 	if !d.Systemd.IsActive(ctx, dnsproxyUnit) {
 		return fmt.Errorf("dnsproxy не запущен")
 	}
-	return nil
+	if _, err := os.Stat(dnsproxyBinary); err != nil {
+		return fmt.Errorf("dnsproxy binary: %w", err)
+	}
+	if err := managedFileHealth(dnsproxyConfPath, []byte(d.Render(cfg)), 0o644); err != nil {
+		return err
+	}
+	if err := managedFileHealth(dnsproxyHostsPath, []byte(d.RenderHosts(cfg)), 0o644); err != nil {
+		return err
+	}
+	return managedFileHealth(filepath.Join(systemdUnitDir, dnsproxyUnit), []byte(dnsproxyUnitContent()), 0o644)
 }

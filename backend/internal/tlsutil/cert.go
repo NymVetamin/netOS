@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -18,7 +19,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
+
+	"github.com/netos-router/netos/internal/system"
 )
 
 // EnsureSelfSigned создаёт сертификат и ключ, если их ещё нет или срок истёк.
@@ -117,35 +121,64 @@ func Fingerprint(cert *x509.Certificate) string {
 	return string(out)
 }
 
-func validExisting(certPath, keyPath string) (string, bool) {
-	return validExistingForNames(certPath, keyPath, nil)
-}
-
 func validExistingForNames(certPath, keyPath string, names []string) (string, bool) {
-	certPEM, err := os.ReadFile(certPath)
-	if err != nil {
-		return "", false
-	}
-	if _, err := os.Stat(keyPath); err != nil {
-		return "", false
-	}
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return "", false
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return "", false
-	}
-	if time.Now().After(cert.NotAfter) {
-		return "", false
-	}
-	for _, name := range names {
-		if name != "" && cert.VerifyHostname(name) != nil {
+	for _, path := range []string{certPath, keyPath} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return "", false
 		}
 	}
-	return Fingerprint(cert), true
+	if err := os.Chmod(certPath, 0o644); err != nil {
+		return "", false
+	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		return "", false
+	}
+	fingerprint, err := ValidatePairForNames(certPath, keyPath, names...)
+	return fingerprint, err == nil
+}
+
+// ValidatePairForNames performs a read-only validation of a netOS-managed TLS
+// pair, including file type/mode, key match, validity window and every required
+// DNS/IP identity.
+func ValidatePairForNames(certPath, keyPath string, names ...string) (string, error) {
+	for path, mode := range map[string]os.FileMode{certPath: 0o644, keyPath: 0o600} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return "", err
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("TLS-артефакт %s не является обычным файлом без symlink", path)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != mode {
+			return "", fmt.Errorf("права TLS-артефакта %s: %04o, ожидалось %04o", path, info.Mode().Perm(), mode)
+		}
+	}
+	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
+		return "", fmt.Errorf("сертификат и ключ не образуют пару: %w", err)
+	}
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return "", err
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return "", fmt.Errorf("сертификат не содержит PEM-блок")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) {
+		return "", fmt.Errorf("сертификат вне срока действия")
+	}
+	for _, name := range names {
+		if name != "" && cert.VerifyHostname(name) != nil {
+			return "", fmt.Errorf("сертификат не покрывает имя %s", name)
+		}
+	}
+	return Fingerprint(cert), nil
 }
 
 // localAddresses собирает адреса машины, чтобы сертификат подходил при
@@ -169,13 +202,5 @@ func localAddresses() []net.IP {
 }
 
 func writePEM(path, blockType string, der []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := pem.Encode(f, &pem.Block{Type: blockType, Bytes: der}); err != nil {
-		return fmt.Errorf("запись %s: %w", path, err)
-	}
-	return nil
+	return system.WriteFileAtomic(path, pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der}), perm)
 }

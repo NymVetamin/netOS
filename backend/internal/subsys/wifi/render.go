@@ -25,6 +25,11 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 	if len(ssids) == 0 {
 		return nil, fmt.Errorf("нет включённых Wi-Fi-сетей")
 	}
+	for _, ssid := range ssids {
+		if bridges[ssid.Network] == "" {
+			return nil, fmt.Errorf("для Wi-Fi-сети %s не найден интерфейс сегмента", ssid.SSID)
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит секреты; права 0600.")
 	fmt.Fprintf(&b, "interface=%s\nctrl_interface=/run/netos-hostapd-%s\ndriver=nl80211\n", radio.Device, radioToken(radio.ID))

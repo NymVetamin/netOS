@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // Problem — одна найденная проблема конфигурации. Path указывает на поле в
@@ -49,6 +52,9 @@ func (r *ValidationResult) HasErrors() bool {
 // выяснения, что две подсети пересекаются.
 func (c *Config) Validate() *ValidationResult {
 	r := &ValidationResult{}
+	if c.Version != Version {
+		r.errf("version", "неподдерживаемая версия схемы %d, ожидается %d", c.Version, Version)
+	}
 
 	c.validateObjectIDs(r)
 	c.validateSystem(r)
@@ -172,6 +178,11 @@ func (c *Config) validateDDNS(r *ValidationResult) {
 	}
 	switch c.DDNS.Provider {
 	case "duckdns":
+		host := strings.ToLower(c.DDNS.Hostname)
+		subdomain := strings.TrimSuffix(host, ".duckdns.org")
+		if subdomain == host || subdomain == "" || strings.Contains(subdomain, ".") {
+			r.errf("ddns.hostname", "для DuckDNS укажите имя вида example.duckdns.org")
+		}
 		if invalidDDNSSecret(c.DDNS.Token) {
 			r.errf("ddns.token", "для DuckDNS нужен токен")
 		}
@@ -279,11 +290,15 @@ func (c *Config) validateClients(r *ValidationResult) {
 			r.errf(path+".down_kbit", "скорость не может быть отрицательной")
 		} else if client.DownKbit > 0 && client.DownKbit < 64 {
 			r.errf(path+".down_kbit", "минимальный лимит — 64 Кбит/с")
+		} else if client.DownKbit > 10_000_000 {
+			r.errf(path+".down_kbit", "максимальный лимит — 10000000 Кбит/с")
 		}
 		if client.UpKbit < 0 {
 			r.errf(path+".up_kbit", "скорость не может быть отрицательной")
 		} else if client.UpKbit > 0 && client.UpKbit < 64 {
 			r.errf(path+".up_kbit", "минимальный лимит — 64 Кбит/с")
+		} else if client.UpKbit > 10_000_000 {
+			r.errf(path+".up_kbit", "максимальный лимит — 10000000 Кбит/с")
 		}
 		if (client.DownKbit > 0 || client.UpKbit > 0) && client.Network == "" {
 			r.errf(path+".network", "для ограничения скорости выберите сегмент клиента")
@@ -347,9 +362,40 @@ func (c *Config) validateSystem(r *ValidationResult) {
 	switch c.System.Panel.TLS.Mode {
 	case "selfsigned":
 	case "custom":
-		r.errf("system.panel.tls.mode", "пользовательский TLS-сертификат ещё не поддерживается")
+		if c.System.Panel.TLS.CertFile == "" || unsafeConfigText(c.System.Panel.TLS.CertFile) {
+			r.errf("system.panel.tls.cert_file", "укажите безопасный путь к файлу сертификата")
+		}
+		if c.System.Panel.TLS.KeyFile == "" || unsafeConfigText(c.System.Panel.TLS.KeyFile) {
+			r.errf("system.panel.tls.key_file", "укажите безопасный путь к закрытому ключу")
+		}
+		if c.System.Panel.TLS.CertFile != "" && c.System.Panel.TLS.CertFile == c.System.Panel.TLS.KeyFile {
+			r.errf("system.panel.tls.key_file", "сертификат и закрытый ключ должны находиться в разных файлах")
+		}
 	case "acme":
-		r.errf("system.panel.tls.mode", "автоматический выпуск сертификата ACME ещё не реализован")
+		domain := strings.TrimSuffix(strings.ToLower(c.System.Panel.TLS.Domain), ".")
+		if c.System.Panel.Port == 80 {
+			r.errf("system.panel.port", "порт 80 нужен для проверки домена ACME; выберите другой порт панели")
+		}
+		publicSuffix, icannSuffix := publicsuffix.PublicSuffix(domain)
+		if domain == "" || unsafeConfigText(c.System.Panel.TLS.Domain) || net.ParseIP(domain) != nil || !validDNSName(domain) || !strings.Contains(domain, ".") || !icannSuffix || publicSuffix == domain {
+			r.errf("system.panel.tls.domain", "укажите полное публичное DNS-имя")
+		} else {
+			for _, reserved := range []string{"local", "lan", "internal", "localhost", "test", "example", "invalid", "example.com", "example.net", "example.org", "home.arpa"} {
+				if domain == reserved || strings.HasSuffix(domain, "."+reserved) {
+					r.errf("system.panel.tls.domain", "ACME требует публичное DNS-имя, а не зарезервированную зону")
+					break
+				}
+			}
+		}
+		if email := c.System.Panel.TLS.Email; email != "" {
+			address, err := mail.ParseAddress(email)
+			if err != nil || address.Address != email || len(email) > 254 || unsafeConfigText(email) {
+				r.errf("system.panel.tls.email", "укажите обычный адрес электронной почты без имени и управляющих символов")
+			}
+		}
+		if !c.System.Panel.TLS.AcceptTOS {
+			r.errf("system.panel.tls.accept_tos", "подтвердите условия использования центра сертификации")
+		}
 	default:
 		r.errf("system.panel.tls.mode", "неизвестный режим TLS %q", c.System.Panel.TLS.Mode)
 	}
@@ -494,6 +540,24 @@ func (c *Config) validateInterfaces(r *ValidationResult) {
 			if _, err := net.ParseMAC(iface.MAC); err != nil {
 				r.errf(path+".mac", "некорректный MAC-адрес")
 			}
+		}
+	}
+
+	carrierOwner := map[string]string{}
+	for i, iface := range c.Interfaces {
+		if iface.Type != "bridge" || len(iface.Members) != 0 {
+			continue
+		}
+		path := fmt.Sprintf("interfaces[%d].name", i)
+		dummy, peer := BridgeCarrierNames(iface.Name)
+		for _, generated := range []string{dummy, peer} {
+			if names[generated] {
+				r.errf(path, "служебный carrier пустого моста %q конфликтует с объявленным интерфейсом", generated)
+			}
+			if other := carrierOwner[generated]; other != "" && other != iface.Name {
+				r.errf(path, "служебный carrier %q уже используется пустым мостом %q", generated, other)
+			}
+			carrierOwner[generated] = iface.Name
 		}
 	}
 
@@ -976,11 +1040,12 @@ func validateProbe(r *ValidationResult, path string, p Probe) {
 			}
 		case "tcp":
 			host, port, err := net.SplitHostPort(target)
-			if err != nil || host == "" || !inPortRange(port) {
+			if err != nil || !validProbeHost(host) || !inPortRange(port) {
 				r.errf(targetPath, "цель TCP должна быть в формате host:port")
 			}
 		case "http":
-			if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+			parsed, err := url.ParseRequestURI(target)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 				r.errf(targetPath, "цель HTTP должна начинаться с http:// или https://")
 			}
 		}
@@ -997,6 +1062,16 @@ func validateProbe(r *ValidationResult, path string, p Probe) {
 	if p.RiseThreshold < 1 || p.RiseThreshold > 100 {
 		r.errf(path+".rise_threshold", "порог восстановления должен быть 1-100")
 	}
+}
+
+func validProbeHost(value string) bool {
+	if value == "" || unsafeConfigText(value) {
+		return false
+	}
+	if _, err := netip.ParseAddr(strings.Trim(value, "[]")); err == nil {
+		return true
+	}
+	return validDNSName(value)
 }
 
 func (c *Config) validateRouting(r *ValidationResult) {
@@ -1037,8 +1112,11 @@ func (c *Config) validateRouting(r *ValidationResult) {
 			}
 		}
 		if route.Gateway != "" {
-			if _, err := netip.ParseAddr(route.Gateway); err != nil {
+			gateway, err := netip.ParseAddr(route.Gateway)
+			if err != nil {
 				r.errf(path+".gateway", "некорректный адрес шлюза")
+			} else if destinationFamily, ok := routeDestinationFamily(route.Destination); ok && destinationFamily != gateway.Is6() {
+				r.errf(path+".gateway", "семейство адреса шлюза должно совпадать с назначением маршрута")
 			}
 		}
 		if route.Gateway == "" && route.Interface == "" && route.Type == "" {
@@ -1080,6 +1158,16 @@ func (c *Config) validateRouting(r *ValidationResult) {
 			r.errf(path+".interface", "некорректное имя входного интерфейса")
 		}
 	}
+}
+
+func routeDestinationFamily(destination string) (is6 bool, ok bool) {
+	if prefix, err := netip.ParsePrefix(destination); err == nil {
+		return prefix.Addr().Is6(), true
+	}
+	if addr, err := netip.ParseAddr(destination); err == nil {
+		return addr.Is6(), true
+	}
+	return false, false
 }
 
 func validFwMark(value string) bool {
@@ -1211,11 +1299,18 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 				}
 			}
 		case "destination":
+			if n.Interface != "" {
+				if !ValidInterfaceName(n.Interface) {
+					r.errf(path+".interface", "некорректное имя интерфейса")
+				} else if !ifaceNames[n.Interface] {
+					r.warnf(path+".interface", "интерфейс %q не описан в конфигурации", n.Interface)
+				}
+			}
 			if n.Protocol != "tcp" && n.Protocol != "udp" && n.Protocol != "tcpudp" {
 				r.errf(path+".protocol", "протокол должен быть tcp, udp или tcpudp")
 			}
-			validatePortSpec(r, path+".ext_port", n.ExtPort)
-			validatePortSpec(r, path+".dest_port", n.DestPort)
+			validateNATPortSpec(r, path+".ext_port", n.ExtPort, true)
+			validateNATPortSpec(r, path+".dest_port", n.DestPort, false)
 			if addr, err := netip.ParseAddr(n.DestIP); err != nil || !addr.Is4() {
 				r.errf(path+".dest_ip", "некорректный адрес назначения")
 			}
@@ -1369,15 +1464,9 @@ func portSpecContains(spec string, port int) bool {
 }
 
 func parsePort(s string) (int, error) {
-	n := 0
-	if s == "" {
-		return 0, fmt.Errorf("пустой порт")
-	}
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return 0, fmt.Errorf("не число")
-		}
-		n = n*10 + int(ch-'0')
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("порт вне диапазона 1-65535")
 	}
 	return n, nil
 }
@@ -1424,6 +1513,9 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 		default:
 			r.errf("dhcp.provider", "неизвестный сервер DHCP %q", c.DHCP.Provider)
 		}
+	}
+	if c.DHCP.AdvancedOptions != "" && c.DHCP.Provider == "kea" {
+		r.errf("dhcp.advanced_options", "Kea использует структурированный JSON и не поддерживает произвольные текстовые директивы")
 	}
 
 	networks := c.networkIDs()
@@ -1476,6 +1568,12 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			r.errf("dns.provider", "неизвестный резолвер %q", c.DNS.Provider)
 		}
 	}
+	if c.DNS.DNSSEC && c.DNS.Enabled && c.DNS.Provider == "dnsmasq" {
+		r.errf("dns.dnssec", "проверка DNSSEC для dnsmasq в netOS не реализована — выберите unbound или dnsproxy")
+	}
+	if c.DNS.AdvancedOptions != "" && c.DNS.Provider != "unbound" {
+		r.errf("dns.advanced_options", "произвольные DNS-директивы поддерживаются только провайдером unbound")
+	}
 	if c.DNS.Port < 1 || c.DNS.Port > 65535 {
 		r.errf("dns.port", "порт DNS вне диапазона 1-65535")
 	}
@@ -1497,6 +1595,8 @@ func (c *Config) validateDNS(r *ValidationResult) {
 	channelOwner := map[string]string{}
 	secure := 0
 	upstreamIDs := map[string]bool{}
+	unboundHasPlain := false
+	unboundHasDoT := false
 
 	for i, u := range c.DNS.Upstreams {
 		path := fmt.Sprintf("dns.upstreams[%d]", i)
@@ -1508,9 +1608,15 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		upstreamByID[u.ID] = u
 		switch u.Type {
 		case "plain":
+			if u.Enabled {
+				unboundHasPlain = true
+			}
 		case "dot", "doh", "doq":
 			if u.Enabled {
 				secure++
+				if u.Type == "dot" {
+					unboundHasDoT = true
+				}
 			}
 			if c.DNS.Enabled && c.DNS.Provider == "dnsmasq" {
 				r.errf(path+".type",
@@ -1538,6 +1644,9 @@ func (c *Config) validateDNS(r *ValidationResult) {
 				}
 			}
 		}
+	}
+	if c.DNS.Enabled && c.DNS.Provider == "unbound" && unboundHasPlain && unboundHasDoT {
+		r.errf("dns.upstreams", "unbound не поддерживает одновременное использование открытых DNS и DoT-апстримов: выберите один тип для всех включённых серверов")
 	}
 
 	recordIDs := map[string]bool{}
@@ -1630,10 +1739,34 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			}
 		}
 	}
+	blocklistURLs := map[string]int{}
 	for i, blocklist := range c.DNS.Blocklists {
-		if blocklist.Enabled {
-			r.errf(fmt.Sprintf("dns.blocklists[%d].enabled", i),
-				"загрузка и применение списков блокировки ещё не реализованы")
+		path := fmt.Sprintf("dns.blocklists[%d]", i)
+		if unsafeConfigText(blocklist.Name) {
+			r.errf(path+".name", "переводы строк и управляющие символы недопустимы")
+		}
+		if blocklist.Enabled && strings.TrimSpace(blocklist.Name) == "" {
+			r.errf(path+".name", "укажите название списка блокировки")
+		}
+		if blocklist.Enabled && !c.DNS.Enabled {
+			r.errf(path+".enabled", "нельзя включить список блокировки при выключенном DNS")
+		}
+		if blocklist.URL == "" {
+			if blocklist.Enabled {
+				r.errf(path+".url", "укажите HTTPS URL списка блокировки")
+			}
+			continue
+		}
+		parsed, err := url.Parse(blocklist.URL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || unsafeConfigText(blocklist.URL) {
+			r.errf(path+".url", "нужен безопасный HTTPS URL без учётных данных и фрагмента")
+			continue
+		}
+		canonical := parsed.String()
+		if previous, exists := blocklistURLs[canonical]; exists {
+			r.errf(path+".url", "этот URL уже используется списком %d", previous+1)
+		} else {
+			blocklistURLs[canonical] = i
 		}
 	}
 }
@@ -1656,6 +1789,9 @@ func validateDNSBootstrap(raw string) error {
 	}
 	host, port := raw, ""
 	if h, p, err := net.SplitHostPort(raw); err == nil {
+		if p == "" {
+			return fmt.Errorf("порт bootstrap-сервера не указан")
+		}
 		host, port = h, p
 	} else if strings.Count(raw, ":") > 0 {
 		return fmt.Errorf("bootstrap-сервер нужно указать как IPv4 или IPv4:порт")
@@ -2040,8 +2176,29 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 				r.errf(path+".protocol", "VLESS не передаёт ICMP")
 			}
 		}
-		if p.Enabled && len(p.Domains) > 0 {
-			r.errf(path+".domains", "выбор трафика по доменам ещё не реализован")
+		if len(p.Domains) > 128 {
+			r.errf(path+".domains", "в одной политике допускается не больше 128 доменов")
+		}
+		seenDomains := map[string]bool{}
+		for j, raw := range p.Domains {
+			domainPath := fmt.Sprintf("%s.domains[%d]", path, j)
+			domain := strings.Trim(raw, ".")
+			canonical := strings.ToLower(domain)
+			if domain == "" || unsafeConfigText(raw) || !validDNSName(domain) {
+				r.errf(domainPath, "нужно корректное DNS-имя без пробелов и управляющих символов")
+			} else if seenDomains[canonical] {
+				r.errf(domainPath, "домен уже указан в этой политике")
+			}
+			seenDomains[canonical] = true
+		}
+		if p.Enabled && len(p.Domains) > 0 && serverTypes[p.VPNServer] != "xray" {
+			if !c.DNS.Enabled {
+				r.errf(path+".domains", "для доменной политики включите DNS-резолвер netOS")
+			} else if !c.IPv6.FilterAAAA {
+				r.errf(path+".domains", "доменная политика каналов поддерживает IPv4: включите фильтрацию AAAA")
+			} else if c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
+				r.errf("dns.port", "порт 5355 занят внутренним DNS backend доменных политик")
+			}
 		}
 		switch p.Protocol {
 		case "", "any", "tcp", "udp", "icmp":
@@ -2243,7 +2400,14 @@ func (c *Config) validateIKEv2Server(r *ValidationResult, path string, s VPNServ
 		}
 	}
 	usernames := map[string]bool{}
+	enabledPeers := 0
 	for i, peer := range s.Peers {
+		if peer.Enabled {
+			enabledPeers++
+			if enabledPeers > 1 {
+				r.errf(fmt.Sprintf("%s.peers[%d].enabled", path, i), "в Debian strongSwan нельзя надёжно закрепить адрес за EAP-учётной записью; одновременно разрешён только один пользователь IKEv2")
+			}
+		}
 		username := peer.Credentials["username"]
 		if username == "" || !safeAccountName(username) {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя может содержать только буквы, цифры, точку, дефис и подчёркивание")
@@ -2510,6 +2674,10 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 
 func (c *Config) validateWiFi(r *ValidationResult) {
 	networks := c.networkIDs()
+	enabledNetworks := map[string]bool{}
+	for _, network := range c.Networks {
+		enabledNetworks[network.ID] = network.Enabled
+	}
 	radioIDs := map[string]bool{}
 	devices := map[string]bool{}
 	for i, radio := range c.WiFi {
@@ -2596,6 +2764,8 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 			}
 			if !networks[s.Network] {
 				r.errf(spath+".network", "неизвестный сегмент %q", s.Network)
+			} else if s.Enabled && !enabledNetworks[s.Network] {
+				r.errf(spath+".network", "сегмент %q выключен", s.Network)
 			}
 			switch s.Security {
 			case "open":
@@ -2644,14 +2814,6 @@ func (c *Config) networkIDs() map[string]bool {
 	m := map[string]bool{}
 	for _, n := range c.Networks {
 		m[n.ID] = true
-	}
-	return m
-}
-
-func (c *Config) channelIDs() map[string]bool {
-	m := map[string]bool{}
-	for _, ch := range c.Channels {
-		m[ch.ID] = true
 	}
 	return m
 }
@@ -2708,11 +2870,30 @@ func validatePortSpec(r *ValidationResult, path, value string) {
 	for _, part := range strings.Split(value, ",") {
 		part = strings.TrimSpace(part)
 		lo, hi, isRange := strings.Cut(part, "-")
-		if !inPortRange(lo) || (isRange && !inPortRange(hi)) {
+		if !inPortRange(lo) || (isRange && (!inPortRange(hi) || portNumber(lo) > portNumber(hi))) {
 			r.errf(path, "некорректная спецификация порта %q", value)
 			return
 		}
 	}
+}
+
+func validateNATPortSpec(r *ValidationResult, path, value string, required bool) {
+	if value == "" {
+		if required {
+			r.errf(path, "укажите внешний порт или диапазон портов")
+		}
+		return
+	}
+	if strings.Contains(value, ",") {
+		r.errf(path, "для NAT укажите один порт или один диапазон без списка")
+		return
+	}
+	validatePortSpec(r, path, value)
+}
+
+func portNumber(value string) int {
+	n, _ := strconv.Atoi(value)
+	return n
 }
 
 func inPortRange(s string) bool {

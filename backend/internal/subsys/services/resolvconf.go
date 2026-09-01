@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +33,10 @@ type SystemResolver struct {
 }
 
 func NewSystemResolver(r system.Runner) *SystemResolver {
-	return &SystemResolver{Runner: r, Systemd: system.NewSystemd(r)}
+	return &SystemResolver{Runner: r, Systemd: system.NewSystemd(r), Root: systemResolverRoot}
 }
+
+var systemResolverRoot string
 
 const (
 	resolvConfPath = "/etc/resolv.conf"
@@ -41,6 +44,7 @@ const (
 	// забрал: сам файл вернуть иначе будет неоткуда.
 	resolvStatePath = "/var/lib/netos/resolv-conf.state"
 	resolvedUnit    = "systemd-resolved.service"
+	netOSResolvMark = "# Сгенерировано netOS."
 )
 
 // resolvState — исходное состояние резолвера машины.
@@ -187,13 +191,74 @@ func (u *SystemResolver) resolvedEnabled(ctx context.Context) bool {
 // панели, и при удалении netOS: подсистема владеет файлом целиком, а значит
 // обязана уметь его отдать.
 func (u *SystemResolver) Release(ctx context.Context) error {
+	statePath := u.path(resolvStatePath)
+	stateData, stateReadErr := os.ReadFile(statePath)
+	if stateReadErr != nil && !os.IsNotExist(stateReadErr) {
+		return stateReadErr
+	}
 	resolvedWanted, err := RestoreSystemResolverFiles(u.Root)
 	if err != nil {
 		return err
 	}
 	// Включённым обратно оказывается только то, что работало до netOS.
 	if resolvedWanted {
-		_, _ = u.Runner.Run(ctx, "systemctl", "enable", "--now", resolvedUnit)
+		if _, err := u.Runner.Run(ctx, "systemctl", "enable", "--now", resolvedUnit); err != nil {
+			// Preserve retryability: RestoreSystemResolverFiles removes the state
+			// only after restoring files, but a failed service enable is still an
+			// incomplete release.
+			if stateReadErr == nil {
+				if rbErr := system.WriteFileAtomic(statePath, stateData, 0o600); rbErr != nil {
+					return fmt.Errorf("включение %s: %v; восстановление state: %w", resolvedUnit, err, rbErr)
+				}
+			}
+			return fmt.Errorf("включение %s: %w", resolvedUnit, err)
+		}
+	}
+	return nil
+}
+
+func (u *SystemResolver) Health(ctx context.Context, cfg *config.Config) error {
+	path := u.path(resolvConfPath)
+	statePath := u.path(resolvStatePath)
+	if u.Needed(cfg) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("проверка %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s остался символической ссылкой", path)
+		}
+		if err := managedFileHealth(path, []byte(u.Render(cfg)), 0o644); err != nil {
+			return err
+		}
+		if _, err := os.Stat(statePath); err != nil {
+			return fmt.Errorf("снимок исходного resolver: %w", err)
+		}
+		if u.Systemd.IsActive(ctx, resolvedUnit) || !u.Systemd.IsDisabled(ctx, resolvedUnit) {
+			return fmt.Errorf("%s продолжает управлять resolver", resolvedUnit)
+		}
+		return nil
+	}
+	if _, err := os.Stat(statePath); err == nil {
+		return fmt.Errorf("после release остался state %s", statePath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(string(content), netOSResolvMark) {
+			return fmt.Errorf("netOS всё ещё владеет %s", path)
+		}
 	}
 	return nil
 }
@@ -216,8 +281,10 @@ func RestoreSystemResolverFiles(root string) (bool, error) {
 	statePath := at(resolvStatePath)
 	data, err := os.ReadFile(statePath)
 	if os.IsNotExist(err) {
-		// Файл никогда не был нашим — трогать его нечего.
-		return false, nil
+		// Старые версии netOS не всегда сохраняли state. Не трогаем произвольный
+		// системный файл, но и не оставляем машину с мёртвым 127.0.0.1 после
+		// удаления, если файл безошибочно узнаётся как сгенерированный netOS.
+		return false, recoverSystemResolverWithoutState(at)
 	} else if err != nil {
 		return false, err
 	}
@@ -229,10 +296,7 @@ func RestoreSystemResolverFiles(root string) (bool, error) {
 	path := at(resolvConfPath)
 	switch state.Kind {
 	case "symlink":
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return false, err
-		}
-		if err := os.Symlink(state.Target, path); err != nil {
+		if err := restoreSymlinkAtomic(path, state.Target); err != nil {
 			return false, err
 		}
 	case "file":
@@ -243,9 +307,133 @@ func RestoreSystemResolverFiles(root string) (bool, error) {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return false, err
 		}
+	default:
+		return false, fmt.Errorf("неизвестный kind resolver state %q", state.Kind)
 	}
 	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
 	return state.ResolvedEnabled, nil
+}
+
+func restoreSymlinkAtomic(path, target string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".netos-resolv-link-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return err
+	}
+	defer os.Remove(tmpPath)
+	if err := os.Symlink(target, tmpPath); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// recoverSystemResolverWithoutState чинит только legacy-состояние, в котором
+// netOS владеет /etc/resolv.conf, а снимка исходного файла уже нет. Источники
+// перечислены от наиболее близких к готовому системному resolv.conf до DHCP
+// leases systemd-networkd. Если система не оставила ни одного адреса, лучше
+// завершить удаление с явной ошибкой, чем незаметно подменять локальный DNS
+// публичным сервером, который может быть недоступен или запрещён политикой.
+func recoverSystemResolverWithoutState(at func(string) string) error {
+	path := at(resolvConfPath)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(string(current), netOSResolvMark) {
+		return nil
+	}
+
+	for _, candidate := range []string{
+		"/run/systemd/resolve/resolv.conf",
+		"/run/NetworkManager/no-stub-resolv.conf",
+		"/run/NetworkManager/resolv.conf",
+		"/run/resolvconf/resolv.conf",
+	} {
+		content, readErr := os.ReadFile(at(candidate))
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				continue
+			}
+			return readErr
+		}
+		if usableResolverContent(content) {
+			return system.WriteFileAtomic(path, content, 0o644)
+		}
+	}
+
+	leases, err := filepath.Glob(at("/run/systemd/netif/leases/*"))
+	if err != nil {
+		return err
+	}
+	var servers []string
+	seen := map[string]bool{}
+	for _, lease := range leases {
+		content, readErr := os.ReadFile(lease)
+		if readErr != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(content), "\n") {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if !ok || key != "DNS" {
+				continue
+			}
+			value = strings.Trim(value, "\"'")
+			for _, field := range strings.Fields(value) {
+				ip := net.ParseIP(strings.Trim(field, "[]"))
+				if ip == nil || ip.IsUnspecified() || ip.IsLoopback() || seen[ip.String()] {
+					continue
+				}
+				seen[ip.String()] = true
+				servers = append(servers, ip.String())
+			}
+		}
+	}
+	if len(servers) == 0 {
+		return fmt.Errorf("исходное состояние %s утрачено, системные DNS-серверы не найдены", resolvConfPath)
+	}
+
+	var restored strings.Builder
+	restored.WriteString("# Восстановлено при удалении netOS из DNS, полученных системой.\n")
+	for _, server := range servers {
+		fmt.Fprintf(&restored, "nameserver %s\n", server)
+	}
+	restored.WriteString("options edns0\n")
+	return system.WriteFileAtomic(path, []byte(restored.String()), 0o644)
+}
+
+func usableResolverContent(content []byte) bool {
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "nameserver" {
+			continue
+		}
+		ip := net.ParseIP(strings.Trim(fields[1], "[]"))
+		if ip != nil && !ip.IsUnspecified() && !ip.IsLoopback() {
+			return true
+		}
+	}
+	return false
 }

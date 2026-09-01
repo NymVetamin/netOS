@@ -35,6 +35,40 @@ export function SystemPage({
   session: Session;
   onSessionEnded: () => void;
 }) {
+  const currentPanel = config.system?.panel || { port: 8443, commit_timeout: 30, tls: { mode: "selfsigned" } };
+  const [panelEndpoint, setPanelEndpoint] = useState<any>({
+    port: currentPanel.port,
+    tls: { ...(currentPanel.tls || { mode: "selfsigned" }) },
+  });
+  const [panelConfirm, setPanelConfirm] = useState("");
+  const [panelBusy, setPanelBusy] = useState(false);
+  const [panelError, setPanelError] = useState("");
+  const [panelTarget, setPanelTarget] = useState("");
+
+  useEffect(() => {
+    setPanelEndpoint({
+      port: currentPanel.port,
+      tls: { ...(currentPanel.tls || { mode: "selfsigned" }) },
+    });
+  }, [currentPanel.port, currentPanel.tls?.mode, currentPanel.tls?.cert_file, currentPanel.tls?.key_file, currentPanel.tls?.domain, currentPanel.tls?.email, currentPanel.tls?.accept_tos]);
+
+  async function restartPanel() {
+    setPanelBusy(true);
+    setPanelError("");
+    setPanelTarget("");
+    try {
+      const panel = { ...panelEndpoint, commit_timeout: currentPanel.commit_timeout };
+      const result = await api.reconfigurePanel(panel, panelConfirm);
+      const host = window.location.hostname.includes(":") ? `[${window.location.hostname}]` : window.location.hostname;
+      setPanelTarget(`https://${host}:${result.port}/`);
+      setPanelConfirm("");
+    } catch (err: any) {
+      setPanelError(err?.message || "Не удалось запланировать перезапуск панели");
+    } finally {
+      setPanelBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="page-head">
@@ -164,15 +198,22 @@ export function SystemPage({
       </Card>
 
       <Card title="Веб-панель">
+        {panelError && <Notice tone="danger" title={panelError} />}
+        {panelTarget && <Notice tone="info" title="Перезапуск панели запланирован">
+          Служба применит новую ревизию и автоматически вернёт прежнюю, если ready-marker не появится за 60 секунд. После короткого ожидания откройте <a href={panelTarget}>{panelTarget}</a>.
+        </Notice>}
         <div className="form-grid">
           <Field
             label="Порт"
-            hint="Изменение порта работающей панели пока не поддерживается"
+            hint="При смене обновляется и системное правило файрволла"
           >
             <input
               type="number"
-              value={config.system?.panel?.port}
-              disabled
+              min={1}
+              max={65535}
+              disabled={session.role !== "admin"}
+              value={panelEndpoint.port}
+              onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, port: Number(e.target.value) }))}
             />
           </Field>
           <Field
@@ -187,6 +228,42 @@ export function SystemPage({
               }
             />
           </Field>
+          <Field label="TLS-сертификат">
+            <select disabled={session.role !== "admin"} value={panelEndpoint.tls?.mode || "selfsigned"} onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, tls: { mode: e.target.value } }))}>
+              <option value="selfsigned">Самоподписанный netOS</option>
+              <option value="custom">Свой сертификат и ключ</option>
+              <option value="acme">Автоматический сертификат ACME</option>
+            </select>
+          </Field>
+          {panelEndpoint.tls?.mode === "custom" && <>
+            <Field label="Файл сертификата" hint="Абсолютный путь к PEM-файлу на роутере">
+              <input disabled={session.role !== "admin"} className="mono" value={panelEndpoint.tls?.cert_file || ""} onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, tls: { ...old.tls, cert_file: e.target.value } }))} />
+            </Field>
+            <Field label="Файл закрытого ключа" hint="Абсолютный путь к PEM-файлу на роутере">
+              <input disabled={session.role !== "admin"} className="mono" type="password" autoComplete="off" value={panelEndpoint.tls?.key_file || ""} onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, tls: { ...old.tls, key_file: e.target.value } }))} />
+            </Field>
+          </>}
+          {panelEndpoint.tls?.mode === "acme" && <>
+            <Field label="Публичное имя панели" hint="DNS-имя должно вести на этот роутер; входящий TCP/80 должен быть доступен центру сертификации">
+              <input disabled={session.role !== "admin"} className="mono" placeholder="router.your-domain.com" value={panelEndpoint.tls?.domain || ""} onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, tls: { ...old.tls, domain: e.target.value } }))} />
+            </Field>
+            <Field label="Email для уведомлений ACME" hint="Необязательно; центр сертификации может сообщать о проблемах продления">
+              <input disabled={session.role !== "admin"} type="email" autoComplete="email" placeholder="admin@example.org" value={panelEndpoint.tls?.email || ""} onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, tls: { ...old.tls, email: e.target.value } }))} />
+            </Field>
+            <Field label="Условия центра сертификации">
+              <label className="row" style={{ alignItems: "flex-start" }}>
+                <input disabled={session.role !== "admin"} type="checkbox" checked={!!panelEndpoint.tls?.accept_tos} onChange={(e) => setPanelEndpoint((old: any) => ({ ...old, tls: { ...old.tls, accept_tos: e.target.checked } }))} />
+                <span>Принимаю действующие условия использования ACME-центра Let&apos;s Encrypt</span>
+              </label>
+            </Field>
+          </>}
+        </div>
+        <Notice tone="warn" title="Порт или TLS меняются отдельным безопасным перезапуском">
+          Сначала примените или отмените обычный черновик. Для подтверждения введите RESTART; новая ревизия станет активной только через отдельный restart с автоматическим возвратом прежней конфигурации при неуспехе.
+        </Notice>
+        <div className="row wrap" style={{ marginTop: ".8rem" }}>
+          <input disabled={session.role !== "admin"} aria-label="Подтверждение перезапуска панели" style={{ maxWidth: 220 }} placeholder="Введите RESTART" value={panelConfirm} onChange={(e) => setPanelConfirm(e.target.value)} />
+          <button type="button" className="btn" disabled={session.role !== "admin" || panelBusy || panelConfirm !== "RESTART"} onClick={() => void restartPanel()}>{panelBusy ? "Планирую…" : "Сменить порт / TLS"}</button>
         </div>
         <div className="faint" style={{ fontSize: 12.5, marginTop: "0.6rem" }}>
           Кому доступна панель, задаётся правилом «Веб-панель netOS» в разделе «Файрволл».

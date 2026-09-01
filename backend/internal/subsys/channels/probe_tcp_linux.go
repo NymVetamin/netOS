@@ -27,7 +27,7 @@ func probeTCP(ctx context.Context, iface, address string, timeout time.Duration)
 			return sockErr
 		}
 	}
-	conn, err := dialer.DialContext(ctx, "tcp4", address)
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}

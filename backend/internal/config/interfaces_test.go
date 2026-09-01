@@ -165,6 +165,42 @@ func TestTooLongInterfaceNameIsRejected(t *testing.T) {
 	}
 }
 
+func TestBridgeCarrierNamesAreStableAndDistinct(t *testing.T) {
+	dummy, peer := BridgeCarrierNames("br-lan")
+	if dummy != "d-lan" || peer != "p-lan" {
+		t.Fatalf("short legacy carrier names changed: %s/%s", dummy, peer)
+	}
+	d1, p1 := BridgeCarrierNames("abcdefghijklm01")
+	d2, p2 := BridgeCarrierNames("abcdefghijklm02")
+	if d1 == d2 || p1 == p2 || len(d1) > maxInterfaceName || len(p1) > maxInterfaceName {
+		t.Fatalf("long bridge carrier collision or overflow: %s/%s and %s/%s", d1, p1, d2, p2)
+	}
+}
+
+func TestEmptyBridgeCarrierCannotCollideWithDeclaredInterface(t *testing.T) {
+	cfg := Default()
+	cfg.Interfaces = []Interface{
+		{ID: "bridge", Name: "lan", Type: "bridge", Enabled: true},
+		{ID: "physical", Name: "d-lan", Type: "physical", Enabled: true},
+	}
+	if !problem(t, cfg, "interfaces[0].name", "carrier") {
+		t.Fatalf("declared interface may steal hidden bridge carrier: %#v", cfg.Validate().Problems)
+	}
+}
+
+func TestDistinctLongEmptyBridgesHaveDistinctCarriers(t *testing.T) {
+	cfg := Default()
+	cfg.Interfaces = []Interface{
+		{ID: "bridge1", Name: "abcdefghijklm01", Type: "bridge", Enabled: true},
+		{ID: "bridge2", Name: "abcdefghijklm02", Type: "bridge", Enabled: true},
+	}
+	for _, item := range cfg.Validate().Problems {
+		if item.Severity == "error" && strings.HasPrefix(item.Path, "interfaces") {
+			t.Fatalf("distinct valid bridges rejected: %#v", cfg.Validate().Problems)
+		}
+	}
+}
+
 // Ссылка на удалённый интерфейс — ошибка, а не молчаливый пропуск: иначе мост
 // остался бы без порта, и никто бы об этом не сказал.
 func TestDanglingMemberIsReported(t *testing.T) {

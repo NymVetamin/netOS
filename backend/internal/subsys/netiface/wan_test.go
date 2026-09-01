@@ -46,15 +46,20 @@ func (r *wanRunner) RunInput(ctx context.Context, _ string, name string, args ..
 func TestCleanupStaticRoutesKeepsWantedAndDeletesStale(t *testing.T) {
 	runner := &wanRunner{}
 	s := NewWAN(runner)
-	wanted := map[string]bool{wanRouteKey("192.0.2.1", "eth0", 10): true}
-	if err := s.cleanupStaticRoutes(context.Background(), wanted); err != nil {
+	s.OwnedRoutePath = filepath.Join(t.TempDir(), "owned-wan-routes.json")
+	previous := `[{"gateway":"192.0.2.1","interface":"eth0","metric":10},{"gateway":"198.51.100.1","interface":"eth1","metric":20}]`
+	if err := os.WriteFile(s.OwnedRoutePath, []byte(previous), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.commands) != 2 {
-		t.Fatalf("команд %d, ожидались show и один del", len(runner.commands))
+	wanted := []ownedWANRoute{{Gateway: "192.0.2.1", Interface: "eth0", Metric: 10}}
+	if err := s.syncStaticRouteOwnership(context.Background(), wanted); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(runner.commands[1], "route del default via 198.51.100.1 dev eth1") {
-		t.Fatalf("удалён не тот маршрут: %s", runner.commands[1])
+	if len(runner.commands) != 1 {
+		t.Fatalf("команд %d, ожидалась одна точная del: %v", len(runner.commands), runner.commands)
+	}
+	if !strings.Contains(runner.commands[0], "route del default via 198.51.100.1 dev eth1 metric 20 proto 201") {
+		t.Fatalf("удалён не тот маршрут: %s", runner.commands[0])
 	}
 }
 

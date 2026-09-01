@@ -122,13 +122,39 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	if err := client.Start(); err != nil {
 		t.Fatal(err)
 	}
+	clientDone := make(chan error, 1)
+	go func() { clientDone <- client.Wait() }()
 	t.Cleanup(func() {
 		_ = client.Process.Kill()
-		_, _ = client.Process.Wait()
 	})
+	// Debian's charon-cmd/kernel-libipsec combination may put the directly
+	// connected transport network into table 220 through ipsec0.  That loops
+	// IKE_SA_INIT back into the client's TUN before it can reach the server.
+	// Remove only that helper route; the namespace keeps its kernel connected
+	// route through veth-ike997c.
+	routeDeadline := time.Now().Add(time.Second)
+	for {
+		if _, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ip", "route", "delete", "192.0.2.0/30", "dev", "ipsec0", "table", "220"); err == nil {
+			break
+		}
+		select {
+		case err := <-clientDone:
+			t.Fatalf("IKEv2 client exited during transport setup: %v: %s", err, clientLog.String())
+		default:
+		}
+		if time.Now().After(routeDeadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	ready := false
 	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
+		select {
+		case err := <-clientDone:
+			t.Fatalf("IKEv2 client exited before receiving its address: %v: %s", err, clientLog.String())
+		default:
+		}
 		out, _ := runner.Run(ctx, "ip", "netns", "exec", namespace, "ip", "-o", "-4", "addr", "show")
 		if strings.Contains(out, "10.97.0.2") {
 			ready = true
@@ -150,7 +176,7 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 		t.Fatalf("traffic did not cross the IKEv2 tunnel: %q (%v); link=%s states=%s policies=%s input=%s client-routes=%s client-states=%s client-policies=%s client=%s", out, err, links, states, policies, rules, clientRoutes, clientStates, clientPolicies, clientLog.String())
 	}
 	_ = client.Process.Kill()
-	_, _ = client.Process.Wait()
+	<-clientDone
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

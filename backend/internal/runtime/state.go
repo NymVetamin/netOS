@@ -12,6 +12,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,10 +68,15 @@ type Collector struct {
 	Runner        system.Runner
 	LeasePath     string
 	LeaseProvider func() string
+	SysClassNet   string
+	ProcNetfilter string
 }
 
 func NewCollector(r system.Runner, leasePath string) *Collector {
-	return &Collector{Runner: r, LeasePath: leasePath}
+	return &Collector{
+		Runner: r, LeasePath: leasePath, SysClassNet: "/sys/class/net",
+		ProcNetfilter: "/proc/sys/net/netfilter",
+	}
 }
 
 // Leases читает файл аренд dnsmasq. Формат строки:
@@ -254,7 +260,11 @@ func (c *Collector) ARP(ctx context.Context) ([]ARPEntry, error) {
 
 // InterfaceStats читает счётчики из sysfs — это дешевле разбора вывода ip -s.
 func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
-	entries, err := os.ReadDir("/sys/class/net")
+	root := c.SysClassNet
+	if root == "" {
+		root = "/sys/class/net"
+	}
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +275,7 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 		if name == "lo" {
 			continue
 		}
-		base := "/sys/class/net/" + name
+		base := filepath.Join(root, name)
 		stat := InterfaceStat{
 			Name:      name,
 			MAC:       readString(base + "/address"),
@@ -367,6 +377,7 @@ func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool
 
 // Route — разобранная запись таблицы маршрутизации.
 type Route struct {
+	Type        string `json:"type"`
 	Destination string `json:"destination"`
 	Gateway     string `json:"gateway"`
 	Interface   string `json:"interface"`
@@ -412,9 +423,19 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 		if len(fields) == 0 {
 			continue
 		}
-		r := Route{Destination: fields[0], Table: table, Raw: line, Origin: "boot"}
+		destinationIndex := 0
+		routeType := "unicast"
+		switch fields[0] {
+		case "local", "broadcast", "multicast", "throw", "unreachable", "prohibit", "blackhole", "nat", "anycast":
+			routeType = fields[0]
+			destinationIndex = 1
+		}
+		if destinationIndex >= len(fields) {
+			continue
+		}
+		r := Route{Type: routeType, Destination: fields[destinationIndex], Table: table, Raw: line, Origin: "boot"}
 
-		for i := 1; i < len(fields); i++ {
+		for i := destinationIndex + 1; i < len(fields); i++ {
 			switch fields[i] {
 			case "via":
 				if i+1 < len(fields) {
@@ -463,7 +484,11 @@ func (c *Collector) Rules(ctx context.Context) (string, error) {
 
 // ConntrackCount возвращает число отслеживаемых соединений.
 func (c *Collector) ConntrackCount() int64 {
-	return readInt("/proc/sys/net/netfilter/nf_conntrack_count")
+	root := c.ProcNetfilter
+	if root == "" {
+		root = "/proc/sys/net/netfilter"
+	}
+	return readInt(filepath.Join(root, "nf_conntrack_count"))
 }
 
 func readString(path string) string {

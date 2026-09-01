@@ -44,11 +44,13 @@ export type ComponentInfo = {
   provides?: string[];
   size_hint?: string;
   external?: boolean;
+  essential?: boolean;
   run_units?: string[];
 };
 
 // CatalogResponse — каталог вместе с живым состоянием машины. installed
-// говорит, что пакет лежит на диске, running — что демон компонента работает
+// говорит, что payload компонента полностью готов и штатные конфликтующие unit
+// погашены, running — что демон компонента работает
 // прямо сейчас. Желаемое состояние панель знает из конфигурации, и эти два
 // поля нужны, чтобы расхождение было видно.
 export type CatalogResponse = {
@@ -59,6 +61,7 @@ export type CatalogResponse = {
 
 // RouteEntry — разобранная запись таблицы маршрутизации.
 export type RouteEntry = {
+  type: string;
   destination: string;
   gateway: string;
   interface: string;
@@ -99,13 +102,14 @@ async function request<T>(
   path: string,
   body?: unknown,
   extraHeaders?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const headers: Record<string, string> = { ...(extraHeaders || {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (csrfToken && method !== "GET") headers["X-NetOS-CSRF"] = csrfToken;
 
   const encodedBody = body === undefined ? undefined : JSON.stringify(body);
-  const send = () => fetch(path, { method, headers, credentials: "same-origin", body: encodedBody });
+  const send = () => fetch(path, { method, headers, credentials: "same-origin", body: encodedBody, signal });
   let res = await send();
 
   // Сессии хранятся в SQLite и переживают перезапуск netosd, а CSRF-токены
@@ -114,7 +118,7 @@ async function request<T>(
   // подтверждаем ту же HttpOnly-сессию и повторяем исходный запрос; повторный
   // 403 возвращается вызывающему коду как обычно и права это не расширяет.
   if (res.status === 403 && method !== "GET" && path !== "/api/login") {
-    const refreshed = await fetch("/api/session", { credentials: "same-origin" });
+    const refreshed = await fetch("/api/session", { credentials: "same-origin", signal });
     if (refreshed.ok) {
       const session = await refreshed.json() as Session;
       if (session.csrf_token) {
@@ -234,9 +238,9 @@ export const api = {
   confirm: () => request<{ ok: boolean }>("POST", "/api/config/confirm"),
   rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
 
-  catalog: () => request<CatalogResponse>("GET", "/api/catalog"),
+  catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
   status: () => request<any>("GET", "/api/status"),
-  ddnsStatus: () => request<any>("GET", "/api/ddns/status"),
+  ddnsStatus: (signal?: AbortSignal) => request<any>("GET", "/api/ddns/status", undefined, undefined, signal),
   statistics: (hours = 24, interfaces: string[] = []) =>
     request<any>("GET", `/api/statistics?hours=${hours}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
   backups: () => request<{ backups: any[] }>("GET", "/api/backups"),
@@ -246,6 +250,8 @@ export const api = {
     request<{ scheduled: boolean }>("POST", "/api/maintenance/restore", { name, confirm }),
   updateSystem: (version: string, confirm: string) =>
     request<{ scheduled: boolean }>("POST", "/api/maintenance/update", { version, confirm }),
+  reconfigurePanel: (panel: any, confirm: string) =>
+    request<{ scheduled: boolean; revision: number; port: number }>("POST", "/api/maintenance/panel", { panel, confirm }),
   maintenanceStatus: () => request<any>("GET", "/api/maintenance/status"),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
@@ -257,9 +263,26 @@ export const api = {
   revisions: (limit = 50) => request<{ revisions: any[] }>("GET", `/api/revisions?limit=${limit}`),
   async restoreRevision(id: number) {
     if (draftVersion === null) throw new ApiError(409, "Сначала обновите конфигурацию");
-    const res = await request<ConfigResponse>("POST", `/api/revisions/${id}/restore`, undefined, {
-      "If-Match": String(draftVersion),
-    });
+    let res: ConfigResponse;
+    try {
+      res = await request<ConfigResponse>("POST", `/api/revisions/${id}/restore`, undefined, {
+        "If-Match": String(draftVersion),
+      });
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 409 || lastCleanConfigJSON === null) throw err;
+
+      // Обслуживание или перезапуск службы сбрасывает счётчик черновика.
+      // Повтор безопасен только если на сервере нет чужого черновика и
+      // активная конфигурация не изменилась с момента загрузки страницы.
+      const fresh = await request<ConfigResponse>("GET", "/api/config");
+      if (fresh.dirty || fresh.pending_confirmation || JSON.stringify(fresh.config) !== lastCleanConfigJSON) {
+        throw err;
+      }
+      draftVersion = fresh.draft_version;
+      res = await request<ConfigResponse>("POST", `/api/revisions/${id}/restore`, undefined, {
+        "If-Match": String(draftVersion),
+      });
+    }
     draftVersion = res.draft_version;
     return res;
   },

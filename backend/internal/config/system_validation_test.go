@@ -3,12 +3,23 @@ package config
 import "testing"
 
 func TestSystemValidationRejectsUnsafeCommitTimeout(t *testing.T) {
-	for _, timeout := range []int{-1, 86401} {
+	for _, timeout := range []int{-1, 0, 86401} {
 		cfg := Default()
 		cfg.System.Panel.CommitTimeout = timeout
+		cfg.Normalize()
 		if result := cfg.Validate(); !hasErrorAt(result, "system.panel.commit_timeout") {
 			t.Fatalf("commit timeout %d accepted: %#v", timeout, result.Problems)
 		}
+	}
+}
+
+func TestNormalizeBackfillsCommitTimeoutForLegacySchema(t *testing.T) {
+	cfg := Default()
+	cfg.Version = Version - 1
+	cfg.System.Panel.CommitTimeout = 0
+	cfg.Normalize()
+	if cfg.System.Panel.CommitTimeout != 30 {
+		t.Fatalf("legacy commit timeout = %d, want 30", cfg.System.Panel.CommitTimeout)
 	}
 }
 

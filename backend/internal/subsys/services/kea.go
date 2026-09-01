@@ -14,7 +14,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-const (
+var (
 	keaConfPath = "/var/lib/netos/generated/kea-dhcp4.json"
 	// Debian's Kea AppArmor profile only allows lease databases below
 	// /var/lib/kea. A syntactically valid config outside it starts and then
@@ -170,15 +170,20 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("Kea DHCP: нет включённых пулов на доступных интерфейсах")
 	}
 	content := []byte(d.Render(cfg))
-	changed := system.FileChanged(keaConfPath, content)
-	if err := system.WriteFileAtomic(keaConfPath, content, 0o644); err != nil {
+	if err := validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
+		if _, err := d.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {
+			return fmt.Errorf("проверка конфигурации Kea DHCP: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	changed, err := writeManagedFile(keaConfPath, content, 0o644)
+	if err != nil {
 		return err
 	}
 	if err := d.ensureUnit(ctx); err != nil {
 		return err
-	}
-	if _, err := d.Runner.Run(ctx, "kea-dhcp4", "-t", keaConfPath); err != nil {
-		return fmt.Errorf("проверка конфигурации Kea DHCP: %w", err)
 	}
 	if !changed && d.Systemd.IsActive(ctx, keaUnit) {
 		return nil
@@ -187,12 +192,12 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 }
 func (d *KeaDHCP) ensureUnit(ctx context.Context) error {
 	unit := renderKeaUnit()
-	path := filepath.Join("/etc/systemd/system", keaUnit)
-	if !system.FileChanged(path, []byte(unit)) {
-		return nil
-	}
-	if err := system.WriteFileAtomic(path, []byte(unit), 0o644); err != nil {
+	changed, err := writeManagedFile(filepath.Join(systemdUnitDir, keaUnit), []byte(unit), 0o644)
+	if err != nil {
 		return err
+	}
+	if !changed {
+		return nil
 	}
 	return d.Systemd.DaemonReload(ctx)
 }
@@ -201,8 +206,20 @@ func renderKeaUnit() string {
 	return "[Unit]\nDescription=netOS Kea DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nRuntimeDirectory=kea\nRuntimeDirectoryMode=0755\nExecStart=/usr/sbin/kea-dhcp4 -c " + keaConfPath + "\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n"
 }
 func (d *KeaDHCP) Health(ctx context.Context, cfg *config.Config) error {
-	if d.Needed(cfg) && !d.Systemd.IsActive(ctx, keaUnit) {
+	if !d.Needed(cfg) {
+		if d.Systemd.IsActive(ctx, keaUnit) {
+			return fmt.Errorf("Kea DHCP запущен, хотя не выбран")
+		}
+		return generatedAbsent(keaConfPath)
+	}
+	if !d.Systemd.IsActive(ctx, keaUnit) {
 		return fmt.Errorf("Kea DHCP не запущен")
 	}
-	return nil
+	if err := managedFileHealth(keaConfPath, []byte(d.Render(cfg)), 0o644); err != nil {
+		return err
+	}
+	if err := managedFileModeHealth(keaLeasePath, 0o600, false); err != nil {
+		return err
+	}
+	return managedFileHealth(filepath.Join(systemdUnitDir, keaUnit), []byte(renderKeaUnit()), 0o644)
 }

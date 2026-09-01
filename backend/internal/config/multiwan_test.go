@@ -4,6 +4,7 @@ import "testing"
 
 func TestNormalizeAssignsStableUniqueWANIndexes(t *testing.T) {
 	cfg := Default()
+	cfg.Version = Version - 1
 	cfg.WANs = []WAN{
 		{ID: "first", Index: 2},
 		{ID: "second"},

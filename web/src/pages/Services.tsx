@@ -76,7 +76,10 @@ function DHCPSection({
             <Field label="Чем раздавать" hint="Выбор из установленных компонентов">
               <select
                 value={config.dhcp?.provider || ""}
-                onChange={(e) => patch((d) => (d.dhcp.provider = e.target.value))}
+                onChange={(e) => patch((d) => {
+                  d.dhcp.provider = e.target.value;
+                  if (e.target.value === "kea") d.dhcp.advanced_options = "";
+                })}
               >
                 {providers.map((p) => (
                   <option key={p} value={p}>
@@ -121,6 +124,15 @@ function DHCPSection({
                     </tbody>
                   </table>
                 </TableWrap>
+              )}
+              {config.dhcp?.provider !== "kea" && (
+                <Field label="Дополнительные директивы DHCP" hint="Вставляются в конфиг выбранного DHCP-сервера; по одной директиве в строке">
+                  <textarea
+                    className="mono"
+                    value={config.dhcp?.advanced_options || ""}
+                    onChange={(e) => patch((d) => (d.dhcp.advanced_options = e.target.value))}
+                  />
+                </Field>
               )}
             </div>
           )}
@@ -185,7 +197,11 @@ function DNSSection({
           <Field label="Чем резолвить" hint="Выбор из установленных компонентов">
             <select
               value={provider}
-              onChange={(e) => patch((d) => (d.dns.provider = e.target.value))}
+              onChange={(e) => patch((d) => {
+                d.dns.provider = e.target.value;
+                if (e.target.value === "dnsmasq") d.dns.dnssec = false;
+                if (e.target.value !== "unbound") d.dns.advanced_options = "";
+              })}
             >
               {providers.map((p) => (
                 <option key={p} value={p}>
@@ -235,6 +251,8 @@ function DNSSection({
           <Field label="Порт">
             <input
               type="number"
+              min={1}
+              max={65535}
               value={config.dns?.port}
               onChange={(e) => patch((d) => (d.dns.port = Number(e.target.value)))}
             />
@@ -242,6 +260,8 @@ function DNSSection({
           <Field label="Размер кэша, записей">
             <input
               type="number"
+              min={0}
+              max={1000000}
               value={config.dns?.cache_size}
               onChange={(e) => patch((d) => (d.dns.cache_size = Number(e.target.value)))}
             />
@@ -266,7 +286,34 @@ function DNSSection({
             label="Журнал запросов"
             onChange={(v) => patch((d) => (d.dns.query_log = v))}
           />
+          {provider !== "dnsmasq" && (
+            <Switch
+              checked={config.dns?.dnssec}
+              label="Проверять DNSSEC"
+              onChange={(v) => patch((d) => (d.dns.dnssec = v))}
+            />
+          )}
         </div>
+
+        {provider === "dnsproxy" && (
+          <Field label="Bootstrap DNS" hint="Для разрешения имён DoH/DoT/DoQ-серверов; по одному IP-адресу в строке">
+            <textarea
+              className="mono"
+              value={(config.dns?.bootstrap || []).join("\n")}
+              onChange={(e) => patch((d) => (d.dns.bootstrap = e.target.value.split(/\s+/).filter(Boolean)))}
+            />
+          </Field>
+        )}
+
+        {provider === "unbound" && (
+          <Field label="Дополнительные директивы DNS" hint="Вставляются в unbound.conf; по одной директиве в строке">
+            <textarea
+              className="mono"
+              value={config.dns?.advanced_options || ""}
+              onChange={(e) => patch((d) => (d.dns.advanced_options = e.target.value))}
+            />
+          </Field>
+        )}
 
         <ResolutionChain config={config} />
       </Card>
@@ -381,6 +428,38 @@ function DNSSection({
         </div>
       </Card>
 
+      <Card title="Локальные DNS-записи" subtitle="Имена, которые обслуживает роутер" tight>
+        {(config.dns?.static_records || []).length === 0 ? (
+          <Empty>Локальных записей нет</Empty>
+        ) : (
+          <TableWrap>
+            <table>
+              <thead><tr><th>Тип</th><th>Имя</th><th>Значение</th><th /></tr></thead>
+              <tbody>
+                {config.dns.static_records.map((record: any, idx: number) => (
+                  <tr key={record.id}>
+                    <td>
+                      <select aria-label={`Тип DNS-записи ${idx + 1}`} value={record.type || "A"} onChange={(e) => patch((d) => (d.dns.static_records[idx].type = e.target.value))}>
+                        {['A', 'CNAME', 'TXT', 'SRV', 'MX'].map((type) => <option key={type} value={type}>{type}</option>)}
+                      </select>
+                    </td>
+                    <td><input aria-label={`Имя DNS-записи ${idx + 1}`} className="mono" value={record.name || ""} onChange={(e) => patch((d) => (d.dns.static_records[idx].name = e.target.value))} /></td>
+                    <td><input aria-label={`Значение DNS-записи ${idx + 1}`} className="mono" value={record.value || ""} onChange={(e) => patch((d) => (d.dns.static_records[idx].value = e.target.value))} /></td>
+                    <td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.static_records = d.dns.static_records.filter((item: any) => item.id !== record.id); })}>Убрать</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+        <div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+          <button className="btn" onClick={() => patch((d) => {
+            d.dns.static_records = d.dns.static_records || [];
+            d.dns.static_records.push({ id: newID("dns"), type: "A", name: "", value: "" });
+          })}>Добавить запись</button>
+        </div>
+      </Card>
+
       <Card title="Split-DNS" subtitle="Отдельные домены — через отдельный DNS-сервер и, при необходимости, VPN-канал" tight>
         {(config.dns?.split_rules || []).length === 0 ? <Empty>Раздельных правил DNS нет</Empty> : (
           <TableWrap>
@@ -412,6 +491,37 @@ function DNSSection({
           })}>Добавить правило</button>
         </div>
       </Card>
+
+	  <Card title="DNS blocklists" subtitle="Блокировка рекламы и трекеров по внешним спискам доменов" tight>
+		{!config.dns?.enabled && (config.dns?.blocklists || []).length > 0 && (
+		  <Notice tone="warn" title="DNS выключен">
+			Списки можно сохранить, но включить их получится только вместе с DNS-резолвером.
+		  </Notice>
+		)}
+		{(config.dns?.blocklists || []).length === 0 ? <Empty>Списки блокировки не заданы</Empty> : (
+		  <TableWrap>
+			<table>
+			  <thead><tr><th>Название</th><th>HTTPS URL списка</th><th>Вкл.</th><th /></tr></thead>
+			  <tbody>
+				{config.dns.blocklists.map((list: any, idx: number) => (
+				  <tr key={list.id}>
+					<td><input aria-label={`Название DNS blocklist ${idx + 1}`} value={list.name || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].name = e.target.value))} /></td>
+					<td><input type="url" aria-label={`URL DNS blocklist ${idx + 1}`} className="mono" style={{ width: 360 }} placeholder="https://example.org/hosts.txt" value={list.url || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].url = e.target.value))} /></td>
+					<td><Switch checked={!!list.enabled} disabled={!config.dns?.enabled} label="" ariaLabel={`DNS blocklist ${list.name || idx + 1} включён`} onChange={(enabled) => patch((d) => (d.dns.blocklists[idx].enabled = enabled))} /></td>
+					<td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.blocklists = d.dns.blocklists.filter((item: any) => item.id !== list.id); })}>Убрать</button></td>
+				  </tr>
+				))}
+			  </tbody>
+			</table>
+		  </TableWrap>
+		)}
+		<div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+		  <button className="btn" onClick={() => patch((d) => {
+			d.dns.blocklists = d.dns.blocklists || [];
+			d.dns.blocklists.push({ id: newID("blocklist"), name: "", url: "", enabled: false });
+		  })}>Добавить DNS blocklist</button>
+		</div>
+	  </Card>
     </>
   );
 }

@@ -12,7 +12,10 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
@@ -20,16 +23,19 @@ import (
 )
 
 type Subsystem struct {
-	Runner   system.Runner
-	Packages *system.Packages
-	Systemd  *system.Systemd
-	Logger   Logger
+	Runner                system.Runner
+	Packages              *system.Packages
+	Systemd               *system.Systemd
+	Logger                Logger
+	ExternalMigrationPath string
 }
 
 type Logger interface {
 	Infof(format string, args ...any)
 	Warnf(format string, args ...any)
 }
+
+var externalVersionTimeout = 10 * time.Second
 
 func New(r system.Runner, logger Logger) *Subsystem {
 	return &Subsystem{
@@ -44,26 +50,27 @@ func (s *Subsystem) Name() string { return "components" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
-	desired := map[string]bool{}
-	for _, component := range new.Components {
-		desired[component.ID] = component.Installed
-	}
+	desired := desiredComponentState(new)
+	protected := protectedComponentPackages(desired)
 
 	for _, info := range config.Catalog {
 		want := desired[info.ID]
-		anyInstalled, allInstalled := s.componentState(context.Background(), info)
 		if info.Essential && !want {
 			continue
 		}
-		if want && allInstalled || !want && !anyInstalled {
-			continue
-		}
 		if want {
+			_, allInstalled := s.componentState(context.Background(), info)
+			if allInstalled {
+				continue
+			}
 			actions = append(actions, apply.Action{
 				Kind: "create", Target: info.Title,
 				Detail: "установка, " + info.SizeHint,
 			})
 		} else {
+			if !s.componentRemovable(context.Background(), info, protected) {
+				continue
+			}
 			actions = append(actions, apply.Action{
 				Kind: "delete", Target: info.Title, Detail: "удаление", Disruptive: true,
 			})
@@ -79,29 +86,33 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 // должна примениться, а о неудаче администратор узнает из журнала и панели.
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	var failures []string
-	desired := map[string]bool{}
-	for _, component := range cfg.Components {
-		desired[component.ID] = component.Installed
+	desired := desiredComponentState(cfg)
+	protected := protectedComponentPackages(desired)
+	if err := s.migrateLegacyExternalOwnership(ctx, desired); err != nil {
+		return fmt.Errorf("миграция владения внешними компонентами: %w", err)
 	}
 
 	for _, info := range config.Catalog {
 		want := desired[info.ID]
-		anyInstalled, allInstalled := s.componentState(ctx, info)
 		if info.Essential && !want {
-			continue
-		}
-		if want && allInstalled || !want && !anyInstalled {
 			continue
 		}
 
 		if want {
+			_, allInstalled := s.componentState(ctx, info)
+			if allInstalled {
+				continue
+			}
 			if err := s.install(ctx, info); err != nil {
 				s.Logger.Warnf("компонент %s: %v", info.Title, err)
 				failures = append(failures, info.Title)
 			}
 			continue
 		}
-		if err := s.remove(ctx, info); err != nil {
+		if !s.componentRemovable(ctx, info, protected) {
+			continue
+		}
+		if err := s.removeProtected(ctx, info, protected); err != nil {
 			s.Logger.Warnf("удаление компонента %s: %v", info.Title, err)
 			failures = append(failures, "удалить "+info.Title)
 		}
@@ -113,12 +124,118 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+// migrateLegacyExternalOwnership bridges installations made before adjacent
+// ownership markers existed.  Old netOS versions already treated a current
+// binary at the catalog target as managed (including deleting it when the
+// component was disabled), so adopting that exact legacy state preserves the
+// previous contract.  The sentinel makes this a one-shot migration: a foreign
+// binary placed at the target later is never silently adopted.
+func (s *Subsystem) migrateLegacyExternalOwnership(ctx context.Context, desired map[string]bool) error {
+	if s.ExternalMigrationPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.ExternalMigrationPath)
+	if err == nil {
+		if string(data) != externalMigrationMark {
+			return fmt.Errorf("неверный marker %s", s.ExternalMigrationPath)
+		}
+		info, statErr := os.Lstat(s.ExternalMigrationPath)
+		if statErr != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("marker %s не является обычным файлом", s.ExternalMigrationPath)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+			return fmt.Errorf("marker %s имеет права %04o вместо 0600", s.ExternalMigrationPath, info.Mode().Perm())
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+
+	var created []string
+	rollback := func() {
+		for _, marker := range created {
+			_ = os.Remove(marker)
+		}
+	}
+	for _, info := range config.Catalog {
+		if !info.External || !desired[info.ID] {
+			continue
+		}
+		rel, ok := externalReleases[info.ID]
+		if !ok || externalOwned(rel) || !externalTargetPresent(rel) || !s.externalCurrent(ctx, rel) {
+			continue
+		}
+		marker := externalOwnerPath(rel)
+		if err := system.WriteFileAtomic(marker, []byte(externalOwnerMark), 0o600); err != nil {
+			rollback()
+			return fmt.Errorf("marker %s: %w", info.ID, err)
+		}
+		created = append(created, marker)
+		s.Logger.Infof("принято владение legacy-компонентом %s", info.Title)
+	}
+	if err := system.WriteFileAtomic(s.ExternalMigrationPath, []byte(externalMigrationMark), 0o600); err != nil {
+		rollback()
+		return err
+	}
+	return nil
+}
+
+func desiredComponentState(cfg *config.Config) map[string]bool {
+	desired := map[string]bool{}
+	if cfg == nil {
+		return desired
+	}
+	for _, component := range cfg.Components {
+		desired[component.ID] = component.Installed
+	}
+	return desired
+}
+
+func protectedComponentPackages(desired map[string]bool) map[string]bool {
+	protected := map[string]bool{}
+	for _, info := range config.Catalog {
+		if !desired[info.ID] && !info.Essential {
+			continue
+		}
+		for _, pkg := range info.Packages {
+			protected[pkg] = true
+		}
+	}
+	return protected
+}
+
+func (s *Subsystem) componentRemovable(ctx context.Context, info config.ComponentInfo, protected map[string]bool) bool {
+	if info.External {
+		rel, ok := externalReleases[info.ID]
+		return ok && externalOwned(rel)
+	}
+	for _, unit := range info.Units {
+		if !s.Systemd.IsDisabled(ctx, unit) {
+			return true
+		}
+	}
+	for _, pkg := range info.Packages {
+		if !protected[pkg] && s.Packages.Installed(ctx, pkg) {
+			return true
+		}
+	}
+	return false
+}
+
 // componentState distinguishes a complete installation from a partial one.
 // The latter must be completed when selected and fully purged when omitted.
 func (s *Subsystem) componentState(ctx context.Context, info config.ComponentInfo) (anyInstalled, allInstalled bool) {
 	if info.External {
-		installed := externalInstalled(info.ID)
-		return installed, installed
+		rel, ok := externalReleases[info.ID]
+		if !ok {
+			return false, false
+		}
+		present := externalTargetPresent(rel)
+		if !present {
+			return false, false
+		}
+		return true, externalOwned(rel) && s.externalCurrent(ctx, rel)
 	}
 	if len(info.Packages) == 0 {
 		return false, false
@@ -128,6 +245,9 @@ func (s *Subsystem) componentState(ctx context.Context, info config.ComponentInf
 		installed := s.Packages.Installed(ctx, pkg)
 		anyInstalled = anyInstalled || installed
 		allInstalled = allInstalled && installed
+	}
+	for _, unit := range info.Units {
+		allInstalled = allInstalled && s.Systemd.IsDisabled(ctx, unit)
 	}
 	return anyInstalled, allInstalled
 }
@@ -151,7 +271,9 @@ func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo) erro
 	// юниты с генерируемыми конфигами. Иначе после установки пакета демон
 	// поднимется со своим конфигом и займёт порт.
 	for _, unit := range info.Units {
-		_ = s.Systemd.Disable(ctx, unit)
+		if err := s.Systemd.Disable(ctx, unit); err != nil {
+			return fmt.Errorf("disable stock unit %s: %w", unit, err)
+		}
 	}
 	return nil
 }
@@ -163,16 +285,81 @@ func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo) erro
 // не просто apt-get install.
 func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentInfo) error {
 	if rel, ok := externalReleases[info.ID]; ok {
-		if s.externalCurrent(ctx, rel) {
+		owned := externalOwned(rel)
+		if s.externalCurrent(ctx, rel) && owned {
 			return nil
 		}
-		return s.installRelease(ctx, info.ID, rel)
+		if externalTargetPresent(rel) && !owned {
+			return fmt.Errorf("target %s уже существует и не принадлежит netOS", rel.Target)
+		}
+		backup := rel.Target + ".netos-rollback"
+		hadPrevious, err := backupExternalTarget(rel.Target, backup)
+		if err != nil {
+			return fmt.Errorf("backup existing %s: %w", info.ID, err)
+		}
+		cleanupBackup := func() { _ = os.Remove(backup) }
+		if err := s.installRelease(ctx, info.ID, rel); err != nil {
+			cleanupBackup()
+			return err
+		}
+		if !s.externalCurrent(ctx, rel) {
+			if hadPrevious {
+				if err := restoreExternalTarget(rel.Target, backup); err != nil {
+					return fmt.Errorf("installed %s does not report pinned version %s; restore previous binary: %w", info.ID, rel.Version, err)
+				}
+			} else if err := os.Remove(rel.Target); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("installed %s does not report pinned version %s; remove invalid binary: %w", info.ID, rel.Version, err)
+			}
+			return fmt.Errorf("installed %s does not report pinned version %s", info.ID, rel.Version)
+		}
+		if err := system.WriteFileAtomic(externalOwnerPath(rel), []byte(externalOwnerMark), 0o600); err != nil {
+			if hadPrevious {
+				if restoreErr := restoreExternalTarget(rel.Target, backup); restoreErr != nil {
+					return fmt.Errorf("write ownership for %s: %v; restore previous binary: %w", info.ID, err, restoreErr)
+				}
+			} else {
+				_ = os.Remove(rel.Target)
+			}
+			return fmt.Errorf("write ownership for %s: %w", info.ID, err)
+		}
+		cleanupBackup()
+		return nil
 	}
 	switch info.ID {
 	case "xray":
 		return fmt.Errorf("установка компонента %s появится вместе с поддержкой самого компонента", info.Title)
 	}
 	return fmt.Errorf("неизвестный внешний компонент %s", info.ID)
+}
+
+func backupExternalTarget(target, backup string) (bool, error) {
+	info, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("target %s is not a regular file", target)
+	}
+	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.Link(target, backup); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func restoreExternalTarget(target, backup string) error {
+	if err := os.Rename(backup, target); err == nil {
+		return nil
+	}
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(backup, target)
 }
 
 // externalCurrent проверяет закреплённую версию, а не просто наличие файла.
@@ -184,28 +371,50 @@ func (s *Subsystem) externalCurrent(ctx context.Context, rel externalRelease) bo
 	if err != nil || !info.Mode().IsRegular() || s.Runner == nil || len(rel.VersionArgs) == 0 {
 		return false
 	}
-	out, err := s.Runner.Run(ctx, rel.Target, rel.VersionArgs...)
+	probeCtx, cancel := context.WithTimeout(ctx, externalVersionTimeout)
+	defer cancel()
+	out, err := s.Runner.Run(probeCtx, rel.Target, rel.VersionArgs...)
 	if err != nil {
 		return false
 	}
-	want := strings.TrimPrefix(rel.Version, "v")
-	return want != "" && strings.Contains(out, want)
+	return versionOutputMatches(out, rel.Version)
+}
+
+func versionOutputMatches(out, version string) bool {
+	want := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(version), "v"), "V")
+	if want == "" {
+		return false
+	}
+	pattern := `(?i)(^|[^0-9a-z.])v?` + regexp.QuoteMeta(want) + `($|[^0-9a-z.+-])`
+	return regexp.MustCompile(pattern).MatchString(out)
 }
 
 func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error {
+	return s.removeProtected(ctx, info, nil)
+}
+
+func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentInfo, protected map[string]bool) error {
 	if info.Essential {
 		// Отключается функция, а не базовый инструмент, которым пользуется сам
 		// netOS. В частности, iproute2 нельзя удалять вместе с QoS.
 		return nil
 	}
 	for _, unit := range info.Units {
-		_ = s.Systemd.Disable(ctx, unit)
+		if err := s.Systemd.Disable(ctx, unit); err != nil {
+			return fmt.Errorf("disable stock unit %s: %w", unit, err)
+		}
 	}
 	if info.External {
-		// Внешний компонент — это один файл, который мы же и положили;
-		// удаляем его, иначе выключённый компонент останется на диске.
+		// Удаляем только файл с явным ownership-маркером. Само имя в
+		// /usr/local/bin не доказывает, что бинарник положил netOS.
 		if rel, ok := externalReleases[info.ID]; ok {
+			if !externalOwned(rel) {
+				return nil
+			}
 			if err := os.Remove(rel.Target); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err := os.Remove(externalOwnerPath(rel)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 			s.Logger.Infof("удалён компонент %s", info.Title)
@@ -220,7 +429,7 @@ func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error
 	// пакете возвращает ошибку и засоряет журнал.
 	var present []string
 	for _, p := range info.Packages {
-		if s.Packages.Installed(ctx, p) {
+		if !protected[p] && s.Packages.Installed(ctx, p) {
 			present = append(present, p)
 		}
 	}

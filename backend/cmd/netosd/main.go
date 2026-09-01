@@ -6,6 +6,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -30,6 +31,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/multiwan"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/netiface"
+	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/qos"
 	"github.com/netos-router/netos/internal/subsys/routing"
 	"github.com/netos-router/netos/internal/subsys/services"
@@ -40,17 +42,21 @@ import (
 )
 
 // version задаётся релизной сборкой через -ldflags "-X main.version=vX.Y.Z".
-var version = "dev"
-
-const (
-	stateDir = "/var/lib/netos/generated"
+var (
+	version = "dev"
+	// Variable rather than a constant so tests can verify first-boot credential
+	// creation and CLI lifecycle without ever touching production paths.
+	credentialsPath = "/var/lib/netos/initial-credentials"
+	stateDir        = "/var/lib/netos/generated"
 	// credentialsPath — файл с учётными данными первого запуска. Установщик
 	// читает его вместо разбора журнала: журнал хранит записи прошлых
 	// установок, и вытащить из него именно текущий пароль надёжно нельзя.
 	// Файл удаляется, как только администратор сменит пароль.
-	credentialsPath = "/var/lib/netos/initial-credentials"
-	tlsDir          = "/etc/netos/tls"
-	leasePath       = "/var/lib/netos/dnsmasq.leases"
+	tlsDir        = "/etc/netos/tls"
+	leasePath     = "/var/lib/netos/dnsmasq.leases"
+	readyPath     = "/run/netosd.ready"
+	detectInitial = bootstrap.Detect
+	newRunner     = func() system.Runner { return system.NewExec() }
 )
 
 func main() {
@@ -69,23 +75,41 @@ func main() {
 		dryRun      = flag.Bool("dry-run", false, "показать действия, ничего не применяя")
 		verbose     = flag.Bool("v", false, "подробный журнал выполняемых команд")
 		showPlan    = flag.Bool("plan", false, "показать план применения и выйти")
-		render      = flag.String("render", "", "напечатать сгенерированный артефакт (iptables|dnsmasq|sysctl|config) и выйти")
+		render      = flag.String("render", "", renderFlagHelp())
 		initOnly    = flag.Bool("init", false, "создать стартовую конфигурацию и выйти")
 		applyNow    = flag.Bool("apply", false, "применить активную конфигурацию и выйти")
+		captureBase = flag.Bool("capture-system-baseline", false, "сохранить состояние системы до первой установки и выйти")
+		showPort    = flag.Bool("panel-port", false, "показать фактический порт панели и выйти")
 		showVersion = flag.Bool("version", false, "показать версию и выйти")
 	)
 	flag.Parse()
+	daemonMode := !*dryRun && !*showPlan && *render == "" && !*initOnly && !*applyNow && !*captureBase && !*showPort && !*showVersion
+	if daemonMode {
+		// Type=simple становится active до окончания стартового Apply. Старый
+		// маркер снимает сам новый процесс: команды обслуживания ждут готовой
+		// конфигурации, а не только существующего PID.
+		_ = os.Remove(readyPath)
+	}
 	if *showVersion {
 		fmt.Printf("netOS %s\n", version)
 		return
 	}
 
 	logger := &stdLogger{}
-	runner := system.NewExec()
+	runner := newRunner()
 	if *verbose {
-		runner.OnCommand = func(name string, args []string) {
-			log.Printf("  $ %s %v", name, args)
+		if execRunner, ok := runner.(*system.Exec); ok {
+			execRunner.OnCommand = func(name string, args []string) {
+				log.Printf("  $ %s %v", name, args)
+			}
 		}
+	}
+	if *captureBase {
+		if err := manage.CaptureSystemBaseline(context.Background(), runner); err != nil {
+			log.Fatalf("не удалось сохранить состояние системы до установки: %v", err)
+		}
+		fmt.Println("Состояние системы до установки сохранено.")
+		return
 	}
 	for _, dir := range []string{filepath.Dir(*dbPath), stateDir} {
 		if err := system.CleanupAtomicTemps(dir); err != nil {
@@ -107,6 +131,10 @@ func main() {
 	cfg, revID, err := loadOrBootstrap(ctx, st, runner, logger)
 	if err != nil {
 		log.Fatalf("не удалось получить конфигурацию: %v", err)
+	}
+	if *showPort {
+		fmt.Println(cfg.System.Panel.Port)
+		return
 	}
 
 	if *initOnly {
@@ -195,7 +223,6 @@ func main() {
 		logger.Warnf("не удалось пометить ревизию активной: %v", err)
 	}
 	logger.Infof("конфигурация применена")
-
 	if *applyNow {
 		printSummary(cfg)
 		return
@@ -226,6 +253,12 @@ func main() {
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)
 	panel.DDNS = ddnsController
+	if daemonMode {
+		panel.Ready = func() error {
+			return system.WriteFileAtomic(readyPath, []byte(strconv.FormatInt(revID, 10)+"\n"), 0o644)
+		}
+		defer os.Remove(readyPath)
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -241,8 +274,9 @@ func main() {
 	logger.Infof("завершение работы")
 }
 
-// ensureAdmin создаёт учётную запись при первом запуске и печатает пароль в
-// журнал: это единственный момент, когда он виден открытым текстом.
+// ensureAdmin создаёт учётную запись при первом запуске. Открытый пароль
+// сохраняется только в root-only initial-credentials: stdout демона попадает
+// в systemd journal и для секретов непригоден.
 func ensureAdmin(st *store.Store, cfg *config.Config, logger apply.Logger) error {
 	count, err := st.CountUsers()
 	if err != nil {
@@ -265,32 +299,36 @@ func ensureAdmin(st *store.Store, cfg *config.Config, logger apply.Logger) error
 	}
 
 	addrs := panelAddresses(cfg)
-	fmt.Println()
-	fmt.Println("==============================================================")
-	fmt.Println("  netOS готов к работе")
-	fmt.Println()
-	port := strconv.Itoa(cfg.System.Panel.Port)
+	if err := writeCredentials(addrs, cfg.System.Panel.Port, password); err != nil {
+		logger.Warnf("не удалось сохранить файл с учётными данными: %v", err)
+	}
+	printReady(os.Stdout, addrs, cfg.System.Panel.Port)
+
+	logger.Infof("создана учётная запись admin; начальные данные сохранены в %s с правами root", credentialsPath)
+	return nil
+}
+
+// printReady пишет только несекретную часть сообщения запуска. stdout демона
+// сохраняется в systemd journal, поэтому пароль допустим лишь в root-only
+// initial-credentials, откуда его отдельно читает интерактивный установщик.
+func printReady(w io.Writer, addrs []string, panelPort int) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "==============================================================")
+	fmt.Fprintln(w, "  netOS готов к работе")
+	fmt.Fprintln(w)
+	port := strconv.Itoa(panelPort)
 	for i, a := range addrs {
 		label := "  Адрес панели:  "
 		if i > 0 {
 			label = "                 "
 		}
-		fmt.Println(label + "https://" + a + ":" + port)
+		fmt.Fprintln(w, label+"https://"+a+":"+port)
 	}
-	fmt.Println("  Пользователь:  admin")
-	fmt.Println("  Пароль:        " + password)
-	fmt.Println()
-	fmt.Println("  Пароль сгенерирован случайным и на этой машине больше нигде не хранится.")
-	fmt.Println("  Сертификат самоподписанный — браузер предупредит об этом.")
-	fmt.Println("==============================================================")
-	fmt.Println()
-
-	if err := writeCredentials(addrs, cfg.System.Panel.Port, password); err != nil {
-		logger.Warnf("не удалось сохранить файл с учётными данными: %v", err)
-	}
-
-	logger.Infof("создана учётная запись admin, пароль напечатан выше")
-	return nil
+	fmt.Fprintln(w, "  Начальные учётные данные: /var/lib/netos/initial-credentials (только root)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Сертификат самоподписанный — браузер предупредит об этом.")
+	fmt.Fprintln(w, "==============================================================")
+	fmt.Fprintln(w)
 }
 
 // writeCredentials сохраняет данные первого входа с правами только для root.
@@ -362,10 +400,12 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	if latest, err := st.LatestRevision(); err == nil {
 		logger.Infof("активной ревизии нет, беру последнюю (%d)", latest.ID)
 		return latest.Config, latest.ID, nil
+	} else if err != store.ErrNotFound {
+		return nil, 0, fmt.Errorf("чтение последней ревизии: %w", err)
 	}
 
 	logger.Infof("конфигурации нет, определяю параметры машины")
-	detected, err := bootstrap.Detect(ctx, runner)
+	detected, err := detectInitial(ctx, runner)
 	if err != nil {
 		return nil, 0, fmt.Errorf("определение параметров: %w", err)
 	}
@@ -373,6 +413,13 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 		detected.WANInterface, detected.WANAddress, detected.LANCandidates)
 
 	cfg := bootstrap.BuildInitial(detected)
+	if value := strings.TrimSpace(os.Getenv("NETOS_INITIAL_PORT")); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 || port == cfg.DNS.Port {
+			return nil, 0, fmt.Errorf("NETOS_INITIAL_PORT имеет недопустимое значение %q", value)
+		}
+		cfg.System.Panel.Port = port
+	}
 	id, err := st.CreateRevision(cfg, "system", "стартовая конфигурация")
 	if err != nil {
 		return nil, 0, err
@@ -382,9 +429,11 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 
 func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller) error {
 	svc := services.NewManager(runner)
+	componentSubsystem := components.New(runner, logger)
+	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")
 
 	subsystems := []apply.Subsystem{
-		components.New(runner, logger),
+		componentSubsystem,
 		hostsettings.New(runner),
 		sysctl.NewCore(runner),
 		sysctl.NewIPv6(runner),
@@ -397,8 +446,10 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		routing.New(runner),
 		channelMonitor,
 		vpnservers.New(runner, stateDir),
+		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
 		firewall.New(runner, stateDir),
+		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),
 		ddnsController,
@@ -414,6 +465,10 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 // renderableArtifacts — что умеет печатать netosd -render. Список общий с
 // командой netos render, чтобы справка не разошлась с действительностью.
 var renderableArtifacts = render.IDs()
+
+func renderFlagHelp() string {
+	return "напечатать сгенерированный артефакт (" + strings.Join(renderableArtifacts, "|") + ") и выйти"
+}
 
 func renderArtifact(kind string, cfg *config.Config) error {
 	if _, ok := render.ByID(kind); !ok {

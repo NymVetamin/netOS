@@ -266,34 +266,40 @@ func (c *Config) EnsureSystemRules() {
 // разбора JSON, чтобы конфигурация со старой версии схемы не приводила к
 // нулевым таймаутам и пустым политикам.
 func (c *Config) Normalize() {
-	if c.Version == 0 {
+	sourceVersion := c.Version
+	legacy := sourceVersion < Version
+	if legacy {
 		c.Version = Version
 	}
-	if c.System.Panel.Port == 0 {
+	if legacy && c.System.Panel.Port == 0 {
 		c.System.Panel.Port = 8443
 	}
-	if c.System.Panel.CommitTimeout == 0 {
+	// В старых схемах поля не было, поэтому ноль означал «подставить
+	// значение по умолчанию». В текущей схеме поле всегда присутствует:
+	// явный ноль должен дойти до Validate и быть отклонён, а не молча
+	// превращаться в 30 секунд.
+	if legacy && c.System.Panel.CommitTimeout == 0 {
 		c.System.Panel.CommitTimeout = 30
 	}
-	if c.System.Panel.TLS.Mode == "" {
+	if legacy && c.System.Panel.TLS.Mode == "" {
 		c.System.Panel.TLS.Mode = "selfsigned"
 	}
-	if c.System.NetworkBackend == "" {
+	if legacy && c.System.NetworkBackend == "" {
 		c.System.NetworkBackend = "netos"
 	}
-	if c.IPv6.Mode == "" {
+	if legacy && c.IPv6.Mode == "" {
 		c.IPv6.Mode = "off"
 	}
-	if c.DNS.Port == 0 {
+	if legacy && c.DNS.Port == 0 {
 		c.DNS.Port = 53
 	}
-	if c.DNS.LocalDomain == "" {
+	if legacy && c.DNS.LocalDomain == "" {
 		c.DNS.LocalDomain = "lan"
 	}
-	if c.MultiWAN.Mode == "" {
+	if legacy && c.MultiWAN.Mode == "" {
 		c.MultiWAN.Mode = "failover"
 	}
-	if len(c.Firewall.Zones) == 0 {
+	if legacy && len(c.Firewall.Zones) == 0 {
 		c.Firewall.Zones = DefaultZones()
 	}
 	if c.Components == nil {
@@ -303,14 +309,14 @@ func (c *Config) Normalize() {
 		c.QoS.WANs = []QoSWAN{}
 	}
 	for i := range c.QoS.WANs {
-		if c.QoS.WANs[i].Diffserv == "" {
+		if legacy && c.QoS.WANs[i].Diffserv == "" {
 			c.QoS.WANs[i].Diffserv = "diffserv4"
 		}
 	}
-	if c.DDNS.AddressSource == "" {
+	if legacy && c.DDNS.AddressSource == "" {
 		c.DDNS.AddressSource = "interface"
 	}
-	if c.DDNS.Interval == 0 {
+	if legacy && c.DDNS.Interval == 0 {
 		c.DDNS.Interval = 300
 	}
 	for i := range c.Clients {
@@ -323,74 +329,76 @@ func (c *Config) Normalize() {
 	// без портов, а VLAN без родителя, и притом молча.
 	c.normalizeInterfaceLinks()
 
-	usedWANIndexes := map[int]bool{}
-	for _, wan := range c.WANs {
-		if wan.Index > 0 {
-			usedWANIndexes[wan.Index] = true
-		}
-	}
-	for i := range c.WANs {
-		if c.WANs[i].Index == 0 {
-			for candidate := 1; ; candidate++ {
-				if !usedWANIndexes[candidate] {
-					c.WANs[i].Index = candidate
-					usedWANIndexes[candidate] = true
-					break
-				}
+	if legacy {
+		usedWANIndexes := map[int]bool{}
+		for _, wan := range c.WANs {
+			if wan.Index > 0 {
+				usedWANIndexes[wan.Index] = true
 			}
 		}
-		if c.WANs[i].Metric == 0 {
-			c.WANs[i].Metric = 100 + i
-		}
-		if c.WANs[i].Weight == 0 {
-			c.WANs[i].Weight = 1
-		}
-		if c.WANs[i].Probe.Type == "" {
-			c.WANs[i].Probe = DefaultProbe()
+		for i := range c.WANs {
+			if c.WANs[i].Index == 0 {
+				for candidate := 1; ; candidate++ {
+					if !usedWANIndexes[candidate] {
+						c.WANs[i].Index = candidate
+						usedWANIndexes[candidate] = true
+						break
+					}
+				}
+			}
+			if c.WANs[i].Metric == 0 {
+				c.WANs[i].Metric = 100 + i
+			}
+			if c.WANs[i].Weight == 0 {
+				c.WANs[i].Weight = 1
+			}
+			if c.WANs[i].Probe.Type == "" {
+				c.WANs[i].Probe = DefaultProbe()
+			}
 		}
 	}
 	for i := range c.Channels {
-		if c.Channels[i].Mode == "" {
+		if legacy && c.Channels[i].Mode == "" {
 			c.Channels[i].Mode = "tun"
 		}
-		if c.Channels[i].FailMode == "" {
+		if legacy && c.Channels[i].FailMode == "" {
 			c.Channels[i].FailMode = "block"
 		}
-		if c.Channels[i].Probe.Type == "" {
+		if legacy && c.Channels[i].Probe.Type == "" {
 			c.Channels[i].Probe = DefaultProbe()
 		}
 	}
 	for i := range c.Networks {
-		if c.Networks[i].Zone == "" {
+		if legacy && c.Networks[i].Zone == "" {
 			c.Networks[i].Zone = "lan"
 		}
-		if c.Networks[i].DHCPPool.LeaseTime == 0 {
+		if legacy && c.Networks[i].DHCPPool.LeaseTime == 0 {
 			c.Networks[i].DHCPPool.LeaseTime = 43200
 		}
 	}
-	if c.Firewall.OutputPolicy == "" {
+	if legacy && c.Firewall.OutputPolicy == "" {
 		c.Firewall.OutputPolicy = "accept"
 	}
 	for i := range c.Firewall.Rules {
 		// Направление раньше называлось router; приводим к именам цепочек ядра.
-		if c.Firewall.Rules[i].Flow == "router" {
+		if legacy && c.Firewall.Rules[i].Flow == "router" {
 			c.Firewall.Rules[i].Flow = "in"
 		}
 		// Направления «во все сразу» больше нет: старые правила приводим к входу.
-		if c.Firewall.Rules[i].Flow == "any" || c.Firewall.Rules[i].Flow == "" {
+		if legacy && (c.Firewall.Rules[i].Flow == "any" || c.Firewall.Rules[i].Flow == "") {
 			c.Firewall.Rules[i].Flow = "in"
 		}
-		if c.Firewall.Rules[i].Zone == "" {
+		if legacy && c.Firewall.Rules[i].Zone == "" {
 			c.Firewall.Rules[i].Zone = "global"
 		}
 		// Зона назначения осмысленна только для форварда.
-		if c.Firewall.Rules[i].Flow != "forward" {
+		if legacy && c.Firewall.Rules[i].Flow != "forward" {
 			c.Firewall.Rules[i].DstZone = ""
 		}
 	}
 
 	for i := range c.Firewall.NAT {
-		if c.Firewall.NAT[i].Direction == "" {
+		if legacy && c.Firewall.NAT[i].Direction == "" {
 			c.Firewall.NAT[i].Direction = "source"
 		}
 	}

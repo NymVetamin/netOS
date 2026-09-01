@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -14,7 +15,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-const confPath = "/etc/sysctl.d/99-netos.conf"
+var confPath = "/etc/sysctl.d/99-netos.conf"
 
 // modulesPath заставляет ядро загрузить conntrack на загрузке.
 //
@@ -23,7 +24,9 @@ const confPath = "/etc/sysctl.d/99-netos.conf"
 // правилом iptables, а это уже сильно позже. В журнале каждой загрузки
 // оставалась ошибка, а размер таблицы до применения конфигурации netOS
 // оставался стандартным — для роутера с десятками клиентов он мал.
-const modulesPath = "/etc/modules-load.d/netos.conf"
+var modulesPath = "/etc/modules-load.d/netos.conf"
+var procSysPath = "/proc/sys"
+var netClassPath = "/sys/class/net"
 
 const modulesData = "# Сгенерировано netOS. Правки будут перезаписаны.\nnf_conntrack\n"
 
@@ -152,7 +155,8 @@ func (c *Core) values(cfg *config.Config) map[string]string {
 func (c *Core) Plan(old, new *config.Config) ([]apply.Action, error) {
 	desired := renderGroups(coreGroups(new))
 	current, _ := os.ReadFile(confPath)
-	if string(current) == desired {
+	modules, _ := os.ReadFile(modulesPath)
+	if string(current) == desired && string(modules) == modulesData {
 		return nil, nil
 	}
 	kind := "update"
@@ -180,14 +184,7 @@ func (c *Core) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 func (c *Core) Health(ctx context.Context, cfg *config.Config) error {
-	out, err := readSysctl("net.ipv4.ip_forward")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(out) != "1" {
-		return fmt.Errorf("форвардинг IPv4 не включён")
-	}
-	return nil
+	return checkValues(c.values(cfg))
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +202,29 @@ func NewIPv6(r system.Runner) *IPv6 { return &IPv6{Runner: r} }
 
 func (s *IPv6) Name() string { return "ipv6" }
 
-const ipv6ConfPath = "/etc/sysctl.d/99-netos-ipv6.conf"
+var ipv6ConfPath = "/etc/sysctl.d/99-netos-ipv6.conf"
+
+// ManagedKeys returns every global kernel setting netOS may change. The
+// installer-side system snapshot uses this catalog before the first Apply so
+// uninstall can restore the host byte-for-byte instead of guessing distro
+// defaults. Keep the catalog derived from the same functions as Apply.
+func ManagedKeys() []string {
+	keys := make([]string, 0)
+	for key := range NewCore(nil).values(config.Default()) {
+		keys = append(keys, key)
+	}
+	for key := range NewIPv6(nil).values(config.Default()) {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// ManagedPerInterfaceIPv6Keys are additionally written for every interface
+// that exists when IPv6 configuration is applied.
+func ManagedPerInterfaceIPv6Keys() []string {
+	return []string{"accept_ra", "autoconf", "disable_ipv6"}
+}
 
 func (s *IPv6) values(cfg *config.Config) map[string]string {
 	if cfg.IPv6.Mode != "off" {
@@ -232,15 +251,21 @@ func (s *IPv6) values(cfg *config.Config) map[string]string {
 }
 
 func (s *IPv6) Plan(old, new *config.Config) ([]apply.Action, error) {
-	if old != nil && old.IPv6.Mode == new.IPv6.Mode {
+	desired := renderSysctl(s.values(new))
+	current, _ := os.ReadFile(ipv6ConfPath)
+	if string(current) == desired {
 		return nil, nil
 	}
 	detail := "IPv6 отключается на всех интерфейсах"
 	if new.IPv6.Mode != "off" {
 		detail = "IPv6 включается обратно"
 	}
+	kind := "update"
+	if len(current) == 0 {
+		kind = "create"
+	}
 	return []apply.Action{{
-		Kind:       "update",
+		Kind:       kind,
 		Target:     "IPv6",
 		Detail:     detail,
 		Disruptive: true,
@@ -285,17 +310,36 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
-	out, err := readSysctl("net.ipv6.conf.all.disable_ipv6")
+	if err := checkValues(s.values(cfg)); err != nil {
+		if os.IsNotExist(err) {
+			// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
+			return nil
+		}
+		return err
+	}
+	names, err := interfaceNames()
 	if err != nil {
 		// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
-	want := "1"
+	values := map[string]string{"disable_ipv6": "1", "accept_ra": "0", "autoconf": "0"}
 	if cfg.IPv6.Mode != "off" {
-		want = "0"
+		values = map[string]string{"disable_ipv6": "0", "accept_ra": "1", "autoconf": "1"}
 	}
-	if strings.TrimSpace(out) != want {
-		return fmt.Errorf("режим IPv6 не применён")
+	for _, name := range names {
+		if name == "lo" {
+			continue
+		}
+		perInterface := map[string]string{}
+		for key, value := range values {
+			perInterface["net.ipv6.conf."+name+"."+key] = value
+		}
+		if err := checkValues(perInterface); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
@@ -389,10 +433,31 @@ func applyValues(values map[string]string) error {
 	return nil
 }
 
+func checkValues(values map[string]string) error {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sortStrings(keys)
+	for _, key := range keys {
+		out, err := readSysctl(key)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("чтение параметра %s: %w", key, err)
+		}
+		if strings.Join(strings.Fields(out), " ") != strings.Join(strings.Fields(values[key]), " ") {
+			return fmt.Errorf("параметр %s: получено %q, ожидалось %q", key, strings.TrimSpace(out), values[key])
+		}
+	}
+	return nil
+}
+
 // writeSysctl переводит имя параметра в путь внутри /proc/sys и записывает
 // значение.
 func writeSysctl(key, value string) error {
-	path := filepath.Join("/proc/sys", filepath.Join(strings.Split(key, ".")...))
+	path := filepath.Join(procSysPath, filepath.Join(strings.Split(key, ".")...))
 	err := os.WriteFile(path, []byte(value), 0o644)
 	switch {
 	case err == nil:
@@ -411,7 +476,7 @@ func writeSysctl(key, value string) error {
 
 // readSysctl читает значение параметра из /proc/sys.
 func readSysctl(key string) (string, error) {
-	path := filepath.Join("/proc/sys", filepath.Join(strings.Split(key, ".")...))
+	path := filepath.Join(procSysPath, filepath.Join(strings.Split(key, ".")...))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -420,7 +485,7 @@ func readSysctl(key string) (string, error) {
 }
 
 func interfaceNames() ([]string, error) {
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(netClassPath)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -32,6 +33,9 @@ type Detected struct {
 	// ManagementCIDR — подсеть, из которой сейчас подключён администратор.
 	// Используется, чтобы не отрезать себе доступ правилами файрволла.
 	ManagementCIDR string
+	// OccupiedCIDRs contains every IPv4 subnet already present on a physical
+	// interface. LAN bootstrap must avoid all of them, not only the uplink.
+	OccupiedCIDRs []string
 }
 
 // Detect опрашивает систему.
@@ -47,13 +51,20 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 	// Интерфейс маршрута по умолчанию — почти наверняка аплинк.
 	out, err := r.Run(ctx, "ip", "-o", "route", "show", "default")
 	if err == nil {
-		fields := strings.Fields(out)
-		for i, f := range fields {
-			if f == "dev" && i+1 < len(fields) {
-				d.WANInterface = fields[i+1]
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			var iface, gateway string
+			for i, f := range fields {
+				if f == "dev" && i+1 < len(fields) {
+					iface = fields[i+1]
+				}
+				if f == "via" && i+1 < len(fields) {
+					gateway = fields[i+1]
+				}
 			}
-			if f == "via" && i+1 < len(fields) {
-				d.WANGateway = fields[i+1]
+			if iface != "" {
+				d.WANInterface, d.WANGateway = iface, gateway
+				break
 			}
 		}
 	}
@@ -62,6 +73,9 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 		addrs, err := addressesOf(ctx, r, name)
 		if err != nil {
 			continue
+		}
+		for _, addr := range addrs {
+			d.OccupiedCIDRs = append(d.OccupiedCIDRs, subnetOf(addr))
 		}
 		if name == d.WANInterface && len(addrs) > 0 {
 			d.WANAddress = addrs[0]
@@ -193,11 +207,17 @@ type subnetChoice struct {
 // сам администратор: совпадение сетей означало бы мгновенную потерю доступа.
 func pickFreeSubnet(d *Detected) subnetChoice {
 	candidates := []struct{ third int }{{10}, {20}, {30}, {40}, {50}}
-	occupied := d.ManagementCIDR
+	occupied := make(map[string]bool, len(d.OccupiedCIDRs)+1)
+	for _, cidr := range d.OccupiedCIDRs {
+		occupied[cidr] = true
+	}
+	if d.ManagementCIDR != "" {
+		occupied[d.ManagementCIDR] = true
+	}
 
 	for _, c := range candidates {
 		base := fmt.Sprintf("192.168.%d.", c.third)
-		if strings.HasPrefix(occupied, base) {
+		if occupied[base+"0/24"] {
 			continue
 		}
 		return subnetChoice{
@@ -218,7 +238,7 @@ func pickFreeSubnet(d *Detected) subnetChoice {
 // physicalInterfaces перечисляет сетевые карты, отсеивая петлю и виртуальные
 // интерфейсы, созданные не нами.
 func physicalInterfaces() ([]string, error) {
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(sysClassNet)
 	if err != nil {
 		return nil, err
 	}
@@ -229,13 +249,15 @@ func physicalInterfaces() ([]string, error) {
 			continue
 		}
 		// У физических карт в sysfs есть ссылка на устройство шины.
-		if _, err := os.Stat("/sys/class/net/" + name + "/device"); err != nil {
+		if _, err := os.Stat(filepath.Join(sysClassNet, name, "device")); err != nil {
 			continue
 		}
 		out = append(out, name)
 	}
 	return out, nil
 }
+
+var sysClassNet = "/sys/class/net"
 
 func addressesOf(ctx context.Context, r system.Runner, iface string) ([]string, error) {
 	out, err := r.Run(ctx, "ip", "-4", "-o", "addr", "show", "dev", iface)

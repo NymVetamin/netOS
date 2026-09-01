@@ -10,6 +10,7 @@ package routing
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"strings"
 
@@ -20,7 +21,7 @@ import (
 
 // Файл с именами таблиц. Именованные таблицы удобнее номеров: команда
 // ip route show table netos-vpn читается без сверки с документацией.
-const rtTablesPath = "/etc/iproute2/rt_tables.d/netos.conf"
+var rtTablesPath = "/etc/iproute2/rt_tables.d/netos.conf"
 
 // Собственный протокол маршрутов. Благодаря ему в выводе ip route видно, что
 // маршрут поставил netOS, а не ядро и не клиент DHCP, — и его же используем,
@@ -28,7 +29,7 @@ const rtTablesPath = "/etc/iproute2/rt_tables.d/netos.conf"
 //
 // Пользовательские статические маршруты помечаются штатным proto static,
 // маршруты аплинков — netos: так подсистемы не удаляют работу друг друга.
-const rtProtosPath = "/etc/iproute2/rt_protos.d/netos.conf"
+var rtProtosPath = "/etc/iproute2/rt_protos.d/netos.conf"
 
 // Приоритеты правил netOS занимают отдельный диапазон, чтобы не спорить с
 // правилами системы (0, 32766, 32767) и оставить место для ручных.
@@ -114,30 +115,32 @@ func (s *Subsystem) writeProtos() error {
 // netOS владеет полным набором статических маршрутов. Маршруты ядра, DHCP и
 // других динамических протоколов не затрагиваются.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
-	wanted := map[string]bool{}
+	wanted := map[string]map[string]bool{"-4": {}, "-6": {}}
 	for _, r := range enabledRoutes(cfg) {
-		wanted[staticRouteKey(r)] = true
+		wanted[routeFamily(r)][staticRouteKey(r)] = true
 	}
 
-	// table all находит хвосты даже в таблицах, уже удалённых из конфигурации.
-	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", "all",
-		"proto", "static")
-	if err != nil {
-		return fmt.Errorf("чтение статических маршрутов netOS: %w", err)
-	}
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || wanted[routeLineKey(line)] {
-			continue
+	for _, family := range []string{"-4", "-6"} {
+		// table all находит хвосты даже в таблицах, уже удалённых из конфигурации.
+		out, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all",
+			"proto", "static")
+		if err != nil {
+			return fmt.Errorf("чтение статических маршрутов netOS (%s): %w", family, err)
 		}
-		args := append([]string{"-4", "route", "del"}, strings.Fields(line)...)
-		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
-			return fmt.Errorf("удаление старого маршрута %q: %w", line, err)
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || wanted[family][routeLineKey(line)] {
+				continue
+			}
+			args := append([]string{family, "route", "del"}, strings.Fields(line)...)
+			if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
+				return fmt.Errorf("удаление старого маршрута %q: %w", line, err)
+			}
 		}
 	}
 
 	for _, r := range enabledRoutes(cfg) {
-		args := []string{"-4", "route", "replace"}
+		args := []string{routeFamily(r), "route", "replace"}
 
 		switch r.Type {
 		case "blackhole", "unreachable", "prohibit":
@@ -164,6 +167,18 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	return nil
+}
+
+func routeFamily(r config.StaticRoute) string {
+	for _, value := range []string{r.Destination, r.Gateway} {
+		if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is6() {
+			return "-6"
+		}
+		if addr, err := netip.ParseAddr(value); err == nil && addr.Is6() {
+			return "-6"
+		}
+	}
+	return "-4"
 }
 
 func routeKey(table, destination, routeType, gateway, iface string, metric int) string {
@@ -222,7 +237,9 @@ func (s *Subsystem) applyRules(ctx context.Context, cfg *config.Config) error {
 		if prio < rulePriorityBase || prio > rulePriorityMax {
 			continue
 		}
-		_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(prio))
+		if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(prio)); err != nil {
+			return fmt.Errorf("удаление старого правила с приоритетом %d: %w", prio, err)
+		}
 	}
 
 	for _, r := range enabledRules(cfg) {
@@ -263,11 +280,26 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	for _, r := range enabledRules(cfg) {
-		if !strings.Contains(out, r.Table) {
+		if !hasRule(out, r.Priority, r.Table) {
 			return fmt.Errorf("правило для таблицы %s не применилось", r.Table)
 		}
 	}
 	return nil
+}
+
+func hasRule(out string, priority int, table string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if leadingPriority(line) != priority {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if (fields[i] == "lookup" || fields[i] == "table") && fields[i+1] == table {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

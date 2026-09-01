@@ -10,6 +10,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
+	goruntime "runtime"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -19,6 +21,11 @@ import (
 
 type ocservPaths struct {
 	conf, passwd, users, tls, auth, unit string
+}
+
+type ocservAuthState struct {
+	PeersSHA256  string `json:"peers_sha256"`
+	PasswdSHA256 string `json:"passwd_sha256"`
 }
 
 func ocservUnitName(server config.VPNServer) string {
@@ -107,10 +114,129 @@ WantedBy=multi-user.target
 `
 }
 
-func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server config.VPNServer) (bool, error) {
+func ocservStateFor(passwdPath, usersPath string, server config.VPNServer) (ocservAuthState, error) {
+	peersJSON, err := json.Marshal(server.Peers)
+	if err != nil {
+		return ocservAuthState{}, err
+	}
+	peersSum := sha256.Sum256(peersJSON)
+	passwd, err := secureRegularFile(passwdPath, 0o600)
+	if err != nil {
+		return ocservAuthState{}, fmt.Errorf("passwd ocserv: %w", err)
+	}
+	wantedUsers := map[string][]byte{}
+	for _, peer := range server.Peers {
+		if peer.Enabled {
+			wantedUsers[peer.Credentials["username"]] = []byte("explicit-ipv4 = " + peer.Address + "\n")
+		}
+	}
+	seenUsers := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(passwd)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 || fields[0] == "" || fields[2] == "" || seenUsers[fields[0]] {
+			return ocservAuthState{}, fmt.Errorf("некорректная строка passwd ocserv")
+		}
+		if _, ok := wantedUsers[fields[0]]; !ok {
+			return ocservAuthState{}, fmt.Errorf("лишний пользователь %s в passwd ocserv", fields[0])
+		}
+		seenUsers[fields[0]] = true
+	}
+	if len(seenUsers) != len(wantedUsers) {
+		return ocservAuthState{}, fmt.Errorf("набор пользователей passwd ocserv расходится с конфигурацией")
+	}
+	usersInfo, err := os.Lstat(usersPath)
+	if err != nil {
+		return ocservAuthState{}, err
+	}
+	if !usersInfo.IsDir() || usersInfo.Mode()&os.ModeSymlink != 0 {
+		return ocservAuthState{}, fmt.Errorf("каталог пользователей ocserv не является обычным каталогом")
+	}
+	if goruntime.GOOS != "windows" && usersInfo.Mode().Perm() != 0o700 {
+		return ocservAuthState{}, fmt.Errorf("права каталога пользователей ocserv: %04o, ожидалось 0700", usersInfo.Mode().Perm())
+	}
+	entries, err := os.ReadDir(usersPath)
+	if err != nil {
+		return ocservAuthState{}, err
+	}
+	if len(entries) != len(wantedUsers) {
+		return ocservAuthState{}, fmt.Errorf("набор per-user файлов ocserv расходится с конфигурацией")
+	}
+	for _, entry := range entries {
+		expected, ok := wantedUsers[entry.Name()]
+		if !ok || entry.IsDir() {
+			return ocservAuthState{}, fmt.Errorf("неожиданный per-user артефакт ocserv %s", entry.Name())
+		}
+		if err := healthyFile(filepath.Join(usersPath, entry.Name()), expected, 0o600); err != nil {
+			return ocservAuthState{}, err
+		}
+	}
+	passwdSum := sha256.Sum256(passwd)
+	return ocservAuthState{PeersSHA256: hex.EncodeToString(peersSum[:]), PasswdSHA256: hex.EncodeToString(passwdSum[:])}, nil
+}
+
+func secureRegularFile(path string, mode os.FileMode) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s не является обычным файлом без symlink", path)
+	}
+	if goruntime.GOOS != "windows" && info.Mode().Perm() != mode.Perm() {
+		return nil, fmt.Errorf("права %s: %04o, ожидалось %04o", path, info.Mode().Perm(), mode.Perm())
+	}
+	return os.ReadFile(path)
+}
+
+func ocservAuthHealth(paths ocservPaths, server config.VPNServer) error {
+	data, err := secureRegularFile(paths.auth, 0o600)
+	if err != nil {
+		return fmt.Errorf("маркер целостности ocserv: %w", err)
+	}
+	var recorded ocservAuthState
+	if err := json.Unmarshal(data, &recorded); err != nil {
+		return fmt.Errorf("маркер целостности ocserv: %w", err)
+	}
+	actual, err := ocservStateFor(paths.passwd, paths.users, server)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(recorded, actual) {
+		return fmt.Errorf("passwd либо конфигурация пользователей ocserv изменены вне netOS")
+	}
+	return nil
+}
+
+func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server config.VPNServer, wasOwned bool) (created bool, retErr error) {
 	paths := s.ocservPaths(server)
 	_, statErr := os.Stat(paths.unit)
 	existed := statErr == nil
+	if existed && !wasOwned {
+		return false, fmt.Errorf("служба %s уже существует и не принадлежит netOS", ocservUnitName(server))
+	}
+	snapshots, err := capturePaths(paths.conf, paths.passwd, paths.auth, paths.unit, paths.users, paths.tls)
+	if err != nil {
+		return false, err
+	}
+	mutated := true // certificate creation is the first managed-state mutation
+	defer func() {
+		if retErr == nil || !mutated {
+			return
+		}
+		if !existed {
+			s.cleanupOcserv(context.Background(), server)
+			return
+		}
+		if err := restorePaths(snapshots); err != nil {
+			retErr = fmt.Errorf("%v; восстановление OpenConnect: %w", retErr, err)
+			return
+		}
+		_, _ = s.Runner.Run(context.Background(), "systemctl", "daemon-reload")
+		_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", ocservUnitName(server))
+	}()
 	certPath := filepath.Join(paths.tls, "panel.crt")
 	certBefore, _ := os.ReadFile(certPath)
 	if _, _, _, err := tlsutil.EnsureSelfSigned(paths.tls, cfg.System.Hostname); err != nil {
@@ -128,19 +254,8 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 	defer os.Remove(confCandidate)
 	defer os.Remove(passwdCandidate)
 	defer os.RemoveAll(usersCandidate)
-	authJSON, err := json.Marshal(server.Peers)
-	if err != nil {
-		return false, err
-	}
-	authSum := sha256.Sum256(authJSON)
-	authData := []byte(hex.EncodeToString(authSum[:]) + "\n")
-	authChanged := system.FileChanged(paths.auth, authData)
-	if _, err := os.Stat(paths.passwd); err != nil {
-		authChanged = true
-	}
-	if _, err := os.Stat(paths.users); err != nil {
-		authChanged = true
-	}
+	authChanged := ocservAuthHealth(paths, server) != nil
+	var authData []byte
 	testConf := conf
 	if authChanged {
 		testConf = []byte(strings.ReplaceAll(strings.ReplaceAll(string(conf), paths.passwd, passwdCandidate), paths.users, usersCandidate))
@@ -168,6 +283,15 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 				return false, err
 			}
 		}
+		state, err := ocservStateFor(passwdCandidate, usersCandidate, server)
+		if err != nil {
+			return false, err
+		}
+		authData, err = json.Marshal(state)
+		if err != nil {
+			return false, err
+		}
+		authData = append(authData, '\n')
 	}
 	if _, err := s.Runner.Run(ctx, "/usr/sbin/ocserv", "--test-config", "--config", confCandidate); err != nil {
 		return false, fmt.Errorf("проверка конфигурации ocserv: %w", err)
@@ -206,13 +330,12 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 		}
 	}
 	name := ocservUnitName(server)
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", name); err != nil {
+	if err := s.ensureUnitEnabled(ctx, name); err != nil {
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", name)
 	if changed || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", name); err != nil {
-			s.cleanupOcserv(ctx, server)
 			return false, fmt.Errorf("запуск ocserv: %w", err)
 		}
 	}

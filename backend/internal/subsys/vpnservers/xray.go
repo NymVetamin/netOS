@@ -107,6 +107,13 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 		if policy.DstIP != "" {
 			rule["ip"] = []string{policy.DstIP}
 		}
+		if len(policy.Domains) > 0 {
+			domains := make([]string, 0, len(policy.Domains))
+			for _, domain := range policy.Domains {
+				domains = append(domains, "domain:"+strings.Trim(strings.ToLower(domain), "."))
+			}
+			rule["domain"] = domains
+		}
 		rules = append(rules, rule)
 	}
 	rules = append(rules, defaultRules...)
@@ -154,10 +161,33 @@ WantedBy=multi-user.target
 `
 }
 
-func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server config.VPNServer) (bool, error) {
+func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server config.VPNServer, wasOwned bool) (created bool, retErr error) {
 	confPath, unitPath := s.xrayPaths(server)
 	_, statErr := os.Stat(unitPath)
 	existed := statErr == nil
+	if existed && !wasOwned {
+		return false, fmt.Errorf("служба %s уже существует и не принадлежит netOS", xrayUnitName(server))
+	}
+	snapshots, err := capturePaths(confPath, unitPath)
+	if err != nil {
+		return false, err
+	}
+	mutated := false
+	defer func() {
+		if retErr == nil || !mutated {
+			return
+		}
+		if !existed {
+			s.cleanupXray(context.Background(), server)
+			return
+		}
+		if err := restorePaths(snapshots); err != nil {
+			retErr = fmt.Errorf("%v; восстановление Xray: %w", retErr, err)
+			return
+		}
+		_, _ = s.Runner.Run(context.Background(), "systemctl", "daemon-reload")
+		_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", xrayUnitName(server))
+	}()
 	conf, err := RenderXray(server, cfg)
 	if err != nil {
 		return false, err
@@ -175,6 +205,7 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 	if err := os.Rename(candidate, confPath); err != nil {
 		return false, err
 	}
+	mutated = true
 	if err := os.Chmod(confPath, 0o600); err != nil {
 		return false, err
 	}
@@ -187,13 +218,12 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 			return false, err
 		}
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
+	if err := s.ensureUnitEnabled(ctx, unitName); err != nil {
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
 	if changed || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
-			s.cleanupXray(ctx, server)
 			return false, fmt.Errorf("запуск сервера Xray: %w", err)
 		}
 	}

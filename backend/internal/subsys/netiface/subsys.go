@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -96,6 +97,12 @@ func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := s.removeStale(ctx, cfg); err != nil {
 		return err
 	}
+	// Record the union before creating anything. If a later ip command fails or
+	// netosd is killed, every newly created virtual link remains discoverable
+	// and removable on the next Apply instead of becoming an orphan.
+	if err := s.prepareOwned(cfg); err != nil {
+		return err
+	}
 
 	// Дальше порядок важен: bond и bridge должны существовать до того, как в
 	// них добавят порты, а родитель VLAN — до создания самого VLAN.
@@ -142,7 +149,9 @@ func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface confi
 			return fmt.Errorf("создание бриджа %s: %w", iface.Name, err)
 		}
 		// STP защищает от петли, если кто-то соединит два порта одного бриджа.
-		_, _ = s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "type", "bridge", "stp_state", "1")
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "type", "bridge", "stp_state", "1"); err != nil {
+			return fmt.Errorf("включение STP на %s: %w", iface.Name, err)
+		}
 	case "vlan":
 		parent := cfg.InterfaceName(iface.Parent)
 		if parent == "" {
@@ -177,7 +186,22 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 		}
 	}
 	if iface.MAC != "" {
-		_, _ = s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "address", iface.MAC)
+		out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface.Name)
+		if err != nil {
+			return fmt.Errorf("чтение текущего MAC для %s: %w", iface.Name, err)
+		}
+		_, _, currentMAC := parseLinkState(out)
+		if !strings.EqualFold(currentMAC, iface.MAC) {
+			// Physical drivers and bond devices commonly reject a MAC change
+			// while the link is administratively UP. The requested final state
+			// is restored at the end of configure.
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "down"); err != nil {
+				return fmt.Errorf("остановка %s перед сменой MAC: %w", iface.Name, err)
+			}
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "address", iface.MAC); err != nil {
+				return fmt.Errorf("установка MAC для %s: %w", iface.Name, err)
+			}
+		}
 	}
 
 	for _, member := range cfg.InterfaceNames(iface.Members) {
@@ -189,7 +213,16 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 		if current := masterOf(member); current == iface.Name {
 			continue
 		} else if current != "" {
-			_, _ = s.Runner.Run(ctx, "ip", "link", "set", member, "nomaster")
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, "down"); err != nil {
+				return fmt.Errorf("остановка %s перед выводом из %s: %w", member, current, err)
+			}
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, "nomaster"); err != nil {
+				return fmt.Errorf("вывод %s из %s: %w", member, current, err)
+			}
+		} else {
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, "down"); err != nil {
+				return fmt.Errorf("остановка %s перед добавлением в %s: %w", member, iface.Name, err)
+			}
 		}
 		if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, "master", iface.Name); err != nil {
 			return fmt.Errorf("добавление %s в %s: %w", member, iface.Name, err)
@@ -266,19 +299,13 @@ func (s *Interfaces) ensureBridgeCarrier(ctx context.Context, bridge string) err
 
 // dummyNameFor строит имя dummy-порта, укладываясь в лимит ядра в 15 символов.
 func dummyNameFor(bridge string) string {
-	name := "d-" + strings.TrimPrefix(bridge, "br-")
-	if len(name) > 15 {
-		name = name[:15]
-	}
-	return name
+	dummy, _ := config.BridgeCarrierNames(bridge)
+	return dummy
 }
 
 func carrierPeerNameFor(bridge string) string {
-	name := "p-" + strings.TrimPrefix(bridge, "br-")
-	if len(name) > 15 {
-		name = name[:15]
-	}
-	return name
+	_, peer := config.BridgeCarrierNames(bridge)
+	return peer
 }
 
 // removeStale удаляет интерфейсы, которыми netOS владеет, но которых больше
@@ -323,7 +350,9 @@ func (s *Interfaces) removeStale(ctx context.Context, cfg *config.Config) error 
 		if _, err := s.Runner.Run(ctx, "ip", "link", "delete", name); err != nil {
 			// Интерфейс мог исчезнуть сам: вынули карту, ушёл модуль. Валить
 			// из-за этого всё применение незачем.
-			continue
+			if linkExists(name) {
+				return fmt.Errorf("удаление старого интерфейса %s: %w", name, err)
+			}
 		}
 	}
 	return nil
@@ -387,16 +416,54 @@ func (s *Interfaces) rememberOwned(cfg *config.Config) error {
 			names = append(names, carrierPeerNameFor(i.Name))
 		}
 	}
+	return s.writeOwnedNames(names)
+}
+
+func (s *Interfaces) prepareOwned(cfg *config.Config) error {
+	byName := map[string]bool{}
+	for name := range s.owned {
+		byName[name] = true
+	}
+	for _, iface := range cfg.Interfaces {
+		if iface.Type == "physical" {
+			continue
+		}
+		// Never adopt an existing foreign link merely because the desired
+		// configuration uses the same name. ensure must reject that collision.
+		if !linkExists(iface.Name) {
+			byName[iface.Name] = true
+		}
+		if iface.Type == "bridge" && len(iface.Members) == 0 {
+			dummy, peer := dummyNameFor(iface.Name), carrierPeerNameFor(iface.Name)
+			if !linkExists(dummy) {
+				byName[dummy] = true
+			}
+			if !linkExists(peer) {
+				byName[peer] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	return s.writeOwnedNames(names)
+}
+
+func (s *Interfaces) writeOwnedNames(names []string) error {
+	if s.OwnedPath == "" {
+		return nil
+	}
 	sort.Strings(names)
 	s.owned = map[string]bool{}
-	for _, n := range names {
-		s.owned[n] = true
+	for _, name := range names {
+		s.owned[name] = true
 	}
 	data := []byte(strings.Join(names, "\n"))
 	if len(names) > 0 {
 		data = append(data, '\n')
 	}
-	if err := system.WriteFileAtomic(s.OwnedPath, data, 0o644); err != nil {
+	if _, err := system.WriteFileAtomicIfChanged(s.OwnedPath, data, 0o644); err != nil {
 		return fmt.Errorf("запись списка интерфейсов netOS: %w", err)
 	}
 	return nil
@@ -421,15 +488,89 @@ func (s *Interfaces) loadOwned() map[string]bool {
 }
 
 func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
-	for _, iface := range cfg.Interfaces {
-		if !iface.Enabled || iface.Type == "physical" {
+	// WAN is applied after the generic interface layer and may deliberately
+	// bring an otherwise disabled physical port up or override its MTU. Health
+	// must validate the final composed state, not the intermediate state that
+	// Interfaces.Apply produced before WAN.Apply ran.
+	wanEnabled := map[string]bool{}
+	wanMTU := map[string]int{}
+	for _, w := range cfg.WANs {
+		if !w.Enabled {
 			continue
 		}
+		wanEnabled[w.Interface] = true
+		if w.MTU > 0 {
+			wanMTU[w.Interface] = w.MTU
+		}
+	}
+	for _, iface := range cfg.Interfaces {
 		if !linkExists(iface.Name) {
+			if iface.Type == "physical" {
+				continue // вынутый физический порт допустим так же, как в Apply
+			}
 			return fmt.Errorf("интерфейс %s не создан", iface.Name)
+		}
+		if mismatch := describeMismatch(cfg, iface); mismatch != "" {
+			return fmt.Errorf("интерфейс %s не соответствует конфигурации: %s", iface.Name, mismatch)
+		}
+		out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface.Name)
+		if err != nil {
+			return fmt.Errorf("проверка интерфейса %s: %w", iface.Name, err)
+		}
+		up, mtu, mac := parseLinkState(out)
+		expectedUp := iface.Enabled || wanEnabled[iface.ID]
+		if up != expectedUp {
+			want := "down"
+			if expectedUp {
+				want = "up"
+			}
+			return fmt.Errorf("интерфейс %s не находится в состоянии %s", iface.Name, want)
+		}
+		expectedMTU := iface.MTU
+		if override := wanMTU[iface.ID]; override > 0 {
+			expectedMTU = override
+		}
+		if expectedMTU > 0 && mtu != expectedMTU {
+			return fmt.Errorf("интерфейс %s: MTU %d вместо %d", iface.Name, mtu, expectedMTU)
+		}
+		if iface.MAC != "" && !strings.EqualFold(mac, iface.MAC) {
+			return fmt.Errorf("интерфейс %s: MAC %s вместо %s", iface.Name, mac, iface.MAC)
+		}
+		if iface.Type == "bridge" || iface.Type == "bond" {
+			for _, member := range cfg.InterfaceNames(iface.Members) {
+				if linkExists(member) && masterOf(member) != iface.Name {
+					return fmt.Errorf("интерфейс %s не включён в %s", member, iface.Name)
+				}
+			}
+		}
+		if iface.Type == "bridge" && len(iface.Members) == 0 {
+			dummy, peer := dummyNameFor(iface.Name), carrierPeerNameFor(iface.Name)
+			if !linkExists(dummy) || !linkExists(peer) || masterOf(dummy) != iface.Name {
+				return fmt.Errorf("carrier-пара %s/%s пустого моста %s неисправна", dummy, peer, iface.Name)
+			}
 		}
 	}
 	return nil
+}
+
+func parseLinkState(out string) (up bool, mtu int, mac string) {
+	fields := strings.Fields(out)
+	for i, field := range fields {
+		if strings.HasPrefix(field, "<") && strings.HasSuffix(field, ">") {
+			for _, flag := range strings.Split(strings.Trim(field, "<>"), ",") {
+				if flag == "UP" {
+					up = true
+				}
+			}
+		}
+		if field == "mtu" && i+1 < len(fields) {
+			_, _ = fmt.Sscan(fields[i+1], &mtu)
+		}
+		if (field == "link/ether" || field == "link/loopback") && i+1 < len(fields) {
+			mac = fields[i+1]
+		}
+	}
+	return up, mtu, mac
 }
 
 // ---------------------------------------------------------------------------
@@ -545,7 +686,7 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 				return fmt.Errorf("назначение адреса %s на %s: %w", addr, iface, err)
 			}
 		}
-		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface, "up"); err != nil {
+		if err := ensureLinkUp(ctx, s.Runner, iface); err != nil {
 			return err
 		}
 	}
@@ -565,11 +706,19 @@ func (s *Networks) syncAddressOwnership(ctx context.Context, wanted []ownedWANAd
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("чтение списка адресов сегментов netOS: %w", err)
 	}
-	encoded, err := json.MarshalIndent(wanted, "", "  ")
-	if err != nil {
-		return err
+	// Сначала сохраняем объединение старого и нового ownership. Новые адреса
+	// должны быть известны rollback до их добавления, а старые нельзя забывать
+	// до подтверждённого удаления.
+	provisionalByKey := map[string]ownedWANAddress{}
+	for _, item := range append(append([]ownedWANAddress{}, previous...), wanted...) {
+		provisionalByKey[item.Interface+"\x00"+item.Address] = item
 	}
-	if err := system.WriteFileAtomic(s.OwnedAddressPath, append(encoded, '\n'), 0o600); err != nil {
+	provisional := make([]ownedWANAddress, 0, len(provisionalByKey))
+	for _, item := range provisionalByKey {
+		provisional = append(provisional, item)
+	}
+	sortOwnedAddresses(provisional)
+	if err := writeOwnedAddresses(s.OwnedAddressPath, provisional); err != nil {
 		return fmt.Errorf("запись списка адресов сегментов netOS: %w", err)
 	}
 	wantedKeys := map[string]bool{}
@@ -591,6 +740,42 @@ func (s *Networks) syncAddressOwnership(ctx context.Context, wanted []ownedWANAd
 			return fmt.Errorf("удаление старого адреса сегмента %s с %s: %w", item.Address, item.Interface, err)
 		}
 	}
+	if err := writeOwnedAddresses(s.OwnedAddressPath, wanted); err != nil {
+		return fmt.Errorf("запись итогового списка адресов сегментов netOS: %w", err)
+	}
+	return nil
+}
+
+func sortOwnedAddresses(items []ownedWANAddress) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Interface == items[j].Interface {
+			return items[i].Address < items[j].Address
+		}
+		return items[i].Interface < items[j].Interface
+	})
+}
+
+func writeOwnedAddresses(path string, items []ownedWANAddress) error {
+	encoded, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = system.WriteFileAtomicIfChanged(path, append(encoded, '\n'), 0o600)
+	return err
+}
+
+func ensureLinkUp(ctx context.Context, runner system.Runner, iface string) error {
+	out, err := runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface)
+	if err != nil {
+		return fmt.Errorf("проверка интерфейса %s: %w", iface, err)
+	}
+	up, _, _ := parseLinkState(out)
+	if up {
+		return nil
+	}
+	if _, err := runner.Run(ctx, "ip", "link", "set", iface, "up"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -604,8 +789,11 @@ func (s *Networks) Health(ctx context.Context, cfg *config.Config) error {
 			continue
 		}
 		name := ifaceName[n.Interface]
-		if name == "" || !linkExists(name) {
-			continue
+		if name == "" {
+			return fmt.Errorf("для сегмента %s не выбран интерфейс", n.Name)
+		}
+		if !linkExists(name) {
+			return fmt.Errorf("интерфейс %s сегмента %s отсутствует", name, n.Name)
 		}
 		current, err := addressesOf(ctx, s.Runner, name)
 		if err != nil {
@@ -623,30 +811,50 @@ func (s *Networks) Health(ctx context.Context, cfg *config.Config) error {
 // ---------------------------------------------------------------------------
 
 type WAN struct {
-	Runner system.Runner
+	Runner            system.Runner
+	OwnedLNSRoutePath string
+	lnsRouteWanted    map[string]ownedLNSRoute
 	// OwnedAddressPath persists the exact static addresses assigned by the WAN
 	// subsystem. Physical links are not owned by netOS, so their addresses must
 	// be tracked explicitly to remove them when an uplink is deleted or changes
 	// protocol, including after a netosd restart.
 	OwnedAddressPath string
-	// pppoePrevious хранит конфигурации PPPoE, какими они были до применения:
-	// по ним видно, менялись ли параметры, и живую сессию не приходится рвать
-	// на каждом применении.
-	pppoePrevious map[string]string
+	// OwnedRoutePath persists only the default routes created by this WAN
+	// subsystem. RouteProto is shared with the Routing subsystem, so protocol
+	// number alone must never be used as an ownership marker.
+	OwnedRoutePath string
 	// PPPoETimeout ограничивает ожидание сессии после применения, PPPoePoll —
 	// как часто проверять. Значения по умолчанию подставляются на месте;
 	// поля существуют, чтобы тесты не ждали десятки секунд.
 	PPPoETimeout time.Duration
 	PPPoePoll    time.Duration
+	DHCPTimeout  time.Duration
+	DHCPPoll     time.Duration
 }
 
 func NewWAN(r system.Runner) *WAN {
-	return &WAN{Runner: r, OwnedAddressPath: "/var/lib/netos/generated/owned-wan-addresses.json"}
+	return &WAN{
+		Runner: r, OwnedAddressPath: "/var/lib/netos/generated/owned-wan-addresses.json",
+		OwnedRoutePath:    "/var/lib/netos/generated/owned-wan-routes.json",
+		OwnedLNSRoutePath: "/var/lib/netos/generated/owned-l2tp-routes.json",
+	}
 }
 
 type ownedWANAddress struct {
 	Interface string `json:"interface"`
 	Address   string `json:"address"`
+}
+
+type ownedWANRoute struct {
+	Gateway   string `json:"gateway"`
+	Interface string `json:"interface"`
+	Metric    int    `json:"metric"`
+}
+
+type ownedLNSRoute struct {
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway"`
+	Interface   string `json:"interface"`
 }
 
 func (s *WAN) Name() string { return "wan" }
@@ -679,6 +887,7 @@ func (s *WAN) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
+	s.lnsRouteWanted = map[string]ownedLNSRoute{}
 	// Fail before looking at host interfaces. Besides producing a useful error
 	// on incomplete/test systems, this prevents an unsupported enabled uplink
 	// from being silently skipped merely because its link is currently absent.
@@ -696,18 +905,38 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	for _, i := range cfg.Interfaces {
 		ifaceName[i.ID] = i.Name
 	}
-	wantedAddresses := make([]ownedWANAddress, 0, len(cfg.WANs))
+	// An enabled uplink with no live physical link cannot be applied. Fail
+	// before cleanup or ownership writes: otherwise a first-boot failure could
+	// claim addresses/routes that were never installed and later delete foreign
+	// state during retry or uninstall.
 	for _, w := range cfg.WANs {
-		name := ifaceName[w.Interface]
-		if !w.Enabled || name == "" || w.Address == "" {
+		if !w.Enabled {
 			continue
 		}
-		if w.Proto == "static" || (w.Proto == "l2tp" && w.Underlay == "static") {
-			wantedAddresses = append(wantedAddresses, ownedWANAddress{Interface: name, Address: w.Address})
+		name := ifaceName[w.Interface]
+		if name == "" {
+			return fmt.Errorf("аплинк %s: не выбран физический интерфейс", w.Name)
+		}
+		if !linkExists(name) {
+			return fmt.Errorf("аплинк %s: интерфейс %s отсутствует", w.Name, name)
 		}
 	}
-	if err := s.syncStaticAddressOwnership(ctx, wantedAddresses); err != nil {
-		return err
+	wantedAddresses := make([]ownedWANAddress, 0, len(cfg.WANs))
+	staticWanted := make([]ownedWANRoute, 0, len(cfg.WANs))
+	for _, w := range cfg.WANs {
+		name := ifaceName[w.Interface]
+		if !w.Enabled || name == "" {
+			continue
+		}
+		if w.Address != "" && (w.Proto == "static" || (w.Proto == "l2tp" && w.Underlay == "static")) {
+			wantedAddresses = append(wantedAddresses, ownedWANAddress{Interface: name, Address: w.Address})
+		}
+		if w.Gateway != "" && w.Proto == "static" {
+			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: w.Metric})
+		}
+		if w.Gateway != "" && w.Proto == "l2tp" && w.Underlay == "static" {
+			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: underlayMetric(w)})
+		}
 	}
 	dhcpWanted := map[string]bool{}
 	pppoeWanted := map[string]bool{}
@@ -734,44 +963,35 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := s.cleanupDHCPClients(ctx, dhcpWanted); err != nil {
 		return err
 	}
-	s.readPPPoEConfs(cfg)
-	s.readL2TPConfs(cfg)
 	if err := s.cleanupPPPoE(ctx, pppoeWanted); err != nil {
 		return err
 	}
 	if err := s.cleanupL2TP(ctx, l2tpWanted); err != nil {
 		return err
 	}
-	staticWanted := map[string]bool{}
-
 	for _, w := range cfg.WANs {
 		name := ifaceName[w.Interface]
 		if name == "" || !linkExists(name) {
 			continue
 		}
 		if !w.Enabled {
-			s.stopDHCPClient(ctx, name)
-			_, _ = s.Runner.Run(ctx, "ip", "addr", "flush", "dev", name)
+			if err := s.stopDHCPClient(ctx, name); err != nil {
+				return err
+			}
 			continue
 		}
 
-		if _, err := s.Runner.Run(ctx, "ip", "link", "set", name, "up"); err != nil {
+		if err := s.ensureWANLink(ctx, w, name); err != nil {
 			return err
-		}
-		if w.MTU > 0 {
-			if err := s.setWANMTU(ctx, w, name); err != nil {
-				return err
-			}
 		}
 
 		switch w.Proto {
 		case "static":
-			s.stopDHCPClient(ctx, name)
-			if err := s.applyStatic(ctx, w, name); err != nil {
+			if err := s.stopDHCPClient(ctx, name); err != nil {
 				return err
 			}
-			if w.Gateway != "" {
-				staticWanted[wanRouteKey(w.Gateway, name, w.Metric)] = true
+			if err := s.applyStaticOwned(ctx, w, name); err != nil {
+				return err
 			}
 		case "dhcp":
 			// Клиент DHCP поднимается отдельным юнитом на интерфейс, чтобы
@@ -782,7 +1002,9 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 		case "pppoe":
 			// Соединение держит pppd: адрес и маршрут по умолчанию приходят
 			// от провайдера, поэтому назначать здесь нечего.
-			s.stopDHCPClient(ctx, name)
+			if err := s.stopDHCPClient(ctx, name); err != nil {
+				return err
+			}
 			if err := s.ensurePPPoE(ctx, w, name); err != nil {
 				return err
 			}
@@ -790,12 +1012,11 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			// Сначала адрес в сети провайдера, и только поверх него туннель:
 			// без адреса не найти ни концентратор, ни маршрут до него.
 			if w.Underlay == "static" {
-				s.stopDHCPClient(ctx, name)
-				if err := s.applyStatic(ctx, underlayWAN(w), name); err != nil {
+				if err := s.stopDHCPClient(ctx, name); err != nil {
 					return err
 				}
-				if w.Gateway != "" {
-					staticWanted[wanRouteKey(w.Gateway, name, underlayMetric(w))] = true
+				if err := s.applyStaticOwned(ctx, underlayWAN(w), name); err != nil {
+					return err
 				}
 			} else if err := s.ensureDHCPClient(ctx, underlayWAN(w), name); err != nil {
 				return err
@@ -807,7 +1028,13 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("аплинк %s: неизвестный тип подключения %q", w.Name, w.Proto)
 		}
 	}
-	return s.cleanupStaticRoutes(ctx, staticWanted)
+	if err := s.syncStaticAddressOwnership(ctx, wantedAddresses); err != nil {
+		return err
+	}
+	if err := s.syncStaticRouteOwnership(ctx, staticWanted); err != nil {
+		return err
+	}
+	return s.syncLNSRouteOwnership(ctx)
 }
 
 func (s *WAN) setWANMTU(ctx context.Context, w config.WAN, name string) error {
@@ -817,15 +1044,27 @@ func (s *WAN) setWANMTU(ctx context.Context, w config.WAN, name string) error {
 	return nil
 }
 
-func (s *WAN) syncStaticAddressOwnership(ctx context.Context, wanted []ownedWANAddress) error {
-	var previous []ownedWANAddress
-	data, err := os.ReadFile(s.OwnedAddressPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &previous); err != nil {
-			return fmt.Errorf("чтение списка адресов WAN netOS: %w", err)
+func (s *WAN) ensureWANLink(ctx context.Context, w config.WAN, name string) error {
+	out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
+	if err != nil {
+		return fmt.Errorf("проверка интерфейса аплинка %s: %w", name, err)
+	}
+	up, mtu, _ := parseLinkState(out)
+	if !up {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", name, "up"); err != nil {
+			return err
 		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("чтение списка адресов WAN netOS: %w", err)
+	}
+	if w.MTU > 0 && mtu != w.MTU {
+		return s.setWANMTU(ctx, w, name)
+	}
+	return nil
+}
+
+func (s *WAN) syncStaticAddressOwnership(ctx context.Context, wanted []ownedWANAddress) error {
+	previous, err := s.readOwnedWANAddresses()
+	if err != nil {
+		return err
 	}
 	wantedKeys := map[string]bool{}
 	for _, item := range wanted {
@@ -837,48 +1076,68 @@ func (s *WAN) syncStaticAddressOwnership(ctx context.Context, wanted []ownedWANA
 		}
 		if _, err := s.Runner.Run(ctx, "ip", "addr", "del", item.Address, "dev", item.Interface); err != nil {
 			// A removed physical link already removed all of its addresses.
-			if linkExists(item.Interface) {
+			if !linkExists(item.Interface) {
+				continue
+			}
+			current, readErr := addressesOf(ctx, s.Runner, item.Interface)
+			if readErr != nil || current[item.Address] {
 				return fmt.Errorf("удаление старого адреса WAN %s с %s: %w", item.Address, item.Interface, err)
 			}
 		}
 	}
-	encoded, err := json.MarshalIndent(wanted, "", "  ")
+	return s.writeOwnedWANAddresses(wanted)
+}
+
+func (s *WAN) prepareStaticAddressOwnership(wanted []ownedWANAddress) error {
+	previous, err := s.readOwnedWANAddresses()
 	if err != nil {
 		return err
 	}
-	return system.WriteFileAtomic(s.OwnedAddressPath, append(encoded, '\n'), 0o600)
+	byKey := map[string]ownedWANAddress{}
+	for _, item := range previous {
+		byKey[item.Interface+"\x00"+item.Address] = item
+	}
+	for _, item := range wanted {
+		byKey[item.Interface+"\x00"+item.Address] = item
+	}
+	items := make([]ownedWANAddress, 0, len(byKey))
+	for _, item := range byKey {
+		items = append(items, item)
+	}
+	return s.writeOwnedWANAddresses(items)
 }
 
-func (s *WAN) cleanupStaticRoutes(ctx context.Context, wanted map[string]bool) error {
-	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", "main",
-		"proto", fmt.Sprint(config.RouteProto))
-	if err != nil {
-		return fmt.Errorf("чтение маршрутов аплинков netOS: %w", err)
+func (s *WAN) readOwnedWANAddresses() ([]ownedWANAddress, error) {
+	if s.OwnedAddressPath == "" {
+		return nil, nil
 	}
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		gateway, iface, metric := "", "", 0
-		for i := 0; i+1 < len(fields); i++ {
-			switch fields[i] {
-			case "via":
-				gateway = fields[i+1]
-			case "dev":
-				iface = fields[i+1]
-			case "metric":
-				_, _ = fmt.Sscan(fields[i+1], &metric)
-			}
-		}
-		if wanted[wanRouteKey(gateway, iface, metric)] {
-			continue
-		}
-		args := append([]string{"-4", "route", "del"}, fields...)
-		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
-			return fmt.Errorf("удаление старого маршрута аплинка %q: %w", line, err)
-		}
+	data, err := os.ReadFile(s.OwnedAddressPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("чтение списка адресов WAN netOS: %w", err)
+	}
+	var items []ownedWANAddress
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("чтение списка адресов WAN netOS: %w", err)
+	}
+	return items, nil
+}
+
+func (s *WAN) writeOwnedWANAddresses(items []ownedWANAddress) error {
+	if s.OwnedAddressPath == "" {
+		return nil
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Interface+"\x00"+items[i].Address < items[j].Interface+"\x00"+items[j].Address
+	})
+	encoded, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := system.WriteFileAtomicIfChanged(s.OwnedAddressPath, append(encoded, '\n'), 0o600); err != nil {
+		return fmt.Errorf("запись списка адресов WAN netOS: %w", err)
 	}
 	return nil
 }
@@ -887,26 +1146,152 @@ func wanRouteKey(gateway, iface string, metric int) string {
 	return fmt.Sprintf("%s|%s|%d", gateway, iface, metric)
 }
 
-func (s *WAN) applyStatic(ctx context.Context, w config.WAN, iface string) error {
-	current, err := addressesOf(ctx, s.Runner, iface)
+func (s *WAN) syncStaticRouteOwnership(ctx context.Context, wanted []ownedWANRoute) error {
+	previous, err := s.readOwnedWANRoutes()
 	if err != nil {
 		return err
 	}
+	wantedByKey := map[string]ownedWANRoute{}
+	for _, item := range wanted {
+		wantedByKey[wanRouteKey(item.Gateway, item.Interface, item.Metric)] = item
+	}
+	// Publish the union first. If deletion fails, the next Apply must still
+	// know both the old route and the newly installed routes belong to WAN.
+	union := map[string]ownedWANRoute{}
+	for _, item := range previous {
+		union[wanRouteKey(item.Gateway, item.Interface, item.Metric)] = item
+	}
+	for key, item := range wantedByKey {
+		union[key] = item
+	}
+	if err := s.writeOwnedWANRoutes(routeValues(union)); err != nil {
+		return err
+	}
+	for _, item := range previous {
+		if _, keep := wantedByKey[wanRouteKey(item.Gateway, item.Interface, item.Metric)]; keep {
+			continue
+		}
+		_, deleteErr := s.Runner.Run(ctx, "ip", "-4", "route", "del", "default",
+			"via", item.Gateway, "dev", item.Interface, "metric", fmt.Sprint(item.Metric),
+			"proto", fmt.Sprint(config.RouteProto))
+		if deleteErr != nil {
+			out, showErr := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default")
+			if showErr != nil || defaultRouteMatches(out, item.Interface, item.Gateway, item.Metric) {
+				return fmt.Errorf("удаление старого маршрута WAN через %s dev %s metric %d: %w",
+					item.Gateway, item.Interface, item.Metric, deleteErr)
+			}
+		}
+	}
+	return s.writeOwnedWANRoutes(routeValues(wantedByKey))
+}
+
+func (s *WAN) prepareStaticRouteOwnership(wanted []ownedWANRoute) error {
+	previous, err := s.readOwnedWANRoutes()
+	if err != nil {
+		return err
+	}
+	byKey := map[string]ownedWANRoute{}
+	for _, item := range previous {
+		byKey[wanRouteKey(item.Gateway, item.Interface, item.Metric)] = item
+	}
+	for _, item := range wanted {
+		byKey[wanRouteKey(item.Gateway, item.Interface, item.Metric)] = item
+	}
+	return s.writeOwnedWANRoutes(routeValues(byKey))
+}
+
+func (s *WAN) readOwnedWANRoutes() ([]ownedWANRoute, error) {
+	if s.OwnedRoutePath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(s.OwnedRoutePath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("чтение списка маршрутов WAN netOS: %w", err)
+	}
+	var items []ownedWANRoute
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("чтение списка маршрутов WAN netOS: %w", err)
+	}
+	return items, nil
+}
+
+func (s *WAN) writeOwnedWANRoutes(items []ownedWANRoute) error {
+	if s.OwnedRoutePath == "" {
+		return nil
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return wanRouteKey(items[i].Gateway, items[i].Interface, items[i].Metric) <
+			wanRouteKey(items[j].Gateway, items[j].Interface, items[j].Metric)
+	})
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := system.WriteFileAtomicIfChanged(s.OwnedRoutePath, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("запись списка маршрутов WAN netOS: %w", err)
+	}
+	return nil
+}
+
+func routeValues(items map[string]ownedWANRoute) []ownedWANRoute {
+	result := make([]ownedWANRoute, 0, len(items))
+	for _, item := range items {
+		result = append(result, item)
+	}
+	return result
+}
+
+func (s *WAN) applyStatic(ctx context.Context, w config.WAN, iface string) error {
+	if err := s.applyStaticAddress(ctx, w, iface); err != nil {
+		return err
+	}
+	return s.applyStaticRoute(ctx, w, iface)
+}
+
+// applyStaticOwned publishes each ownership record immediately before the
+// corresponding kernel mutation. If a later mutation fails, anything already
+// changed remains discoverable for rollback/retry, while operations that were
+// never attempted are never falsely claimed.
+func (s *WAN) applyStaticOwned(ctx context.Context, w config.WAN, iface string) error {
+	if w.Address != "" {
+		if err := s.prepareStaticAddressOwnership([]ownedWANAddress{{Interface: iface, Address: w.Address}}); err != nil {
+			return err
+		}
+	}
+	if err := s.applyStaticAddress(ctx, w, iface); err != nil {
+		return err
+	}
+	if w.Gateway != "" {
+		if err := s.prepareStaticRouteOwnership([]ownedWANRoute{{Gateway: w.Gateway, Interface: iface, Metric: w.Metric}}); err != nil {
+			return err
+		}
+	}
+	return s.applyStaticRoute(ctx, w, iface)
+}
+
+func (s *WAN) applyStaticAddress(ctx context.Context, w config.WAN, iface string) error {
 	// replace, а не add: адрес с тем же значением мог быть выдан чужим клиентом
 	// DHCP и жить с ограниченным сроком. Тогда add молча ничего не делал бы, а
 	// netOS считал бы адрес своим статическим — до истечения аренды, после
 	// которой аплинк тихо остался бы без адреса. replace делает адрес
 	// постоянным и не разрывает установленные соединения.
+	if current, err := addressesOf(ctx, s.Runner, iface); err == nil && current[w.Address] {
+		return nil
+	}
 	if _, err := s.Runner.Run(ctx, "ip", "addr", "replace", w.Address, "dev", iface); err != nil {
 		return fmt.Errorf("назначение адреса аплинка %s: %w", w.Address, err)
 	}
-	for addr := range current {
-		if addr != w.Address {
-			_, _ = s.Runner.Run(ctx, "ip", "addr", "del", addr, "dev", iface)
-		}
-	}
+	return nil
+}
 
+func (s *WAN) applyStaticRoute(ctx context.Context, w config.WAN, iface string) error {
 	if w.Gateway != "" {
+		if s.defaultRouteHealthy(ctx, iface, w.Gateway, w.Metric) {
+			return nil
+		}
 		metric := fmt.Sprint(w.Metric)
 		// Маршрут по умолчанию заменяем, а не добавляем: иначе при повторном
 		// применении накопится несколько шлюзов с одной метрикой.
@@ -923,7 +1308,7 @@ func (s *WAN) applyStatic(ctx context.Context, w config.WAN, iface string) error
 }
 
 func (s *WAN) ensureDHCPClient(ctx context.Context, w config.WAN, iface string) error {
-	unit, err := s.ensureDHCPClientFiles(ctx, w, iface)
+	unit, changed, err := s.ensureDHCPClientFiles(ctx, w, iface)
 	if err != nil {
 		return err
 	}
@@ -931,7 +1316,25 @@ func (s *WAN) ensureDHCPClient(ctx context.Context, w config.WAN, iface string) 
 	// Уже работающего клиента не трогаем: перезапуск приводит к отпусканию
 	// аренды и кратковременной потере аплинка.
 	out, err := s.Runner.Run(ctx, "systemctl", "is-active", unit)
-	if err == nil && strings.TrimSpace(out) == "active" {
+	active := err == nil && strings.TrimSpace(out) == "active"
+	enabled := s.unitEnabled(ctx, unit)
+	if active && !changed {
+		if !enabled {
+			if _, err := s.Runner.Run(ctx, "systemctl", "enable", unit); err != nil {
+				return fmt.Errorf("включение автозапуска DHCP-клиента на %s: %w", iface, err)
+			}
+		}
+		return nil
+	}
+	if active {
+		if !enabled {
+			if _, err := s.Runner.Run(ctx, "systemctl", "enable", unit); err != nil {
+				return fmt.Errorf("включение автозапуска DHCP-клиента на %s: %w", iface, err)
+			}
+		}
+		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unit); err != nil {
+			return fmt.Errorf("перезапуск клиента DHCP на %s после изменения настроек: %w", iface, err)
+		}
 		return nil
 	}
 	if _, err := s.Runner.Run(ctx, "systemctl", "enable", "--now", unit); err != nil {
@@ -942,40 +1345,184 @@ func (s *WAN) ensureDHCPClient(ctx context.Context, w config.WAN, iface string) 
 
 // stopDHCPClient гасит клиента, когда аплинк перевели на статику или выключили.
 // Иначе он продолжит переназначать адрес поверх заданного вручную.
-func (s *WAN) stopDHCPClient(ctx context.Context, iface string) {
+func (s *WAN) stopDHCPClient(ctx context.Context, iface string) error {
 	unit := "netos-dhcp-" + iface + ".service"
-	_, _ = s.Runner.Run(ctx, "systemctl", "disable", "--now", unit)
+	if !s.unitActive(ctx, unit) && !s.unitEnabled(ctx, unit) {
+		return nil
+	}
+	_, stopErr := s.Runner.Run(ctx, "systemctl", "disable", "--now", unit)
+	if s.unitActive(ctx, unit) {
+		if stopErr != nil {
+			return fmt.Errorf("остановка DHCP-клиента на %s: %w", iface, stopErr)
+		}
+		return fmt.Errorf("DHCP-клиент на %s остался активен", iface)
+	}
+	return nil
 }
 
 func (s *WAN) Health(ctx context.Context, cfg *config.Config) error {
-	enabled := false
-	for _, w := range cfg.WANs {
-		if w.Enabled {
-			enabled = true
-		}
+	ifaceName := map[string]string{}
+	for _, iface := range cfg.Interfaces {
+		ifaceName[iface.ID] = iface.Name
 	}
-	if !enabled {
-		return nil
-	}
-	// Сессии PPPoE проверяем поимённо: маршрут по умолчанию мог остаться от
-	// другого аплинка, и тогда неподнявшийся PPPoE прошёл бы незамеченным.
 	for _, w := range cfg.WANs {
-		if !w.Enabled || w.Proto != "pppoe" {
+		if !w.Enabled {
 			continue
 		}
-		if err := s.waitPPPoE(ctx, w); err != nil {
-			return err
+		physical := ifaceName[w.Interface]
+		if physical == "" {
+			return fmt.Errorf("аплинк %s: не выбран физический интерфейс", w.Name)
+		}
+		if !linkExists(physical) {
+			return fmt.Errorf("аплинк %s: интерфейс %s отсутствует", w.Name, physical)
+		}
+
+		switch w.Proto {
+		case "static":
+			if err := s.healthAddress(ctx, physical, w.Address, w.Name); err != nil {
+				return err
+			}
+			if !cfg.MultiWAN.Enabled && !s.defaultRouteHealthy(ctx, physical, w.Gateway, w.Metric) {
+				return fmt.Errorf("аплинк %s: нет точного default-маршрута через %s dev %s metric %d", w.Name, w.Gateway, physical, w.Metric)
+			}
+		case "dhcp":
+			if !s.unitActive(ctx, "netos-dhcp-"+physical+".service") {
+				return fmt.Errorf("аплинк %s: DHCP-клиент на %s не активен", w.Name, physical)
+			}
+			if !s.unitEnabled(ctx, "netos-dhcp-"+physical+".service") {
+				return fmt.Errorf("аплинк %s: DHCP-клиент на %s не включён для автозапуска", w.Name, physical)
+			}
+			if err := s.waitDHCP(ctx, physical, w.Name); err != nil {
+				return err
+			}
+			if !cfg.MultiWAN.Enabled && !s.defaultRouteHealthy(ctx, physical, "", w.Metric) {
+				return fmt.Errorf("аплинк %s: нет DHCP default-маршрута dev %s metric %d", w.Name, physical, w.Metric)
+			}
+		case "pppoe":
+			if !s.unitActive(ctx, pppoeUnitName(w.ID)) {
+				return fmt.Errorf("аплинк %s: служба PPPoE не активна", w.Name)
+			}
+			if !s.unitEnabled(ctx, pppoeUnitName(w.ID)) {
+				return fmt.Errorf("аплинк %s: служба PPPoE не включена для автозапуска", w.Name)
+			}
+			if err := s.waitPPPoE(ctx, w); err != nil {
+				return err
+			}
+			if !cfg.MultiWAN.Enabled && !s.defaultRouteHealthy(ctx, PPPoEInterface(w.ID), "", w.Metric) {
+				return fmt.Errorf("аплинк %s: нет default-маршрута через %s metric %d", w.Name, PPPoEInterface(w.ID), w.Metric)
+			}
+		case "l2tp":
+			if w.Underlay == "static" {
+				if err := s.healthAddress(ctx, physical, w.Address, w.Name); err != nil {
+					return err
+				}
+			} else {
+				if !s.unitActive(ctx, "netos-dhcp-"+physical+".service") {
+					return fmt.Errorf("аплинк %s: DHCP подложки на %s не активен", w.Name, physical)
+				}
+				if !s.unitEnabled(ctx, "netos-dhcp-"+physical+".service") {
+					return fmt.Errorf("аплинк %s: DHCP подложки на %s не включён для автозапуска", w.Name, physical)
+				}
+				if err := s.waitDHCP(ctx, physical, w.Name); err != nil {
+					return err
+				}
+			}
+			if err := s.healthLNSRoutes(ctx, w, physical); err != nil {
+				return err
+			}
+			if !s.unitActive(ctx, l2tpUnitName(w.ID)) {
+				return fmt.Errorf("аплинк %s: служба L2TP не активна", w.Name)
+			}
+			if !s.unitEnabled(ctx, l2tpUnitName(w.ID)) {
+				return fmt.Errorf("аплинк %s: служба L2TP не включена для автозапуска", w.Name)
+			}
+			if err := s.waitPPPoE(ctx, w); err != nil {
+				return err
+			}
+			if !cfg.MultiWAN.Enabled && !s.defaultRouteHealthy(ctx, L2TPInterface(w.ID), "", w.Metric) {
+				return fmt.Errorf("аплинк %s: нет default-маршрута через %s metric %d", w.Name, L2TPInterface(w.ID), w.Metric)
+			}
+		default:
+			return fmt.Errorf("аплинк %s: неизвестный тип подключения %q", w.Name, w.Proto)
 		}
 	}
+	return nil
+}
 
-	out, err := s.Runner.Run(ctx, "ip", "route", "show", "default")
+func (s *WAN) waitDHCP(ctx context.Context, iface, wanName string) error {
+	timeout := s.DHCPTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	interval := s.DHCPPoll
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	statePath := filepath.Join(dhcpRuntimeDir, "netos-dhcp-"+iface+".address")
+	deadline := time.Now().Add(timeout)
+	for {
+		data, readErr := os.ReadFile(statePath)
+		lease := strings.TrimSpace(string(data))
+		if readErr == nil && lease != "" {
+			if addresses, err := addressesOf(ctx, s.Runner, iface); err == nil && addresses[lease] {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("аплинк %s: DHCP на %s не получил адрес за %s", wanName, iface, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+func (s *WAN) defaultRouteHealthy(ctx context.Context, iface, gateway string, metric int) bool {
+	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default")
+	return err == nil && defaultRouteMatches(out, iface, gateway, metric)
+}
+
+func (s *WAN) healthAddress(ctx context.Context, iface, expected, wanName string) error {
+	addresses, err := addressesOf(ctx, s.Runner, iface)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(out) == "" {
-		return fmt.Errorf("маршрут по умолчанию отсутствует")
+	if expected != "" {
+		if !addresses[expected] {
+			return fmt.Errorf("аплинк %s: адрес %s отсутствует на %s", wanName, expected, iface)
+		}
+		return nil
+	}
+	if len(addresses) == 0 {
+		return fmt.Errorf("аплинк %s: на %s нет IPv4-адреса", wanName, iface)
 	}
 	return nil
+}
+
+func defaultRouteMatches(out, iface, gateway string, metric int) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "default" {
+			continue
+		}
+		gotIface, gotGateway, gotMetric := "", "", 0
+		for i := 1; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "dev":
+				gotIface = fields[i+1]
+			case "via":
+				gotGateway = fields[i+1]
+			case "metric":
+				_, _ = fmt.Sscan(fields[i+1], &gotMetric)
+			}
+		}
+		if gotIface == iface && gotMetric == metric && (gateway == "" || gotGateway == gateway) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

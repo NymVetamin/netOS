@@ -116,12 +116,6 @@ func (m *Maintenance) DeleteBackup(name string) error {
 var versionPattern = regexp.MustCompile(`^(?:latest|v?[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)$`)
 
 func (m *Maintenance) Schedule(ctx context.Context, operation, argument string) error {
-	active, _ := m.Runner.Run(ctx, "systemctl", "is-active", m.Unit+".service", m.Unit+".timer")
-	for _, state := range strings.Fields(active) {
-		if state == "active" || state == "activating" {
-			return fmt.Errorf("операция обслуживания уже выполняется")
-		}
-	}
 	var command []string
 	switch operation {
 	case "backup":
@@ -142,6 +136,26 @@ func (m *Maintenance) Schedule(ctx context.Context, operation, argument string) 
 		command = []string{m.Binary, "update", argument}
 	default:
 		return fmt.Errorf("неизвестная операция обслуживания")
+	}
+	return m.scheduleCommand(ctx, command)
+}
+
+func (m *Maintenance) SchedulePanelActivation(ctx context.Context, targetRevision, previousRevision int64) error {
+	if targetRevision < 1 || previousRevision < 1 || targetRevision == previousRevision {
+		return fmt.Errorf("некорректные ревизии смены панели")
+	}
+	return m.scheduleCommand(ctx, []string{
+		m.Binary, "internal-panel-activate",
+		fmt.Sprint(targetRevision), fmt.Sprint(previousRevision),
+	})
+}
+
+func (m *Maintenance) scheduleCommand(ctx context.Context, command []string) error {
+	active, _ := m.Runner.Run(ctx, "systemctl", "is-active", m.Unit+".service", m.Unit+".timer")
+	for _, state := range strings.Fields(active) {
+		if state == "active" || state == "activating" {
+			return fmt.Errorf("операция обслуживания уже выполняется")
+		}
 	}
 	_, _ = m.Runner.Run(ctx, "systemctl", "reset-failed", m.Unit+".service")
 	args := []string{

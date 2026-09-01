@@ -15,9 +15,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/netos-router/netos/internal/api"
+	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/render"
+	"github.com/netos-router/netos/internal/store"
+	"github.com/netos-router/netos/internal/subsys/components"
+	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/services"
 )
 
@@ -34,10 +42,9 @@ func installerURL(version string) string {
 	return fmt.Sprintf("https://raw.githubusercontent.com/%s/master/install.sh", installerRepo)
 }
 
-// renderableArtifacts перечисляет то, что умеет печатать netosd -render.
-// Список продублирован здесь намеренно: CLI обязан отказать до запуска демона,
-// а не показывать пользователю его внутреннюю ошибку.
-var renderableArtifacts = []string{"iptables", "dnsmasq", "isc-dhcp", "kea-dhcp4", "unbound", "dnsproxy", "resolv", "network", "sysctl", "config"}
+// renderableArtifacts берётся из единого каталога render, которым также
+// пользуются daemon и панель. Help и completion строятся из этого же списка.
+var renderableArtifacts = render.IDs()
 
 type command struct {
 	name  string
@@ -80,6 +87,8 @@ type Manager struct {
 	Binary    string
 	CLI       string
 	Unit      string
+	Database  string
+	ReadyFile string
 }
 
 // sys возвращает системный путь с учётом Root.
@@ -97,6 +106,7 @@ func New(version string) *Manager {
 		StateDir: "/var/lib/netos", ConfigDir: "/etc/netos", LogDir: "/var/log/netos",
 		BackupDir: "/var/backups/netos", Binary: "/usr/local/bin/netosd",
 		CLI: "/usr/local/bin/netos", Unit: "/etc/systemd/system/netosd.service",
+		Database: "/var/lib/netos/netos.db", ReadyFile: "/run/netosd.ready",
 	}
 	m.Run = m.runOS
 	m.Output = m.outputOS
@@ -110,6 +120,22 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 	}
 
 	switch args[0] {
+	case "internal-panel-activate":
+		if len(args) != 3 {
+			return fmt.Errorf("внутренняя команда panel-activate требует target и previous revision")
+		}
+		if err := m.requireRoot(); err != nil {
+			return err
+		}
+		target, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil || target < 1 {
+			return fmt.Errorf("некорректная целевая ревизия")
+		}
+		previous, err := strconv.ParseInt(args[2], 10, 64)
+		if err != nil || previous < 1 || previous == target {
+			return fmt.Errorf("некорректная предыдущая ревизия")
+		}
+		return m.activatePanelRevision(ctx, target, previous)
 	case "version", "--version", "-v":
 		if len(args) != 1 {
 			return fmt.Errorf("команда version не принимает параметры")
@@ -153,6 +179,10 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		}
 		return m.run(ctx, m.Binary, "-plan")
 	case "render":
+		if len(args) == 2 && args[1] == "--list" {
+			fmt.Fprintln(m.Out, strings.Join(renderableArtifacts, "\n"))
+			return nil
+		}
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
@@ -168,6 +198,19 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 			return err
 		}
 		return m.backupNow(ctx)
+	case "password-reset":
+		if err := m.requireRoot(); err != nil {
+			return err
+		}
+		rest, stdin := extractFlags(args[1:], "--stdin")
+		if !stdin || len(rest) > 1 {
+			return fmt.Errorf("использование: netos password-reset [пользователь] --stdin")
+		}
+		username := ""
+		if len(rest) == 1 {
+			username = rest[0]
+		}
+		return m.resetPasswordFromStdin(username)
 	// reinstall — синоним update: установщик и так разворачивает версию заново,
 	// сохраняя данные, и отдельного поведения у переустановки нет. Имя оставлено
 	// потому, что за ним приходят, когда установка развалилась.
@@ -223,7 +266,7 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		if shell != "bash" {
 			return fmt.Errorf("дополнение поддерживается только для bash")
 		}
-		fmt.Fprint(m.Out, bashCompletion)
+		fmt.Fprint(m.Out, bashCompletion())
 		return nil
 	case "uninstall":
 		if err := m.requireRoot(); err != nil {
@@ -240,6 +283,90 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 	}
 }
 
+// activatePanelRevision performs the only safe transition for settings used by
+// the listening socket itself. The old daemon cannot rebind its own HTTP
+// listener while serving the request, so a transient systemd unit activates
+// the prepared revision, restarts netosd and waits for the daemon's post-Apply
+// ready marker. A failed start restores the previous active revision and
+// restarts once more instead of leaving the router in Restart=always loop.
+func (m *Manager) activatePanelRevision(ctx context.Context, targetID, previousID int64) error {
+	st, err := store.Open(m.sys(m.Database))
+	if err != nil {
+		return fmt.Errorf("открытие базы конфигурации: %w", err)
+	}
+	defer st.Close()
+
+	target, err := st.Revision(targetID)
+	if err != nil {
+		return fmt.Errorf("целевая ревизия: %w", err)
+	}
+	previous, err := st.Revision(previousID)
+	if err != nil {
+		return fmt.Errorf("предыдущая ревизия: %w", err)
+	}
+	if target.State != store.StateApplying {
+		return fmt.Errorf("целевая ревизия %d находится в состоянии %s, ожидалось applying", targetID, target.State)
+	}
+	if previous.State != store.StateActive {
+		return fmt.Errorf("предыдущая ревизия %d находится в состоянии %s, ожидалось active", previousID, previous.State)
+	}
+
+	if err := st.MarkActive(targetID); err != nil {
+		return fmt.Errorf("активация ревизии панели: %w", err)
+	}
+	activationErr := m.restartAndWaitReady(ctx, targetID, panelReadyAttempts(target.Config))
+	if activationErr == nil {
+		return nil
+	}
+
+	if err := st.SetRevisionState(targetID, store.StateRolledBack); err != nil {
+		return fmt.Errorf("новая панель не запустилась (%v), не удалось пометить ревизию откаченной: %w", activationErr, err)
+	}
+	if err := st.MarkActive(previousID); err != nil {
+		return fmt.Errorf("новая панель не запустилась (%v), не удалось вернуть ревизию %d: %w", activationErr, previousID, err)
+	}
+	if err := m.restartAndWaitReady(ctx, previousID, panelReadyAttempts(previous.Config)); err != nil {
+		return fmt.Errorf("новая панель не запустилась (%v); предыдущая ревизия возвращена, но её запуск также не подтверждён: %w", activationErr, err)
+	}
+	return fmt.Errorf("новая панель не запустилась, предыдущая ревизия восстановлена: %w", activationErr)
+}
+
+func panelReadyAttempts(cfg *config.Config) int {
+	if cfg != nil && cfg.System.Panel.TLS.Mode == "acme" {
+		return 360
+	}
+	return 60
+}
+
+func (m *Manager) restartAndWaitReady(ctx context.Context, revisionID int64, attempts int) error {
+	// A marker left by the daemon that is about to be stopped proves nothing
+	// about the new process. This matters especially during rollback, where the
+	// expected revision ID is the same one that was ready before the transition.
+	if err := os.Remove(m.sys(m.ReadyFile)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("удаление устаревшего маркера готовности: %w", err)
+	}
+	if err := m.run(ctx, "systemctl", "restart", "netosd"); err != nil {
+		return err
+	}
+	want := strconv.FormatInt(revisionID, 10)
+	for attempt := 0; attempt < attempts; attempt++ {
+		if data, err := os.ReadFile(m.sys(m.ReadyFile)); err == nil && strings.TrimSpace(string(data)) == want {
+			return nil
+		}
+		state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
+		if state = strings.TrimSpace(state); state == "inactive" || state == "failed" {
+			return fmt.Errorf("netosd перешёл в состояние %s до готовности ревизии %d", state, revisionID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			m.Sleep(time.Second)
+		}
+	}
+	return fmt.Errorf("netosd не подтвердил готовность ревизии %d за %d секунд", revisionID, attempts)
+}
+
 func (m *Manager) help() {
 	fmt.Fprintln(m.Out, `netOS — управление роутером
 
@@ -253,6 +380,8 @@ func (m *Manager) help() {
   netos reset [--backup|--no-backup] [-y|--yes]
                                сбросить настройки и пользователей к заводским
   netos backup                 создать резервную копию
+  netos password-reset [user] --stdin
+                               задать пароль из stdin и отозвать его сессии
   netos restore [файл] [-y|--yes]
                                восстановить из резервной копии; без файла
                                покажет список и спросит, какую брать
@@ -262,8 +391,8 @@ func (m *Manager) help() {
   netos plan                   что netOS изменит в живой системе, если применить
                                конфигурацию прямо сейчас
   netos render <артефакт>      вывести сгенерированный конфиг:
-                               iptables, wireguard, dnsmasq, isc-dhcp, kea-dhcp4, unbound, dnsproxy,
-                               resolv, network, sysctl, config
+                               `+strings.Join(renderableArtifacts, ", ")+`
+  netos render --list          вывести машинно-читаемый список артефактов
   netos completion [bash]      скрипт дополнения команд для оболочки
   netos version                версия netOS
 
@@ -273,20 +402,20 @@ update и reinstall сохраняют конфигурацию, пользов�
 // bashCompletion — скрипт дополнения. Держим его здесь, а не отдельным файлом
 // в репозитории: список команд и артефактов задан рядом, и разъехаться им
 // труднее. Установщик кладёт вывод в /etc/bash_completion.d/netos.
-const bashCompletion = `# Дополнение команд netos. Сгенерировано: netos completion bash
+const bashCompletionTemplate = `# Дополнение команд netos. Сгенерировано: netos completion bash
 _netos() {
     local cur cmd
     cur="${COMP_WORDS[COMP_CWORD]}"
     cmd="${COMP_WORDS[1]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=($(compgen -W "status logs start stop restart plan render backup restore update reinstall reset uninstall completion version help" -- "$cur"))
+        COMPREPLY=($(compgen -W "status logs start stop restart plan render backup password-reset restore update reinstall reset uninstall completion version help" -- "$cur"))
         return
     fi
 
     case "$cmd" in
         render)
-            COMPREPLY=($(compgen -W "iptables wireguard dnsmasq isc-dhcp kea-dhcp4 unbound dnsproxy resolv network sysctl config" -- "$cur"))
+            COMPREPLY=($(compgen -W "{{ARTIFACTS}}" -- "$cur"))
             ;;
         logs)
             COMPREPLY=($(compgen -W "-f --follow" -- "$cur"))
@@ -305,6 +434,9 @@ _netos() {
             # пуст — это честнее, чем показывать несуществующие имена.
             COMPREPLY=($(compgen -W "-y --yes $(ls /var/backups/netos/*.tar.gz 2>/dev/null)" -- "$cur"))
             ;;
+        password-reset)
+            COMPREPLY=($(compgen -W "--stdin" -- "$cur"))
+            ;;
         completion)
             COMPREPLY=($(compgen -W "bash" -- "$cur"))
             ;;
@@ -315,6 +447,46 @@ _netos() {
 }
 complete -F _netos netos
 `
+
+func bashCompletion() string {
+	return strings.Replace(bashCompletionTemplate, "{{ARTIFACTS}}", strings.Join(renderableArtifacts, " "), 1)
+}
+
+func (m *Manager) resetPasswordFromStdin(username string) error {
+	if len(username) > 64 || strings.TrimSpace(username) != username ||
+		strings.IndexFunc(username, unicode.IsControl) >= 0 {
+		return fmt.Errorf("некорректное имя пользователя")
+	}
+	line, err := m.reader().ReadString('\n')
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("чтение пароля: %w", err)
+	}
+	password := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	if len(password) < 10 || len(password) > 1024 || strings.IndexByte(password, 0) >= 0 {
+		return fmt.Errorf("пароль должен содержать от 10 до 1024 байт без NUL")
+	}
+	hash, err := api.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("хеширование пароля: %w", err)
+	}
+	st, err := store.Open(m.sys(m.Database))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if username == "" {
+		username, err = st.SingleUsername()
+		if err != nil {
+			return err
+		}
+	}
+	_, err = st.ResetPasswordByRoot(username, hash)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(m.Out, "Пароль пользователя %s изменён; активные сессии отозваны.\n", username)
+	return nil
+}
 
 func (m *Manager) install(ctx context.Context, version string, force bool) error {
 	fromSource := os.Getenv("NETOS_FROM_SOURCE") == "1"
@@ -460,8 +632,14 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	// Сброс обязан убрать не только данные, но и уже применённое состояние.
 	// После удаления БД новый демон больше не знает имён старых каналов,
 	// VPN-серверов и интерфейсов и потому сам удалить их уже не сможет.
-	m.removeComponentUnits(ctx)
-	m.clearNetOSFirewall(ctx)
+	if err := m.removeComponentUnits(ctx); err != nil {
+		_ = m.run(ctx, "systemctl", "start", "netosd")
+		return err
+	}
+	if err := m.clearNetOSFirewall(ctx); err != nil {
+		_ = m.run(ctx, "systemctl", "start", "netosd")
+		return err
+	}
 	// Локальный DNS сейчас уже остановлен, а его резервное состояние исчезнет
 	// вместе с StateDir. Вернуть системный resolv.conf нужно до удаления данных,
 	// иначе заводской запуск и последующее restore не смогут скачать компоненты.
@@ -483,7 +661,10 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 		m.sys("/etc/sysctl.d/99-netos-ipv6.conf"),
 		m.sys("/etc/systemd/timesyncd.conf.d/90-netos.conf"),
 	} {
-		_ = os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return fmt.Errorf("удаление %s: %w", path, err)
+		}
 	}
 	for _, pattern := range []string{
 		m.sys("/etc/systemd/network/05-netos-*"),
@@ -491,7 +672,10 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	} {
 		matches, _ := filepath.Glob(pattern)
 		for _, path := range matches {
-			_ = os.RemoveAll(path)
+			if err := os.RemoveAll(path); err != nil {
+				_ = m.run(ctx, "systemctl", "start", "netosd")
+				return fmt.Errorf("удаление %s: %w", path, err)
+			}
 		}
 	}
 	m.bestEffort(ctx, "systemctl", "daemon-reload")
@@ -673,15 +857,21 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	// пользователи, которых в копии нет.
 	for _, path := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("очистка %s: %w; состояние до восстановления: %s", path, err, safety)
+			return m.rollbackRestore(ctx, safety, fmt.Errorf("очистка %s: %w", path, err))
 		}
 	}
 	if err := m.run(ctx, "tar", "-C", string(filepath.Separator), "-xzf", selected); err != nil {
-		return fmt.Errorf("распаковка %s: %w; состояние до восстановления: %s", selected, err, safety)
+		return m.rollbackRestore(ctx, safety, fmt.Errorf("распаковка %s: %w", selected, err))
 	}
 
+	// Старый маркер принадлежит предыдущему процессу. Новый демон создаст его
+	// только после успешного Engine.Apply восстановленной ревизии.
+	_ = os.Remove(m.sys(runtimeReadyPath))
 	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
-		return fmt.Errorf("запуск после восстановления: %w; состояние до восстановления: %s", err, safety)
+		return m.rollbackRestore(ctx, safety, fmt.Errorf("запуск после восстановления: %w", err))
+	}
+	if err := m.waitRuntimeReady(ctx, 240); err != nil {
+		return m.rollbackRestore(ctx, safety, fmt.Errorf("ожидание применения после восстановления: %w", err))
 	}
 	fmt.Fprintf(m.Out, "Восстановлено из %s\n", filepath.Base(selected))
 	fmt.Fprintf(m.Out, "Состояние до восстановления сохранено: %s\n", safety)
@@ -689,9 +879,63 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	return nil
 }
 
+func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	_ = m.stopDaemon(rollbackCtx)
+	for _, target := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("%v; rollback из %s не удался при очистке %s: %w", cause, safety, target, err)
+		}
+	}
+	if err := m.run(rollbackCtx, "tar", "-C", string(filepath.Separator), "-xzf", safety); err != nil {
+		return fmt.Errorf("%v; rollback из %s не распакован: %w", cause, safety, err)
+	}
+	_ = os.Remove(m.sys(runtimeReadyPath))
+	if err := m.run(rollbackCtx, "systemctl", "start", "netosd"); err != nil {
+		return fmt.Errorf("%v; rollback из %s распакован, но netosd не запущен: %w", cause, safety, err)
+	}
+	if err := m.waitRuntimeReady(rollbackCtx, 240); err != nil {
+		return fmt.Errorf("%v; rollback из %s распакован, но не применён: %w", cause, safety, err)
+	}
+	return fmt.Errorf("%v; предыдущее состояние автоматически восстановлено из %s", cause, safety)
+}
+
+func (m *Manager) waitRuntimeReady(ctx context.Context, attempts int) error {
+	for i := 0; ; i++ {
+		if _, err := os.Stat(m.sys(runtimeReadyPath)); err == nil {
+			state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
+			switch strings.TrimSpace(state) {
+			case "inactive", "failed", "unknown":
+				return fmt.Errorf("netosd перешёл в состояние %s", strings.TrimSpace(state))
+			default:
+				return nil
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+
+		state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
+		switch strings.TrimSpace(state) {
+		case "inactive", "failed":
+			return fmt.Errorf("netosd перешёл в состояние %s до окончания применения", strings.TrimSpace(state))
+		}
+		if i >= attempts {
+			return fmt.Errorf("netosd не завершил стартовое применение за %s", time.Duration(attempts)*500*time.Millisecond)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			m.Sleep(500 * time.Millisecond)
+		}
+	}
+}
+
 const (
 	maxBackupEntries = 100_000
 	maxBackupBytes   = int64(2 << 30)
+	runtimeReadyPath = "/run/netosd.ready"
 )
 
 // validateBackupArchive ensures that root extraction cannot escape the three
@@ -772,27 +1016,54 @@ func humanSize(n int64) string {
 // removeComponentUnits останавливает и удаляет каждый сгенерированный юнит
 // компонента. Одна маска надёжнее списка: новые подсистемы автоматически
 // попадают и в reset, и в uninstall, а сам netosd под неё не подходит.
-func (m *Manager) removeComponentUnits(ctx context.Context) {
+func (m *Manager) removeComponentUnits(ctx context.Context) error {
 	units, _ := filepath.Glob(m.sys("/etc/systemd/system/netos-*.service"))
 	for _, unit := range units {
-		m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "--now", filepath.Base(unit))
-		_ = os.Remove(unit)
+		name := filepath.Base(unit)
+		if err := m.run(ctx, "systemctl", "disable", "--no-reload", "--now", name); err != nil {
+			return fmt.Errorf("остановка компонента %s: %w", name, err)
+		}
+		if err := os.Remove(unit); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление unit %s: %w", unit, err)
+		}
 	}
+	return nil
 }
 
-func (m *Manager) clearNetOSFirewall(ctx context.Context) {
+func (m *Manager) clearNetOSFirewall(ctx context.Context) error {
 	clear4 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n" +
 		"*nat\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n" +
 		"*mangle\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n"
 	clear6 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
-	m.bestEffortInput(ctx, clear4, "iptables-restore")
-	m.bestEffortInput(ctx, clear6, "ip6tables-restore")
+	if err := m.Run(ctx, command{name: "iptables-restore", stdin: clear4}); err != nil {
+		return fmt.Errorf("очистка IPv4 firewall: %w", err)
+	}
+	if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: clear6}); err != nil {
+		return fmt.Errorf("очистка IPv6 firewall: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) removeOwnedPolicySets(ctx context.Context) {
+	stateDir := filepath.Join(m.StateDir, "generated")
+	names, err := policy.OwnedSetNames(stateDir)
+	if err != nil {
+		fmt.Fprintf(m.Err, "Warning: policy ipset ownership %s was not trusted: %v\n", stateDir, err)
+		return
+	}
+	for _, name := range names {
+		m.bestEffort(ctx, "ipset", "destroy", name)
+	}
 }
 
 func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	if !yes && !m.confirm("netOS и применённая им конфигурация будут удалены. Продолжить?") {
 		fmt.Fprintln(m.Out, "Отменено.")
 		return nil
+	}
+	baseline, err := m.readSystemBaseline()
+	if err != nil {
+		return fmt.Errorf("системный baseline повреждён; удаление остановлено до изменений: %w", err)
 	}
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
@@ -814,33 +1085,63 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	// заметно тормозит. Перечитывание нужно ровно одно — оно идёт ниже, после
 	// удаления файлов юнитов.
 	m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "netosd")
-	m.removeComponentUnits(ctx)
+	if err := m.removeComponentUnits(ctx); err != nil {
+		_ = m.run(ctx, "systemctl", "start", "netosd")
+		return err
+	}
 
-	// netOS владеет полными таблицами firewall, поэтому при удалении оставляет
-	// систему с разрешающими пустыми таблицами, а не с последним DROP ruleset.
-	m.clearNetOSFirewall(ctx)
+	// Старым установкам без baseline остаётся совместимый разрешающий fallback.
+	// Точный сохранённый firewall возвращается в самом конце системной уборки:
+	// до этого он мог бы оборвать удалённую сессию и оставить половину netOS.
+	if baseline == nil {
+		if err := m.clearNetOSFirewall(ctx); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return err
+		}
+	}
 	// Дефолтные маршруты запоминаются до очистки: следующая строка сносит в том
 	// числе маршрут аплинка, и без запаса вернуть его будет неоткуда.
 	savedRoutes := m.captureDefaultRoutes(ctx)
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "static")
+	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "static")
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
+	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
+	m.removeOwnedQoS(ctx)
 	m.removeVirtualInterfaces(ctx)
-	// Параметры ядра возвращаются записью в /proc/sys, а не командой sysctl:
-	// она живёт в пакете procps, которого на минимальной установке Debian нет,
-	// и удаление оставило бы машину с выключенным IPv6 и включённым
-	// форвардингом.
-	for key, value := range map[string]string{
-		"net.ipv4.ip_forward":                "0",
-		"net.ipv6.conf.all.disable_ipv6":     "0",
-		"net.ipv6.conf.default.disable_ipv6": "0",
-		"net.ipv6.conf.all.accept_ra":        "1",
-		"net.ipv6.conf.default.accept_ra":    "1",
-		"net.ipv6.conf.all.autoconf":         "1",
-		"net.ipv6.conf.default.autoconf":     "1",
-	} {
-		path := filepath.Join(m.sys("/proc/sys"), filepath.Join(strings.Split(key, ".")...))
-		_ = os.WriteFile(path, []byte(value), 0o644)
+	if baseline != nil {
+		if err := m.restoreBaselineRouting(ctx, baseline); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return err
+		}
+		if err := m.restoreBaselineHostSettings(ctx, baseline); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return err
+		}
+		// tuned меняет часть сетевых sysctl при запуске, поэтому сначала
+		// возвращаем сервис, а затем последней записью — точные значения ядра.
+		if err := m.restoreBaselineTuned(ctx, baseline); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return fmt.Errorf("восстановление tuned: %w", err)
+		}
+		if err := m.restoreBaselineSysctl(baseline); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return err
+		}
+	} else {
+		// Legacy fallback для установок, сделанных до появления baseline.
+		for key, value := range map[string]string{
+			"net.ipv4.ip_forward":                "0",
+			"net.ipv6.conf.all.disable_ipv6":     "0",
+			"net.ipv6.conf.default.disable_ipv6": "0",
+			"net.ipv6.conf.all.accept_ra":        "1",
+			"net.ipv6.conf.default.accept_ra":    "1",
+			"net.ipv6.conf.all.autoconf":         "1",
+			"net.ipv6.conf.default.autoconf":     "1",
+		} {
+			path := filepath.Join(m.sys("/proc/sys"), filepath.Join(strings.Split(key, ".")...))
+			_ = os.WriteFile(path, []byte(value), 0o644)
+		}
 	}
 
 	// Резолвер роутера возвращается системе до удаления состояния: чем был
@@ -848,6 +1149,11 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	// восстанавливать будет неоткуда.
 	if resolvedWanted, err := services.RestoreSystemResolverFiles(m.Root); err != nil {
 		fmt.Fprintf(m.Err, "Предупреждение: резолвер системы не восстановлен: %v\n", err)
+	} else if baseline != nil {
+		if err := m.restoreBaselineResolved(ctx, baseline); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return fmt.Errorf("восстановление systemd-resolved: %w", err)
+		}
 	} else if resolvedWanted {
 		m.quiet(ctx, "systemctl", "enable", "--now", "systemd-resolved.service")
 	}
@@ -860,7 +1166,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	}
 
 	for _, path := range []string{
-		m.Unit,
+		// Старые установщики выносили hardening в drop-in. Основной unit уже
+		// содержит эти настройки, но uninstall обязан убрать и legacy-файл.
+		m.sys("/etc/systemd/system/netosd.service.d/90-hardening.conf"),
 		m.sys("/etc/systemd/system/netos-dnsmasq.service"),
 		m.sys("/etc/systemd/system/netos-isc-dhcp.service"),
 		m.sys("/etc/systemd/system/netos-kea-dhcp4.service"),
@@ -880,8 +1188,21 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		// поднялась бы в сеть.
 		m.sys("/etc/NetworkManager/conf.d/99-netos.conf"),
 	} {
-		_ = os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return fmt.Errorf("удаление %s: %w", path, err)
+		}
 	}
+	if baseline == nil {
+		path := m.sys("/etc/systemd/timesyncd.conf.d/90-netos.conf")
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return fmt.Errorf("удаление %s: %w", path, err)
+		}
+	}
+	// Удаляем каталог только если он пуст: чужие drop-in файлы пользователя
+	// сохраняются, а принадлежащий netOS пустой хвост после uninstall не остаётся.
+	_ = os.Remove(m.sys("/etc/systemd/system/netosd.service.d"))
 	networkd, _ := filepath.Glob(m.sys("/etc/systemd/network/05-netos-*"))
 	var links []string
 	for _, path := range networkd {
@@ -889,7 +1210,42 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		if name != "" {
 			links = append(links, name)
 		}
-		_ = os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return fmt.Errorf("удаление %s: %w", path, err)
+		}
+	}
+	m.bestEffort(ctx, "systemctl", "daemon-reload")
+	// Демоны, которых netOS погасил ради единоличного управления, возвращаются
+	// вместе с системой: удаление обязано оставлять машину такой, какой она
+	// была до установки.
+	if baseline == nil {
+		for _, unit := range []string{"tuned.service"} {
+			m.quiet(ctx, "systemctl", "enable", "--now", unit)
+		}
+	}
+	// NetworkManager должен узнать, что интерфейсы снова его.
+	m.quiet(ctx, "systemctl", "reload", "NetworkManager.service")
+	if baseline != nil {
+		// Текущий default принадлежит уже применённому netOS; при наличии
+		// baseline возвращать его как аварийный маршрут было бы неверно.
+		savedRoutes = nil
+	}
+	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
+	if baseline != nil {
+		if err := m.restoreBaselineFirewall(ctx, baseline); err != nil {
+			_ = m.run(ctx, "systemctl", "start", "netosd")
+			return err
+		}
+	}
+	m.removeOwnedPolicySets(ctx)
+	// До этого места unit, бинарник и данные остаются доступны для аварийного
+	// повторного Apply. Удаляем их только после успешного возврата системы.
+	if err := components.RemoveOwnedExternal(m.Root); err != nil {
+		return err
+	}
+	if err := os.Remove(m.Unit); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("удаление unit netOS: %w", err)
 	}
 	if !keepData {
 		for _, path := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
@@ -898,18 +1254,32 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 			}
 		}
 	}
-	_ = os.Remove(m.Binary)
-	_ = os.Remove(m.CLI)
-	m.bestEffort(ctx, "systemctl", "daemon-reload")
-	// Демоны, которых netOS погасил ради единоличного управления, возвращаются
-	// вместе с системой: удаление обязано оставлять машину такой, какой она
-	// была до установки.
-	for _, unit := range []string{"tuned.service"} {
-		m.quiet(ctx, "systemctl", "enable", "--now", unit)
+	if err := os.Remove(m.Binary); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("удаление netosd: %w", err)
 	}
-	// NetworkManager должен узнать, что интерфейсы снова его.
-	m.quiet(ctx, "systemctl", "reload", "NetworkManager.service")
-	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
+	if err := os.Remove(m.CLI); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("удаление CLI netOS: %w", err)
+	}
+	m.bestEffort(ctx, "systemctl", "daemon-reload")
+	if !keepData && baseline != nil {
+		if err := os.RemoveAll(m.sys(systemBaselineDir)); err != nil {
+			return fmt.Errorf("удаление использованного системного baseline: %w", err)
+		}
+	} else if keepData {
+		// Reinstall распознаёт сохранённую БД как upgrade. Старый baseline уже
+		// использован и может устареть, пока netOS отсутствует; удаляем его и
+		// просим установщик снять новый непосредственно перед следующим Apply.
+		dir := m.sys(systemBaselineDir)
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".capture-required"), nil, 0o600); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintln(m.Out, "netOS удалён. Установленные через apt компоненты оставлены в системе.")
 	return nil
 }
@@ -918,7 +1288,16 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 	if err := os.MkdirAll(m.BackupDir, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(m.BackupDir, fmt.Sprintf("netos-%s-%s.tar.gz", reason, m.Now().Format("20060102-150405")))
+	stem := fmt.Sprintf("netos-%s-%s", reason, m.Now().Format("20060102-150405"))
+	path := filepath.Join(m.BackupDir, stem+".tar.gz")
+	for sequence := 2; ; sequence++ {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			return "", err
+		}
+		path = filepath.Join(m.BackupDir, fmt.Sprintf("%s-%d.tar.gz", stem, sequence))
+	}
 	var sources []string
 	for _, source := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if _, err := os.Stat(source); err == nil {
@@ -926,11 +1305,32 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 		}
 	}
 	if len(sources) == 0 {
-		return path, nil
-	}
-	args := append([]string{"-C", string(filepath.Separator), "-czf", path}, sources...)
-	if err := m.run(ctx, "tar", args...); err != nil {
-		return "", fmt.Errorf("резервное копирование: %w", err)
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return "", err
+		}
+		gzipWriter := gzip.NewWriter(file)
+		tarWriter := tar.NewWriter(gzipWriter)
+		if err := tarWriter.Close(); err != nil {
+			_ = gzipWriter.Close()
+			_ = file.Close()
+			_ = os.Remove(path)
+			return "", err
+		}
+		if err := gzipWriter.Close(); err != nil {
+			_ = file.Close()
+			_ = os.Remove(path)
+			return "", err
+		}
+		if err := file.Close(); err != nil {
+			_ = os.Remove(path)
+			return "", err
+		}
+	} else {
+		args := append([]string{"-C", string(filepath.Separator), "-czf", path}, sources...)
+		if err := m.run(ctx, "tar", args...); err != nil {
+			return "", fmt.Errorf("резервное копирование: %w", err)
+		}
 	}
 	// Архив содержит базу с хэшами паролей, bearer-сессиями и секретами
 	// сетей. Права каталога уже 0700, но сам файл также должен оставаться
@@ -1088,13 +1488,15 @@ func (m *Manager) removeVirtualInterfaces(ctx context.Context) {
 		fmt.Fprintf(m.Err, "Предупреждение: чтение интерфейсов: %v\n", err)
 		return
 	}
-	prefixes := []string{"br-", "vl-", "bond-", "d-", "wg-ch", "tun-ch", "wg-srv", "xfrm-ch", "xfrm-srv"}
+	owned, ownershipErr := m.ownedVirtualInterfaceNames()
+	if ownershipErr != nil {
+		fmt.Fprintf(m.Err, "Предупреждение: чтение ownership интерфейсов: %v\n", ownershipErr)
+	}
 	for _, entry := range entries {
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(entry.Name(), prefix) {
-				m.bestEffort(ctx, "ip", "link", "delete", entry.Name())
-				break
-			}
+		// Узкие legacy-шаблоны нужны установкам до ownership-журналов. Общие
+		// br-/bond-/d- намеренно не используются: это обычные чужие имена.
+		if owned[entry.Name()] || legacyUnambiguousNetOSLink(entry.Name()) {
+			m.bestEffort(ctx, "ip", "link", "delete", entry.Name())
 		}
 	}
 }

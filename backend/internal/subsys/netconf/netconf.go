@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -41,7 +42,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-const (
+var (
 	ifupdownPath = "/etc/network/interfaces.d/netos.conf"
 	networkdDir  = "/etc/systemd/network"
 	// networkdPrefix отделяет наши файлы от чужих: чистим только своё.
@@ -108,7 +109,7 @@ func (s *Subsystem) Name() string { return "netconf" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	if old != nil && old.System.NetworkBackend == new.System.NetworkBackend &&
-		render(old) == render(new) && !s.backendServicesDrift(context.Background(), new.System.NetworkBackend) {
+		render(old) == render(new) && s.Health(context.Background(), new) == nil {
 		return nil, nil
 	}
 
@@ -139,6 +140,18 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	backend := cfg.System.NetworkBackend
+	// Check the selected implementation before changing shared ownership files.
+	// A missing backend must not leave NetworkManager/networkd half-reconfigured.
+	switch backend {
+	case "ifupdown":
+		if err := s.requireUnit(ctx, "networking.service", "ifupdown"); err != nil {
+			return err
+		}
+	case "networkd":
+		if err := s.requireUnit(ctx, "systemd-networkd.service", "systemd-networkd"); err != nil {
+			return err
+		}
+	}
 	if err := s.syncNetworkdOwnership(ctx); err != nil {
 		return err
 	}
@@ -167,13 +180,22 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
+	var err error
 	switch backend {
 	case "ifupdown":
-		return s.applyIfupdown(ctx, cfg)
+		err = s.applyIfupdown(ctx, cfg)
 	case "networkd":
-		return s.applyNetworkd(ctx, cfg)
+		err = s.applyNetworkd(ctx, cfg)
+	default:
+		err = s.applyNetOS(ctx, cfg)
 	}
-	return s.applyNetOS(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		return fmt.Errorf("verify network configuration: %w", err)
+	}
+	return nil
 }
 
 // syncNetworkdOwnership закрепляет границу владения с systemd-networkd.
@@ -217,8 +239,7 @@ ManageForeignRoutingPolicyRules=no
 // applyNetOS отбирает интерфейсы netOS у остальных механизмов настройки сети.
 func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
 	// Отбирать нечего, если механизма нет или он не работает.
-	if !s.unitPresent(ctx, "systemd-networkd.service") ||
-		!s.unitActive(ctx, "systemd-networkd.service") {
+	if !s.unitPresent(ctx, "systemd-networkd.service") {
 		if err := s.syncWaitOnline(ctx, false); err != nil {
 			return err
 		}
@@ -248,14 +269,7 @@ func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
 // написано у каждого линка в RequiredForOnline. Имя начинается с 99, потому что
 // drop-in применяются в лексическом порядке имён, а netplan занимает 10.
 func (s *Subsystem) syncWaitOnline(ctx context.Context, needed bool) error {
-	content := []byte(`# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.
-#
-# Требование к состоянию линка снято: адреса при прямом управлении назначает
-# netOS, и решает RequiredForOnline в файлах /etc/systemd/network/05-netos-*.
-[Service]
-ExecStart=
-ExecStart=/usr/lib/systemd/systemd-networkd-wait-online
-`)
+	content := []byte(renderWaitOnlineDropIn())
 
 	if !needed {
 		if _, err := os.Stat(waitOnlineDropIn); err != nil {
@@ -278,6 +292,17 @@ ExecStart=/usr/lib/systemd/systemd-networkd-wait-online
 	return err
 }
 
+func renderWaitOnlineDropIn() string {
+	return `# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.
+#
+# Требование к состоянию линка снято: адреса при прямом управлении назначает
+# netOS, и решает RequiredForOnline в файлах /etc/systemd/network/05-netos-*.
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online
+`
+}
+
 // syncNetworkManager просит NetworkManager не трогать интерфейсы netOS.
 //
 // Отбирать их нужно средствами самого NM: остановка службы решала бы задачу
@@ -295,20 +320,42 @@ func (s *Subsystem) syncNetworkManager(ctx context.Context, names []string) erro
 		if _, err := os.Stat(nmConfPath); err != nil {
 			return nil
 		}
+		old, existed, err := readOptionalFile(nmConfPath)
+		if err != nil {
+			return err
+		}
 		if err := removeFile(nmConfPath); err != nil {
 			return err
 		}
-		return s.reloadNetworkManager(ctx)
+		if err := s.reloadNetworkManager(ctx); err != nil {
+			if rbErr := restoreOptionalFile(nmConfPath, old, existed); rbErr != nil {
+				return fmt.Errorf("%v; откат файла NetworkManager: %w", err, rbErr)
+			}
+			_ = s.reloadNetworkManager(ctx)
+			return err
+		}
+		return nil
 	}
 
 	content := []byte(renderNetworkManagerConf(names))
 	if !system.FileChanged(nmConfPath, content) {
 		return nil
 	}
+	old, existed, err := readOptionalFile(nmConfPath)
+	if err != nil {
+		return err
+	}
 	if err := system.WriteFileAtomic(nmConfPath, content, 0o644); err != nil {
 		return fmt.Errorf("отстранение NetworkManager: %w", err)
 	}
-	return s.reloadNetworkManager(ctx)
+	if err := s.reloadNetworkManager(ctx); err != nil {
+		if rbErr := restoreOptionalFile(nmConfPath, old, existed); rbErr != nil {
+			return fmt.Errorf("%v; откат файла NetworkManager: %w", err, rbErr)
+		}
+		_ = s.reloadNetworkManager(ctx)
+		return err
+	}
+	return nil
 }
 
 // renderNetworkManagerConf собирает содержимое файла для NetworkManager.
@@ -341,16 +388,13 @@ func (s *Subsystem) reloadNetworkManager(ctx context.Context) error {
 	if !s.unitActive(ctx, "NetworkManager.service") {
 		return nil
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "reload", "NetworkManager.service"); err != nil && s.Logger != nil {
-		s.Logger.Warnf("NetworkManager не перечитал конфигурацию: %v", err)
+	if _, err := s.Runner.Run(ctx, "systemctl", "reload", "NetworkManager.service"); err != nil {
+		return fmt.Errorf("NetworkManager не перечитал конфигурацию: %w", err)
 	}
 	return nil
 }
 
 func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error {
-	if err := s.requireUnit(ctx, "networking.service", "ifupdown"); err != nil {
-		return err
-	}
 	// Настройку взял на себя ifupdown — описания для networkd быть не должно.
 	if err := s.syncNetworkdFiles(ctx, nil); err != nil {
 		return err
@@ -365,9 +409,6 @@ func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error
 }
 
 func (s *Subsystem) applyNetworkd(ctx context.Context, cfg *config.Config) error {
-	if err := s.requireUnit(ctx, "systemd-networkd.service", "systemd-networkd"); err != nil {
-		return err
-	}
 	if err := s.syncNetworkdFiles(ctx, renderNetworkd(cfg)); err != nil {
 		return err
 	}
@@ -380,29 +421,41 @@ func (s *Subsystem) applyNetworkd(ctx context.Context, cfg *config.Config) error
 func (s *Subsystem) activateBackend(ctx context.Context, backend string) error {
 	systemd := system.NewSystemd(s.Runner)
 	if backend == "ifupdown" {
-		if _, err := s.Runner.Run(ctx, "systemctl", "enable", "networking.service"); err != nil {
-			return fmt.Errorf("включение networking.service: %w", err)
+		if !s.unitEnabled(ctx, "networking.service") {
+			if _, err := s.Runner.Run(ctx, "systemctl", "enable", "networking.service"); err != nil {
+				return fmt.Errorf("включение networking.service: %w", err)
+			}
 		}
-		if _, err := s.Runner.Run(ctx, "systemctl", "start", "networking.service"); err != nil {
-			return fmt.Errorf("запуск networking.service: %w", err)
+		if !s.unitActive(ctx, "networking.service") {
+			if _, err := s.Runner.Run(ctx, "systemctl", "start", "networking.service"); err != nil {
+				return fmt.Errorf("запуск networking.service: %w", err)
+			}
 		}
-		if err := s.disableNetworkd(ctx); err != nil {
-			return fmt.Errorf("остановка systemd-networkd: %w", err)
+		if s.networkdMayCompete(ctx) {
+			if err := s.disableNetworkd(ctx); err != nil {
+				return fmt.Errorf("остановка systemd-networkd: %w", err)
+			}
 		}
 		return nil
 	}
 
 	if s.unitPresent(ctx, "systemd-networkd.service") {
 		for _, unit := range []string{"systemd-networkd.service", "systemd-networkd.socket"} {
-			if _, err := s.Runner.Run(ctx, "systemctl", "unmask", unit); err != nil {
-				return fmt.Errorf("снятие блокировки %s: %w", unit, err)
+			if s.unitMasked(ctx, unit) {
+				if _, err := s.Runner.Run(ctx, "systemctl", "unmask", unit); err != nil {
+					return fmt.Errorf("снятие блокировки %s: %w", unit, err)
+				}
 			}
 		}
-		if _, err := s.Runner.Run(ctx, "systemctl", "enable", "systemd-networkd.service"); err != nil {
-			return fmt.Errorf("включение systemd-networkd: %w", err)
+		if !s.unitEnabled(ctx, "systemd-networkd.service") {
+			if _, err := s.Runner.Run(ctx, "systemctl", "enable", "systemd-networkd.service"); err != nil {
+				return fmt.Errorf("включение systemd-networkd: %w", err)
+			}
 		}
-		if _, err := s.Runner.Run(ctx, "systemctl", "start", "systemd-networkd.service"); err != nil {
-			return fmt.Errorf("запуск systemd-networkd: %w", err)
+		if !s.unitActive(ctx, "systemd-networkd.service") {
+			if _, err := s.Runner.Run(ctx, "systemctl", "start", "systemd-networkd.service"); err != nil {
+				return fmt.Errorf("запуск systemd-networkd: %w", err)
+			}
 		}
 	}
 	if err := systemd.Disable(ctx, "networking.service"); err != nil {
@@ -691,6 +744,21 @@ func (s *Subsystem) unitEnabled(ctx context.Context, unit string) bool {
 	return false
 }
 
+func (s *Subsystem) unitMasked(ctx context.Context, unit string) bool {
+	out, _ := s.Runner.Run(ctx, "systemctl", "is-enabled", unit)
+	state := strings.TrimSpace(out)
+	return state == "masked" || state == "masked-runtime"
+}
+
+func (s *Subsystem) networkdMayCompete(ctx context.Context) bool {
+	for _, unit := range []string{"systemd-networkd.service", "systemd-networkd.socket"} {
+		if s.unitPresent(ctx, unit) && (s.unitActive(ctx, unit) || !s.unitMasked(ctx, unit)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Subsystem) unitActive(ctx context.Context, unit string) bool {
 	out, err := s.Runner.Run(ctx, "systemctl", "is-active", unit)
 	if err != nil {
@@ -707,12 +775,16 @@ func (s *Subsystem) backendServicesDrift(ctx context.Context, backend string) bo
 		return !networkingPresent || !s.unitActive(ctx, "networking.service") ||
 			!s.unitEnabled(ctx, "networking.service") ||
 			(networkdPresent && (s.unitActive(ctx, "systemd-networkd.service") ||
-				s.unitEnabled(ctx, "systemd-networkd.service"))) ||
+				s.unitEnabled(ctx, "systemd-networkd.service") ||
+				!s.unitMasked(ctx, "systemd-networkd.service"))) ||
 			(networkdSocketPresent && (s.unitActive(ctx, "systemd-networkd.socket") ||
-				s.unitEnabled(ctx, "systemd-networkd.socket")))
+				s.unitEnabled(ctx, "systemd-networkd.socket") ||
+				!s.unitMasked(ctx, "systemd-networkd.socket")))
 	}
 	return (networkdPresent && (!s.unitActive(ctx, "systemd-networkd.service") ||
-		!s.unitEnabled(ctx, "systemd-networkd.service"))) ||
+		!s.unitEnabled(ctx, "systemd-networkd.service") ||
+		s.unitMasked(ctx, "systemd-networkd.service"))) ||
+		(networkdSocketPresent && s.unitMasked(ctx, "systemd-networkd.socket")) ||
 		(networkingPresent && (s.unitActive(ctx, "networking.service") ||
 			s.unitEnabled(ctx, "networking.service")))
 }
@@ -721,10 +793,81 @@ func (s *Subsystem) backendServicesDrift(ctx context.Context, backend string) bo
 // interfaces, networks and wan; this subsystem makes sure a second manager
 // cannot silently add another lease or default route after apply or reboot.
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
-	if !s.backendServicesDrift(ctx, cfg.System.NetworkBackend) {
+	if s.backendServicesDrift(ctx, cfg.System.NetworkBackend) {
+		return fmt.Errorf("службы настройки сети не соответствуют режиму %q", cfg.System.NetworkBackend)
+	}
+	return s.filesHealth(ctx, cfg)
+}
+
+func (s *Subsystem) filesHealth(ctx context.Context, cfg *config.Config) error {
+	exact := func(path string, content []byte, wanted bool) error {
+		info, statErr := os.Stat(path)
+		if !wanted {
+			if statErr == nil {
+				return fmt.Errorf("лишний управляемый файл %s", path)
+			}
+			if !os.IsNotExist(statErr) {
+				return fmt.Errorf("проверка %s: %w", path, statErr)
+			}
+			return nil
+		}
+		if system.FileChanged(path, content) {
+			return fmt.Errorf("содержимое %s не соответствует конфигурации", path)
+		}
+		if statErr != nil {
+			return fmt.Errorf("проверка %s: %w", path, statErr)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+			return fmt.Errorf("режим %s равен %o, ожидался 644", path, info.Mode().Perm())
+		}
 		return nil
 	}
-	return fmt.Errorf("службы настройки сети не соответствуют режиму %q", cfg.System.NetworkBackend)
+
+	networkdPresent := s.unitPresent(ctx, "systemd-networkd.service")
+	if err := exact(networkdOwnershipDropIn, []byte(renderNetworkdOwnershipConf()), networkdPresent); err != nil {
+		return err
+	}
+	nmPresent := s.unitPresent(ctx, "NetworkManager.service")
+	names := managedInterfaces(cfg)
+	if err := exact(nmConfPath, []byte(renderNetworkManagerConf(names)), nmPresent && len(names) > 0); err != nil {
+		return err
+	}
+
+	backend := cfg.System.NetworkBackend
+	if err := exact(ifupdownPath, []byte(renderIfupdown(cfg)), backend == "ifupdown"); err != nil {
+		return err
+	}
+	wanted := map[string]string(nil)
+	if backend == "networkd" {
+		wanted = renderNetworkd(cfg)
+	} else if (backend == "netos" || backend == "") && networkdPresent && s.unitActive(ctx, "systemd-networkd.service") {
+		wanted = passiveFiles(cfg)
+	}
+	existing, err := filepath.Glob(filepath.Join(networkdDir, networkdPrefix+"*"))
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(existing))
+	for _, path := range existing {
+		name := filepath.Base(path)
+		content, ok := wanted[name]
+		if !ok {
+			return fmt.Errorf("лишний управляемый файл %s", path)
+		}
+		seen[name] = true
+		if err := exact(path, []byte(content), true); err != nil {
+			return err
+		}
+	}
+	for name, content := range wanted {
+		if !seen[name] {
+			if err := exact(filepath.Join(networkdDir, name), []byte(content), true); err != nil {
+				return err
+			}
+		}
+	}
+	waitNeeded := (backend == "netos" || backend == "") && networkdPresent && s.unitActive(ctx, "systemd-networkd.service")
+	return exact(waitOnlineDropIn, []byte(renderWaitOnlineDropIn()), waitNeeded)
 }
 
 // render — общий отпечаток конфигурации для сравнения в Plan.
@@ -768,4 +911,22 @@ func removeFile(path string) error {
 		return fmt.Errorf("удаление %s: %w", path, err)
 	}
 	return nil
+}
+
+func readOptionalFile(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("чтение %s: %w", path, err)
+	}
+	return data, true, nil
+}
+
+func restoreOptionalFile(path string, data []byte, existed bool) error {
+	if !existed {
+		return removeFile(path)
+	}
+	return system.WriteFileAtomic(path, data, 0o644)
 }

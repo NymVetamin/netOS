@@ -14,8 +14,12 @@ import (
 
 func baseConfig(provider string) *config.Config {
 	cfg := config.Default()
+	hostname := "router.example.test"
+	if provider == "duckdns" {
+		hostname = "router.duckdns.org"
+	}
 	cfg.DDNS = config.DDNS{
-		Enabled: true, Provider: provider, Hostname: "router.example.test", AddressSource: "web",
+		Enabled: true, Provider: provider, Hostname: hostname, AddressSource: "web",
 		Interval: 60, Token: "secret-token", Username: "user", Password: "pass", ZoneID: "zone", RecordID: "record",
 	}
 	return cfg
@@ -25,7 +29,7 @@ func TestDuckDNSUpdateAndStatus(t *testing.T) {
 	called := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called++
-		if r.URL.Query().Get("domains") != "router.example.test" || r.URL.Query().Get("token") != "secret-token" || r.URL.Query().Get("ip") != "203.0.113.9" {
+		if r.URL.Query().Get("domains") != "router" || r.URL.Query().Get("token") != "secret-token" || r.URL.Query().Get("ip") != "203.0.113.9" {
 			t.Errorf("unexpected query: %s", r.URL.RawQuery)
 		}
 		_, _ = w.Write([]byte("OK"))

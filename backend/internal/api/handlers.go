@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +23,8 @@ import (
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/store"
 )
+
+var panelActivationStaleAfter = 2 * time.Minute
 
 func generateWireGuardKeypair() (privateKey, publicKey string, err error) {
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -120,6 +124,10 @@ func (s *Server) handleXrayKeypair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVPNServerCertificate(w http.ResponseWriter, r *http.Request) {
+	if s.Engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
+		return
+	}
 	cfg := s.Engine.Current()
 	if cfg == nil {
 		writeError(w, http.StatusNotFound, "конфигурация недоступна")
@@ -129,10 +137,10 @@ func (s *Server) handleVPNServerCertificate(w http.ResponseWriter, r *http.Reque
 		if server.ID != r.PathValue("id") || (server.Type != "ocserv" && server.Type != "ikev2") || !server.Enabled {
 			continue
 		}
-		path := fmt.Sprintf("/var/lib/netos/generated/ocserv-srv%d-tls/panel.crt", server.Index)
+		path := filepath.Join(vpnGeneratedDir, fmt.Sprintf("ocserv-srv%d-tls", server.Index), "panel.crt")
 		filename := fmt.Sprintf("netos-openconnect-%d.crt", server.Index)
 		if server.Type == "ikev2" {
-			path = "/var/lib/netos/generated/strongswan/x509/server.crt"
+			path = filepath.Join(vpnGeneratedDir, "strongswan", "x509", "server.crt")
 			filename = fmt.Sprintf("netos-ikev2-%d-ca.crt", server.Index)
 		}
 		data, err := os.ReadFile(path)
@@ -164,6 +172,14 @@ const (
 // Переменная, а не константа: проверять уборку надо на временном файле, а не
 // на настоящем /var/lib/netos машины, где идёт сборка.
 var initialCredentialsPath = "/var/lib/netos/initial-credentials"
+var vpnGeneratedDir = "/var/lib/netos/generated"
+var panelPortAvailable = func(port int) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	return listener.Close()
+}
 
 // requireAuth проверяет сессию и, для изменяющих запросов, CSRF-токен.
 func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
@@ -674,9 +690,14 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"points": []any{}})
 		return
 	}
-	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
-	if hours == 0 {
-		hours = 24
+	hours := 24
+	if raw := r.URL.Query().Get("hours"); raw != "" {
+		var err error
+		hours, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "диапазон должен быть целым числом часов")
+			return
+		}
 	}
 	if hours < 1 || hours > 168 {
 		writeError(w, http.StatusBadRequest, "диапазон должен быть от 1 до 168 часов")
@@ -685,9 +706,14 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 	var names []string
 	for _, name := range strings.Split(r.URL.Query().Get("interfaces"), ",") {
 		name = strings.TrimSpace(name)
-		if name != "" && len(name) <= 15 {
-			names = append(names, name)
+		if name == "" {
+			continue
 		}
+		if !config.ValidInterfaceName(name) {
+			writeError(w, http.StatusBadRequest, "некорректное имя интерфейса %q", name)
+			return
+		}
+		names = append(names, name)
 	}
 	points := s.Traffic.Points(time.Now().UTC().Add(-time.Duration(hours)*time.Hour), names)
 	writeJSON(w, http.StatusOK, map[string]any{"points": points, "interval_seconds": int(s.Traffic.Interval.Seconds())})
@@ -776,6 +802,129 @@ func (s *Server) handleMaintenanceUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.scheduleMaintenance(w, r, "update", input.Version, "update")
+}
+
+func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Panel   config.Panel `json:"panel"`
+		Confirm string       `json:"confirm"`
+	}
+	if err := readJSON(r, &input); err != nil || input.Confirm != "RESTART" {
+		writeError(w, http.StatusBadRequest, "для смены адреса панели требуется подтверждение RESTART")
+		return
+	}
+	if s.Maintenance == nil || s.Store == nil || s.Engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "обслуживание панели недоступно")
+		return
+	}
+	if pending, _ := s.Engine.Pending(); pending {
+		writeError(w, http.StatusConflict, "сначала подтвердите или откатите предыдущее применение")
+		return
+	}
+
+	s.draftMu.Lock()
+	if s.draft != nil || s.draftApplying {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "сначала примените или отмените текущий черновик")
+		return
+	}
+	s.draftApplying = true
+	s.draftMu.Unlock()
+	releaseLock := true
+	defer func() {
+		if releaseLock {
+			s.draftMu.Lock()
+			s.draftApplying = false
+			s.draftMu.Unlock()
+		}
+	}()
+
+	current := s.Engine.Current()
+	if current == nil {
+		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
+		return
+	}
+	encoded, err := json.Marshal(current)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось скопировать конфигурацию панели: %v", err)
+		return
+	}
+	var next config.Config
+	if err := json.Unmarshal(encoded, &next); err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось скопировать конфигурацию панели: %v", err)
+		return
+	}
+	next.System.Panel = input.Panel
+	for i := range next.Firewall.Rules {
+		if next.Firewall.Rules[i].ID == config.RulePanel {
+			next.Firewall.Rules[i].DstPort = strconv.Itoa(input.Panel.Port)
+		}
+	}
+	if result := next.Validate(); result.HasErrors() {
+		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{
+			Error: "параметры панели содержат ошибки", Problems: result.Problems,
+		})
+		return
+	}
+	if input.Panel.TLS.Mode == "custom" {
+		if _, err := customTLSFingerprint(input.Panel.TLS.CertFile, input.Panel.TLS.KeyFile); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "сертификат и ключ не образуют рабочую TLS-пару: %v", err)
+			return
+		}
+	}
+	if input.Panel.TLS.Mode == "acme" && current.System.Panel.TLS.Mode != "acme" && current.System.Panel.Port != 80 {
+		if err := panelPortAvailable(80); err != nil {
+			writeError(w, http.StatusConflict, "порт 80 для проверки домена ACME уже занят: %v", err)
+			return
+		}
+	}
+	if input.Panel.Port != current.System.Panel.Port {
+		if err := panelPortAvailable(input.Panel.Port); err != nil {
+			writeError(w, http.StatusConflict, "порт %d уже занят: %v", input.Panel.Port, err)
+			return
+		}
+	}
+
+	previous, err := s.Store.ActiveRevision()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось определить активную ревизию: %v", err)
+		return
+	}
+	targetID, err := s.Store.CreateRevision(&next, userOf(r), "смена адреса/TLS веб-панели")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось сохранить ревизию панели: %v", err)
+		return
+	}
+	if err := s.Store.SetRevisionState(targetID, store.StateApplying); err != nil {
+		_ = s.Store.SetRevisionState(targetID, store.StateRolledBack)
+		writeError(w, http.StatusInternalServerError, "не удалось подготовить ревизию панели: %v", err)
+		return
+	}
+	if err := s.Maintenance.SchedulePanelActivation(r.Context(), targetID, previous.ID); err != nil {
+		_ = s.Store.SetRevisionState(targetID, store.StateRolledBack)
+		_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: "panel-restart", Target: strconv.FormatInt(targetID, 10), Detail: err.Error(), Success: false})
+		writeError(w, http.StatusConflict, "%v", err)
+		return
+	}
+	_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: "panel-restart", Target: strconv.FormatInt(targetID, 10), Detail: "перезапуск запланирован с автоматическим откатом", Success: true})
+	releaseLock = false
+	if panelActivationStaleAfter > 0 {
+		go func() {
+			// If systemd-run itself was accepted but never executed, the old daemon
+			// remains alive. Do not leave configuration editing locked forever.
+			time.Sleep(panelActivationStaleAfter)
+			rev, err := s.Store.Revision(targetID)
+			if err == nil && rev.State == store.StateApplying {
+				_ = s.Store.SetRevisionState(targetID, store.StateRolledBack)
+				s.draftMu.Lock()
+				s.draftApplying = false
+				s.draftMu.Unlock()
+			}
+		}()
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"scheduled": true, "revision": targetID, "port": input.Panel.Port,
+	})
 }
 
 func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, operation, argument, action string) {
@@ -1024,7 +1173,11 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	if err := s.Engine.Rollback(r.Context()); err != nil {
+	// Restoring the previous network can terminate the very HTTP connection
+	// that requested the rollback. The system transaction must outlive it.
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := s.Engine.Rollback(rollbackCtx); err != nil {
 		writeError(w, http.StatusConflict, "%v", err)
 		return
 	}
@@ -1127,7 +1280,9 @@ func draftPrecondition(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"components": config.Catalog}
 	if s.Components != nil {
-		// installed — что действительно лежит на диске, running — чей демон
+		// installed — полностью ли готов компонент (весь payload на диске,
+		// закреплённая external-версия актуальна, штатные конфликтующие unit
+		// погашены), running — чей демон
 		// поднят. Желаемое состояние панель знает из конфигурации, а эти два
 		// поля показывают живую машину: установленный компонент может быть
 		// никем не выбран и не работать.
@@ -1138,9 +1293,21 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "сбор состояния недоступен")
+		return
+	}
 	cfg := s.Engine.Current()
-	stats, _ := s.Collector.InterfaceStats()
-	clients, _ := s.Collector.Clients(r.Context(), localClientInterfaces(cfg))
+	stats, err := s.Collector.InterfaceStats()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "чтение интерфейсов: %v", err)
+		return
+	}
+	clients, err := s.Collector.Clients(r.Context(), localClientInterfaces(cfg))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "чтение клиентов: %v", err)
+		return
+	}
 
 	online := 0
 	for _, c := range clients {
@@ -1175,6 +1342,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "сбор состояния недоступен")
+		return
+	}
 	cfg := s.Engine.Current()
 	clients, err := s.Collector.Clients(r.Context(), localClientInterfaces(cfg))
 	if err != nil {
@@ -1236,6 +1407,10 @@ func localClientInterfaces(cfg *config.Config) map[string]bool {
 }
 
 func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "сбор состояния недоступен")
+		return
+	}
 	stats, err := s.Collector.InterfaceStats()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
@@ -1245,6 +1420,10 @@ func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLeases(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "сбор состояния недоступен")
+		return
+	}
 	leases, err := s.Collector.Leases()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
@@ -1254,6 +1433,10 @@ func (s *Server) handleLeases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleARP(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "сбор состояния недоступен")
+		return
+	}
 	entries, err := s.Collector.ARP(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
@@ -1263,14 +1446,26 @@ func (s *Server) handleARP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "сбор состояния недоступен")
+		return
+	}
 	table := r.URL.Query().Get("table")
 	routes, err := s.Collector.Routes(r.Context(), table)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
 		return
 	}
-	rules, _ := s.Collector.Rules(r.Context())
-	parsed, _ := s.Collector.ParsedRoutes(r.Context(), table)
+	rules, err := s.Collector.Rules(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "чтение policy rules: %v", err)
+		return
+	}
+	parsed, err := s.Collector.ParsedRoutes(r.Context(), table)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "разбор маршрутов: %v", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"routes": routes, "rules": rules, "parsed": parsed,
 	})
@@ -1337,7 +1532,7 @@ func (s *Server) handleRenderList(w http.ResponseWriter, r *http.Request) {
 
 // uptimeSeconds читает время работы машины.
 func uptimeSeconds() int64 {
-	data, err := os.ReadFile("/proc/uptime")
+	data, err := os.ReadFile(procUptimePath)
 	if err != nil {
 		return 0
 	}
@@ -1347,3 +1542,5 @@ func uptimeSeconds() int64 {
 	}
 	return int64(up)
 }
+
+var procUptimePath = "/proc/uptime"

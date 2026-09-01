@@ -45,3 +45,23 @@ func TestWarnsThatClientNamesNeedDnsmasq(t *testing.T) {
 		})
 	}
 }
+
+func TestUnboundRejectsMixedPlainAndDoTUpstreams(t *testing.T) {
+	cfg := Default()
+	cfg.DNS.Enabled = true
+	cfg.DNS.Provider = "unbound"
+	cfg.DNS.Upstreams = []Upstream{
+		{ID: "plain", Type: "plain", Address: "9.9.9.9", Enabled: true},
+		{ID: "dot", Type: "dot", Address: "1.1.1.1@853#cloudflare-dns.com", Enabled: true},
+	}
+
+	if !problem(t, cfg, "dns.upstreams", "один тип") {
+		t.Fatal("смешанные plain и DoT-апстримы приняты, хотя forward-tls-upstream действует на всю зону Unbound")
+	}
+
+	cfg.DNS.Upstreams[0].Type = "dot"
+	cfg.DNS.Upstreams[0].Address = "9.9.9.9@853#dns.quad9.net"
+	if problem(t, cfg, "dns.upstreams", "один тип") {
+		t.Fatal("однородный набор DoT-апстримов ошибочно отклонён")
+	}
+}

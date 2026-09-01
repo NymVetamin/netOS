@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -15,26 +18,28 @@ import (
 // совпадать (dnsmasq умеет обе), поэтому владение процессами держим в одном
 // месте, а подсистемы dhcp и dns лишь дёргают его.
 type Manager struct {
-	Dnsmasq  *Dnsmasq
-	ISC      *ISCDHCP
-	Kea      *KeaDHCP
-	Unbound  *Unbound
-	Dnsproxy *Dnsproxy
-	Resolv   *SystemResolver
-	Packages *system.Packages
-	Systemd  *system.Systemd
+	Dnsmasq   *Dnsmasq
+	ISC       *ISCDHCP
+	Kea       *KeaDHCP
+	Unbound   *Unbound
+	Dnsproxy  *Dnsproxy
+	Resolv    *SystemResolver
+	Blocklist *BlocklistManager
+	Packages  *system.Packages
+	Systemd   *system.Systemd
 }
 
 func NewManager(r system.Runner) *Manager {
 	return &Manager{
-		Dnsmasq:  NewDnsmasq(r),
-		ISC:      NewISCDHCP(r),
-		Kea:      NewKeaDHCP(r),
-		Unbound:  NewUnbound(r),
-		Dnsproxy: NewDnsproxy(r),
-		Resolv:   NewSystemResolver(r),
-		Packages: system.NewPackages(r),
-		Systemd:  system.NewSystemd(r),
+		Dnsmasq:   NewDnsmasq(r),
+		ISC:       NewISCDHCP(r),
+		Kea:       NewKeaDHCP(r),
+		Unbound:   NewUnbound(r),
+		Dnsproxy:  NewDnsproxy(r),
+		Resolv:    NewSystemResolver(r),
+		Blocklist: NewBlocklistManager(),
+		Packages:  system.NewPackages(r),
+		Systemd:   system.NewSystemd(r),
 	}
 }
 
@@ -43,6 +48,10 @@ func NewManager(r system.Runner) *Manager {
 // выбора в панели.
 func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error {
 	need := map[string]bool{}
+	if hasKernelDomainPolicies(cfg) {
+		need["dnsmasq"] = true
+		need["ipset"] = true
+	}
 	if cfg.DHCP.Enabled {
 		switch cfg.DHCP.Provider {
 		case "dnsmasq":
@@ -84,8 +93,95 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 	for p := range need {
 		pkgs = append(pkgs, p)
 	}
+	sort.Strings(pkgs)
 	_, err := m.Packages.Ensure(ctx, pkgs...)
 	return err
+}
+
+func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
+	if !cfg.DHCP.Enabled {
+		return nil
+	}
+	switch cfg.DHCP.Provider {
+	case "dnsmasq":
+		content := []byte(m.Dnsmasq.Render(cfg))
+		return validateManagedContent(dnsmasqConfPath, content, 0o644, func(path string) error {
+			if _, err := m.Dnsmasq.Runner.Run(ctx, "dnsmasq", "--test", "--conf-file="+path); err != nil {
+				return fmt.Errorf("проверка конфигурации dnsmasq: %w", err)
+			}
+			return nil
+		})
+	case "isc-dhcp-server":
+		if len(m.ISC.interfaces(cfg)) == 0 {
+			return fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")
+		}
+		content := []byte(m.ISC.Render(cfg))
+		return validateManagedContent(iscConfPath, content, 0o644, func(path string) error {
+			lease, err := os.CreateTemp(filepath.Dir(path), ".netos-dhcpd-leases-*")
+			if err != nil {
+				return err
+			}
+			leasePath := lease.Name()
+			_ = lease.Close()
+			defer os.Remove(leasePath)
+			if _, err := m.ISC.Runner.Run(ctx, "dhcpd", "-4", "-t", "-cf", path, "-lf", leasePath); err != nil {
+				return fmt.Errorf("проверка конфигурации ISC DHCP: %w", err)
+			}
+			return nil
+		})
+	case "kea":
+		content := []byte(m.Kea.Render(cfg))
+		return validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
+			if _, err := m.Kea.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {
+				return fmt.Errorf("проверка конфигурации Kea DHCP: %w", err)
+			}
+			return nil
+		})
+	}
+	return nil
+}
+
+func (m *Manager) preflightDNS(ctx context.Context, cfg *config.Config) error {
+	if !cfg.DNS.Enabled {
+		return nil
+	}
+	switch cfg.DNS.Provider {
+	case "dnsmasq":
+		return m.preflightDnsmasq(ctx, cfg)
+	case "unbound":
+		if cfg.DNS.DNSSEC {
+			if err := m.Unbound.ensureTrustAnchor(ctx); err != nil {
+				return err
+			}
+		}
+		content := []byte(m.Unbound.Render(cfg))
+		if err := validateManagedContent(unboundConfPath, content, 0o644, func(path string) error {
+			if _, err := m.Unbound.Runner.Run(ctx, "unbound-checkconf", path); err != nil {
+				return fmt.Errorf("проверка конфигурации unbound: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	case "dnsproxy":
+		if _, err := os.Stat(dnsproxyBinary); err != nil {
+			return fmt.Errorf("dnsproxy выбран резолвером, но не установлен")
+		}
+	}
+	if hasKernelDomainPolicies(cfg) && cfg.DNS.Provider != "dnsmasq" {
+		return m.preflightDnsmasq(ctx, cfg)
+	}
+	return nil
+}
+
+func (m *Manager) preflightDnsmasq(ctx context.Context, cfg *config.Config) error {
+	content := []byte(m.Dnsmasq.Render(cfg))
+	return validateManagedContent(dnsmasqConfPath, content, 0o644, func(path string) error {
+		if _, err := m.Dnsmasq.Runner.Run(ctx, "dnsmasq", "--test", "--conf-file="+path); err != nil {
+			return fmt.Errorf("проверка конфигурации dnsmasq: %w", err)
+		}
+		return nil
+	})
 }
 
 // stopUnused гасит демонов, которые перестали быть выбранными провайдерами.
@@ -151,6 +247,9 @@ func (s *DHCP) Plan(old, new *config.Config) ([]apply.Action, error) {
 		if old != nil && old.DHCP.Enabled {
 			return []apply.Action{{Kind: "delete", Target: "DHCP-сервер", Disruptive: true}}, nil
 		}
+		if err := s.Health(context.Background(), new); err != nil {
+			return []apply.Action{{Kind: "repair", Target: "DHCP-сервер", Detail: err.Error()}}, nil
+		}
 		return nil, nil
 	}
 	if old == nil || !old.DHCP.Enabled {
@@ -180,11 +279,17 @@ func (s *DHCP) Plan(old, new *config.Config) ([]apply.Action, error) {
 	if !sameRender {
 		return []apply.Action{{Kind: "reload", Target: "DHCP-сервер", Detail: "конфигурация обновлена"}}, nil
 	}
+	if err := s.Health(context.Background(), new); err != nil {
+		return []apply.Action{{Kind: "repair", Target: "DHCP-сервер", Detail: err.Error()}}, nil
+	}
 	return nil, nil
 }
 
 func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := s.M.ensurePackages(ctx, cfg); err != nil {
+		return err
+	}
+	if err := s.M.preflightDHCP(ctx, cfg); err != nil {
 		return err
 	}
 	if err := s.M.stopUnused(ctx, cfg); err != nil {
@@ -212,17 +317,12 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *DHCP) Health(ctx context.Context, cfg *config.Config) error {
-	if !cfg.DHCP.Enabled {
-		return nil
-	}
-	if cfg.DHCP.Provider == "dnsmasq" {
-		return s.M.Dnsmasq.Health(ctx, cfg)
-	}
-	if cfg.DHCP.Provider == "isc-dhcp-server" {
-		return s.M.ISC.Health(ctx, cfg)
-	}
-	if cfg.DHCP.Provider == "kea" {
-		return s.M.Kea.Health(ctx, cfg)
+	for _, check := range []func(context.Context, *config.Config) error{
+		s.M.Dnsmasq.Health, s.M.ISC.Health, s.M.Kea.Health,
+	} {
+		if err := check(ctx, cfg); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -245,6 +345,9 @@ func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
 		if old != nil && old.DNS.Enabled {
 			return []apply.Action{{Kind: "delete", Target: "DNS-резолвер", Disruptive: true}}
 		}
+		if err := s.providerHealth(context.Background(), new); err != nil {
+			return []apply.Action{{Kind: "repair", Target: "DNS-резолвер", Detail: err.Error()}}
+		}
 		return nil
 	}
 	if old == nil || !old.DNS.Enabled {
@@ -257,6 +360,9 @@ func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
 			Detail:     fmt.Sprintf("%s → %s", old.DNS.Provider, new.DNS.Provider),
 			Disruptive: true,
 		}}
+	}
+	if !slices.Equal(old.DNS.Blocklists, new.DNS.Blocklists) {
+		return []apply.Action{{Kind: "reload", Target: "DNS blocklists", Detail: "источники или состояние списков изменены"}}
 	}
 	switch new.DNS.Provider {
 	case "dnsmasq":
@@ -272,6 +378,12 @@ func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
 			return []apply.Action{{Kind: "reload", Target: "DNS-резолвер", Detail: "конфигурация обновлена"}}
 		}
 	}
+	if err := s.M.Blocklist.Health(new); err != nil {
+		return []apply.Action{{Kind: "repair", Target: "DNS blocklists", Detail: err.Error()}}
+	}
+	if err := s.providerHealth(context.Background(), new); err != nil {
+		return []apply.Action{{Kind: "repair", Target: "DNS-резолвер", Detail: err.Error()}}
+	}
 	return nil
 }
 
@@ -282,6 +394,11 @@ func (s *DNS) planSystemResolver(old, new *config.Config) []apply.Action {
 	was := old != nil && s.M.Resolv.Needed(old)
 	will := s.M.Resolv.Needed(new)
 	if was == will {
+		if old != nil {
+			if err := s.M.Resolv.Health(context.Background(), new); err != nil {
+				return []apply.Action{{Kind: "repair", Target: "резолвер роутера", Detail: err.Error()}}
+			}
+		}
 		return nil
 	}
 	if will {
@@ -301,7 +418,40 @@ func (s *DNS) planSystemResolver(old, new *config.Config) []apply.Action {
 // Apply для DNS почти всегда ничего не делает: если резолвер — dnsmasq, его
 // уже применила подсистема dhcp, а повторный вызов идемпотентен и просто
 // увидит, что файл не изменился.
-func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
+func (s *DNS) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
+	if err := s.M.ensurePackages(ctx, cfg); err != nil {
+		return err
+	}
+	blockChanged, blockTx, err := s.M.Blocklist.Apply(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	serviceTx, err := snapshotDNSDomainTransition(ctx, s.M, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if rollbackErr := blockTx.Rollback(); rollbackErr != nil {
+			retErr = fmt.Errorf("%w; возврат DNS blocklist также не удался: %v", retErr, rollbackErr)
+		}
+		if rollbackErr := serviceTx.Rollback(); rollbackErr != nil {
+			retErr = fmt.Errorf("%w; возврат DNS frontend/backend также не удался: %v", retErr, rollbackErr)
+		}
+	}()
+	if err := s.M.preflightDNS(ctx, cfg); err != nil {
+		return err
+	}
+	if serviceTx != nil {
+		serviceTx.armed = true
+	}
+	if !s.M.Dnsmasq.Needed(cfg) {
+		if err := s.M.Dnsmasq.Apply(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	// Резолвер, переставший быть выбранным, надо погасить прежде всего: иначе
 	// он продолжит держать порт 53 и новый не поднимется. Apply провайдера сам
 	// выключает свой юнит, когда провайдер не нужен.
@@ -322,15 +472,20 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	switch cfg.DNS.Provider {
 	case "dnsmasq":
-		if err := s.M.Dnsmasq.Apply(ctx, cfg); err != nil {
+		if err := s.M.Dnsmasq.ApplyPrepared(ctx, cfg, blockChanged); err != nil {
 			return err
 		}
 	case "unbound":
-		if err := s.M.Unbound.Apply(ctx, cfg); err != nil {
+		if err := s.M.Unbound.ApplyPrepared(ctx, cfg, blockChanged); err != nil {
 			return err
 		}
 	case "dnsproxy":
-		if err := s.M.Dnsproxy.Apply(ctx, cfg); err != nil {
+		if err := s.M.Dnsproxy.ApplyPrepared(ctx, cfg, blockChanged); err != nil {
+			return err
+		}
+	}
+	if cfg.DNS.Provider != "dnsmasq" && s.M.Dnsmasq.Needed(cfg) {
+		if err := s.M.Dnsmasq.Apply(ctx, cfg); err != nil {
 			return err
 		}
 	}
@@ -341,17 +496,22 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *DNS) Health(ctx context.Context, cfg *config.Config) error {
-	if !cfg.DNS.Enabled {
-		return nil
+	if err := s.M.Blocklist.Health(cfg); err != nil {
+		return err
 	}
-	if cfg.DNS.Provider == "dnsmasq" {
-		return s.M.Dnsmasq.Health(ctx, cfg)
+	if err := s.providerHealth(ctx, cfg); err != nil {
+		return err
 	}
-	if cfg.DNS.Provider == "unbound" {
-		return s.M.Unbound.Health(ctx, cfg)
-	}
-	if cfg.DNS.Provider == "dnsproxy" {
-		return s.M.Dnsproxy.Health(ctx, cfg)
+	return s.M.Resolv.Health(ctx, cfg)
+}
+
+func (s *DNS) providerHealth(ctx context.Context, cfg *config.Config) error {
+	for _, check := range []func(context.Context, *config.Config) error{
+		s.M.Dnsmasq.Health, s.M.Unbound.Health, s.M.Dnsproxy.Health,
+	} {
+		if err := check(ctx, cfg); err != nil {
+			return err
+		}
 	}
 	return nil
 }

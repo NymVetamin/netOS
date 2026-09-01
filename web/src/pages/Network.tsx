@@ -83,7 +83,14 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
           </select>
         </Field>
         <Field label="Соединения" hint="Установленные соединения не перескакивают между аплинками">
-          <Switch checked={config.multiwan?.sticky_connections !== false} disabled label="Закреплять до завершения" onChange={() => {}} />
+          <Switch
+            checked={config.multiwan?.sticky_connections !== false}
+            label="Закреплять до завершения"
+            onChange={(sticky) => patch((draft) => {
+              draft.multiwan = draft.multiwan || { enabled: false, mode: "failover", sticky_connections: true };
+              draft.multiwan.sticky_connections = sticky;
+            })}
+          />
         </Field>
       </div>
       {wans.filter((wan) => wan.enabled).length < 2 && <div className="hint">Включите минимум два подключения.</div>}
@@ -550,6 +557,8 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                       <Field label="Срок аренды, секунд">
                         <input
                           type="number"
+                          min={1}
+                          max={31536000}
                           value={n.dhcp_pool.lease_time}
                           onChange={(e) =>
                             patch(
@@ -559,7 +568,43 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                           }
                         />
                       </Field>
+                      <Field label="Шлюз для клиентов" hint="Пусто — адрес роутера в сегменте">
+                        <input
+                          type="text"
+                          className="mono"
+                          value={n.dhcp_pool.gateway || ""}
+                          onChange={(e) => patch((d) => (d.networks[idx].dhcp_pool.gateway = e.target.value))}
+                        />
+                      </Field>
+                      <Field label="DHCP-домен">
+                        <input
+                          type="text"
+                          value={n.dhcp_pool.domain || ""}
+                          onChange={(e) => patch((d) => (d.networks[idx].dhcp_pool.domain = e.target.value))}
+                        />
+                      </Field>
+                      <Field label="DNS для клиентов" hint="По одному IPv4-адресу в строке; пусто — роутер">
+                        <textarea
+                          className="mono"
+                          value={(n.dhcp_pool.dns_servers || []).join("\n")}
+                          onChange={(e) => patch((d) => (d.networks[idx].dhcp_pool.dns_servers = e.target.value.split(/\s+/).filter(Boolean)))}
+                        />
+                      </Field>
                     </div>
+                    <Field label="Дополнительные DHCP-опции" hint="По одной в строке: номер=значение (например, 66=pxe.lan)">
+                      <textarea
+                        className="mono"
+                        value={Object.entries(n.dhcp_pool.options || {}).map(([key, value]) => `${key}=${value}`).join("\n")}
+                        onChange={(e) => patch((d) => {
+                          const options: Record<string, string> = {};
+                          for (const line of e.target.value.split("\n")) {
+                            const pos = line.indexOf("=");
+                            if (pos > 0) options[line.slice(0, pos).trim()] = line.slice(pos + 1).trim();
+                          }
+                          d.networks[idx].dhcp_pool.options = options;
+                        })}
+                      />
+                    </Field>
                   </>
                 )}
               </div>
@@ -638,6 +683,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
               <th>Тип</th>
               <th>Состав</th>
               <th>Занят</th>
+              <th>MAC</th>
               <th>MTU</th>
               <th>Включён</th>
               <th />
@@ -681,6 +727,17 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                 </td>
                 <td className="faint" style={{ fontSize: 12.5 }}>
                   {usageOf(config, i) || "свободен"}
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    className="mono"
+                    aria-label={`MAC интерфейса ${i.name}`}
+                    placeholder="не менять"
+                    style={{ width: 150 }}
+                    value={i.mac || ""}
+                    onChange={(e) => patch((d) => (d.interfaces[idx].mac = e.target.value.trim()))}
+                  />
                 </td>
                 <td>
                   <input

@@ -43,6 +43,7 @@ var contendingUnits = []string{"tuned.service"}
 func (s *Subsystem) Name() string { return "system" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	_ = old
 	var actions []apply.Action
 	// Проверка идёт по живой системе, а не по разнице конфигураций: чужой
 	// демон мог подняться и после применения, и тогда план обязан это
@@ -56,18 +57,13 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 			})
 		}
 	}
-	if old == nil {
-		return actions, nil
-	}
-	if old.System.Hostname != new.System.Hostname {
+	if s.hostnameDrift(context.Background(), new) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "имя хоста", Detail: new.System.Hostname})
 	}
-	if old.System.Timezone != new.System.Timezone {
+	if s.timezoneDrift(context.Background(), new) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "часовой пояс", Detail: new.System.Timezone})
 	}
-	if old.System.NTP.Enabled != new.System.NTP.Enabled ||
-		strings.Join(old.System.NTP.Servers, "\x00") != strings.Join(new.System.NTP.Servers, "\x00") ||
-		s.ntpDrift(context.Background(), new) {
+	if s.ntpDrift(context.Background(), new) {
 		detail := "синхронизация времени отключается"
 		if new.System.NTP.Enabled {
 			detail = "серверы: " + strings.Join(new.System.NTP.Servers, ", ")
@@ -85,13 +81,27 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("остановка %s: %w", unit, err)
 		}
 	}
-	if _, err := s.Runner.Run(ctx, "hostnamectl", "set-hostname", cfg.System.Hostname); err != nil {
-		return fmt.Errorf("смена имени хоста: %w", err)
+	if s.hostnameDrift(ctx, cfg) {
+		if _, err := s.Runner.Run(ctx, "hostnamectl", "set-hostname", cfg.System.Hostname); err != nil {
+			return fmt.Errorf("смена имени хоста: %w", err)
+		}
 	}
-	if _, err := s.Runner.Run(ctx, "timedatectl", "set-timezone", cfg.System.Timezone); err != nil {
-		return fmt.Errorf("смена часового пояса: %w", err)
+	if s.timezoneDrift(ctx, cfg) {
+		if _, err := s.Runner.Run(ctx, "timedatectl", "set-timezone", cfg.System.Timezone); err != nil {
+			return fmt.Errorf("смена часового пояса: %w", err)
+		}
 	}
 	return s.applyNTP(ctx, cfg)
+}
+
+func (s *Subsystem) hostnameDrift(ctx context.Context, cfg *config.Config) bool {
+	out, err := s.Runner.Run(ctx, "hostnamectl", "--static")
+	return err != nil || strings.TrimSpace(out) != cfg.System.Hostname
+}
+
+func (s *Subsystem) timezoneDrift(ctx context.Context, cfg *config.Config) bool {
+	out, err := s.Runner.Run(ctx, "timedatectl", "show", "--property=Timezone", "--value")
+	return err != nil || strings.TrimSpace(out) != cfg.System.Timezone
 }
 
 func (s *Subsystem) renderNTP(cfg *config.Config) []byte {
@@ -101,6 +111,9 @@ func (s *Subsystem) renderNTP(cfg *config.Config) []byte {
 
 func (s *Subsystem) applyNTP(ctx context.Context, cfg *config.Config) error {
 	if !cfg.System.NTP.Enabled {
+		if !s.ntpDrift(ctx, cfg) {
+			return nil
+		}
 		if err := s.Systemd.Disable(ctx, "systemd-timesyncd.service"); err != nil {
 			return fmt.Errorf("отключение синхронизации времени: %w", err)
 		}
@@ -109,6 +122,13 @@ func (s *Subsystem) applyNTP(ctx context.Context, cfg *config.Config) error {
 		}
 		return nil
 	}
+	fileChanged := system.FileChanged(s.TimesyncdPath, s.renderNTP(cfg))
+	active := s.Systemd.IsActive(ctx, "systemd-timesyncd.service")
+	enabled := s.unitEnabled(ctx, "systemd-timesyncd.service")
+	if !fileChanged && active && enabled && s.timesyncdDirReady() {
+		return nil
+	}
+
 	// netosd runs with UMask=0077. MkdirAll therefore creates a new drop-in
 	// directory as 0700 unless we correct it explicitly, while timesyncd reads
 	// configuration as the unprivileged systemd-timesync user.
@@ -119,14 +139,20 @@ func (s *Subsystem) applyNTP(ctx context.Context, cfg *config.Config) error {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		return fmt.Errorf("права каталога настроек времени: %w", err)
 	}
-	if err := system.WriteFileAtomic(s.TimesyncdPath, s.renderNTP(cfg), 0o644); err != nil {
-		return fmt.Errorf("настройка синхронизации времени: %w", err)
+	if fileChanged {
+		if err := system.WriteFileAtomic(s.TimesyncdPath, s.renderNTP(cfg), 0o644); err != nil {
+			return fmt.Errorf("настройка синхронизации времени: %w", err)
+		}
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", "--now", "systemd-timesyncd.service"); err != nil {
-		return fmt.Errorf("запуск синхронизации времени: %w", err)
+	if !active || !enabled {
+		if _, err := s.Runner.Run(ctx, "systemctl", "enable", "--now", "systemd-timesyncd.service"); err != nil {
+			return fmt.Errorf("запуск синхронизации времени: %w", err)
+		}
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "restart", "systemd-timesyncd.service"); err != nil {
-		return fmt.Errorf("перезапуск синхронизации времени: %w", err)
+	if fileChanged && active {
+		if _, err := s.Runner.Run(ctx, "systemctl", "restart", "systemd-timesyncd.service"); err != nil {
+			return fmt.Errorf("перезапуск синхронизации времени: %w", err)
+		}
 	}
 	return nil
 }
@@ -138,7 +164,12 @@ func (s *Subsystem) ntpDrift(ctx context.Context, cfg *config.Config) bool {
 		_, err := os.Stat(s.TimesyncdPath)
 		return active || enabled || err == nil
 	}
-	return !active || !enabled || system.FileChanged(s.TimesyncdPath, s.renderNTP(cfg))
+	return !active || !enabled || system.FileChanged(s.TimesyncdPath, s.renderNTP(cfg)) || !s.timesyncdDirReady()
+}
+
+func (s *Subsystem) timesyncdDirReady() bool {
+	info, err := os.Stat(filepath.Dir(s.TimesyncdPath))
+	return err == nil && info.IsDir() && info.Mode().Perm()&0o555 == 0o555
 }
 
 func (s *Subsystem) unitEnabled(ctx context.Context, unit string) bool {

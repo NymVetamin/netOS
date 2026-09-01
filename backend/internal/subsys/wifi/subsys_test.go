@@ -14,25 +14,43 @@ import (
 type fakeRunner struct {
 	commands []string
 	active   bool
+	enabled  bool
+	outputs  map[string]string
+	errors   map[string]error
 }
 
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	cmd := name + " " + strings.Join(args, " ")
 	r.commands = append(r.commands, cmd)
+	if err := r.errors[cmd]; err != nil {
+		return "", err
+	}
+	if output, ok := r.outputs[cmd]; ok {
+		return output, nil
+	}
 	if strings.HasPrefix(cmd, "systemctl restart netos-hostapd-") {
 		r.active = true
+	}
+	if strings.HasPrefix(cmd, "systemctl enable netos-hostapd-") {
+		r.enabled = true
 	}
 	if strings.HasPrefix(cmd, "systemctl stop netos-hostapd-") {
 		r.active = false
 	}
+	if strings.HasPrefix(cmd, "systemctl disable netos-hostapd-") {
+		r.enabled = false
+	}
 	if strings.HasPrefix(cmd, "systemctl is-active netos-hostapd-") && r.active {
 		return "active\n", nil
 	}
+	if strings.HasPrefix(cmd, "systemctl is-enabled netos-hostapd-") && r.enabled {
+		return "enabled\n", nil
+	}
 	if strings.HasPrefix(cmd, "iw dev wlan0 info") && r.active {
-		return "Interface wlan0\n\tssid netOS\n\ttype AP\n\tchannel 36\n", nil
+		return "Interface wlan0\n\tssid netOS\n\ttype AP\n\tchannel 36 (5180 MHz)\n\ttxpower 18.00 dBm\n", nil
 	}
 	if strings.HasPrefix(cmd, "iw dev wlan0-n1 info") && r.active {
-		return "Interface wlan0-n1\n\tssid netOS Guest\n\ttype AP\n\tchannel 36\n", nil
+		return "Interface wlan0-n1\n\tssid netOS Guest\n\ttype AP\n\tchannel 36 (5180 MHz)\n\ttxpower 18.00 dBm\n", nil
 	}
 	return "", nil
 }

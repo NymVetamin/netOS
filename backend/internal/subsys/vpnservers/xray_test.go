@@ -34,7 +34,7 @@ func TestRenderXrayRealityServerAndPeerChannel(t *testing.T) {
 	cfg, server := xrayServerConfig()
 	cfg.Policies = []config.Policy{{
 		ID: "web", Name: "Web", Enabled: true, Priority: 10, Channel: "direct",
-		VPNServer: server.ID, VPNPeer: "phone", Protocol: "tcp", DstPort: "443", DstIP: "1.1.1.0/24",
+		VPNServer: server.ID, VPNPeer: "phone", Protocol: "tcp", DstPort: "443", DstIP: "1.1.1.0/24", Domains: []string{"Example.COM."},
 	}}
 	data, err := RenderXray(server, cfg)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestRenderXrayRealityServerAndPeerChannel(t *testing.T) {
 	for _, want := range []string{
 		`"protocol": "vless"`, `"security": "reality"`, `"email": "reality/phone"`,
 		`"outboundTag": "channel-vpn"`, `"mark": ` + fmt.Sprint(channels.Mark(cfg.Channels[1])),
-		`"network": "tcp"`, `"port": "443"`, `"ip": [`, `"1.1.1.0/24"`,
+		`"network": "tcp"`, `"port": "443"`, `"ip": [`, `"1.1.1.0/24"`, `"domain:example.com"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q:\n%s", want, text)

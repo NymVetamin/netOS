@@ -45,6 +45,7 @@ func TestRoutingValidationRejectsValuesThatWouldFailOrChangeMeaning(t *testing.T
 		{"routing.static[0].type", func(c *Config) { c.Routing.Static[0].Type = "throw" }},
 		{"routing.static[0].interface", func(c *Config) { c.Routing.Static[0].Interface = "bad name" }},
 		{"routing.static[0].metric", func(c *Config) { c.Routing.Static[0].Metric = -1 }},
+		{"routing.static[0].gateway", func(c *Config) { c.Routing.Static[0].Gateway = "2001:db8::1" }},
 		{"routing.rules[0].fwmark", func(c *Config) { c.Routing.Rules[0].FwMark = "0x100000000" }},
 		{"routing.rules[0].fwmark", func(c *Config) { c.Routing.Rules[0].FwMark = "1/2/3" }},
 		{"routing.rules[0].interface", func(c *Config) { c.Routing.Rules[0].Interface = "bad/name" }},
@@ -55,5 +56,15 @@ func TestRoutingValidationRejectsValuesThatWouldFailOrChangeMeaning(t *testing.T
 		if !problem(t, cfg, tc.path, "") {
 			t.Fatalf("invalid value accepted at %s", tc.path)
 		}
+	}
+}
+
+func TestRoutingValidationAcceptsMatchingIPv6Route(t *testing.T) {
+	cfg := validRoutingConfig()
+	cfg.Routing.Static[0].Destination = "2001:db8:1::/64"
+	cfg.Routing.Static[0].Gateway = "2001:db8::1"
+	cfg.Routing.Static[0].Interface = ""
+	if problem(t, cfg, "routing.static[0].gateway", "семейство") {
+		t.Fatal("matching IPv6 destination and gateway rejected")
 	}
 }

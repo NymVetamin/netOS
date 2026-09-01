@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, ConfigResponse, Problem, Session } from "./api";
+import { api, ApiError, ConfigResponse, PlanAction, Problem, Session } from "./api";
 import { Notice, Spinner } from "./ui";
 import { Dashboard } from "./pages/Dashboard";
 import { Clients } from "./pages/Clients";
@@ -496,8 +496,13 @@ function ApplyBar({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [plan, setPlan] = useState<PlanAction[] | null>(null);
   const [remaining, setRemaining] = useState(0);
   const timerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!dirty) setPlan(null);
+  }, [dirty]);
 
   // Обратный отсчёт до автоматического отката держим на виду: именно в эти
   // секунды администратор обязан проверить, что связь не потеряна.
@@ -584,6 +589,17 @@ function ApplyBar({
             "Изменения вступят в силу сразу, перезагрузка не нужна."
           )}
         </div>
+        {plan !== null && (
+          <div className="dim" style={{ marginTop: ".35rem" }}>
+            {plan.length === 0
+              ? "План пуст: фактических действий не требуется."
+              : plan.map((action, index) => (
+                <div key={`${action.subsystem}-${action.target}-${index}`}>
+                  {action.disruptive ? "⚠ " : ""}{action.subsystem}: {action.kind} — {action.target}{action.detail ? ` (${action.detail})` : ""}
+                </div>
+              ))}
+          </div>
+        )}
       </div>
       <div className="actions">
         <button
@@ -602,11 +618,33 @@ function ApplyBar({
           Отменить
         </button>
         <button
+          className="btn"
+          disabled={busy || errorCount > 0}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            setPlan(null);
+            try {
+              await onFlush();
+              const response = await api.plan();
+              setPlan(response.actions || []);
+            } catch (err) {
+              setPlan(null);
+              setError(err instanceof ApiError ? err.message : "Не удалось построить план");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Показать план
+        </button>
+        <button
           className="btn primary"
           disabled={busy || errorCount > 0}
           onClick={async () => {
             setBusy(true);
             setError("");
+            setPlan(null);
             try {
               await onFlush();
               await api.apply("изменения из панели");
@@ -618,7 +656,7 @@ function ApplyBar({
             }
           }}
         >
-          {busy ? "Применяю…" : "Применить"}
+          {busy ? "Подождите…" : "Применить"}
         </button>
       </div>
     </div>

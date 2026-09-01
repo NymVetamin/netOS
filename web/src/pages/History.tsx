@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
-import { Badge, Card, Empty, TableWrap } from "../ui";
+import { Badge, Card, Empty, Notice, TableWrap } from "../ui";
 
 // История ревизий и журнал аудита. Главная ценность — возможность вернуться к
 // заведомо рабочей конфигурации, когда что-то пошло не так.
@@ -8,6 +8,7 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
   const [revisions, setRevisions] = useState<any[]>([]);
   const [audit, setAudit] = useState<any[]>([]);
   const [busy, setBusy] = useState(0);
+  const [error, setError] = useState("");
 
   async function load() {
     const [r, a] = await Promise.all([api.revisions(), api.audit(60)]);
@@ -25,6 +26,8 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
         <h1>История</h1>
         <p>Ревизии конфигурации и журнал действий</p>
       </div>
+
+      {error && <Notice tone="danger" title="Не удалось загрузить ревизию">{error}</Notice>}
 
       <Card title="Ревизии" subtitle="Каждое применение сохраняется отдельной версией" tight>
         {revisions.length === 0 ? (
@@ -57,10 +60,13 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
                           disabled={busy === r.id}
                           onClick={async () => {
                             setBusy(r.id);
+                            setError("");
                             try {
                               await api.restoreRevision(r.id);
                               onRestored();
                               await load();
+                            } catch (cause) {
+                              setError(cause instanceof Error ? cause.message : "Не удалось загрузить ревизию");
                             } finally {
                               setBusy(0);
                             }

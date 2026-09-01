@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -103,6 +104,27 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// WriteFileAtomicIfChanged preserves the inode and mtime when both content
+// and permissions already match. A symlink or another non-regular target is
+// always replaced atomically rather than followed.
+func WriteFileAtomicIfChanged(path string, data []byte, perm os.FileMode) (bool, error) {
+	changed := FileChanged(path, data)
+	if !changed {
+		info, err := os.Lstat(path)
+		changed = err != nil || !info.Mode().IsRegular()
+		if !changed && runtime.GOOS != "windows" {
+			changed = info.Mode().Perm() != perm.Perm()
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := WriteFileAtomic(path, data, perm); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CleanupAtomicTemps removes incomplete files left when a process was killed

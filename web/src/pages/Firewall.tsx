@@ -20,6 +20,16 @@ const ACTIONS = [
   { id: "continue", title: "Передать дальше по списку", tone: "neutral" as const },
 ];
 
+const SCHEDULE_DAYS = [
+  { id: "Mon", title: "Пн" },
+  { id: "Tue", title: "Вт" },
+  { id: "Wed", title: "Ср" },
+  { id: "Thu", title: "Чт" },
+  { id: "Fri", title: "Пт" },
+  { id: "Sat", title: "Сб" },
+  { id: "Sun", title: "Вс" },
+];
+
 export function FirewallPage({ config, patch }: { config: any; patch: Patch }) {
   const fw = config.firewall || {};
   const zones: any[] = fw.zones || [];
@@ -202,17 +212,23 @@ function RuleForm({
       flow: "in",
       action: "accept",
       protocol: "",
+      interface: "",
       src_ip: "",
       dst_ip: "",
+      src_port: "",
       dst_port: "",
       src_mac: "",
+      conn_state: "",
+      schedule: null,
       dst_zone: "",
       log: false,
+      comment: "",
     },
   );
 
   const set = (k: string, v: any) => setR({ ...r, [k]: v });
-  const needsProtocol = !!r.dst_port && r.protocol !== "tcp" && r.protocol !== "udp";
+  const needsProtocol =
+    !!(r.src_port || r.dst_port) && r.protocol !== "tcp" && r.protocol !== "udp";
   const zoneLabel = r.flow === "out" ? "В какую зону" : "Из какой зоны";
 
   return (
@@ -287,6 +303,22 @@ function RuleForm({
           </select>
         </Field>
 
+        <Field label="Интерфейс" hint="Имя входящего или исходящего интерфейса; пусто — любой">
+          <input
+            type="text"
+            className="mono"
+            placeholder="любой"
+            list="firewall-interface-names"
+            value={r.interface || ""}
+            onChange={(e) => set("interface", e.target.value)}
+          />
+          <datalist id="firewall-interface-names">
+            {(config.interfaces || []).map((x: any) => (
+              <option key={x.id || x.name} value={x.name} />
+            ))}
+          </datalist>
+        </Field>
+
         <Field label="Адрес источника" hint="Адрес или подсеть, пусто — любой">
           <input
             type="text"
@@ -317,6 +349,16 @@ function RuleForm({
           />
         </Field>
 
+        <Field label="Порт источника" hint="80, или 80,443, или 1000-2000">
+          <input
+            type="text"
+            className="mono"
+            placeholder="любой"
+            value={r.src_port || ""}
+            onChange={(e) => set("src_port", e.target.value)}
+          />
+        </Field>
+
         <Field label="MAC источника">
           <input
             type="text"
@@ -326,6 +368,81 @@ function RuleForm({
             onChange={(e) => set("src_mac", e.target.value)}
           />
         </Field>
+
+        <Field
+          label="Состояние соединения"
+          hint="Через запятую: new, established, related, invalid"
+        >
+          <input
+            type="text"
+            className="mono"
+            placeholder="любое"
+            value={r.conn_state || ""}
+            onChange={(e) => set("conn_state", e.target.value)}
+          />
+        </Field>
+
+        <Field label="Комментарий" hint="Заметка администратора">
+          <input
+            type="text"
+            value={r.comment || ""}
+            onChange={(e) => set("comment", e.target.value)}
+          />
+        </Field>
+      </div>
+
+      <div style={{ marginTop: "0.9rem" }}>
+        <Switch
+          checked={!!r.schedule}
+          label="Ограничить правило расписанием"
+          onChange={(v) =>
+            set("schedule", v ? { days: [], time_start: "", time_stop: "" } : null)
+          }
+        />
+        {r.schedule && (
+          <div className="form-grid" style={{ marginTop: "0.7rem" }}>
+            <Field label="Дни недели" hint="Пусто — каждый день">
+              <div className="row wrap" style={{ gap: "0.6rem" }}>
+                {SCHEDULE_DAYS.map((day) => (
+                  <label key={day.id} className="row" style={{ gap: "0.25rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={(r.schedule.days || []).includes(day.id)}
+                      onChange={(e) => {
+                        const days = r.schedule.days || [];
+                        set("schedule", {
+                          ...r.schedule,
+                          days: e.target.checked
+                            ? [...days, day.id]
+                            : days.filter((x: string) => x !== day.id),
+                        });
+                      }}
+                    />
+                    {day.title}
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <Field label="Начало (UTC)" hint="Пусто — без нижней границы">
+              <input
+                type="time"
+                value={r.schedule.time_start || ""}
+                onChange={(e) =>
+                  set("schedule", { ...r.schedule, time_start: e.target.value })
+                }
+              />
+            </Field>
+            <Field label="Окончание (UTC)" hint="Пусто — без верхней границы">
+              <input
+                type="time"
+                value={r.schedule.time_stop || ""}
+                onChange={(e) =>
+                  set("schedule", { ...r.schedule, time_stop: e.target.value })
+                }
+              />
+            </Field>
+          </div>
+        )}
       </div>
 
       {needsProtocol && (
@@ -480,6 +597,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
         enabled: true,
         system: false,
         interface: d.interfaces?.[0]?.name || "",
+        comment: "",
       };
       d.firewall.nat.push(
         direction === "source"
@@ -545,6 +663,14 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       style={{ width: 180 }}
                       value={n.name}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].name = e.target.value))}
+                    />
+                    <input
+                      type="text"
+                      aria-label="Комментарий правила NAT"
+                      placeholder="комментарий"
+                      style={{ width: 180, marginTop: 4 }}
+                      value={n.comment || ""}
+                      onChange={(e) => patch((d) => (d.firewall.nat[i].comment = e.target.value))}
                     />
                     {n.system && (
                       <div style={{ marginTop: 3 }}>
@@ -649,13 +775,28 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   <td>
                     <input
                       type="text"
+                      aria-label={`Название проброса порта ${i + 1}`}
                       style={{ width: 130 }}
                       value={n.name}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].name = e.target.value))}
                     />
+                    <input
+                      type="text"
+                      aria-label={`Комментарий проброса порта ${i + 1}`}
+                      placeholder="комментарий"
+                      style={{ width: 130, marginTop: 4 }}
+                      value={n.comment || ""}
+                      onChange={(e) => patch((d) => (d.firewall.nat[i].comment = e.target.value))}
+                    />
+                    {n.system && (
+                      <div style={{ marginTop: 3 }}>
+                        <Badge tone="neutral">создано netOS</Badge>
+                      </div>
+                    )}
                   </td>
                   <td>
                     <select
+                      aria-label={`Входящий интерфейс проброса порта ${n.name || i + 1}`}
                       value={n.interface || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].interface = e.target.value))}
                     >
@@ -669,6 +810,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   </td>
                   <td>
                     <select
+                      aria-label={`Протокол проброса порта ${n.name || i + 1}`}
                       value={n.protocol || "tcp"}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].protocol = e.target.value))}
                     >
@@ -680,6 +822,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   <td>
                     <input
                       type="text"
+                      aria-label={`Внешний порт проброса ${n.name || i + 1}`}
                       className="mono"
                       style={{ width: 90 }}
                       value={n.ext_port || ""}
@@ -690,6 +833,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                     <div className="row" style={{ gap: "0.25rem" }}>
                       <input
                         type="text"
+                        aria-label={`Адрес назначения проброса ${n.name || i + 1}`}
                         className="mono"
                         style={{ width: 125 }}
                         placeholder="192.168.10.5"
@@ -699,6 +843,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       <span className="faint">:</span>
                       <input
                         type="text"
+                        aria-label={`Порт назначения проброса ${n.name || i + 1}`}
                         className="mono"
                         style={{ width: 78 }}
                         placeholder="тот же"
@@ -712,6 +857,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                   <td>
                     <input
                       type="text"
+                      aria-label={`Разрешённые источники проброса ${n.name || i + 1}`}
                       className="mono"
                       style={{ width: 125 }}
                       placeholder="с любых"
@@ -730,9 +876,11 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                     />
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <button className="btn ghost sm" onClick={() => remove(n.id)}>
-                      Удалить
-                    </button>
+                    {!n.system && (
+                      <button className="btn ghost sm" onClick={() => remove(n.id)}>
+                        Удалить
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -742,7 +890,9 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
       )}
       <div className="faint" style={{ fontSize: 12, marginTop: "0.5rem" }}>
         Разрешение на транзит проброшенных пакетов netOS добавляет само — отдельное
-        правило файрволла заводить не нужно.
+        правило файрволла заводить не нужно. Внешний и внутренний порт задаются одним
+        портом или одним диапазоном, например 443 или 8000-8010; списки здесь не
+        поддерживаются.
       </div>
     </Card>
   );
@@ -840,7 +990,13 @@ function describeConditions(r: any): string {
   if (r.src_ip) parts.push(`от ${r.src_ip}`);
   if (r.src_mac) parts.push(`от ${r.src_mac}`);
   if (r.dst_ip) parts.push(`к ${r.dst_ip}`);
+  if (r.src_port) parts.push(`из порта ${r.src_port}`);
   if (r.dst_port) parts.push(`порт ${r.dst_port}`);
   if (r.conn_state) parts.push(r.conn_state);
+  if (r.schedule) {
+    const days = (r.schedule.days || []).join(",") || "ежедневно";
+    const time = [r.schedule.time_start, r.schedule.time_stop].filter(Boolean).join("–");
+    parts.push(`${days}${time ? ` ${time} UTC` : ""}`);
+  }
   return parts.join(", ");
 }

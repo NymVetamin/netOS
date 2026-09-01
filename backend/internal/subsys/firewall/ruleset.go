@@ -24,6 +24,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/multiwan"
+	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
 
@@ -227,6 +228,12 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 
 	// 1. Правила без привязки к зоне — прямо во встроенных цепочках.
 	b.line("# --- правила без привязки к зоне ---")
+	if cfg.System.Panel.TLS.Mode == "acme" {
+		// HTTP-01 проверяет домен с непредсказуемых адресов CA. На этом порту
+		// панель не обслуживается: отдельный handler отвечает только на challenge,
+		// а остальные запросы получает 404.
+		b.line("-A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -m comment --comment %q -j ACCEPT", "ACME HTTP-01")
+	}
 	for _, h := range hooks {
 		for _, r := range cfg.Firewall.Rules {
 			if !r.Enabled || r.Zone != "global" {
@@ -383,8 +390,9 @@ func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
 		for _, proto := range protocols(n.Protocol) {
 			port := n.DestPort
 			if port == "" {
-				port = iptablesPortSpec(n.ExtPort)
+				port = n.ExtPort
 			}
+			port = iptablesPortSpec(port)
 			b.line("-A %s -d %s -p %s --dport %s -m conntrack --ctstate DNAT -m comment --comment %q -j ACCEPT",
 				chain, n.DestIP, proto, port, "проброс: "+n.Name)
 		}
@@ -471,7 +479,6 @@ func scheduleMatch(s config.Schedule) string {
 	if len(s.Days) > 0 {
 		fmt.Fprintf(&b, " --weekdays %s", strings.Join(s.Days, ","))
 	}
-	b.WriteString(" --kerneltz")
 	return b.String()
 }
 
@@ -637,8 +644,12 @@ func (b *builder) multiWANPolicies(cfg *config.Config) {
 		return
 	}
 	b.line(":NETOS-MULTIWAN - [0:0]")
-	b.line("-A PREROUTING -j CONNMARK --restore-mark")
-	b.line("-A PREROUTING -m mark --mark 0 -j NETOS-MULTIWAN")
+	if cfg.MultiWAN.StickyConnections {
+		b.line("-A PREROUTING -j CONNMARK --restore-mark")
+		b.line("-A PREROUTING -m mark --mark 0 -j NETOS-MULTIWAN")
+	} else {
+		b.line("-A PREROUTING -j NETOS-MULTIWAN")
+	}
 	remaining := total
 	for i, wan := range wans {
 		mark := fmt.Sprintf("0x%x", multiwan.Mark(wan))
@@ -648,7 +659,9 @@ func (b *builder) multiWANPolicies(cfg *config.Config) {
 			probability := float64(wan.Weight) / float64(remaining)
 			b.line("-A NETOS-MULTIWAN -m statistic --mode random --probability %.6f -j MARK --set-mark %s", probability, mark)
 		}
-		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark", mark)
+		if cfg.MultiWAN.StickyConnections {
+			b.line("-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark", mark)
+		}
 		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j RETURN", mark)
 		remaining -= wan.Weight
 	}
@@ -833,6 +846,9 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 	}
 	if p.DstIP != "" {
 		fmt.Fprintf(&s, " -d %s", p.DstIP)
+	}
+	if len(p.Domains) > 0 {
+		fmt.Fprintf(&s, " -m set --match-set %s dst", policy.IPv4SetName(p.ID))
 	}
 	if p.DstPort != "" {
 		fmt.Fprintf(&s, " -m multiport --dports %s", iptablesPortSpec(p.DstPort))

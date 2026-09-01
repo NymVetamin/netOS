@@ -53,3 +53,15 @@ func TestWiFiAcceptsStandardPrimaryChannels(t *testing.T) {
 		}
 	}
 }
+
+func TestWiFiRejectsEnabledSSIDOnDisabledSegment(t *testing.T) {
+	cfg := validWiFiSecurityConfig()
+	cfg.Networks[0].Enabled = false
+	result := cfg.Validate()
+	for _, problem := range result.Problems {
+		if problem.Path == "wifi[0].ssids[0].network" && problem.Severity == "error" {
+			return
+		}
+	}
+	t.Fatalf("enabled SSID on disabled segment accepted: %+v", result.Problems)
+}

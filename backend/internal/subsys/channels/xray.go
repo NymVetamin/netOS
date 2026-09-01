@@ -96,13 +96,42 @@ WantedBy=multi-user.target
 `
 }
 
-func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, disableIPv6 bool) (bool, error) {
+func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (created bool, retErr error) {
 	existedBefore := s.linkExists(InterfaceName(ch))
+	if existedBefore && !wasOwned {
+		return false, fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", InterfaceName(ch))
+	}
 	conf, err := RenderXray(ch)
 	if err != nil {
 		return false, err
 	}
 	confPath, unitPath := s.xrayPaths(ch)
+	snapshots, err := captureChannelFiles(confPath, unitPath)
+	if err != nil {
+		return false, err
+	}
+	mutated := false
+	defer func() {
+		if retErr == nil || !mutated {
+			return
+		}
+		rollbackCtx := context.Background()
+		if !wasOwned {
+			s.cleanupXray(rollbackCtx, ch)
+			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(Priority(ch)))
+			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "route", "flush", "table", fmt.Sprint(TableNumber(ch)))
+			if s.linkExists(InterfaceName(ch)) {
+				_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "delete", InterfaceName(ch))
+			}
+			return
+		}
+		if err := restoreChannelFiles(snapshots); err != nil {
+			retErr = fmt.Errorf("%v; rollback Xray: %w", retErr, err)
+			return
+		}
+		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "daemon-reload")
+		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "restart", xrayUnitName(ch))
+	}()
 	// Xray detects the config format by the final filename extension.
 	candidate := strings.TrimSuffix(confPath, filepath.Ext(confPath)) + ".candidate.json"
 	if err := writeFileIfChanged(candidate, conf, 0o600); err != nil {
@@ -117,6 +146,7 @@ func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, disableIPv
 	if err := os.Rename(candidate, confPath); err != nil {
 		return false, err
 	}
+	mutated = true
 	if err := os.Chmod(confPath, 0o600); err != nil {
 		return false, err
 	}
@@ -129,13 +159,12 @@ func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, disableIPv
 			return false, err
 		}
 	}
-	if _, err := s.Runner.Run(ctx, "systemctl", "enable", unitName); err != nil {
+	if err := s.ensureUnitEnabled(ctx, unitName); err != nil {
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
 	if changed || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
-			s.cleanupXray(ctx, ch)
 			return false, fmt.Errorf("запуск Xray: %w", err)
 		}
 	}
@@ -143,28 +172,23 @@ func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, disableIPv
 	for !s.linkExists(InterfaceName(ch)) && time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			s.cleanupXray(context.Background(), ch)
 			return false, ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
 	if !s.linkExists(InterfaceName(ch)) {
-		s.cleanupXray(ctx, ch)
 		return false, fmt.Errorf("Xray не создал интерфейс %s", InterfaceName(ch))
 	}
-	created := !existedBefore
+	created = !existedBefore
 	if disableIPv6 {
 		if err := s.suppressIPv6(InterfaceName(ch)); err != nil {
-			s.cleanupXray(ctx, ch)
 			return created, err
 		}
 	}
 	if err := s.ensureRoutes(ctx, ch, InterfaceName(ch)); err != nil {
-		s.cleanupXray(ctx, ch)
 		return created, err
 	}
 	if err := s.ensureRule(ctx, ch); err != nil {
-		s.cleanupXray(ctx, ch)
 		return created, err
 	}
 	return created, nil
