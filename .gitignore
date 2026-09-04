@@ -19,12 +19,7 @@ coverage_full
 npm-debug.log*
 .npm/
 
-# Воспроизводимые QA-артефакты и кэши
-/output/
-audit_*.md
-/NETOS_FULL_AUDIT.md
-/NETOS_QA_REPORT.md
-/.netos-audit/
+# Кэши Python
 __pycache__/
 *.pyc
 

@@ -54,8 +54,8 @@ jobs:
             GOARCH=$arch go build -trimpath -o /dev/null ./cmd/netosd
           done
 
-  # Готовый бинарник каждой сборки. Нужен, чтобы заливать изменения на тестовую
-  # машину, не выпуская релиз: scripts/dev-push.sh забирает артефакт через
+  # Готовый бинарник каждой сборки. Нужен, чтобы доставлять изменения на стенд,
+  # не выпуская релиз: scripts/dev-push.sh забирает артефакт через
   # gh run download, когда локального Go нет. Собирается ровно так же, как
   # релизный, — с фронтендом внутри и без CGO.
   binary:
@@ -151,6 +151,5 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           bash -n install.sh
-          bash -n scripts/dev-deploy.sh
           bash -n scripts/dev-push.sh
-          shellcheck --severity=warning install.sh scripts/dev-deploy.sh scripts/dev-push.sh
+          shellcheck --severity=warning install.sh scripts/dev-push.sh
