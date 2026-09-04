@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -123,6 +124,12 @@ func TestBackupNowCreatesRealEmptyArchiveAndRestartsDaemon(t *testing.T) {
 	var calls []string
 	m.Run = func(_ context.Context, cmd command) error {
 		calls = append(calls, cmd.name+" "+strings.Join(cmd.args, " "))
+		if cmd.name == "systemctl" && len(cmd.args) > 0 && cmd.args[0] == "start" {
+			if err := os.MkdirAll(filepath.Dir(m.sys(m.ReadyFile)), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(m.sys(m.ReadyFile), []byte("ready\n"), 0o644)
+		}
 		return nil
 	}
 	if err := m.Execute(context.Background(), []string{"backup"}); err != nil {
@@ -141,6 +148,44 @@ func TestBackupNowCreatesRealEmptyArchiveAndRestartsDaemon(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), archive) || !strings.Contains(out.String(), second) || strings.Join(calls, "\n") != "systemctl stop netosd\nsystemctl start netosd\nsystemctl stop netosd\nsystemctl start netosd" {
 		t.Fatalf("output=%q calls=%v", out.String(), calls)
+	}
+}
+
+func TestBackupNowWaitsForFreshDaemonReadiness(t *testing.T) {
+	m, out := testManager()
+	sandbox(t, m)
+	ready := m.sys(m.ReadyFile)
+	if err := os.MkdirAll(filepath.Dir(ready), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ready, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	m.Run = func(_ context.Context, cmd command) error {
+		if cmd.name == "systemctl" && len(cmd.args) > 0 && cmd.args[0] == "start" {
+			started = true
+			if _, err := os.Stat(ready); !os.IsNotExist(err) {
+				return fmt.Errorf("stale readiness marker survived: %v", err)
+			}
+		}
+		return nil
+	}
+	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
+	sleeps := 0
+	m.Sleep = func(time.Duration) {
+		sleeps++
+		if sleeps == 3 {
+			if err := os.WriteFile(ready, []byte("fresh\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := m.Execute(context.Background(), []string{"backup"}); err != nil {
+		t.Fatal(err)
+	}
+	if !started || sleeps != 3 || !strings.Contains(out.String(), "Резервная копия создана:") {
+		t.Fatalf("started=%v sleeps=%d output=%q", started, sleeps, out.String())
 	}
 }
 

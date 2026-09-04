@@ -108,8 +108,12 @@ func New(r system.Runner, logger Logger) *Subsystem {
 func (s *Subsystem) Name() string { return "netconf" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	if old != nil && old.System.NetworkBackend == new.System.NetworkBackend &&
-		render(old) == render(new) && s.Health(context.Background(), new) == nil {
+		render(old) == render(new) && s.Health(ctx, new) == nil {
 		return nil, nil
 	}
 

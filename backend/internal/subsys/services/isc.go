@@ -196,7 +196,10 @@ func (d *ISCDHCP) interfaces(cfg *config.Config) []string {
 }
 func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
-		return d.Systemd.Disable(ctx, iscUnit)
+		if err := removeManagedUnit(ctx, d.Systemd, iscUnit); err != nil {
+			return err
+		}
+		return removeGenerated(iscConfPath)
 	}
 	if len(d.interfaces(cfg)) == 0 {
 		return fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")

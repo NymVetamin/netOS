@@ -1,4 +1,5 @@
-import { Problem } from "../api";
+import { useEffect, useState } from "react";
+import { api, Problem } from "../api";
 import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
@@ -620,6 +621,24 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
 
 function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
   const interfaces: any[] = config.interfaces || [];
+  const [liveInterfaces, setLiveInterfaces] = useState<any[]>([]);
+  const [scanError, setScanError] = useState("");
+
+  const refreshPorts = () => {
+    setScanError("");
+    api.interfaces()
+      .then((result) => setLiveInterfaces(result.interfaces || []))
+      .catch(() => setScanError("Не удалось прочитать сетевые порты машины"));
+  };
+
+  useEffect(() => {
+    refreshPorts();
+  }, []);
+
+  const configuredNames = new Set(interfaces.map((i: any) => i.name));
+  const discovered = liveInterfaces.filter(
+    (i: any) => i.physical && !configuredNames.has(i.name),
+  );
 
   return (
     <Card
@@ -628,6 +647,9 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
       tight
       actions={
         <div className="row" style={{ gap: "0.4rem" }}>
+          <button className="btn ghost sm" onClick={refreshPorts}>
+            Обновить порты
+          </button>
           <button
             className="btn sm"
             onClick={() =>
@@ -690,6 +712,34 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
             </tr>
           </thead>
           <tbody>
+            {discovered.map((i: any) => (
+              <tr key={`discovered-${i.name}`}>
+                <td><span className="mono">{i.name}</span></td>
+                <td><Badge tone="accent">новый порт</Badge></td>
+                <td className="faint mono">—</td>
+                <td className="faint" style={{ fontSize: 12.5 }}>не настроен</td>
+                <td className="mono faint">{i.mac || "—"}</td>
+                <td className="mono">{i.mtu || "—"}</td>
+                <td><Badge tone={i.up ? "ok" : "neutral"}>{i.up ? "up" : "down"}</Badge></td>
+                <td style={{ textAlign: "right" }}>
+                  <button
+                    className="btn sm"
+                    onClick={() => patch((d) => {
+                      d.interfaces = d.interfaces || [];
+                      if (d.interfaces.some((item: any) => item.name === i.name)) return;
+                      d.interfaces.push({
+                        id: newID("if"),
+                        name: i.name,
+                        type: "physical",
+                        enabled: true,
+                      });
+                    })}
+                  >
+                    Настроить
+                  </button>
+                </td>
+              </tr>
+            ))}
             {interfaces.map((i: any, idx: number) => (
               <tr key={i.id}>
                 <td>
@@ -771,6 +821,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
           </tbody>
         </table>
       </TableWrap>
+      {scanError && <Notice tone="warn" title="Список портов недоступен">{scanError}</Notice>}
       <div className="faint" style={{ fontSize: 12.5, marginTop: "0.7rem" }}>
         Порт входит только в один мост. У подчинённого порта нет своего адреса:
         сегмент и подключение к провайдеру назначаются самому мосту.

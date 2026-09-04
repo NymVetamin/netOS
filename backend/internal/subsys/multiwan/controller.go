@@ -73,6 +73,10 @@ func New(r system.Runner, stateDir string, logger Logger) *Controller {
 func (c *Controller) Name() string { return "multiwan" }
 
 func (c *Controller) Plan(old, next *config.Config) ([]apply.Action, error) {
+	return c.PlanContext(context.Background(), old, next)
+}
+
+func (c *Controller) PlanContext(ctx context.Context, old, next *config.Config) ([]apply.Action, error) {
 	if old == nil || !reflect.DeepEqual(old.MultiWAN, next.MultiWAN) || !reflect.DeepEqual(old.WANs, next.WANs) {
 		if next.MultiWAN.Enabled {
 			return []apply.Action{{Kind: "update", Target: "Multi-WAN failover", Detail: "пробы доступности", Disruptive: true}}, nil
@@ -82,7 +86,7 @@ func (c *Controller) Plan(old, next *config.Config) ([]apply.Action, error) {
 		}
 	}
 	if old != nil {
-		if err := c.Health(context.Background(), next); err != nil {
+		if err := c.Health(ctx, next); err != nil {
 			return []apply.Action{{Kind: "update", Target: "Multi-WAN", Detail: err.Error(), Disruptive: true}}, nil
 		}
 	}

@@ -882,7 +882,7 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 
 	// Старый маркер принадлежит предыдущему процессу. Новый демон создаст его
 	// только после успешного Engine.Apply восстановленной ревизии.
-	_ = os.Remove(m.sys(runtimeReadyPath))
+	_ = os.Remove(m.sys(m.ReadyFile))
 	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
 		return m.rollbackRestore(ctx, safety, fmt.Errorf("запуск после восстановления: %w", err))
 	}
@@ -910,7 +910,7 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error)
 	if err := m.run(rollbackCtx, "tar", "-C", string(filepath.Separator), "-xzf", safety); err != nil {
 		return fmt.Errorf("%v; rollback из %s не распакован: %w", cause, safety, err)
 	}
-	_ = os.Remove(m.sys(runtimeReadyPath))
+	_ = os.Remove(m.sys(m.ReadyFile))
 	if err := m.run(rollbackCtx, "systemctl", "start", "netosd"); err != nil {
 		return fmt.Errorf("%v; rollback из %s распакован, но netosd не запущен: %w", cause, safety, err)
 	}
@@ -922,7 +922,7 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error)
 
 func (m *Manager) waitRuntimeReady(ctx context.Context, attempts int) error {
 	for i := 0; ; i++ {
-		if _, err := os.Stat(m.sys(runtimeReadyPath)); err == nil {
+		if _, err := os.Stat(m.sys(m.ReadyFile)); err == nil {
 			state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
 			switch strings.TrimSpace(state) {
 			case "inactive", "failed", "unknown":
@@ -1372,16 +1372,37 @@ func (m *Manager) backupNow(ctx context.Context) error {
 		return err
 	}
 	path, err := m.backup(ctx, "backup")
+	// A marker from an already stopped or abruptly terminated daemon must not
+	// make the new process look ready. The daemon writes it only after the full
+	// startup Apply and a live HTTPS /api/ping probe.
+	removeErr := os.Remove(m.sys(m.ReadyFile))
+	if os.IsNotExist(removeErr) {
+		removeErr = nil
+	}
 	startErr := m.run(ctx, "systemctl", "start", "netosd")
 	if err != nil {
 		return err
 	}
+	if removeErr != nil {
+		return fmt.Errorf("резервная копия создана в %s, служба запущена, но не удалось сбросить маркер готовности: %w", path, removeErr)
+	}
 	if startErr != nil {
 		return fmt.Errorf("резервная копия создана в %s, но служба не запустилась: %w", path, startErr)
+	}
+	// systemd Type=simple reports start success as soon as the process exists.
+	// netosd is usable only after its startup reconciliation and listener probe
+	// have completed, which can take minutes on a small router.
+	if readyErr := m.waitRuntimeReady(ctx, backupReadyAttempts); readyErr != nil {
+		return fmt.Errorf("резервная копия создана в %s, но панель не достигла готовности: %w", path, readyErr)
 	}
 	fmt.Fprintf(m.Out, "Резервная копия создана: %s\n", path)
 	return nil
 }
+
+// waitRuntimeReady sleeps for 500 ms between attempts. Keep the same six
+// minute startup allowance used by installation without making normal backups
+// wait any longer than the daemon actually needs.
+const backupReadyAttempts = 720
 
 // defaultRoute описывает дефолтный маршрут в объёме, которого хватает, чтобы
 // вернуть его на место.

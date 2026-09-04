@@ -347,7 +347,7 @@ func (d *Dnsmasq) Apply(ctx context.Context, cfg *config.Config) error {
 
 func (d *Dnsmasq) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRestart bool) error {
 	if !d.Needed(cfg) {
-		if err := d.Systemd.Disable(ctx, dnsmasqUnit); err != nil {
+		if err := removeManagedUnit(ctx, d.Systemd, dnsmasqUnit); err != nil {
 			return err
 		}
 		return removeGenerated(dnsmasqConfPath)

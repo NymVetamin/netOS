@@ -109,6 +109,10 @@ func domainPoliciesEqual(a, b *config.Config) bool {
 }
 
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, next)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) ([]apply.Action, error) {
 	before, after := desiredSets(old), desiredSets(next)
 	if !reflect.DeepEqual(before, after) || !domainPoliciesEqual(old, next) {
 		kind := "update"
@@ -119,7 +123,7 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 		}
 		return []apply.Action{{Kind: kind, Target: "доменные политики", Detail: fmt.Sprintf("%d IPv4 ipset", len(after))}}, nil
 	}
-	if err := s.Health(context.Background(), next); err != nil {
+	if err := s.Health(ctx, next); err != nil {
 		return []apply.Action{{Kind: "repair", Target: "доменные политики", Detail: err.Error()}}, nil
 	}
 	return nil, nil

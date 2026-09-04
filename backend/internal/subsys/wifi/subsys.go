@@ -64,13 +64,17 @@ func (s *Subsystem) paths(radio config.WiFiRadio) (string, string) {
 }
 
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, next)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) ([]apply.Action, error) {
 	var before []config.WiFiRadio
 	if old != nil {
 		before = enabledRadios(old)
 	}
 	after := enabledRadios(next)
 	if reflect.DeepEqual(before, after) {
-		if err := s.health(context.Background(), next, 1); err != nil {
+		if err := s.health(ctx, next, 1); err != nil {
 			return []apply.Action{{Subsystem: s.Name(), Kind: "restart", Target: "Wi-Fi", Detail: "исправление расхождения с живыми точками доступа", Disruptive: true}}, nil
 		}
 		return nil, nil

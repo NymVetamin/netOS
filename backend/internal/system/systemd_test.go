@@ -266,6 +266,41 @@ func TestSystemdCommandWrappersAndActiveUnits(t *testing.T) {
 	}
 }
 
+type snapshotRunner struct{ commands []string }
+
+func (r *snapshotRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	joined := strings.Join(args, " ")
+	switch {
+	case name == "dpkg-query":
+		return "dnsmasq\tinstall ok installed\nunbound\tdeinstall ok config-files\n", nil
+	case strings.HasPrefix(joined, "list-units"):
+		return "dnsmasq.service loaded inactive dead DNS\nunbound.service loaded active running DNS\n", nil
+	case strings.HasPrefix(joined, "list-unit-files"):
+		return "dnsmasq.service disabled enabled\nunbound.service enabled enabled\n", nil
+	}
+	return "", nil
+}
+
+func (r *snapshotRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+func TestCatalogStateUsesBatchedPackageAndUnitSnapshots(t *testing.T) {
+	r := &snapshotRunner{}
+	packages, err := NewPackages(r).InstalledPackages(context.Background(), []string{"dnsmasq", "unbound", "missing"})
+	if err != nil || !packages["dnsmasq"] || packages["unbound"] || packages["missing"] {
+		t.Fatalf("packages=%v err=%v", packages, err)
+	}
+	disabled, err := NewSystemd(r).DisabledUnits(context.Background(), []string{"dnsmasq.service", "unbound.service", "missing.service"})
+	if err != nil || !disabled["dnsmasq.service"] || disabled["unbound.service"] || !disabled["missing.service"] {
+		t.Fatalf("disabled=%v err=%v", disabled, err)
+	}
+	if len(r.commands) != 3 {
+		t.Fatalf("catalog snapshot launched %d processes instead of 3: %v", len(r.commands), r.commands)
+	}
+}
+
 type packageRunner struct {
 	installed  map[string]bool
 	commands   []string

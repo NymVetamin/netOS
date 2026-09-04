@@ -32,6 +32,13 @@ type Subsystem interface {
 	Health(ctx context.Context, cfg *config.Config) error
 }
 
+// ContextPlanner is implemented by planners that inspect live system state.
+// Pure config planners can keep the smaller Subsystem interface; live probes
+// must stop when an HTTP client goes away or the control-plane budget expires.
+type ContextPlanner interface {
+	PlanContext(ctx context.Context, old, new *config.Config) ([]Action, error)
+}
+
 // Action — одно запланированное изменение.
 type Action struct {
 	Subsystem string `json:"subsystem"`
@@ -213,10 +220,14 @@ func (e *Engine) Current() *config.Config {
 
 // Plan собирает планы всех подсистем в порядке применения.
 func (e *Engine) Plan(new *config.Config) ([]Action, error) {
+	return e.PlanContext(context.Background(), new)
+}
+
+func (e *Engine) PlanContext(ctx context.Context, new *config.Config) ([]Action, error) {
 	e.mu.Lock()
 	old := e.current
 	e.mu.Unlock()
-	return e.PlanFrom(old, new)
+	return e.PlanFromContext(ctx, old, new)
 }
 
 // PlanFrom строит план перехода между двумя заданными конфигурациями.
@@ -226,6 +237,10 @@ func (e *Engine) Plan(new *config.Config) ([]Action, error) {
 // неё нет, и без явного old она сравнивала бы конфигурацию с пустотой — то
 // есть всегда печатала бы план первой установки.
 func (e *Engine) PlanFrom(old, new *config.Config) ([]Action, error) {
+	return e.PlanFromContext(context.Background(), old, new)
+}
+
+func (e *Engine) PlanFromContext(ctx context.Context, old, new *config.Config) ([]Action, error) {
 	if err := validateLiveTransition(old, new); err != nil {
 		return nil, err
 	}
@@ -236,7 +251,16 @@ func (e *Engine) PlanFrom(old, new *config.Config) ([]Action, error) {
 		if !ok {
 			continue
 		}
-		sub, err := s.Plan(old, new)
+		var sub []Action
+		var err error
+		if planner, ok := s.(ContextPlanner); ok {
+			sub, err = planner.PlanContext(ctx, old, new)
+		} else {
+			sub, err = s.Plan(old, new)
+		}
+		if err == nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("план подсистемы %s: %w", name, err)
 		}

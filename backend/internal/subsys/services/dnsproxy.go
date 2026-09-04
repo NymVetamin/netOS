@@ -219,7 +219,7 @@ func (d *Dnsproxy) Apply(ctx context.Context, cfg *config.Config) error {
 
 func (d *Dnsproxy) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRestart bool) error {
 	if !d.Needed(cfg) {
-		if err := d.Systemd.Disable(ctx, dnsproxyUnit); err != nil {
+		if err := removeManagedUnit(ctx, d.Systemd, dnsproxyUnit); err != nil {
 			return err
 		}
 		return removeGenerated(dnsproxyConfPath, dnsproxyHostsPath)

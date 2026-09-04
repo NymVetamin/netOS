@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -440,6 +441,44 @@ func (r *sharedPackageRunner) RunInput(ctx context.Context, _ string, name strin
 
 func (r activeUnitsRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
 	return r.Run(ctx, name, args...)
+}
+
+type catalogSnapshotRunner struct{ commands []string }
+
+func (r *catalogSnapshotRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	joined := strings.Join(args, " ")
+	switch {
+	case name == "dpkg-query":
+		return "dns\tinstall ok installed\nvpn\tinstall ok installed\n", nil
+	case strings.Contains(joined, "list-units"):
+		return "dns.service loaded inactive dead DNS\nvpn.service loaded inactive dead VPN\n", nil
+	case strings.Contains(joined, "list-unit-files"):
+		return "dns.service disabled enabled\nvpn.service disabled enabled\n", nil
+	default:
+		return "", fmt.Errorf("unexpected per-item probe: %s %s", name, joined)
+	}
+}
+
+func (r *catalogSnapshotRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+func TestStatusSnapshotsWholeCatalogInThreeProcesses(t *testing.T) {
+	originalCatalog := config.Catalog
+	config.Catalog = []config.ComponentInfo{
+		{ID: "dns", Packages: []string{"dns"}, Units: []string{"dns.service"}},
+		{ID: "vpn", Packages: []string{"vpn"}, Units: []string{"vpn.service"}},
+	}
+	t.Cleanup(func() { config.Catalog = originalCatalog })
+	runner := &catalogSnapshotRunner{}
+	status := New(runner, testLogger{}).Status(context.Background())
+	if !status["dns"] || !status["vpn"] {
+		t.Fatalf("status=%v", status)
+	}
+	if len(runner.commands) != 3 {
+		t.Fatalf("status launched %d processes instead of 3: %v", len(runner.commands), runner.commands)
+	}
 }
 
 func TestMetadataStatusRunningAndUnitPatterns(t *testing.T) {

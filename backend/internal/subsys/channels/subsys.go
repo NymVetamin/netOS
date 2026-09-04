@@ -233,6 +233,10 @@ func enabledChannels(cfg *config.Config) []config.Channel {
 }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	wanted := enabledChannels(new)
 	if old == nil {
 		var actions []apply.Action
@@ -261,7 +265,7 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 		actions = append(actions, apply.Action{Kind: "delete", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true})
 	}
 	if len(actions) == 0 {
-		if err := s.Health(context.Background(), new); err != nil {
+		if err := s.Health(ctx, new); err != nil {
 			actions = append(actions, apply.Action{Kind: "update", Target: "channels", Detail: err.Error(), Disruptive: true})
 		}
 	}

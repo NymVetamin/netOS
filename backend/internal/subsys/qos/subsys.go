@@ -37,6 +37,10 @@ func New(r system.Runner, stateDir string) *Subsystem {
 func (s *Subsystem) Name() string { return "qos" }
 
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, next)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) ([]apply.Action, error) {
 	var before config.QoS
 	if old != nil {
 		before = old.QoS
@@ -48,7 +52,7 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	qosChanged := !equalQoS(before, next.QoS)
 	clientsChanged := !equalClientLimits(oldClients, next.Clients)
 	if !qosChanged && !clientsChanged {
-		if err := s.Health(context.Background(), next); err != nil {
+		if err := s.Health(ctx, next); err != nil {
 			return []apply.Action{{Subsystem: s.Name(), Kind: "update", Target: "очереди трафика", Detail: "исправление расхождения с живым QoS", Disruptive: true}}, nil
 		}
 		return nil, nil

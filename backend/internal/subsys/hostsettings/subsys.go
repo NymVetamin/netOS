@@ -43,13 +43,17 @@ var contendingUnits = []string{"tuned.service"}
 func (s *Subsystem) Name() string { return "system" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	_ = old
 	var actions []apply.Action
 	// Проверка идёт по живой системе, а не по разнице конфигураций: чужой
 	// демон мог подняться и после применения, и тогда план обязан это
 	// показать, а не промолчать.
 	for _, unit := range contendingUnits {
-		if s.Systemd.IsActive(context.Background(), unit) {
+		if s.Systemd.IsActive(ctx, unit) {
 			actions = append(actions, apply.Action{
 				Kind:   "update",
 				Target: "чужие демоны",
@@ -57,13 +61,13 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 			})
 		}
 	}
-	if s.hostnameDrift(context.Background(), new) {
+	if s.hostnameDrift(ctx, new) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "имя хоста", Detail: new.System.Hostname})
 	}
-	if s.timezoneDrift(context.Background(), new) {
+	if s.timezoneDrift(ctx, new) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "часовой пояс", Detail: new.System.Timezone})
 	}
-	if s.ntpDrift(context.Background(), new) {
+	if s.ntpDrift(ctx, new) {
 		detail := "синхронизация времени отключается"
 		if new.System.NTP.Enabled {
 			detail = "серверы: " + strings.Join(new.System.NTP.Servers, ", ")

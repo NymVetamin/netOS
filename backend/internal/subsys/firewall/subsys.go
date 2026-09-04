@@ -48,6 +48,10 @@ func (s *Subsystem) restore6Cmd() string {
 // изменится. Диффа по строкам достаточно: правила детерминированы, порядок
 // стабилен, поэтому изменение в UI даёт минимальный дифф в плане.
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	newRS, err := Build(new)
 	if err != nil {
 		return nil, err
@@ -80,7 +84,7 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "ip6tables", Detail: detail})
 	}
 	if len(actions) == 0 {
-		ipv4OK, ipv6OK, err := s.liveMatches(context.Background(), newRS)
+		ipv4OK, ipv6OK, err := s.liveMatches(ctx, newRS)
 		if err != nil {
 			return nil, err
 		}

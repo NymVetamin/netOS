@@ -2,6 +2,7 @@ package apply
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,14 @@ func (testLogger) Errorf(string, ...any) {}
 
 type testSubsystem struct {
 	apply func(context.Context, *config.Config) error
+}
+
+type contextPlanSubsystem struct{ testSubsystem }
+
+func (s *contextPlanSubsystem) Name() string { return "components" }
+func (s *contextPlanSubsystem) PlanContext(ctx context.Context, _, _ *config.Config) ([]Action, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (s *testSubsystem) Name() string { return "interfaces" }
@@ -42,6 +51,18 @@ func newTestEngine(t *testing.T, subsystem *testSubsystem) *Engine {
 		t.Fatal(err)
 	}
 	return e
+}
+
+func TestPlanContextCancelsLivePlanner(t *testing.T) {
+	e := NewEngine(testLogger{}, false)
+	if err := e.Register(&contextPlanSubsystem{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.PlanContext(ctx, config.Default()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PlanContext error=%v, want context.Canceled", err)
+	}
 }
 
 func validConfig(host string) *config.Config {

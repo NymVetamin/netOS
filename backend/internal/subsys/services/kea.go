@@ -159,7 +159,10 @@ func joinComma(v []string) string {
 }
 func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
-		return d.Systemd.Disable(ctx, keaUnit)
+		if err := removeManagedUnit(ctx, d.Systemd, keaUnit); err != nil {
+			return err
+		}
+		return removeGenerated(keaConfPath)
 	}
 	var root map[string]any
 	if err := json.Unmarshal([]byte(d.Render(cfg)), &root); err != nil {

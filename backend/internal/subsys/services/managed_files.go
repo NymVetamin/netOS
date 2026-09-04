@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,27 @@ import (
 )
 
 var systemdUnitDir = "/etc/systemd/system"
+
+// removeManagedUnit stops a netOS-owned service, removes its unit definition
+// and makes systemd forget it immediately. Leaving a disabled unit behind is
+// misleading after the corresponding component has been purged: it remains
+// visible in list-unit-files and points at a binary that no longer exists.
+func removeManagedUnit(ctx context.Context, systemd *system.Systemd, unit string) error {
+	if err := systemd.Disable(ctx, unit); err != nil {
+		return err
+	}
+	path := filepath.Join(systemdUnitDir, unit)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("удаление неиспользуемого юнита %s: %w", path, err)
+	}
+	if err := systemd.DaemonReload(ctx); err != nil {
+		return fmt.Errorf("перечитывание systemd после удаления %s: %w", unit, err)
+	}
+	return nil
+}
 
 // writeManagedFile changes bytes only when necessary. A permission-only drift
 // is repaired without replacing the inode or forcing a daemon restart.

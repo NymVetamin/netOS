@@ -119,6 +119,57 @@ func (s *Systemd) IsDisabled(ctx context.Context, unit string) bool {
 	return s.alreadyDisabled(ctx, unit)
 }
 
+// DisabledUnits reads the state of many units with two systemctl processes.
+// Calling IsDisabled for every catalog component amplifies scheduler pressure
+// on small routers and used to turn one plan request into dozens of process
+// launches. Missing units are considered disabled, just like Disable does.
+func (s *Systemd) DisabledUnits(ctx context.Context, units []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(units))
+	if len(units) == 0 {
+		return result, nil
+	}
+	// Do not pass unit names as patterns: list-unit-files exits with status 1
+	// when even one optional package unit is absent, discarding the useful
+	// snapshot and forcing the slow per-unit fallback on minimal installs.
+	activeOut, err := s.R.Run(ctx, "systemctl", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager")
+	if err != nil {
+		return nil, err
+	}
+	active := map[string]string{}
+	for _, line := range strings.Split(activeOut, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 {
+			active[fields[0]] = fields[2]
+		}
+	}
+
+	fileOut, err := s.R.Run(ctx, "systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager")
+	if err != nil {
+		return nil, err
+	}
+	fileState := map[string]string{}
+	for _, line := range strings.Split(fileOut, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			fileState[fields[0]] = fields[1]
+		}
+	}
+	for _, unit := range units {
+		activeState, loaded := active[unit]
+		if !loaded {
+			activeState = "inactive"
+		}
+		state, exists := fileState[unit]
+		unableAtBoot := !exists
+		switch state {
+		case "disabled", "masked", "masked-runtime", "static", "generated", "transient":
+			unableAtBoot = true
+		}
+		result[unit] = activeState == "inactive" && unableAtBoot
+	}
+	return result, nil
+}
+
 // unitMissing распознаёт отказ из-за отсутствующего юнита.
 //
 // Для Disable это не ошибка, а уже достигнутая цель: юнита нет — значит, демон
@@ -188,6 +239,32 @@ func (p *Packages) Installed(ctx context.Context, pkg string) bool {
 		return false
 	}
 	return strings.Contains(out, "install ok installed")
+}
+
+// InstalledPackages snapshots dpkg once for the entire component catalog.
+// Besides being faster in the normal case, this keeps plan/catalog latency
+// bounded by one scheduler-delayed process instead of one delay per package.
+func (p *Packages) InstalledPackages(ctx context.Context, packages []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(packages))
+	if len(packages) == 0 {
+		return result, nil
+	}
+	out, err := p.R.Run(ctx, "dpkg-query", "-W", "-f=${Package}\t${Status}\n")
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]bool, len(packages))
+	for _, pkg := range packages {
+		wanted[pkg] = true
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || !wanted[fields[0]] {
+			continue
+		}
+		result[fields[0]] = strings.Join(fields[1:4], " ") == "install ok installed"
+	}
+	return result, nil
 }
 
 // Ensure ставит пакеты, которых нет. Возвращает список установленных, чтобы

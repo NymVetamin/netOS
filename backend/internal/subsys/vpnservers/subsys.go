@@ -202,6 +202,10 @@ func ownedServersEqual(left, right []ownedServer) bool {
 }
 
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, next)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) ([]apply.Action, error) {
 	wanted := enabledServers(next)
 	previous := map[string]config.VPNServer{}
 	if old != nil {
@@ -226,7 +230,7 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 		actions = append(actions, apply.Action{Kind: "delete", Target: server.Name, Detail: resourceName(server), Disruptive: true})
 	}
 	if old != nil && len(actions) == 0 {
-		if err := s.Health(context.Background(), next); err != nil {
+		if err := s.Health(ctx, next); err != nil {
 			actions = append(actions, apply.Action{
 				Kind: "update", Target: "живое состояние VPN-серверов", Detail: err.Error(), Disruptive: true,
 			})

@@ -22,6 +22,9 @@ npm-debug.log*
 # Воспроизводимые QA-артефакты и кэши
 /output/
 audit_*.md
+/NETOS_FULL_AUDIT.md
+/NETOS_QA_REPORT.md
+/.netos-audit/
 __pycache__/
 *.pyc
 

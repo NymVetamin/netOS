@@ -49,9 +49,20 @@ func New(r system.Runner, logger Logger) *Subsystem {
 func (s *Subsystem) Name() string { return "components" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+// PlanContext keeps the live package/unit probes attached to the caller. The
+// API gives preview a latency budget; using context.Background here used to
+// leave dozens of probes running after the browser had already timed out.
+func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
 	desired := desiredComponentState(new)
 	protected := protectedComponentPackages(desired)
+	snapshot, snapshotErr := s.liveSnapshot(ctx)
+	if snapshotErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	for _, info := range config.Catalog {
 		want := desired[info.ID]
@@ -59,7 +70,7 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 			continue
 		}
 		if want {
-			_, allInstalled := s.componentState(context.Background(), info)
+			_, allInstalled := s.componentStateFrom(ctx, info, snapshot, snapshotErr == nil)
 			if allInstalled {
 				continue
 			}
@@ -68,7 +79,7 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 				Detail: "установка, " + info.SizeHint,
 			})
 		} else {
-			if !s.componentRemovable(context.Background(), info, protected) {
+			if !s.componentRemovableFrom(ctx, info, protected, snapshot, snapshotErr == nil) {
 				continue
 			}
 			actions = append(actions, apply.Action{
@@ -77,6 +88,42 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 		}
 	}
 	return actions, nil
+}
+
+type componentLiveSnapshot struct {
+	packages map[string]bool
+	disabled map[string]bool
+}
+
+// liveSnapshot collapses the catalog-wide state check to one dpkg-query and
+// two systemctl calls. On a saturated single-core router the old per-item loop
+// multiplied process scheduling latency into minutes.
+func (s *Subsystem) liveSnapshot(ctx context.Context) (componentLiveSnapshot, error) {
+	var packages, units []string
+	seenPackages, seenUnits := map[string]bool{}, map[string]bool{}
+	for _, info := range config.Catalog {
+		for _, pkg := range info.Packages {
+			if !seenPackages[pkg] {
+				seenPackages[pkg] = true
+				packages = append(packages, pkg)
+			}
+		}
+		for _, unit := range info.Units {
+			if !seenUnits[unit] {
+				seenUnits[unit] = true
+				units = append(units, unit)
+			}
+		}
+	}
+	installed, err := s.Packages.InstalledPackages(ctx, packages)
+	if err != nil {
+		return componentLiveSnapshot{}, err
+	}
+	disabled, err := s.Systemd.DisabledUnits(ctx, units)
+	if err != nil {
+		return componentLiveSnapshot{}, err
+	}
+	return componentLiveSnapshot{packages: installed, disabled: disabled}, nil
 }
 
 // Apply доводит состав установленного до описанного в конфигурации.
@@ -206,17 +253,29 @@ func protectedComponentPackages(desired map[string]bool) map[string]bool {
 }
 
 func (s *Subsystem) componentRemovable(ctx context.Context, info config.ComponentInfo, protected map[string]bool) bool {
+	return s.componentRemovableFrom(ctx, info, protected, componentLiveSnapshot{}, false)
+}
+
+func (s *Subsystem) componentRemovableFrom(ctx context.Context, info config.ComponentInfo, protected map[string]bool, snapshot componentLiveSnapshot, useSnapshot bool) bool {
 	if info.External {
 		rel, ok := externalReleases[info.ID]
 		return ok && externalOwned(rel)
 	}
 	for _, unit := range info.Units {
-		if !s.Systemd.IsDisabled(ctx, unit) {
+		disabled := snapshot.disabled[unit]
+		if !useSnapshot {
+			disabled = s.Systemd.IsDisabled(ctx, unit)
+		}
+		if !disabled {
 			return true
 		}
 	}
 	for _, pkg := range info.Packages {
-		if !protected[pkg] && s.Packages.Installed(ctx, pkg) {
+		installed := snapshot.packages[pkg]
+		if !useSnapshot {
+			installed = s.Packages.Installed(ctx, pkg)
+		}
+		if !protected[pkg] && installed {
 			return true
 		}
 	}
@@ -226,6 +285,10 @@ func (s *Subsystem) componentRemovable(ctx context.Context, info config.Componen
 // componentState distinguishes a complete installation from a partial one.
 // The latter must be completed when selected and fully purged when omitted.
 func (s *Subsystem) componentState(ctx context.Context, info config.ComponentInfo) (anyInstalled, allInstalled bool) {
+	return s.componentStateFrom(ctx, info, componentLiveSnapshot{}, false)
+}
+
+func (s *Subsystem) componentStateFrom(ctx context.Context, info config.ComponentInfo, snapshot componentLiveSnapshot, useSnapshot bool) (anyInstalled, allInstalled bool) {
 	if info.External {
 		rel, ok := externalReleases[info.ID]
 		if !ok {
@@ -242,12 +305,19 @@ func (s *Subsystem) componentState(ctx context.Context, info config.ComponentInf
 	}
 	allInstalled = true
 	for _, pkg := range info.Packages {
-		installed := s.Packages.Installed(ctx, pkg)
+		installed := snapshot.packages[pkg]
+		if !useSnapshot {
+			installed = s.Packages.Installed(ctx, pkg)
+		}
 		anyInstalled = anyInstalled || installed
 		allInstalled = allInstalled && installed
 	}
 	for _, unit := range info.Units {
-		allInstalled = allInstalled && s.Systemd.IsDisabled(ctx, unit)
+		disabled := snapshot.disabled[unit]
+		if !useSnapshot {
+			disabled = s.Systemd.IsDisabled(ctx, unit)
+		}
+		allInstalled = allInstalled && disabled
 	}
 	return anyInstalled, allInstalled
 }
@@ -457,11 +527,15 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error { retu
 // показывает это рядом с желаемым состоянием, чтобы расхождение было видно.
 func (s *Subsystem) Status(ctx context.Context) map[string]bool {
 	out := map[string]bool{}
+	snapshot, snapshotErr := s.liveSnapshot(ctx)
+	if snapshotErr != nil && ctx.Err() != nil {
+		return out
+	}
 	for _, info := range config.Catalog {
 		if !info.External && len(info.Packages) == 0 {
 			continue
 		}
-		_, out[info.ID] = s.componentState(ctx, info)
+		_, out[info.ID] = s.componentStateFrom(ctx, info, snapshot, snapshotErr == nil)
 	}
 	return out
 }

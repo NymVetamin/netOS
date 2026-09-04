@@ -1058,8 +1058,17 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
 		return
 	}
-	actions, err := s.Engine.Plan(cfg)
+	// Preview is a control-plane request, not an unbounded diagnostic job. Live
+	// probes below the planner inherit this budget and stop when the client has
+	// already left instead of accumulating behind CPU saturation.
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	actions, err := s.Engine.PlanContext(ctx, cfg)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			writeError(w, http.StatusServiceUnavailable, "построение плана превысило лимит 15 секунд; повторите после снижения нагрузки")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "не удалось построить план: %v", err)
 		return
 	}

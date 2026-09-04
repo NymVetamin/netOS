@@ -39,6 +39,9 @@ func TestInterfaceStatsReadsEveryFieldAndSkipsLoopback(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeFile(t, filepath.Join(root, "lo", "operstate"), "up\n")
 	base := filepath.Join(root, "eth0")
+	if err := os.MkdirAll(filepath.Join(base, "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for path, value := range map[string]string{
 		"address": "02:00:00:00:00:01\n", "mtu": "1500\n", "operstate": "unknown\n", "flags": "0x1\n",
 		"statistics/rx_bytes": "101\n", "statistics/tx_bytes": "202\n",
@@ -53,7 +56,7 @@ func TestInterfaceStatsReadsEveryFieldAndSkipsLoopback(t *testing.T) {
 	if err != nil || len(stats) != 1 {
 		t.Fatalf("stats=%+v err=%v", stats, err)
 	}
-	want := InterfaceStat{Name: "eth0", Up: true, MAC: "02:00:00:00:00:01", MTU: 1500, RXBytes: 101, TXBytes: 202, RXPackets: 11, TXPackets: 22, RXErrors: 1, TXErrors: 2}
+	want := InterfaceStat{Name: "eth0", Physical: true, Up: true, MAC: "02:00:00:00:00:01", MTU: 1500, RXBytes: 101, TXBytes: 202, RXPackets: 11, TXPackets: 22, RXErrors: 1, TXErrors: 2}
 	if !reflect.DeepEqual(stats[0], want) {
 		t.Fatalf("stat=%+v want=%+v", stats[0], want)
 	}

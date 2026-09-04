@@ -106,6 +106,48 @@ func hasCommand(commands []string, fragment string) bool {
 	return false
 }
 
+func TestDisabledProvidersRemoveTheirManagedUnits(t *testing.T) {
+	useProviderPaths(t)
+	if err := os.MkdirAll(systemdUnitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	runner := newProviderRunner()
+	tests := []struct {
+		name  string
+		unit  string
+		files []string
+		apply func(context.Context, *config.Config) error
+	}{
+		{"dnsmasq", dnsmasqUnit, []string{dnsmasqConfPath}, NewDnsmasq(runner).Apply},
+		{"ISC DHCP", iscUnit, []string{iscConfPath}, NewISCDHCP(runner).Apply},
+		{"Kea DHCP", keaUnit, []string{keaConfPath}, NewKeaDHCP(runner).Apply},
+		{"Unbound", unboundUnit, []string{unboundConfPath}, NewUnbound(runner).Apply},
+		{"dnsproxy", dnsproxyUnit, []string{dnsproxyConfPath, dnsproxyHostsPath}, NewDnsproxy(runner).Apply},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			paths := append([]string{filepath.Join(systemdUnitDir, tc.unit)}, tc.files...)
+			for _, path := range paths {
+				if err := os.WriteFile(path, []byte("stale\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tc.apply(context.Background(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range paths {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("disabled provider left %s: %v", path, err)
+				}
+			}
+		})
+	}
+	if !hasCommand(runner.commands, "systemctl daemon-reload") {
+		t.Fatalf("systemd was not reloaded after unit removal: %v", runner.commands)
+	}
+}
+
 func TestDnsproxyHostsOnlyChangeRestartsAndCleanRepeatDoesNot(t *testing.T) {
 	useProviderPaths(t)
 	r := newProviderRunner()

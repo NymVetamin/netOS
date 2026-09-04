@@ -40,7 +40,11 @@ type ARPEntry struct {
 
 // InterfaceStat — счётчики интерфейса.
 type InterfaceStat struct {
-	Name      string `json:"name"`
+	Name string `json:"name"`
+	// Physical distinguishes configurable hardware ports from bridges, VLANs,
+	// tunnels and other runtime-only links. A hot-added NIC must be visible to
+	// the configuration UI without adopting every transient virtual interface.
+	Physical  bool   `json:"physical"`
 	Up        bool   `json:"up"`
 	MAC       string `json:"mac"`
 	MTU       int    `json:"mtu"`
@@ -278,6 +282,7 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 		base := filepath.Join(root, name)
 		stat := InterfaceStat{
 			Name:      name,
+			Physical:  pathExists(filepath.Join(base, "device")),
 			MAC:       readString(base + "/address"),
 			MTU:       int(readInt(base + "/mtu")),
 			Up:        interfaceIsUp(readString(base+"/operstate"), readString(base+"/flags")),
@@ -291,6 +296,11 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 		out = append(out, stat)
 	}
 	return out, nil
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // interfaceIsUp учитывает TUN/TAP: ядро обычно сообщает им operstate=unknown,

@@ -243,11 +243,15 @@ func NewDHCP(m *Manager) *DHCP { return &DHCP{M: m} }
 func (s *DHCP) Name() string { return "dhcp" }
 
 func (s *DHCP) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+func (s *DHCP) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	if !new.DHCP.Enabled {
 		if old != nil && old.DHCP.Enabled {
 			return []apply.Action{{Kind: "delete", Target: "DHCP-сервер", Disruptive: true}}, nil
 		}
-		if err := s.Health(context.Background(), new); err != nil {
+		if err := s.Health(ctx, new); err != nil {
 			return []apply.Action{{Kind: "repair", Target: "DHCP-сервер", Detail: err.Error()}}, nil
 		}
 		return nil, nil
@@ -279,7 +283,7 @@ func (s *DHCP) Plan(old, new *config.Config) ([]apply.Action, error) {
 	if !sameRender {
 		return []apply.Action{{Kind: "reload", Target: "DHCP-сервер", Detail: "конфигурация обновлена"}}, nil
 	}
-	if err := s.Health(context.Background(), new); err != nil {
+	if err := s.Health(ctx, new); err != nil {
 		return []apply.Action{{Kind: "repair", Target: "DHCP-сервер", Detail: err.Error()}}, nil
 	}
 	return nil, nil
@@ -337,15 +341,19 @@ func NewDNS(m *Manager) *DNS { return &DNS{M: m} }
 func (s *DNS) Name() string { return "dns" }
 
 func (s *DNS) Plan(old, new *config.Config) ([]apply.Action, error) {
-	return append(s.planProvider(old, new), s.planSystemResolver(old, new)...), nil
+	return s.PlanContext(context.Background(), old, new)
 }
 
-func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
+func (s *DNS) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
+	return append(s.planProvider(ctx, old, new), s.planSystemResolver(ctx, old, new)...), nil
+}
+
+func (s *DNS) planProvider(ctx context.Context, old, new *config.Config) []apply.Action {
 	if !new.DNS.Enabled {
 		if old != nil && old.DNS.Enabled {
 			return []apply.Action{{Kind: "delete", Target: "DNS-резолвер", Disruptive: true}}
 		}
-		if err := s.providerHealth(context.Background(), new); err != nil {
+		if err := s.providerHealth(ctx, new); err != nil {
 			return []apply.Action{{Kind: "repair", Target: "DNS-резолвер", Detail: err.Error()}}
 		}
 		return nil
@@ -381,7 +389,7 @@ func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
 	if err := s.M.Blocklist.Health(new); err != nil {
 		return []apply.Action{{Kind: "repair", Target: "DNS blocklists", Detail: err.Error()}}
 	}
-	if err := s.providerHealth(context.Background(), new); err != nil {
+	if err := s.providerHealth(ctx, new); err != nil {
 		return []apply.Action{{Kind: "repair", Target: "DNS-резолвер", Detail: err.Error()}}
 	}
 	return nil
@@ -390,12 +398,12 @@ func (s *DNS) planProvider(old, new *config.Config) []apply.Action {
 // planSystemResolver показывает смену резолвера самого роутера: это остановка
 // systemd-resolved и подмена /etc/resolv.conf, то есть изменение, о котором
 // администратор обязан узнать до применения, а не после.
-func (s *DNS) planSystemResolver(old, new *config.Config) []apply.Action {
+func (s *DNS) planSystemResolver(ctx context.Context, old, new *config.Config) []apply.Action {
 	was := old != nil && s.M.Resolv.Needed(old)
 	will := s.M.Resolv.Needed(new)
 	if was == will {
 		if old != nil {
-			if err := s.M.Resolv.Health(context.Background(), new); err != nil {
+			if err := s.M.Resolv.Health(ctx, new); err != nil {
 				return []apply.Action{{Kind: "repair", Target: "резолвер роутера", Detail: err.Error()}}
 			}
 		}

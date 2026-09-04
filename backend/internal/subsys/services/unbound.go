@@ -344,7 +344,7 @@ func (u *Unbound) Apply(ctx context.Context, cfg *config.Config) error {
 
 func (u *Unbound) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRestart bool) error {
 	if !u.Needed(cfg) {
-		if err := u.Systemd.Disable(ctx, unboundUnit); err != nil {
+		if err := removeManagedUnit(ctx, u.Systemd, unboundUnit); err != nil {
 			return err
 		}
 		return removeGenerated(unboundConfPath)
