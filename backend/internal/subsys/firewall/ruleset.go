@@ -513,8 +513,11 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 			}
 			routerIP := addressOf(n.RouterAddress)
 			for _, proto := range []string{"udp", "tcp"} {
-				b.line("-A PREROUTING -s %s -p %s --dport 53 ! -d %s -m comment --comment %q -j DNAT --to-destination %s:%d",
-					subnetOf(n.RouterAddress), proto, routerIP, "перехват DNS", routerIP, cfg.DNS.Port)
+				// Keep the negated destination before the protocol selector. The
+				// nft-backed iptables-save emits rules in this order, and Health
+				// deliberately compares the live ruleset with the generated one.
+				b.line("-A PREROUTING -s %s ! -d %s/32 -p %s --dport 53 -m comment --comment %q -j DNAT --to-destination %s:%d",
+					subnetOf(n.RouterAddress), routerIP, proto, "перехват DNS", routerIP, cfg.DNS.Port)
 			}
 		}
 	}

@@ -81,7 +81,12 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 			d.WANAddress = addrs[0]
 			continue
 		}
-		if len(addrs) == 0 {
+		// A Wi-Fi radio is exposed as a physical netdev too, but a station-mode
+		// mac80211 interface cannot be enslaved directly to a Linux bridge.
+		// Wi-Fi is configured separately and hostapd creates/attaches the AP;
+		// choosing a fresh or hwsim radio as factory LAN makes every daemon start
+		// fail while repeatedly disturbing the management uplink.
+		if len(addrs) == 0 && !isWirelessInterface(name) {
 			d.LANCandidates = append(d.LANCandidates, name)
 		}
 	}
@@ -115,6 +120,7 @@ func BuildInitial(d *Detected) *config.Config {
 		})
 		wan := config.WAN{
 			ID:        "wan",
+			Index:     1,
 			Name:      "Аплинк",
 			Interface: "if-wan",
 			Enabled:   true,
@@ -258,6 +264,11 @@ func physicalInterfaces() ([]string, error) {
 }
 
 var sysClassNet = "/sys/class/net"
+
+func isWirelessInterface(name string) bool {
+	_, err := os.Stat(filepath.Join(sysClassNet, name, "wireless"))
+	return err == nil
+}
 
 func addressesOf(ctx context.Context, r system.Runner, iface string) ([]string, error) {
 	out, err := r.Run(ctx, "ip", "-4", "-o", "addr", "show", "dev", iface)

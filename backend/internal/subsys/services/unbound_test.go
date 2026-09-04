@@ -130,6 +130,28 @@ func TestDnsmasqNeverMixesBindModes(t *testing.T) {
 	}
 }
 
+func TestDnsmasqForceLocalListensOnEnabledNetworkInterfaces(t *testing.T) {
+	cfg := dnsmasqOwnsDNSConfig()
+	cfg.DNS.ForceLocal = true
+	cfg.Interfaces = []config.Interface{
+		{ID: "lan", Name: "br-lan"},
+		{ID: "off", Name: "br-off"},
+	}
+	cfg.Networks = []config.Network{
+		{ID: "lan", Interface: "lan", Enabled: true},
+		{ID: "duplicate", Interface: "lan", Enabled: true},
+		{ID: "off", Interface: "off", Enabled: false},
+	}
+
+	out := NewDnsmasq(nil).Render(cfg)
+	if strings.Count(out, "interface=br-lan\n") != 1 {
+		t.Fatalf("force-local LAN interface missing or duplicated:\n%s", out)
+	}
+	if strings.Contains(out, "interface=br-off\n") {
+		t.Fatalf("disabled network interface emitted:\n%s", out)
+	}
+}
+
 func dnsmasqOwnsDNSConfig() *config.Config {
 	cfg := resolverConfig()
 	cfg.DNS.Provider = "dnsmasq"

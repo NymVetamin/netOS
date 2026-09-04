@@ -112,7 +112,7 @@ func TestNATSourceDestinationDNSAndChannelFields(t *testing.T) {
 	b.nat(cfg, buildZoneMap(cfg))
 	text := b.String()
 	for _, part := range []string{
-		"-s 192.0.2.0/24 -p udp --dport 53 ! -d 192.0.2.1", "--to-destination 192.0.2.1:5353",
+		"-s 192.0.2.0/24 ! -d 192.0.2.1/32 -p udp --dport 53", "--to-destination 192.0.2.1:5353",
 		"-o wg-ch1", "-o tun-ch2", "-o tun-ch3", "-j MASQUERADE", "-j SNAT --to-source 198.51.100.8",
 		"-i eth0 -s 203.0.113.0/24 -p tcp --dport 8000:8010", "--to-destination 192.0.2.9:9000-9010",
 		"-p udp --dport 8000:8010", "-p tcp --dport 443", "--to-destination 192.0.2.10",

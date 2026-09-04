@@ -398,6 +398,93 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 	}
 }
 
+func TestRestoreRemovesCurrentRuntimeBeforeReplacingOwnership(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	if err := os.MkdirAll(m.BackupDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(m.BackupDir, "netos-backup-20260101-000000.tar.gz")
+	valid, err := os.ReadFile(writeTestBackup(t, []tar.Header{{Name: "var/lib/netos/netos.db", Mode: 0o600, Size: 1, Typeflag: tar.TypeReg}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backup, valid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	unit := filepath.Join(m.Root, "etc/systemd/system/netos-hostapd-wlan0.service")
+	if err := os.MkdirAll(filepath.Dir(unit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unit, []byte("unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	generated := filepath.Join(m.StateDir, "generated")
+	if err := os.MkdirAll(generated, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generated, "owned-qos.json"), []byte(`[{"interface":"eth9","ifb":"ifb-netos-0"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generated, "owned-vpn-servers.json"), []byte(`[{"name":"wg-srv1"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"wg-srv1", "ifb-netos-0"} {
+		if err := os.MkdirAll(filepath.Join(m.Root, "sys/class/net", name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var commands []command
+	m.Run = func(_ context.Context, spec command) error {
+		commands = append(commands, spec)
+		if spec.name == "tar" && contains(spec.args, "-czf") {
+			for i, arg := range spec.args {
+				if arg == "-czf" && i+1 < len(spec.args) {
+					return os.WriteFile(spec.args[i+1], []byte("mock archive"), 0o600)
+				}
+			}
+		}
+		if spec.name == "systemctl" && contains(spec.args, "start") {
+			if err := os.MkdirAll(filepath.Dir(m.sys(runtimeReadyPath)), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(m.sys(runtimeReadyPath), []byte("1\n"), 0o644)
+		}
+		return nil
+	}
+	if err := m.Execute(context.Background(), []string{"restore", backup, "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stoppedWiFi, removedWG, removedIFB, clearedQoS bool
+	cleanupAt, extractAt := -1, -1
+	for i, spec := range commands {
+		switch {
+		case spec.name == "systemctl" && contains(spec.args, "netos-hostapd-wlan0.service") && contains(spec.args, "--now"):
+			stoppedWiFi = true
+			if cleanupAt < 0 {
+				cleanupAt = i
+			}
+		case spec.name == "ip" && contains(spec.args, "delete") && contains(spec.args, "wg-srv1"):
+			removedWG = true
+		case spec.name == "ip" && contains(spec.args, "delete") && contains(spec.args, "ifb-netos-0"):
+			removedIFB = true
+		case spec.name == "tc" && contains(spec.args, "eth9") && contains(spec.args, "qdisc"):
+			clearedQoS = true
+		case spec.name == "tar" && contains(spec.args, "-xzf") && contains(spec.args, backup):
+			extractAt = i
+		}
+	}
+	if !stoppedWiFi || !removedWG || !removedIFB || !clearedQoS {
+		t.Fatalf("runtime cleanup incomplete: wifi=%v wg=%v ifb=%v qos=%v commands=%#v", stoppedWiFi, removedWG, removedIFB, clearedQoS, commands)
+	}
+	if cleanupAt < 0 || extractAt < 0 || cleanupAt >= extractAt {
+		t.Fatalf("runtime was not removed before backup extraction: cleanup=%d extract=%d commands=%#v", cleanupAt, extractAt, commands)
+	}
+}
+
 func TestRestoreWithoutBackupsExplainsWhy(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)

@@ -868,6 +868,23 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 		return err
 	}
 
+	// Сначала снимаем живое состояние текущей конфигурации, пока её журналы
+	// ownership ещё доступны. После удаления StateDir новый демон увидит только
+	// восстановленную конфигурацию и уже не сможет отличить оставшиеся от
+	// текущей установки hostapd/WireGuard/QoS-объекты от чужих.
+	if err := m.removeComponentUnits(ctx); err != nil {
+		return m.rollbackRestore(ctx, safety, err)
+	}
+	if err := m.clearNetOSFirewall(ctx); err != nil {
+		return m.rollbackRestore(ctx, safety, err)
+	}
+	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
+	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
+	m.removePolicyRules(ctx)
+	m.removeOwnedPolicySets(ctx)
+	m.removeOwnedQoS(ctx)
+	m.removeVirtualInterfaces(ctx)
+
 	// Каталоги очищаются перед распаковкой: tar кладёт файлы поверх, и без
 	// уборки в восстановленной установке остались бы сегменты, правила и
 	// пользователи, которых в копии нет.

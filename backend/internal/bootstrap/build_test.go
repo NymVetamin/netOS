@@ -46,23 +46,27 @@ func TestDetectUsesPreferredDefaultAndAllPhysicalSubnets(t *testing.T) {
 	oldRoot := sysClassNet
 	sysClassNet = root
 	t.Cleanup(func() { sysClassNet = oldRoot })
-	for _, name := range []string{"lo", "eth0", "eth1", "eth2", "tun0"} {
+	for _, name := range []string{"lo", "eth0", "eth1", "eth2", "tun0", "wlan0"} {
 		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"eth0", "eth1", "eth2"} {
+	for _, name := range []string{"eth0", "eth1", "eth2", "wlan0"} {
 		if err := os.WriteFile(filepath.Join(root, name, "device"), nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "wlan0", "wireless"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	runner := detectRunner{
 		routes: "default via 192.0.2.1 dev eth0 proto dhcp metric 10\n" +
 			"default via 198.51.100.1 dev eth1 proto static metric 500\n",
 		addrs: map[string]string{
-			"eth0": "2: eth0 inet 192.0.2.10/24 scope global eth0\n",
-			"eth1": "3: eth1 inet 198.51.100.10/24 scope global eth1\n",
-			"eth2": "",
+			"eth0":  "2: eth0 inet 192.0.2.10/24 scope global eth0\n",
+			"eth1":  "3: eth1 inet 198.51.100.10/24 scope global eth1\n",
+			"eth2":  "",
+			"wlan0": "",
 		},
 	}
 	d, err := Detect(context.Background(), runner)
@@ -72,7 +76,7 @@ func TestDetectUsesPreferredDefaultAndAllPhysicalSubnets(t *testing.T) {
 	if d.WANInterface != "eth0" || d.WANGateway != "192.0.2.1" || d.WANAddress != "192.0.2.10/24" {
 		t.Fatalf("preferred WAN=%+v", d)
 	}
-	if !reflect.DeepEqual(d.AllInterfaces, []string{"eth0", "eth1", "eth2"}) || !reflect.DeepEqual(d.LANCandidates, []string{"eth2"}) {
+	if !reflect.DeepEqual(d.AllInterfaces, []string{"eth0", "eth1", "eth2", "wlan0"}) || !reflect.DeepEqual(d.LANCandidates, []string{"eth2"}) {
 		t.Fatalf("interfaces=%v LAN=%v", d.AllInterfaces, d.LANCandidates)
 	}
 	if !reflect.DeepEqual(d.OccupiedCIDRs, []string{"192.0.2.0/24", "198.51.100.0/24"}) || d.ManagementCIDR != "192.0.2.0/24" {
@@ -138,6 +142,9 @@ func TestBuildInitialCreatesDHCPOrStaticWAN(t *testing.T) {
 				t.Fatalf("unexpected WAN objects: interfaces=%v wans=%v", cfg.Interfaces, cfg.WANs)
 			}
 			wan := cfg.WANs[0]
+			if wan.Index != 1 {
+				t.Fatalf("WAN index = %d, want 1", wan.Index)
+			}
 			if wan.Proto != tc.wantProto {
 				t.Fatalf("WAN proto = %q, want %q", wan.Proto, tc.wantProto)
 			}

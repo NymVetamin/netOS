@@ -316,3 +316,23 @@ func TestNeedsConfirmationVariants(t *testing.T) {
 		t.Fatal("connectivity/disruptive plan skipped confirmation")
 	}
 }
+
+func TestBridgeTopologyChangeDetection(t *testing.T) {
+	old := validConfig("old")
+	next := validConfig("new")
+	if bridgeTopologyChanged(old, next) {
+		t.Fatal("unrelated config change was treated as bridge topology change")
+	}
+	next.Interfaces = append(next.Interfaces, config.Interface{ID: "br-lan", Name: "br-lan", Type: "bridge", Enabled: true})
+	if !bridgeTopologyChanged(old, next) {
+		t.Fatal("new bridge was not detected")
+	}
+	old.Interfaces = append(old.Interfaces, next.Interfaces[len(next.Interfaces)-1])
+	if bridgeTopologyChanged(old, next) {
+		t.Fatal("identical bridge topology was treated as changed")
+	}
+	next.Interfaces[len(next.Interfaces)-1].Members = []string{"lan0"}
+	if !bridgeTopologyChanged(old, next) {
+		t.Fatal("bridge member change was not detected")
+	}
+}

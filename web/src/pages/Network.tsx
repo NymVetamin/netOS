@@ -72,6 +72,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
             disabled={wans.filter((wan) => wan.enabled).length < 2}
             onChange={(enabled) => patch((draft) => {
               draft.multiwan = draft.multiwan || { mode: "failover", sticky_connections: true };
+              if (enabled) assignMissingWANIndexes(draft.wans || []);
               draft.multiwan.enabled = enabled;
             })}
             label="Включить Multi-WAN"
@@ -642,7 +643,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
 
   return (
     <Card
-      title="Порты, мосты и VLAN"
+      title="Порты, агрегации, мосты и VLAN"
       subtitle="Физические сетевые карты и построенные поверх них интерфейсы"
       tight
       actions={
@@ -666,6 +667,23 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
             }
           >
             Добавить мост
+          </button>
+          <button
+            className="btn sm"
+            onClick={() =>
+              patch((d) => {
+                d.interfaces = d.interfaces || [];
+                d.interfaces.push({
+                  id: newID("bond"),
+                  name: freeName(d.interfaces, "bond"),
+                  type: "bond",
+                  members: [],
+                  enabled: true,
+                });
+              })
+            }
+          >
+            Добавить агрегацию
           </button>
           <button
             className="btn sm"
@@ -895,7 +913,9 @@ function MemberPicker({
   const candidates = (config.interfaces || []).filter(
     (x: any) =>
       x.id !== iface.id &&
-      (x.type === "physical" || x.type === "vlan") &&
+      (x.type === "physical" ||
+        x.type === "vlan" ||
+        (iface.type === "bridge" && x.type === "bond")) &&
       // VLAN, поднятый над этим же мостом, включать в него нельзя: вышло бы
       // кольцо из интерфейса в самого себя.
       x.parent !== iface.id,
@@ -1024,7 +1044,7 @@ function masterOf(config: any, id: string): any {
 function usageOf(config: any, iface: any): string {
   const parts: string[] = [];
   const master = masterOf(config, iface.id);
-  if (master) parts.push("в мосту " + master.name);
+  if (master) parts.push((master.type === "bond" ? "в агрегации " : "в мосту ") + master.name);
   const wan = (config.wans || []).find((w: any) => w.interface === iface.id);
   if (wan) parts.push("аплинк «" + wan.name + "»");
   const net = (config.networks || []).find((n: any) => n.interface === iface.id);
@@ -1084,6 +1104,17 @@ function freeName(interfaces: any[], prefix: string): string {
   let n = 1;
   while (taken.has(prefix + n)) n++;
   return prefix + n;
+}
+
+function assignMissingWANIndexes(wans: any[]) {
+  const used = new Set<number>(wans.map((wan: any) => Number(wan.index)).filter((index: number) => index > 0));
+  let candidate = 1;
+  for (const wan of wans) {
+    if (Number(wan.index) > 0) continue;
+    while (used.has(candidate)) candidate++;
+    wan.index = candidate;
+    used.add(candidate);
+  }
 }
 
 // setVLANParent и setVLANID меняют связь и подтягивают имя, если его не

@@ -117,6 +117,20 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	// каналов, разрешает адреса VPN-эндпоинтов и ходит за обновлениями.
 	w("interface=lo")
 	w("listen-address=127.0.0.1")
+	if cfg.DNS.ForceLocal {
+		ifaceByID := make(map[string]string, len(cfg.Interfaces))
+		for _, iface := range cfg.Interfaces {
+			ifaceByID[iface.ID] = iface.Name
+		}
+		seen := map[string]bool{"lo": true}
+		for _, network := range cfg.Networks {
+			iface := ifaceByID[network.Interface]
+			if network.Enabled && iface != "" && !seen[iface] {
+				w("interface=%s", iface)
+				seen[iface] = true
+			}
+		}
+	}
 	w("domain-needed") // не пересылать наверх имена без домена
 	w("bogus-priv")    // не пересылать обратные запросы для приватных сетей
 	w("no-resolv")     // апстримы задаём сами, /etc/resolv.conf не читаем

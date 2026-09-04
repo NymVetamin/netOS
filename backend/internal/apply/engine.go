@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -360,6 +361,13 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 		if timeout <= 0 {
 			timeout = 30 * time.Second
 		}
+		// A Linux bridge can spend roughly 30 seconds in STP listening and
+		// learning before the administrator's path starts forwarding. Keep a
+		// real confirmation window after convergence even when the global
+		// commit timeout is still the historical 30-second default.
+		if bridgeTopologyChanged(previous, cfg) && timeout < 60*time.Second {
+			timeout = 60 * time.Second
+		}
 		p := &pendingCommit{
 			previous: previous,
 			revision: revision,
@@ -374,6 +382,22 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	e.mu.Unlock()
 
 	return res, nil
+}
+
+func bridgeTopologyChanged(old, next *config.Config) bool {
+	bridges := func(cfg *config.Config) []config.Interface {
+		if cfg == nil {
+			return nil
+		}
+		var result []config.Interface
+		for _, iface := range cfg.Interfaces {
+			if iface.Type == "bridge" {
+				result = append(result, iface)
+			}
+		}
+		return result
+	}
+	return !reflect.DeepEqual(bridges(old), bridges(next))
 }
 
 // Confirm подтверждает, что админ по-прежнему имеет доступ, и отменяет откат.

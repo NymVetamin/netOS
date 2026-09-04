@@ -344,6 +344,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                   <th>Название</th>
                   <th>От кого</th>
                   <th>Куда</th>
+                  <th>Входной интерфейс</th>
                   <th>Метка</th>
                   <th>В таблицу</th>
                   <th>Вкл.</th>
@@ -396,6 +397,19 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                           placeholder="любой"
                           value={r.to || ""}
                           onChange={(e) => patch((d) => (d.routing.rules[i].to = e.target.value))}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          aria-label={`Входной интерфейс правила маршрутизации ${r.name || i + 1}`}
+                          className="mono"
+                          style={{ width: 120 }}
+                          placeholder="любой"
+                          value={r.interface || ""}
+                          onChange={(e) =>
+                            patch((d) => (d.routing.rules[i].interface = e.target.value))
+                          }
                         />
                       </td>
                       <td>
