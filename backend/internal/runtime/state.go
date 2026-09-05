@@ -280,6 +280,13 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 			continue
 		}
 		base := filepath.Join(root, name)
+		// В каталоге лежат не только интерфейсы: загруженный модуль bonding
+		// добавляет туда управляющий файл bonding_masters, и он показывался в
+		// панели отдельной строкой с нулевыми счётчиками. Настоящий интерфейс
+		// отличает ifindex.
+		if !pathExists(filepath.Join(base, "ifindex")) {
+			continue
+		}
 		stat := InterfaceStat{
 			Name:      name,
 			Physical:  pathExists(filepath.Join(base, "device")),
@@ -353,14 +360,25 @@ func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool
 		if !localInterfaces[a.Interface] {
 			continue
 		}
-		reachable := a.State == "REACHABLE" || a.State == "DELAY" || a.State == "STALE"
+		// STALE означает, что запись есть, но её достоверность ядром не
+		// подтверждена: устройство могло исчезнуть час назад, а запись живёт
+		// до сборки мусора. Считать такое устройство находящимся в сети —
+		// значит показывать администратору «4 в сети из 4» там, где не отвечает
+		// никто. Подтверждённым считаем только то, что ядро проверило.
+		reachable := a.State == "REACHABLE" || a.State == "DELAY" || a.State == "PROBE"
 		if cl, ok := byMAC[a.MAC]; ok {
 			cl.Interface = a.Interface
-			cl.Online = reachable
-			cl.Source = "both"
-			if cl.IP == "" {
+			// Вторая запись ARP для того же MAC — это ещё один адрес того же
+			// устройства, а не аренда: источником «DHCP и ARP» она делать
+			// запись не должна. И актуальным считаем адрес подтверждённый, а
+			// не тот, что встретился первым.
+			if cl.Source == "dhcp" {
+				cl.Source = "both"
+			}
+			if cl.IP == "" || (cl.Source == "arp" && reachable && !cl.Online) {
 				cl.IP = a.IP
 			}
+			cl.Online = cl.Online || reachable
 			continue
 		}
 		byMAC[a.MAC] = &Client{

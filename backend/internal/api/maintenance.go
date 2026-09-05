@@ -187,8 +187,15 @@ func (m *Maintenance) Status(ctx context.Context) map[string]any {
 	if state == "" {
 		state = "idle"
 	}
+	// failed считаем сами: systemd про неудачный выход сообщает Result=exit-code
+	// и ActiveState=failed, а слово «failed» в Result не появляется вовсе.
+	// Панель сравнивала именно с ним и показывала «готово» после операции,
+	// завершившейся ошибкой.
+	result := fields["Result"]
+	failed := state == "failed" || (result != "" && result != "success")
 	return map[string]any{
-		"state": state, "sub_state": fields["SubState"], "result": fields["Result"], "exit_code": fields["ExecMainStatus"],
+		"state": state, "sub_state": fields["SubState"], "result": result,
+		"exit_code": fields["ExecMainStatus"], "failed": failed,
 	}
 }
 

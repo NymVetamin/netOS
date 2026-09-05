@@ -345,7 +345,88 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 			return err
 		}
 	}
+	return s.terminateRevokedIKEv2(ctx, servers)
+}
+
+// terminateRevokedIKEv2 завершает соединения отозванных пользователей.
+//
+// Перечитывание конфигурации удаляет их учётные данные, но уже установленную
+// пару SA не трогает: снятый в панели флаг «Разрешён» оставлял пользователю
+// работающий доступ к сети до тех пор, пока соединение не разорвётся само.
+// Администратор при этом видел доступ отозванным.
+func (s *Subsystem) terminateRevokedIKEv2(ctx context.Context, servers []config.VPNServer) error {
+	if strings.TrimSpace(s.runQuiet(ctx, "systemctl", "is-active", ikev2Unit)) != "active" {
+		return nil
+	}
+	allowed := map[string]bool{}
+	for _, server := range servers {
+		for _, peer := range server.Peers {
+			if peer.Enabled {
+				if id := peer.Credentials["username"]; id != "" {
+					allowed[id] = true
+				}
+			}
+		}
+	}
+	list, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--list-sas", "--raw",
+		"--uri", "unix:///run/netos-strongswan/charon.vici")
+	if err != nil {
+		return fmt.Errorf("чтение установленных соединений IKEv2: %w", err)
+	}
+	for _, sa := range parseIKEv2SAs(list) {
+		if sa.uniqueID == "" || allowed[sa.identity] {
+			continue
+		}
+		if _, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--terminate", "--ike-id", sa.uniqueID,
+			"--uri", "unix:///run/netos-strongswan/charon.vici"); err != nil {
+			return fmt.Errorf("разрыв соединения отозванного пользователя IKEv2: %w", err)
+		}
+	}
 	return nil
+}
+
+type ikev2SA struct {
+	uniqueID string
+	identity string
+}
+
+// parseIKEv2SAs достаёт из машинного вывода swanctl номер соединения и то, под
+// какой учётной записью оно установлено. Формат --raw — плоские пары
+// ключ=значение, и нужны из них ровно две.
+func parseIKEv2SAs(raw string) []ikev2SA {
+	var out []ikev2SA
+	current := ikev2SA{}
+	flush := func() {
+		if current.uniqueID != "" {
+			out = append(out, current)
+		}
+		current = ikev2SA{}
+	}
+	for _, token := range strings.Fields(raw) {
+		key, value, ok := strings.Cut(strings.Trim(token, "[]{},"), "=")
+		if !ok {
+			continue
+		}
+		value = strings.Trim(value, `"`)
+		switch key {
+		case "uniqueid":
+			flush()
+			current.uniqueID = value
+		case "remote-eap-id", "remote-xauth-id", "remote-id":
+			if current.identity == "" {
+				current.identity = value
+			}
+		}
+	}
+	flush()
+	return out
+}
+
+// runQuiet возвращает вывод команды, не превращая ненулевой код в ошибку:
+// systemctl сообщает состояние и им, и текстом.
+func (s *Subsystem) runQuiet(ctx context.Context, name string, args ...string) string {
+	out, _ := s.Runner.Run(ctx, name, args...)
+	return out
 }
 
 func (s *Subsystem) cleanupIKEv2(ctx context.Context) {

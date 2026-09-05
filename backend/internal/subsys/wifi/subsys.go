@@ -169,11 +169,21 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 			return err
 		}
 	}
-	apReady, info := s.radioRuntimeMatches(ctx, radio)
-	if radio.TxPower > 0 && !txPowerMatches(info, radio.TxPower) {
+	apReady, info := s.radioRuntimeMatches(ctx, cfg, radio)
+	switch {
+	case radio.TxPower > 0 && !txPowerMatches(info, radio.TxPower):
 		if _, err := s.Runner.Run(ctx, "iw", "dev", radio.Device, "set", "txpower", "fixed", fmt.Sprint(radio.TxPower*100)); err != nil {
 			return fmt.Errorf("мощность передатчика: %w", err)
 		}
+	case radio.TxPower == 0:
+		// Ноль означает «как решит драйвер», и вернуть это состояние обязаны
+		// мы: раньше значение просто не трогали, и после отката конфигурации
+		// радио оставалось на мощности, которую администратор уже отменил.
+		//
+		// Отказ драйвера вернуться в автоматический режим не повод откатывать
+		// всю конфигурацию: мощность — не связность, а команда идемпотентна и
+		// повторится при следующем применении.
+		_, _ = s.Runner.Run(ctx, "iw", "dev", radio.Device, "set", "txpower", "auto")
 	}
 	if changed {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -233,7 +243,7 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 				return err
 			}
 			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName(radio))
-			allReady, primaryInfo := s.radioRuntimeMatches(ctx, radio)
+			allReady, primaryInfo := s.radioRuntimeMatches(ctx, cfg, radio)
 			allReady = strings.TrimSpace(active) == "active" && allReady && (radio.TxPower == 0 || txPowerMatches(primaryInfo, radio.TxPower))
 			if allReady {
 				ready = true
@@ -307,7 +317,7 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-func (s *Subsystem) radioRuntimeMatches(ctx context.Context, radio config.WiFiRadio) (bool, string) {
+func (s *Subsystem) radioRuntimeMatches(ctx context.Context, cfg *config.Config, radio config.WiFiRadio) (bool, string) {
 	allReady := true
 	primaryInfo := ""
 	bssIndex := 0
@@ -326,9 +336,49 @@ func (s *Subsystem) radioRuntimeMatches(ctx context.Context, radio config.WiFiRa
 		if err != nil || !radioInfoMatches(info, device, radio.Channel, ssid.SSID) {
 			allReady = false
 		}
+		// Точка доступа без моста — это работающая сеть без сегмента:
+		// клиент подключается к SSID, но не видит ни шлюза, ни соседей.
+		// Проверять состояние радио и не проверять мост означало считать
+		// такую сеть исправной, а её надо поднимать заново.
+		if bridge := bridgeFor(cfg, ssid); bridge != "" && linkExists(device) && masterOf(device) != bridge {
+			allReady = false
+		}
 		bssIndex++
 	}
 	return allReady && bssIndex > 0, primaryInfo
+}
+
+// bridgeFor — интерфейс сегмента, в который hostapd обязан включить сеть.
+func bridgeFor(cfg *config.Config, ssid config.WiFiSSID) string {
+	if cfg == nil {
+		return ""
+	}
+	for _, network := range cfg.Networks {
+		if network.ID == ssid.Network {
+			if !network.Enabled {
+				return ""
+			}
+			return cfg.InterfaceName(network.Interface)
+		}
+	}
+	return ""
+}
+
+// linkExists сообщает, есть ли устройство в системе. Проверять членство в
+// мосте имеет смысл только для настоящего радио: на машине без него (сборка,
+// тесты) отсутствие устройства не значит, что сеть собрана неправильно.
+func linkExists(name string) bool {
+	_, err := os.Stat(filepath.Join("/sys/class/net", name))
+	return err == nil
+}
+
+// masterOf возвращает мост или агрегацию, которой подчинён интерфейс.
+func masterOf(name string) string {
+	target, err := os.Readlink(filepath.Join("/sys/class/net", name, "master"))
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(target)
 }
 
 func radioInfoMatches(info, device string, channel int, ssid string) bool {

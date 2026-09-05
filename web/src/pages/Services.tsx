@@ -1,5 +1,7 @@
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 import { newID } from "../id";
+import { Problem } from "../api";
+import { ProblemsFor } from "./Network";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -20,7 +22,7 @@ const DNS_CAPS: Record<
 // Должен совпадать с dnsmasqLocalPort в backend/internal/subsys/services.
 const DNSMASQ_LOCAL_PORT = 5354;
 
-export function ServicesPage({ config, patch }: { config: any; patch: Patch }) {
+export function ServicesPage({ config, patch, problems }: { config: any; patch: Patch; problems: Problem[] }) {
   const dnsProviders = installedProviders(config, ["dnsmasq", "unbound", "dnsproxy"]);
   const dhcpProviders = installedProviders(config, ["dnsmasq", "isc-dhcp-server", "kea"]);
 
@@ -30,6 +32,8 @@ export function ServicesPage({ config, patch }: { config: any; patch: Patch }) {
         <h1>Адреса и DNS</h1>
         <p>Автоматическая настройка устройств и разрешение доменных имён</p>
       </div>
+
+      <ProblemsFor problems={problems} prefixes={["dns", "dhcp"]} />
 
       <DHCPSection config={config} patch={patch} providers={dhcpProviders} />
       <DNSSection config={config} patch={patch} providers={dnsProviders} />

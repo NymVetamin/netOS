@@ -21,7 +21,8 @@ func TestAllStaticRecordTypesRenderForDnsmasqAndUnbound(t *testing.T) {
 	cfg.DNS.Provider = "dnsmasq"
 	dnsmasq := NewDnsmasq(nil).Render(cfg)
 	for _, want := range []string{
-		"address=/host.lan/192.168.50.9",
+		// host-record, а не address=: только его dnsmasq считает целью CNAME.
+		"host-record=host.lan,192.168.50.9",
 		"cname=alias.lan,host.lan",
 		`txt-record=text.lan,say "hello"`,
 		"srv-host=_sip._tcp.lan,sip.lan,5060,10,20",

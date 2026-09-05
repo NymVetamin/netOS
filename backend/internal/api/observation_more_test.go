@@ -70,6 +70,7 @@ func observationServer(t *testing.T, runner *observationRunner) *Server {
 	base := filepath.Join(collector.SysClassNet, "br0")
 	values := map[string]string{
 		"address": "aa:bb:cc:dd:ee:01\n", "mtu": "1500\n", "operstate": "up\n", "flags": "0x1003\n",
+		"ifindex":             "3\n",
 		"statistics/rx_bytes": "100\n", "statistics/tx_bytes": "200\n",
 		"statistics/rx_packets": "3\n", "statistics/tx_packets": "4\n",
 		"statistics/rx_errors": "0\n", "statistics/tx_errors": "1\n",

@@ -185,6 +185,24 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 			return fmt.Errorf("установка MTU для %s: %w", iface.Name, err)
 		}
 	}
+	// Пустое поле означает «заводской адрес», и вернуть его обязаны мы: пока
+	// адрес просто не трогали, откат конфигурации оставлял на порту MAC,
+	// который администратор уже отменил.
+	//
+	// Только для свободного физического порта. У порта в агрегации адрес
+	// подменяет само ядро — оно ставит ему MAC агрегации и показывает прежний
+	// как permaddr. Возврат «заводского» значения там сломал бы bond, а не
+	// восстановил бы состояние.
+	if iface.MAC == "" && iface.Type == "physical" && masterOf(iface.Name) == "" {
+		if permanent := s.permanentMAC(ctx, iface.Name); permanent != "" {
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "down"); err != nil {
+				return fmt.Errorf("остановка %s перед возвратом заводского MAC: %w", iface.Name, err)
+			}
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "address", permanent); err != nil {
+				return fmt.Errorf("возврат заводского MAC для %s: %w", iface.Name, err)
+			}
+		}
+	}
 	if iface.MAC != "" {
 		out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface.Name)
 		if err != nil {
@@ -258,6 +276,27 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 		return fmt.Errorf("перевод %s в состояние %s: %w", iface.Name, state, err)
 	}
 	return nil
+}
+
+// permanentMAC возвращает заводской адрес порта, если текущий от него
+// отличается.
+//
+// iproute2 печатает permaddr только тогда, когда адрес был изменён: совпадение
+// он опускает. Пустой ответ поэтому означает «менять нечего», а не ошибку, и
+// для интерфейсов без заводского адреса — мостов, VLAN, агрегаций — он пуст
+// всегда.
+func (s *Interfaces) permanentMAC(ctx context.Context, name string) string {
+	out, err := s.Runner.Run(ctx, "ip", "-d", "-o", "link", "show", "dev", name)
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(out)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "permaddr" {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 // ensureBridgeCarrier создаёт dummy-порт для пустого бриджа.
@@ -372,6 +411,14 @@ func (s *Interfaces) releaseFormerMembers(ctx context.Context, cfg *config.Confi
 	if len(iface.Members) == 0 {
 		keep[dummyNameFor(iface.Name)] = true
 	}
+	// Точку доступа в мост включает сам hostapd, и в составе моста её нет.
+	// Пока эти устройства не попадали в список сохраняемых, любое применение
+	// конфигурации — даже никак не связанное с Wi-Fi — выводило работающую
+	// точку из моста: клиенты оставались подключёнными к сети, но теряли и
+	// шлюз, и остальной сегмент.
+	for _, device := range wifiDevicesOn(cfg, iface.ID) {
+		keep[device] = true
+	}
 	for _, port := range slavesOf(iface.Name) {
 		if keep[port] {
 			continue
@@ -381,6 +428,41 @@ func (s *Interfaces) releaseFormerMembers(ctx context.Context, cfg *config.Confi
 		}
 	}
 	return nil
+}
+
+// wifiDevicesOn перечисляет радиоустройства, чьи включённые сети сидят в
+// сегменте на указанном интерфейсе. Именно их hostapd подчиняет мосту.
+func wifiDevicesOn(cfg *config.Config, ifaceID string) []string {
+	networks := map[string]bool{}
+	for _, network := range cfg.Networks {
+		if network.Enabled && network.Interface == ifaceID {
+			networks[network.ID] = true
+		}
+	}
+	if len(networks) == 0 {
+		return nil
+	}
+	var out []string
+	for _, radio := range cfg.WiFi {
+		if !radio.Enabled || radio.Device == "" {
+			continue
+		}
+		index := 0
+		for _, ssid := range radio.SSIDs {
+			if !ssid.Enabled {
+				continue
+			}
+			if networks[ssid.Network] {
+				if index == 0 {
+					out = append(out, radio.Device)
+				} else {
+					out = append(out, fmt.Sprintf("%s-n%d", radio.Device, index))
+				}
+			}
+			index++
+		}
+	}
+	return out
 }
 
 // wantedLinks — имена, которые обязаны существовать после применения.
@@ -494,14 +576,23 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 	// Interfaces.Apply produced before WAN.Apply ran.
 	wanEnabled := map[string]bool{}
 	wanMTU := map[string]int{}
+	// Минимально допустимый MTU физического интерфейса: у PPPoE он обязан быть
+	// больше MTU сессии на заголовок, иначе полезный размер пакета окажется
+	// меньше заказанного.
+	wanMinMTU := map[string]int{}
 	for _, w := range cfg.WANs {
 		if !w.Enabled {
 			continue
 		}
 		wanEnabled[w.Interface] = true
-		if w.MTU > 0 {
-			wanMTU[w.Interface] = w.MTU
+		if w.MTU <= 0 {
+			continue
 		}
+		if w.Proto == "pppoe" {
+			wanMinMTU[w.Interface] = w.MTU + PPPoEUnderlayOverhead
+			continue
+		}
+		wanMTU[w.Interface] = w.MTU
 	}
 	for _, iface := range cfg.Interfaces {
 		if !linkExists(iface.Name) {
@@ -529,6 +620,12 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 		expectedMTU := iface.MTU
 		if override := wanMTU[iface.ID]; override > 0 {
 			expectedMTU = override
+		}
+		if minimum := wanMinMTU[iface.ID]; minimum > 0 {
+			if mtu < minimum {
+				return fmt.Errorf("интерфейс %s: MTU %d меньше %d, необходимых сессии PPPoE", iface.Name, mtu, minimum)
+			}
+			expectedMTU = 0
 		}
 		if expectedMTU > 0 && mtu != expectedMTU {
 			return fmt.Errorf("интерфейс %s: MTU %d вместо %d", iface.Name, mtu, expectedMTU)
@@ -830,6 +927,10 @@ type WAN struct {
 	PPPoePoll    time.Duration
 	DHCPTimeout  time.Duration
 	DHCPPoll     time.Duration
+	// balancing повторяет состояние Multi-WAN текущего применения: в режиме
+	// балансировки маршруты по умолчанию живут в отдельных таблицах, и судить
+	// по таблице main о работоспособности аплинка нельзя.
+	balancing bool
 }
 
 func NewWAN(r system.Runner) *WAN {
@@ -888,6 +989,7 @@ func (s *WAN) Plan(old, new *config.Config) ([]apply.Action, error) {
 
 func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	s.lnsRouteWanted = map[string]ownedLNSRoute{}
+	s.balancing = cfg.MultiWAN.Enabled
 	// Fail before looking at host interfaces. Besides producing a useful error
 	// on incomplete/test systems, this prevents an unsupported enabled uplink
 	// from being silently skipped merely because its link is currently absent.
@@ -1037,11 +1139,37 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	return s.syncLNSRouteOwnership(ctx)
 }
 
-func (s *WAN) setWANMTU(ctx context.Context, w config.WAN, name string) error {
-	if _, err := s.Runner.Run(ctx, "ip", "link", "set", name, "mtu", fmt.Sprint(w.MTU)); err != nil {
-		return fmt.Errorf("задать MTU %d для аплинка %s: %w", w.MTU, w.ID, err)
+func (s *WAN) setWANMTU(ctx context.Context, w config.WAN, name string, mtu int) error {
+	if _, err := s.Runner.Run(ctx, "ip", "link", "set", name, "mtu", fmt.Sprint(mtu)); err != nil {
+		return fmt.Errorf("задать MTU %d для аплинка %s: %w", mtu, w.ID, err)
 	}
 	return nil
+}
+
+// PPPoEUnderlayOverhead — заголовок PPPoE поверх кадра Ethernet: 6 байт PPPoE
+// и 2 байта PPP.
+const PPPoEUnderlayOverhead = 8
+
+// underlayMTU — MTU, который обязан иметь физический интерфейс аплинка.
+//
+// Для PPPoE заданное значение относится к сессии, а не к кадру под ней:
+// плагин rp-pppoe вычитает из физического MTU восемь байт заголовка. Пока то
+// же число ставилось и физическому интерфейсу, полезный MTU выходил ещё на
+// восемь меньше заказанного — запрошенные 1492 превращались в 1484, и пакеты
+// нормального размера отбрасывались локально. Поэтому под сессией держим
+// MTU+8 и никогда не опускаем физический интерфейс ниже уже имеющегося.
+func underlayMTU(w config.WAN, current int) int {
+	if w.MTU <= 0 {
+		return 0
+	}
+	if w.Proto != "pppoe" {
+		return w.MTU
+	}
+	needed := w.MTU + PPPoEUnderlayOverhead
+	if current > needed {
+		return 0 // запаса и так достаточно, чужой MTU не занижаем
+	}
+	return needed
 }
 
 func (s *WAN) ensureWANLink(ctx context.Context, w config.WAN, name string) error {
@@ -1055,8 +1183,8 @@ func (s *WAN) ensureWANLink(ctx context.Context, w config.WAN, name string) erro
 			return err
 		}
 	}
-	if w.MTU > 0 && mtu != w.MTU {
-		return s.setWANMTU(ctx, w, name)
+	if want := underlayMTU(w, mtu); want > 0 && mtu != want {
+		return s.setWANMTU(ctx, w, name, want)
 	}
 	return nil
 }
@@ -1307,6 +1435,34 @@ func (s *WAN) applyStaticRoute(ctx context.Context, w config.WAN, iface string) 
 	return nil
 }
 
+// dhcpLeaseLost сообщает, что работающий клиент DHCP считает аренду выданной,
+// а в ядре её следов нет.
+//
+// Так выглядит интерфейс после смены MAC или MTU: подсистема интерфейсов
+// опускает и поднимает линк, ядро вычищает адреса и маршруты, а клиент об этом
+// не узнаёт — он не перезапускался, файлы его настроек не менялись. Аплинк
+// остаётся без маршрута по умолчанию до следующего продления аренды, то есть
+// на минуты. Перезапуск клиента возвращает связность за секунды.
+func (s *WAN) dhcpLeaseLost(ctx context.Context, w config.WAN, iface string) bool {
+	state, err := os.ReadFile(filepath.Join(dhcpRuntimeDir, "netos-dhcp-"+iface+".address"))
+	if err != nil {
+		return false // аренды ещё не было — клиент как раз её и добывает
+	}
+	address := strings.TrimSpace(string(state))
+	if address == "" {
+		return false
+	}
+	if addrs, err := addressesOf(ctx, s.Runner, iface); err == nil && !addrs[address] {
+		return true
+	}
+	if s.balancing {
+		// В режиме балансировки маршрут по умолчанию живёт в таблицах
+		// Multi-WAN, и его отсутствие в main ничего не означает.
+		return false
+	}
+	return !s.defaultRouteHealthy(ctx, iface, "", w.Metric)
+}
+
 func (s *WAN) ensureDHCPClient(ctx context.Context, w config.WAN, iface string) error {
 	unit, changed, err := s.ensureDHCPClientFiles(ctx, w, iface)
 	if err != nil {
@@ -1318,7 +1474,7 @@ func (s *WAN) ensureDHCPClient(ctx context.Context, w config.WAN, iface string) 
 	out, err := s.Runner.Run(ctx, "systemctl", "is-active", unit)
 	active := err == nil && strings.TrimSpace(out) == "active"
 	enabled := s.unitEnabled(ctx, unit)
-	if active && !changed {
+	if active && !changed && !s.dhcpLeaseLost(ctx, w, iface) {
 		if !enabled {
 			if _, err := s.Runner.Run(ctx, "systemctl", "enable", unit); err != nil {
 				return fmt.Errorf("включение автозапуска DHCP-клиента на %s: %w", iface, err)
@@ -1408,7 +1564,7 @@ func (s *WAN) Health(ctx context.Context, cfg *config.Config) error {
 			if err := s.waitPPPoE(ctx, w); err != nil {
 				return err
 			}
-			if !cfg.MultiWAN.Enabled && !s.defaultRouteHealthy(ctx, PPPoEInterface(w.ID), "", w.Metric) {
+			if !cfg.MultiWAN.Enabled && !s.waitDefaultRoute(ctx, PPPoEInterface(w.ID), "", w.Metric) {
 				return fmt.Errorf("аплинк %s: нет default-маршрута через %s metric %d", w.Name, PPPoEInterface(w.ID), w.Metric)
 			}
 		case "l2tp":
@@ -1439,7 +1595,7 @@ func (s *WAN) Health(ctx context.Context, cfg *config.Config) error {
 			if err := s.waitPPPoE(ctx, w); err != nil {
 				return err
 			}
-			if !cfg.MultiWAN.Enabled && !s.defaultRouteHealthy(ctx, L2TPInterface(w.ID), "", w.Metric) {
+			if !cfg.MultiWAN.Enabled && !s.waitDefaultRoute(ctx, L2TPInterface(w.ID), "", w.Metric) {
 				return fmt.Errorf("аплинк %s: нет default-маршрута через %s metric %d", w.Name, L2TPInterface(w.ID), w.Metric)
 			}
 		default:
@@ -1475,6 +1631,48 @@ func (s *WAN) waitDHCP(ctx context.Context, iface, wanName string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(interval):
+		}
+	}
+}
+
+// waitDefaultRoute ждёт появления маршрута по умолчанию.
+//
+// Адрес и маршрут pppd ставит не одной операцией: сессия успевает получить
+// адрес на доли секунды раньше маршрута. Единственная проверка сразу за
+// ожиданием адреса заставала эту щель и объявляла поднявшийся аплинк
+// неудачным — вплоть до сообщения «откат не удался» при полностью рабочем
+// соединении.
+func (s *WAN) waitDefaultRoute(ctx context.Context, iface, gateway string, metric int) bool {
+	timeout := s.PPPoETimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	// Ждать столько же, сколько саму сессию, незачем: маршрут ставится следом
+	// за адресом, и речь идёт о долях секунды.
+	if timeout > 10*time.Second {
+		timeout = 10 * time.Second
+	}
+	interval := s.PPPoePoll
+	if interval <= 0 {
+		interval = time.Second
+	}
+	if interval > 250*time.Millisecond {
+		interval = 250 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if s.defaultRouteHealthy(ctx, iface, gateway, metric) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
 		}
 	}
 }

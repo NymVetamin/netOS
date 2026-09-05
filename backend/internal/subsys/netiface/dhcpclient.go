@@ -49,7 +49,22 @@ func renderDHCPScript(metric int) string {
 	w("        fi")
 	w("        ip -4 route flush default dev \"$interface\" proto dhcp 2>/dev/null || true")
 	w("        rm -f \"$STATE\"")
+	w("        # Линк поднимаем только на старте клиента: без него не уйдёт")
+	w("        # DISCOVER. При остановке юнита вызывается release — там этого")
+	w("        # делать нельзя, иначе порт, только что выключенный в панели,")
+	w("        # молча вернётся в состояние up.")
 	w("        ip link set \"$interface\" up")
+	w("        ;;")
+	w("")
+	w("    release)")
+	w("        # Остановка клиента: убираем за собой, но состояние линка")
+	w("        # оставляем тому, кто им владеет, — подсистеме интерфейсов.")
+	w("        if [ -s \"$STATE\" ]; then")
+	w("            old=$(cat \"$STATE\")")
+	w("            ip -4 addr del \"$old\" dev \"$interface\" 2>/dev/null || true")
+	w("        fi")
+	w("        ip -4 route flush default dev \"$interface\" proto dhcp 2>/dev/null || true")
+	w("        rm -f \"$STATE\"")
 	w("        ;;")
 	w("")
 	w("    bound|renew)")
@@ -103,7 +118,7 @@ Type=simple
 # -f держит клиента на переднем плане, чтобы systemd следил за ним сам,
 # -t и -T задают число и интервал попыток, -S пишет события в syslog.
 ExecStart=/usr/bin/busybox udhcpc -f -i ` + iface + ` -s ` + scriptPath + ` -t 5 -T 3 -S
-ExecStopPost=/usr/bin/env interface=` + iface + ` ` + scriptPath + ` deconfig
+ExecStopPost=/usr/bin/env interface=` + iface + ` ` + scriptPath + ` release
 Restart=always
 RestartSec=5
 

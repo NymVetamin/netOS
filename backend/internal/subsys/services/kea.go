@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -188,6 +189,12 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := d.ensureUnit(ctx); err != nil {
 		return err
 	}
+	// Файл аренд, оставшийся от прежней установки, маска юнита уже не
+	// исправит: права выставляем сами. Отсутствие файла — норма, Kea создаст
+	// его при первом старте, уже под маской 0077.
+	if err := os.Chmod(keaLeasePath, 0o600); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("права файла аренд Kea: %w", err)
+	}
 	if !changed && d.Systemd.IsActive(ctx, keaUnit) {
 		return nil
 	}
@@ -206,7 +213,10 @@ func (d *KeaDHCP) ensureUnit(ctx context.Context) error {
 }
 
 func renderKeaUnit() string {
-	return "[Unit]\nDescription=netOS Kea DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nRuntimeDirectory=kea\nRuntimeDirectoryMode=0755\nExecStart=/usr/sbin/kea-dhcp4 -c " + keaConfPath + "\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n"
+	// UMask=0077 обязателен: файл аренд создаёт сама Kea, и со штатной маской
+	// он выходит 0640, а проверка после применения требует 0600. Без маски
+	// первое же включение Kea заканчивалось откатом всей конфигурации.
+	return "[Unit]\nDescription=netOS Kea DHCPv4\nAfter=network.target\nWants=network.target\n\n[Service]\nType=simple\nRuntimeDirectory=kea\nRuntimeDirectoryMode=0755\nExecStart=/usr/sbin/kea-dhcp4 -c " + keaConfPath + "\nRestart=always\nRestartSec=2\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
 }
 func (d *KeaDHCP) Health(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {

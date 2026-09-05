@@ -83,7 +83,7 @@ func TestUnsupportedUplinkProtoFailsLoudly(t *testing.T) {
 
 func TestWANApplyReportsMTUFailure(t *testing.T) {
 	s := NewWAN(mtuFailRunner{})
-	err := s.setWANMTU(context.Background(), config.WAN{ID: "wan1", MTU: 1400}, "lo")
+	err := s.setWANMTU(context.Background(), config.WAN{ID: "wan1", MTU: 1400}, "lo", 1400)
 	if err == nil || !strings.Contains(err.Error(), "MTU 1400") {
 		t.Fatalf("MTU failure was hidden: %v", err)
 	}

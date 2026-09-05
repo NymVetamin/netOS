@@ -3,6 +3,7 @@ package firewall
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -443,6 +444,15 @@ func canonicalTable(lines []string) string {
 	return strings.Join(result, "\n")
 }
 
+// canonicalRule приводит правило к записи, не зависящей от того, как его
+// напечатал iptables-save.
+//
+// Сравнивать строки приходится потому, что проверка после применения сверяет
+// живой ruleset с сгенерированным. Реализация поверх nft печатает то же самое
+// правило иначе: переставляет адресные и протокольные селекторы, дописывает к
+// адресу хоста /32, опускает подразумеваемый уровень журналирования и
+// избыточный «-m tcp». Без этих приведений верное правило считалось
+// несовпавшим, и вся конфигурация откатывалась — сохранить его было нельзя.
 func canonicalRule(line string) string {
 	for _, protocol := range []string{"tcp", "udp", "icmp", "icmpv6"} {
 		if strings.Contains(line, "-p "+protocol) {
@@ -465,5 +475,108 @@ func canonicalRule(line string) string {
 		sort.Strings(states)
 		line = line[:valueStart] + strings.Join(states, ",") + line[valueEnd:]
 	}
-	return line
+	return canonicalRuleTokens(line)
+}
+
+// coreSelectorOrder — порядок, в котором селекторы печатает реализация поверх
+// nft. Приводим к нему обе стороны: логика правила от их порядка не зависит.
+var coreSelectorOrder = []string{"-s", "-d", "-i", "-o", "-p"}
+
+var coreSelectorAlias = map[string]string{
+	"-s": "-s", "--source": "-s",
+	"-d": "-d", "--destination": "-d",
+	"-i": "-i", "--in-interface": "-i",
+	"-o": "-o", "--out-interface": "-o",
+	"-p": "-p", "--protocol": "-p",
+}
+
+func canonicalRuleTokens(line string) string {
+	tokens := splitRuleTokens(line)
+	if len(tokens) < 2 || tokens[0] != "-A" {
+		return line
+	}
+	core := map[string][]string{}
+	rest := make([]string, 0, len(tokens))
+	logTarget := false
+	for i := 2; i < len(tokens); i++ {
+		token := tokens[i]
+		negated := ""
+		if token == "!" && i+1 < len(tokens) {
+			negated = "! "
+			i++
+			token = tokens[i]
+		}
+		flag, isCore := coreSelectorAlias[token]
+		if isCore && i+1 < len(tokens) {
+			i++
+			value := tokens[i]
+			if flag == "-s" || flag == "-d" {
+				value = canonicalAddress(value)
+			}
+			core[flag] = append(core[flag], negated+flag+" "+value)
+			continue
+		}
+		if negated != "" {
+			rest = append(rest, "!")
+		}
+		if token == "-j" && i+1 < len(tokens) && tokens[i+1] == "LOG" {
+			logTarget = true
+		}
+		// Уровень 4 — значение по умолчанию для LOG, и в выводе оно опускается.
+		if logTarget && token == "--log-level" && i+1 < len(tokens) &&
+			(tokens[i+1] == "4" || tokens[i+1] == "warning") {
+			i++
+			continue
+		}
+		rest = append(rest, token)
+	}
+	out := make([]string, 0, len(tokens))
+	out = append(out, tokens[0], tokens[1])
+	for _, flag := range coreSelectorOrder {
+		out = append(out, core[flag]...)
+	}
+	out = append(out, rest...)
+	return strings.Join(out, " ")
+}
+
+// canonicalAddress дописывает длину префикса: адрес хоста iptables-save
+// печатает как 192.0.2.1/32, а в сгенерированном правиле он стоит без неё.
+func canonicalAddress(value string) string {
+	if value == "" || strings.ContainsAny(value, "/,") {
+		return value
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return value
+	}
+	return fmt.Sprintf("%s/%d", addr.String(), addr.BitLen())
+}
+
+// splitRuleTokens делит строку на слова, не разрывая закавыченный комментарий.
+func splitRuleTokens(line string) []string {
+	var out []string
+	var cur strings.Builder
+	quoted, started := false, false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case c == '"':
+			quoted = !quoted
+			cur.WriteByte(c)
+			started = true
+		case c == ' ' && !quoted:
+			if started {
+				out = append(out, cur.String())
+				cur.Reset()
+				started = false
+			}
+		default:
+			cur.WriteByte(c)
+			started = true
+		}
+	}
+	if started {
+		out = append(out, cur.String())
+	}
+	return out
 }

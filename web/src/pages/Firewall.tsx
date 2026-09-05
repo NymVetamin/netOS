@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { Problem } from "../api";
+import { ProblemsFor } from "./Network";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -30,7 +32,7 @@ const SCHEDULE_DAYS = [
   { id: "Sun", title: "Вс" },
 ];
 
-export function FirewallPage({ config, patch }: { config: any; patch: Patch }) {
+export function FirewallPage({ config, patch, problems }: { config: any; patch: Patch; problems: Problem[] }) {
   const fw = config.firewall || {};
   const zones: any[] = fw.zones || [];
   const rules: any[] = fw.rules || [];
@@ -55,6 +57,8 @@ export function FirewallPage({ config, patch }: { config: any; patch: Patch }) {
         <h1>Защита сети</h1>
         <p>Правила доступа и перенаправления портов; проверяются сверху вниз</p>
       </div>
+
+      <ProblemsFor problems={problems} prefixes={["firewall", "clients"]} />
 
       {!fw.enabled && (
         <Notice tone="danger" title="Файрволл выключен">
@@ -234,10 +238,22 @@ function RuleForm({
   return (
     <div className="rule-form">
       <div className="form-grid">
-        <Field label="Название" hint="Попадёт в комментарий правила в ядре">
+        {/* Название и комментарий системного правила принадлежат netOS: они
+            восстанавливаются при каждом сохранении конфигурации. Поле,
+            принимающее правку и молча возвращающее прежнее значение после
+            перезагрузки страницы, хуже поля недоступного. */}
+        <Field
+          label="Название"
+          hint={
+            r.system
+              ? "Название системного правила задаёт netOS"
+              : "Попадёт в комментарий правила в ядре"
+          }
+        >
           <input
             type="text"
             autoFocus
+            readOnly={!!r.system}
             placeholder="Например: доступ к принтеру"
             value={r.name}
             onChange={(e) => set("name", e.target.value)}
@@ -382,9 +398,13 @@ function RuleForm({
           />
         </Field>
 
-        <Field label="Комментарий" hint="Заметка администратора">
+        <Field
+          label="Комментарий"
+          hint={r.system ? "Комментарий системного правила задаёт netOS" : "Заметка администратора"}
+        >
           <input
             type="text"
+            readOnly={!!r.system}
             value={r.comment || ""}
             onChange={(e) => set("comment", e.target.value)}
           />

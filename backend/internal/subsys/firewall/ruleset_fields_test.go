@@ -16,7 +16,7 @@ func TestInterfaceMappingsZoneDeduplicationAndExpectedChains(t *testing.T) {
 			t.Errorf("channel %s=%q want=%q", kind, got, want)
 		}
 	}
-	serverCases := map[string]string{"wireguard": "wg-srv8", "ocserv": "vpns8", "ikev2": "xfrm-srv8", "xray": ""}
+	serverCases := map[string]string{"wireguard": "wg-srv8", "ocserv": "vpns8+", "ikev2": "xfrm-srv8", "xray": ""}
 	for kind, want := range serverCases {
 		if got := serverInterface(config.VPNServer{Type: kind, Index: 8}); got != want {
 			t.Errorf("server %s=%q want=%q", kind, got, want)
@@ -34,7 +34,7 @@ func TestInterfaceMappingsZoneDeduplicationAndExpectedChains(t *testing.T) {
 	cfg.Channels = []config.Channel{{ID: "ch", Type: "wireguard", Index: 7, Enabled: true}, {ID: "direct", Type: "direct", Enabled: true}}
 	cfg.VPNServers = []config.VPNServer{{ID: "srv", Type: "ocserv", Index: 8, Enabled: true}}
 	zones := buildZoneMap(cfg)
-	if strings.Join(zones["lan"], ",") != "lan0" || strings.Join(zones["wan"], ",") != "ppp-w2,wan0" || strings.Join(zones["vpn"], ",") != "vpns8,wg-ch7" {
+	if strings.Join(zones["lan"], ",") != "lan0" || strings.Join(zones["wan"], ",") != "ppp-w2,wan0" || strings.Join(zones["vpn"], ",") != "vpns8+,wg-ch7" {
 		t.Fatalf("zones=%+v", zones)
 	}
 	wantChains := len(cfg.Firewall.Zones) * 3
@@ -237,7 +237,7 @@ func TestChannelPoliciesExplicitClientPeerServerAndNetworkMatrix(t *testing.T) {
 	for _, part := range []string{
 		":NETOS-POLICY", "-s 192.0.2.10 -m comment --comment \"direct\" -j RETURN",
 		"-d 198.51.100.2", "-d 198.51.100.1", "--mac-source aa:bb:cc:dd:ee:01",
-		"-i wg-srv11 -s 10.11.0.2/32", "-i vpns12 -s 10.12.0.2/32", "-i wg-srv11 -m comment",
+		"-i wg-srv11 -s 10.11.0.2/32", "-i vpns12+ -s 10.12.0.2/32", "-i wg-srv11 -m comment",
 		"-s 10.13.0.2/32 -m policy --dir in --pol ipsec", "-s 10.13.0.0/24 -m policy --dir in --pol ipsec",
 		"-s 172.16.1.0/24", "CONNMARK --save-mark",
 	} {

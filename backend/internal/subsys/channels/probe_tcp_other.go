@@ -13,5 +13,5 @@ func probeTCP(ctx context.Context, _ string, address string, timeout time.Durati
 	if err != nil {
 		return err
 	}
-	return conn.Close()
+	return confirmTCPHandshake(conn, timeout)
 }

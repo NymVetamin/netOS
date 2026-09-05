@@ -651,6 +651,13 @@ func (c *Config) validateTopology(r *ValidationResult) {
 			r.errf(path+".parent",
 				"VLAN поверх VLAN (%q над %q) netOS не настраивает", iface.Name, parent.Name)
 		}
+		// Кольцо: VLAN поднят над мостом, в который сам же и включён. Ядро
+		// такую связь не строит и отвечает «Device or resource busy» уже на
+		// применении — то есть посреди изменений, с откатом всей конфигурации.
+		if own := owner[iface.ID]; own == parent.Name {
+			r.errf(path+".parent",
+				"VLAN %q нельзя поднять над %q: он сам входит в этот мост", iface.Name, parent.Name)
+		}
 		// Подчинённый порт отдаёт весь трафик мосту. VLAN, поднятый над ним,
 		// не увидит ничего: тегированный трафик уйдёт в мост целиком.
 		if own := owner[parent.ID]; own != "" {
@@ -1097,6 +1104,8 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		numbers[t.Number] = t.Name
 	}
 
+	// routeKeys — уже занятые сочетания «назначение + таблица + метрика».
+	routeKeys := map[string]string{}
 	for i, route := range c.Routing.Static {
 		path := fmt.Sprintf("routing.static[%d]", i)
 		switch route.Type {
@@ -1131,6 +1140,28 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		if route.Table != "" && !tables[route.Table] {
 			r.errf(path+".table", "неизвестная таблица %q", route.Table)
 		}
+		// Назначение, таблица и метрика — это и есть адрес маршрута в ядре.
+		// Два включённых маршрута с одинаковым адресом ядро не хранит: второй
+		// вытесняет первый молча, панель продолжает показывать оба, а проверка
+		// после применения расхождения не видит. Отвергаем на входе.
+		if !route.Enabled {
+			continue
+		}
+		key := fmt.Sprintf("%s\x00%s\x00%d", route.Destination, route.Table, route.Metric)
+		if prev, taken := routeKeys[key]; taken {
+			table := route.Table
+			if table == "" {
+				table = "main"
+			}
+			r.errf(path+".destination",
+				"маршрут до %s в таблице %s с метрикой %d уже описан правилом %q: ядро оставит только один из них",
+				route.Destination, table, route.Metric, prev)
+		}
+		name := route.Name
+		if name == "" {
+			name = fmt.Sprintf("№%d", i+1)
+		}
+		routeKeys[key] = name
 	}
 
 	priorities := map[int]string{}
@@ -1686,6 +1717,15 @@ func (c *Config) validateDNS(r *ValidationResult) {
 	// такого моста нет — локальные имена не разрешатся ни у кого, и молчать об
 	// этом нельзя: администратор видит в настройках локальный домен и считает,
 	// что имена работают.
+	// dnsproxy умеет только классифицировать приватные сети для обратных
+	// запросов; отбрасывать ответы публичного DNS, указывающие внутрь локальной
+	// сети, он не умеет вовсе. Молча оставленный включённым переключатель здесь
+	// хуже отсутствующего: администратор видит защиту, которой нет.
+	if c.DNS.Enabled && c.DNS.Provider == "dnsproxy" && c.DNS.RebindProtection {
+		r.warnf("dns.rebind_protection",
+			"dnsproxy не отбрасывает ответы с приватными адресами: защита от DNS rebinding работать не будет — выберите dnsmasq или unbound")
+	}
+
 	if c.DNS.Enabled && c.DNS.Provider != "dnsmasq" &&
 		c.DHCP.Enabled && c.DHCP.Provider != "dnsmasq" {
 		r.warnf("dhcp.provider",

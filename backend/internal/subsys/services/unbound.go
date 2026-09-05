@@ -157,6 +157,7 @@ func (u *Unbound) Render(cfg *config.Config) string {
 
 	u.renderStaticRecords(&b, cfg)
 	u.renderLocalZones(&b, cfg)
+	u.renderLocalZoneOverrides(&b, cfg)
 
 	w("")
 	u.renderForwardZones(&b, cfg)
@@ -228,6 +229,32 @@ func (u *Unbound) renderLocalZones(b *strings.Builder, cfg *config.Config) {
 	w("    # --- зоны вне публичного дерева DNSSEC ---")
 	for _, zone := range zones {
 		w("    domain-insecure: \"%s\"", zone)
+	}
+}
+
+// renderLocalZoneOverrides снимает встроенные local-zone unbound с зон, которые
+// netOS обслуживает сам.
+//
+// Unbound по умолчанию отвечает на зарезервированные и приватные зоны
+// самостоятельно, отдавая NXDOMAIN с собственным SOA: сюда попадают test,
+// invalid, home.arpa и обратные зоны приватных сетей. Такая встроенная зона
+// сильнее forward-zone, и локальный домен .test вместе с PTR клиентов из
+// 192.168.0.0/16 не разрешался вовсе — при полностью верном конфиге
+// перенаправления. transparent на конкретную зону возвращает разрешение
+// обычному пути, то есть нашему forward-zone.
+func (u *Unbound) renderLocalZoneOverrides(b *strings.Builder, cfg *config.Config) {
+	if !backendLocalDNSNeeded(cfg) {
+		return
+	}
+	zones := localZones(cfg)
+	if len(zones) == 0 {
+		return
+	}
+	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
+	w("")
+	w("    # --- зоны, которые обслуживает dnsmasq, а не встроенные ответы unbound ---")
+	for _, zone := range zones {
+		w("    local-zone: \"%s.\" transparent", strings.Trim(zone, "."))
 	}
 }
 

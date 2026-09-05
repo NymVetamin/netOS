@@ -38,12 +38,16 @@ func writeRuntimeFile(t *testing.T, path, value string) {
 func TestInterfaceStatsReadsEveryFieldAndSkipsLoopback(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeFile(t, filepath.Join(root, "lo", "operstate"), "up\n")
+	writeRuntimeFile(t, filepath.Join(root, "lo", "ifindex"), "1\n")
+	// Загруженный модуль bonding кладёт сюда управляющий файл, а не интерфейс.
+	writeRuntimeFile(t, filepath.Join(root, "bonding_masters"), "\n")
 	base := filepath.Join(root, "eth0")
 	if err := os.MkdirAll(filepath.Join(base, "device"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for path, value := range map[string]string{
 		"address": "02:00:00:00:00:01\n", "mtu": "1500\n", "operstate": "unknown\n", "flags": "0x1\n",
+		"ifindex":             "2\n",
 		"statistics/rx_bytes": "101\n", "statistics/tx_bytes": "202\n",
 		"statistics/rx_packets": "11\n", "statistics/tx_packets": "22\n",
 		"statistics/rx_errors": "1\n", "statistics/tx_errors": "2\n",

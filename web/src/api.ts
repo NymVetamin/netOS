@@ -109,7 +109,20 @@ async function request<T>(
   if (csrfToken && method !== "GET") headers["X-NetOS-CSRF"] = csrfToken;
 
   const encodedBody = body === undefined ? undefined : JSON.stringify(body);
-  const send = () => fetch(path, { method, headers, credentials: "same-origin", body: encodedBody, signal });
+  // Обрыв сети fetch сообщает через TypeError, а не через ответ сервера.
+  // Вызывающий код разбирает только ApiError, и необёрнутый отказ проходил
+  // мимо него молча: правка оставалась несохранённой, а панель показывала
+  // её так, будто всё в порядке, — до перезагрузки страницы, которая её
+  // теряла. Поэтому приводим отказ к тому же типу, статус 0 означает, что
+  // ответа не было вовсе.
+  const send = async () => {
+    try {
+      return await fetch(path, { method, headers, credentials: "same-origin", body: encodedBody, signal });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      throw new ApiError(0, "Нет связи с роутером: изменение не сохранено");
+    }
+  };
   let res = await send();
 
   // Сессии хранятся в SQLite и переживают перезапуск netosd, а CSRF-токены
@@ -118,8 +131,8 @@ async function request<T>(
   // подтверждаем ту же HttpOnly-сессию и повторяем исходный запрос; повторный
   // 403 возвращается вызывающему коду как обычно и права это не расширяет.
   if (res.status === 403 && method !== "GET" && path !== "/api/login") {
-    const refreshed = await fetch("/api/session", { credentials: "same-origin", signal });
-    if (refreshed.ok) {
+    const refreshed = await fetch("/api/session", { credentials: "same-origin", signal }).catch(() => null);
+    if (refreshed?.ok) {
       const session = await refreshed.json() as Session;
       if (session.csrf_token) {
         csrfToken = session.csrf_token;

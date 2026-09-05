@@ -932,6 +932,23 @@ func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, ope
 		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
 		return
 	}
+	// Обслуживание останавливает netosd. Пока идёт применение конфигурации,
+	// это разрывает транзакцию посреди изменений: пакеты успевают удалиться,
+	// сеть — перестроиться наполовину, а новый процесс поднимается на прежней
+	// ревизии и переустанавливает всё обратно. Отказ здесь дешевле.
+	if s.Engine != nil {
+		if pending, _ := s.Engine.Pending(); pending {
+			writeError(w, http.StatusConflict, "сначала подтвердите или откатите предыдущее применение")
+			return
+		}
+	}
+	s.draftMu.Lock()
+	applying := s.draftApplying
+	s.draftMu.Unlock()
+	if applying {
+		writeError(w, http.StatusConflict, "идёт применение конфигурации: дождитесь его окончания")
+		return
+	}
 	if err := s.Maintenance.Schedule(r.Context(), operation, argument); err != nil {
 		_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: action, Target: argument, Detail: err.Error(), Success: false})
 		writeError(w, http.StatusConflict, "%v", err)
@@ -1341,9 +1358,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname
+		// Здесь и ниже — применённая конфигурация, а не черновик: карточка
+		// «Службы» описывает то, что работает сейчас. Пока она строилась из
+		// редактируемого дерева, выключенный, но не применённый DHCP выглядел
+		// уже выключенным, хотя сервер продолжал раздавать адреса.
 		resp["ipv6_mode"] = cfg.IPv6.Mode
 		resp["dns_provider"] = cfg.DNS.Provider
+		resp["dns_enabled"] = cfg.DNS.Enabled
 		resp["dhcp_provider"] = cfg.DHCP.Provider
+		resp["dhcp_enabled"] = cfg.DHCP.Enabled
+		resp["firewall_enabled"] = cfg.Firewall.Enabled
 	}
 	if pending {
 		resp["confirm_deadline"] = deadline

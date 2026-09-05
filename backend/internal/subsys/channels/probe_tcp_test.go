@@ -34,3 +34,31 @@ func TestProbeTCPOnlyRequiresHandshake(t *testing.T) {
 		t.Fatal("probe did not reach listener")
 	}
 }
+
+// Через TUN канала локальный стек завершает рукопожатие раньше, чем узнаёт о
+// доступности удалённой стороны, и о её недоступности сообщает закрытием уже
+// установленного соединения. Пока проба смотрела только на connect, такой
+// канал считался исправным.
+func TestProbeTCPDetectsImmediateClose(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := probeTCP(ctx, "", listener.Addr().String(), time.Second); err == nil {
+		t.Fatal("соединение, закрытое сразу после установки, признано рабочим каналом")
+	}
+}

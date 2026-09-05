@@ -40,6 +40,46 @@ func localDNSNeeded(cfg *config.Config) bool {
 		cfg.DNS.Enabled && cfg.DNS.Provider != "dnsmasq"
 }
 
+// dnsListenInterfaces перечисляет интерфейсы, на которых резолвер обязан
+// принимать запросы: loopback ради самого роутера, интерфейс каждого
+// включённого сегмента и интерфейсы серверов VPN — клиент, получивший в
+// профиле адрес роутера, вправе рассчитывать, что имена по нему разрешаются.
+//
+// ocserv сюда не попадает: имя его устройства складывается из настройки и
+// номера рабочего процесса, и заранее оно неизвестно.
+func dnsListenInterfaces(cfg *config.Config) []string {
+	ifaceByID := make(map[string]string, len(cfg.Interfaces))
+	for _, iface := range cfg.Interfaces {
+		ifaceByID[iface.ID] = iface.Name
+	}
+	seen := map[string]bool{"lo": true}
+	var out []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	for _, network := range cfg.Networks {
+		if network.Enabled {
+			add(ifaceByID[network.Interface])
+		}
+	}
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled {
+			continue
+		}
+		switch server.Type {
+		case "wireguard":
+			add(fmt.Sprintf("wg-srv%d", server.Index))
+		case "ikev2":
+			add(fmt.Sprintf("xfrm-srv%d", server.Index))
+		}
+	}
+	return out
+}
+
 // Dnsmasq владеет процессом dnsmasq.
 type Dnsmasq struct {
 	Runner  system.Runner
@@ -83,8 +123,12 @@ func (d *Dnsmasq) Render(cfg *config.Config) string {
 		ifaceByID[i.ID] = i.Name
 	}
 
+	listening := map[string]bool{"lo": true}
 	switch {
 	case serveDNS:
+		for _, iface := range dnsListenInterfaces(cfg) {
+			listening[iface] = true
+		}
 		d.renderDNS(&b, cfg)
 	case localDNSNeeded(cfg):
 		// Порт 53 держит другой резолвер, но имена клиентов знает dnsmasq:
@@ -100,7 +144,7 @@ func (d *Dnsmasq) Render(cfg *config.Config) string {
 	}
 
 	if serveDHCP {
-		d.renderDHCP(&b, cfg, ifaceByID)
+		d.renderDHCP(&b, cfg, ifaceByID, listening)
 	} else {
 		w("no-dhcp-interface=")
 	}
@@ -117,19 +161,15 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	// каналов, разрешает адреса VPN-эндпоинтов и ходит за обновлениями.
 	w("interface=lo")
 	w("listen-address=127.0.0.1")
-	if cfg.DNS.ForceLocal {
-		ifaceByID := make(map[string]string, len(cfg.Interfaces))
-		for _, iface := range cfg.Interfaces {
-			ifaceByID[iface.ID] = iface.Name
-		}
-		seen := map[string]bool{"lo": true}
-		for _, network := range cfg.Networks {
-			iface := ifaceByID[network.Interface]
-			if network.Enabled && iface != "" && !seen[iface] {
-				w("interface=%s", iface)
-				seen[iface] = true
-			}
-		}
+	// Слушать сегменты обязательно, а не по желанию: с bind-dynamic dnsmasq
+	// принимает запросы только на перечисленных интерфейсах. Раньше их
+	// добавлял лишь ForceLocal, а в остальных случаях список интерфейсов
+	// случайно приносила DHCP-часть конфига — и связка «DHCP не dnsmasq,
+	// резолвер dnsmasq» оставляла клиентов без DNS: демон работал, но слушал
+	// один loopback. Unbound и dnsproxy всегда слушают адрес роутера в каждом
+	// сегменте, dnsmasq теперь тоже.
+	for _, iface := range dnsListenInterfaces(cfg) {
+		w("interface=%s", iface)
 	}
 	w("domain-needed") // не пересылать наверх имена без домена
 	w("bogus-priv")    // не пересылать обратные запросы для приватных сетей
@@ -213,7 +253,11 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	for _, rec := range cfg.DNS.StaticRecords {
 		switch rec.Type {
 		case "A":
-			w("address=/%s/%s", rec.Name, rec.Value)
+			// host-record, а не address=/имя/адрес: цель CNAME dnsmasq ищет
+			// только среди host-record, аренд и /etc/hosts. С address= запись
+			// отвечала сама, но CNAME на неё возвращал клиенту голый CNAME без
+			// адреса, и имя не разрешалось вовсе.
+			w("host-record=%s,%s", rec.Name, rec.Value)
 		case "CNAME":
 			w("cname=%s,%s", rec.Name, rec.Value)
 		case "TXT":
@@ -268,7 +312,9 @@ func (d *Dnsmasq) renderLocalDNS(b *strings.Builder, cfg *config.Config) {
 	w("")
 }
 
-func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID map[string]string) {
+// listening — интерфейсы, уже перечисленные DNS-частью конфига. Повторять их
+// незачем: interface= в dnsmasq один на весь процесс, а не на роль.
+func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID map[string]string, listening map[string]bool) {
 	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
 
 	w("# --- DHCP ---")
@@ -291,7 +337,10 @@ func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID m
 			continue
 		}
 
-		w("interface=%s", iface)
+		if !listening[iface] {
+			w("interface=%s", iface)
+			listening[iface] = true
+		}
 		tag := "net-" + n.ID
 		w("dhcp-range=set:%s,%s,%s,%s,%ds", tag, pool.Start, pool.End, mask, pool.LeaseTime)
 

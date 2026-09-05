@@ -151,6 +151,20 @@ func InterfaceName(server config.VPNServer) string {
 	}
 }
 
+// MatchInterfaceName возвращает имя интерфейса для селекторов файрволла.
+//
+// У ocserv настройка device задаёт не имя устройства, а его начало: рабочий
+// процесс дописывает свой номер, и первое же соединение приходит на vpns30, а
+// не на vpns3. Точный селектор не совпадал ни с чем, и разрешённый трафик
+// VPN-клиента упирался в запрет по умолчанию. Шаблон iptables с «+» покрывает
+// все процессы сервера.
+func MatchInterfaceName(server config.VPNServer) string {
+	if server.Type == "ocserv" {
+		return InterfaceName(server) + "+"
+	}
+	return InterfaceName(server)
+}
+
 func resourceName(server config.VPNServer) string {
 	if server.Type == "xray" {
 		return fmt.Sprintf("xray-srv%d", server.Index)
@@ -308,6 +322,18 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+// zeroWireGuardKey — 32 нулевых байта в base64. Для WireGuard такой общий ключ
+// равнозначен его отсутствию, и это единственный способ снять уже заданный:
+// строки «PresharedKey =» без значения формат не допускает.
+const zeroWireGuardKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+func presharedKeyOrZero(key string) string {
+	if key == "" {
+		return zeroWireGuardKey
+	}
+	return key
+}
+
 func RenderWireGuard(server config.VPNServer) (string, error) {
 	wg, err := server.WireGuardConfig()
 	if err != nil {
@@ -326,9 +352,10 @@ func RenderWireGuard(server config.VPNServer) (string, error) {
 		fmt.Fprintln(&b, "[Peer]")
 		fmt.Fprintf(&b, "# %s\n", strings.ReplaceAll(peer.Name, "\n", " "))
 		fmt.Fprintf(&b, "PublicKey = %s\n", peer.Credentials["public_key"])
-		if key := peer.Credentials["preshared_key"]; key != "" {
-			fmt.Fprintf(&b, "PresharedKey = %s\n", key)
-		}
+		// Ключ пишем всегда, в том числе нулевым: wg syncconf не сбрасывает то,
+		// чего нет в файле, и снятый в панели общий ключ продолжал бы
+		// действовать на живом интерфейсе.
+		fmt.Fprintf(&b, "PresharedKey = %s\n", presharedKeyOrZero(peer.Credentials["preshared_key"]))
 		fmt.Fprintf(&b, "AllowedIPs = %s/32\n", peer.Address)
 	}
 	return b.String(), nil

@@ -27,6 +27,17 @@ type Manager struct {
 	Blocklist *BlocklistManager
 	Packages  *system.Packages
 	Systemd   *system.Systemd
+
+	// blockStage хранит результат подготовки blocklist в пределах одного
+	// применения конфигурации. Списки нужны раньше, чем до них доходит
+	// подсистема dns: конфиг dnsmasq подключает файл списка, а проверку этого
+	// конфига делает уже подсистема dhcp. Готовим один раз, пользуемся дважды.
+	blockStage *blocklistStage
+}
+
+type blocklistStage struct {
+	changed bool
+	tx      *blocklistTransaction
 }
 
 func NewManager(r system.Runner) *Manager {
@@ -96,6 +107,32 @@ func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error 
 	sort.Strings(pkgs)
 	_, err := m.Packages.Ensure(ctx, pkgs...)
 	return err
+}
+
+// prepareBlocklists загружает включённые списки и раскладывает файл провайдера.
+// Повторный вызов в пределах одного применения возвращает прежний результат:
+// иначе подсистема dns не узнала бы, что содержимое списка изменилось, и не
+// перезапустила бы демона.
+func (m *Manager) prepareBlocklists(ctx context.Context, cfg *config.Config) (bool, *blocklistTransaction, error) {
+	if m.blockStage != nil {
+		return m.blockStage.changed, m.blockStage.tx, nil
+	}
+	changed, tx, err := m.Blocklist.Apply(ctx, cfg)
+	if err != nil {
+		return false, nil, err
+	}
+	m.blockStage = &blocklistStage{changed: changed, tx: tx}
+	return changed, tx, nil
+}
+
+// releaseBlocklists закрывает подготовку: следующее применение начнёт заново.
+func (m *Manager) releaseBlocklists() { m.blockStage = nil }
+
+// blocklistNeededForDnsmasq сообщает, ссылается ли конфиг dnsmasq на файл
+// списка. Пока файла нет, dnsmasq --test завершается ошибкой, и первое же
+// включение blocklist откатывалось до того, как список успевал загрузиться.
+func blocklistNeededForDnsmasq(cfg *config.Config) bool {
+	return hasEnabledBlocklists(cfg) && cfg.DNS.Enabled && cfg.DNS.Provider == "dnsmasq"
 }
 
 func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
@@ -289,9 +326,29 @@ func (s *DHCP) PlanContext(ctx context.Context, old, new *config.Config) ([]appl
 	return nil, nil
 }
 
-func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) error {
+func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
+	// Подсистема dhcp идёт первой из двух, поэтому подготовку списков она же и
+	// начинает заново.
+	s.M.releaseBlocklists()
 	if err := s.M.ensurePackages(ctx, cfg); err != nil {
 		return err
+	}
+	if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" && blocklistNeededForDnsmasq(cfg) {
+		// Список должен лежать на диске до проверки конфигурации: dnsmasq
+		// читает conf-file уже на --test и без файла завершается ошибкой.
+		_, tx, err := s.M.prepareBlocklists(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if retErr == nil {
+				return
+			}
+			s.M.releaseBlocklists()
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				retErr = fmt.Errorf("%w; возврат DNS blocklist также не удался: %v", retErr, rollbackErr)
+			}
+		}()
 	}
 	if err := s.M.preflightDHCP(ctx, cfg); err != nil {
 		return err
@@ -430,10 +487,11 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	if err := s.M.ensurePackages(ctx, cfg); err != nil {
 		return err
 	}
-	blockChanged, blockTx, err := s.M.Blocklist.Apply(ctx, cfg)
+	blockChanged, blockTx, err := s.M.prepareBlocklists(ctx, cfg)
 	if err != nil {
 		return err
 	}
+	defer s.M.releaseBlocklists()
 	serviceTx, err := snapshotDNSDomainTransition(ctx, s.M, cfg)
 	if err != nil {
 		return err

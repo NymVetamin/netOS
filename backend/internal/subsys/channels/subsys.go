@@ -402,15 +402,29 @@ func RenderWireGuard(ch config.Channel) (string, error) {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "[Peer]")
 	fmt.Fprintf(&b, "PublicKey = %s\n", wg.PeerPublicKey)
-	if wg.PresharedKey != "" {
-		fmt.Fprintf(&b, "PresharedKey = %s\n", wg.PresharedKey)
-	}
+	// Пустое значение пишем явно нулевым ключом, а не пропуском строки:
+	// wg syncconf меняет только то, что в файле названо, а отсутствующий
+	// параметр оставляет в ядре как есть. Очищенный в панели ключ продолжал
+	// действовать на живом интерфейсе.
+	fmt.Fprintf(&b, "PresharedKey = %s\n", presharedKeyOrZero(wg.PresharedKey))
 	fmt.Fprintf(&b, "Endpoint = %s\n", wg.Endpoint)
 	fmt.Fprintf(&b, "AllowedIPs = %s\n", strings.Join(wg.AllowedIPs, ", "))
-	if wg.PersistentKeepalive > 0 {
-		fmt.Fprintf(&b, "PersistentKeepalive = %d\n", wg.PersistentKeepalive)
-	}
+	// Ноль означает «периодических пакетов нет», и сказать это надо вслух: без
+	// строки прежнее значение keepalive оставалось в ядре навсегда.
+	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", max(wg.PersistentKeepalive, 0))
 	return b.String(), nil
+}
+
+// zeroWireGuardKey — 32 нулевых байта в base64. Для WireGuard такой общий ключ
+// равнозначен его отсутствию, и это единственный способ снять уже заданный:
+// строки «PresharedKey =» без значения формат не допускает.
+const zeroWireGuardKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+func presharedKeyOrZero(key string) string {
+	if key == "" {
+		return zeroWireGuardKey
+	}
+	return key
 }
 
 func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (created bool, retErr error) {

@@ -191,7 +191,10 @@ func (c *Controller) Health(ctx context.Context, cfg *config.Config) error {
 		table := fmt.Sprint(Table(wan))
 		routes, err := c.Runner.Run(ctx, "ip", "-4", "route", "show", "table", table)
 		if err != nil {
-			return err
+			if !missingFIBTable(err) {
+				return err
+			}
+			routes = ""
 		}
 		if !hasBlackholeDefault(routes) {
 			return fmt.Errorf("в таблице balance %s нет защитного blackhole default", wan.Name)
@@ -515,7 +518,14 @@ func (c *Controller) captureBalanceKernel(ctx context.Context, indices map[int]b
 	for _, index := range ordered {
 		routes, err := c.Runner.Run(ctx, "ip", "-4", "route", "show", "table", fmt.Sprint(tableBase+index))
 		if err != nil {
-			return nil, err
+			if !missingFIBTable(err) {
+				return nil, err
+			}
+			// Таблицы ещё нет — это чистое состояние перед первым включением
+			// балансировки, а не сбой. Ядро на такой запрос отвечает ошибкой
+			// «FIB table does not exist», и пока она считалась настоящей,
+			// первое же включение балансировки откатывалось целиком.
+			routes = ""
 		}
 		snapshot := balanceKernelSnapshot{index: index, routes: routes}
 		prefix := fmt.Sprint(priorityBase+index) + ":"
@@ -530,12 +540,24 @@ func (c *Controller) captureBalanceKernel(ctx context.Context, indices map[int]b
 	return snapshots, nil
 }
 
+// missingFIBTable распознаёт отсутствие таблицы маршрутизации.
+//
+// Пустая таблица и несуществующая для ядра одно и то же, но iproute2 на вторую
+// отвечает ненулевым кодом возврата. Судить о результате по одному коду нельзя:
+// до первого создания таблицы это штатное состояние.
+func missingFIBTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "fib table does not exist")
+}
+
 func (c *Controller) restoreBalance(ctx context.Context, kernel []balanceKernelSnapshot, ownedPath string, owned balanceOwnedSnapshot) error {
 	var failures []string
 	for _, snapshot := range kernel {
 		table := fmt.Sprint(tableBase + snapshot.index)
 		priority := fmt.Sprint(priorityBase + snapshot.index)
-		if _, err := c.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table); err != nil {
+		if _, err := c.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table); err != nil && !missingFIBTable(err) {
 			failures = append(failures, err.Error())
 			continue
 		}

@@ -297,6 +297,10 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
     setBackups(list.backups || []);
     setStatus(live);
     const running = live.state === "active" || live.state === "activating";
+    // Сообщение «операция запланирована» относится к ожиданию. Как только
+    // операция завершилась неудачей, оно вводит в заблуждение: рядом с
+    // отметкой об ошибке панель продолжала обещать, что всё идёт по плану.
+    if (!running && live.failed) setMessage("");
     if (waitingForRestore && running) restoreObservedRunning.current = true;
     if (waitingForRestore && !running && restoreObservedRunning.current) {
       restoreObservedRunning.current = false;
@@ -336,11 +340,15 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
   }
 
   const running = status.state === "active" || status.state === "activating";
+  // Неудачу считает сервер: systemd про ненулевой выход пишет Result=exit-code,
+  // а не «failed», и сравнение с одним этим словом показывало «готово» после
+  // операции, завершившейся ошибкой.
+  const failed = !running && !!status.failed;
   return (
     <Card
       title="Резервные копии и обновление"
       subtitle="Операции выполняются отдельно от панели и продолжаются после перезапуска службы"
-      actions={<Badge tone={running ? "warn" : status.result === "failed" ? "danger" : "neutral"}>{running ? "выполняется" : status.result === "failed" ? "последняя операция завершилась ошибкой" : "готово"}</Badge>}
+      actions={<Badge tone={running ? "warn" : failed ? "danger" : "neutral"}>{running ? "выполняется" : failed ? "последняя операция завершилась ошибкой" : "готово"}</Badge>}
     >
       {message && <Notice tone="info" title={message} />}
       {error && <Notice tone="danger" title={error} />}

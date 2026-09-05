@@ -296,8 +296,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         if (err instanceof ApiError) {
           setProblems(err.problems || []);
           setSaveError(err.problems?.length ? "" : err.message);
-          setDirty(true);
+        } else {
+          // Отказ неизвестной природы всё равно означает несохранённую правку,
+          // и молчать о ней нельзя.
+          setSaveError("Не удалось сохранить изменение");
         }
+        setDirty(true);
         if (!pendingCfg.current) pendingCfg.current = next;
         throw err;
       }
@@ -458,8 +462,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "vpn-servers" && <VPNServersPage config={cfg} patch={patch} />}
               {page === "wifi" && <WiFiPage config={cfg} patch={patch} />}
               {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}
-              {page === "services" && <ServicesPage config={cfg} patch={patch} />}
-              {page === "firewall" && <FirewallPage config={cfg} patch={patch} />}
+              {page === "services" && <ServicesPage config={cfg} patch={patch} problems={problems} />}
+              {page === "firewall" && <FirewallPage config={cfg} patch={patch} problems={problems} />}
               {page === "components" && <ComponentsPage config={cfg} patch={patch} />}
               {page === "system" && (
                 <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} onConfigReplaced={reload} />
@@ -476,6 +480,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           dirty={dirty}
           pending={pending}
           errorCount={errors.length}
+          problems={problems}
           onFlush={flushNow}
           onReload={reload}
         />
@@ -488,16 +493,44 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 // Панель применения
 // ---------------------------------------------------------------------------
 
+// ProblemList печатает сами замечания валидатора. Ошибки идут первыми и
+// полностью: не увидев причины, администратор не поймёт, какую из строк
+// править. Предупреждения тоже показываем — они объясняют, почему настройка
+// принята, но работать не будет.
+function ProblemList({ problems }: { problems: Problem[] }) {
+  const ordered = [
+    ...problems.filter((p) => p.severity === "error"),
+    ...problems.filter((p) => p.severity !== "error"),
+  ];
+  if (ordered.length === 0) return null;
+  const shown = ordered.slice(0, 8);
+  return (
+    <span style={{ display: "block", marginTop: ".35rem", fontWeight: 400 }}>
+      {shown.map((p, i) => (
+        <span key={i} style={{ display: "block" }}>
+          {p.severity === "error" ? "" : "⚠ "}
+          {p.message}
+        </span>
+      ))}
+      {ordered.length > shown.length && (
+        <span style={{ display: "block" }}>и ещё {ordered.length - shown.length}</span>
+      )}
+    </span>
+  );
+}
+
 function ApplyBar({
   dirty,
   pending,
   errorCount,
+  problems,
   onFlush,
   onReload,
 }: {
   dirty: boolean;
   pending: { until?: string } | null;
   errorCount: number;
+  problems: Problem[];
   onFlush: () => Promise<void>;
   onReload: () => void;
 }) {
@@ -587,8 +620,12 @@ function ApplyBar({
         <strong>Есть несохранённые изменения</strong>
         <div className="dim">
           {errorCount > 0 ? (
+            // Одного числа мало: раньше панель сообщала «ошибок 4» и не
+            // говорила, каких именно, — валидатор объяснял причину, а до
+            // администратора она не доходила.
             <span style={{ color: "var(--danger)" }}>
               Ошибок в конфигурации: {errorCount} — исправьте перед применением
+              <ProblemList problems={problems} />
             </span>
           ) : error ? (
             <span style={{ color: "var(--danger)" }}>{error}</span>

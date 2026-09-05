@@ -39,7 +39,20 @@ func TestClientsExcludeWANNeighbors(t *testing.T) {
 			t.Fatalf("WAN-шлюз попал в список клиентов: %+v", client)
 		}
 	}
-	if got[0].IP != "192.168.10.20" || got[0].Source != "both" || !got[0].Online {
-		t.Fatalf("аренда не объединена с локальным ARP: %+v", got[0])
+	byMAC := map[string]Client{}
+	for _, client := range got {
+		byMAC[client.MAC] = client
+	}
+	leased := byMAC["aa:bb:cc:dd:ee:01"]
+	if leased.IP != "192.168.10.20" || leased.Source != "both" {
+		t.Fatalf("аренда не объединена с локальным ARP: %+v", leased)
+	}
+	// STALE — запись, достоверность которой ядро не подтверждало: устройство
+	// могло исчезнуть давно, и «в сети» о нём говорить нельзя.
+	if leased.Online {
+		t.Fatalf("устаревшая запись ARP выдана за устройство в сети: %+v", leased)
+	}
+	if reachable := byMAC["aa:bb:cc:dd:ee:02"]; !reachable.Online || reachable.Source != "arp" {
+		t.Fatalf("подтверждённый сосед не показан в сети: %+v", reachable)
 	}
 }

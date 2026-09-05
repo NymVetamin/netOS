@@ -418,7 +418,7 @@ func TestRadioRuntimeSkipsDisabledSSID(t *testing.T) {
 	s := testWiFiSubsystem(t, runner)
 	radio := wifiConfig().WiFi[0]
 	radio.SSIDs = append([]config.WiFiSSID{{ID: "off", SSID: "off", Enabled: false}}, radio.SSIDs...)
-	ready, _ := s.radioRuntimeMatches(context.Background(), radio)
+	ready, _ := s.radioRuntimeMatches(context.Background(), wifiConfig(), radio)
 	if !ready {
 		t.Fatal("disabled SSID affected runtime match")
 	}

@@ -147,7 +147,7 @@ provider-файла и кэша. Если источник временно не
 Порядок применения подсистем:
 
 ```
-components → system → sysctl → ipv6 → netconf → interfaces → networks
+components → system → sysctl → netconf → ipv6 → interfaces → networks
       → wan → routing → channels → vpn-servers → policy → firewall
       → dhcp → dns → wifi
 ```
@@ -157,6 +157,10 @@ components → system → sysctl → ipv6 → netconf → interfaces → network
 идёт перед подсистемами, назначающими адреса: в режиме прямого управления он
 отбирает интерфейсы у systemd-networkd, и тот снимает выданные им адреса —
 разрыв закрывают `interfaces`, `networks` и `wan`, идущие сразу следом.
+
+`ipv6` стоит сразу за `netconf` по той же причине: перечитывая свои файлы,
+systemd-networkd переписывает `accept_ra` у каждого управляемого линка, и
+параметры ядра, выставленные раньше, до проверки после применения не доживают.
 
 Источник правды по порядку — `apply.Order` в коде; этот список повторяет его.
 

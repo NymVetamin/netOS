@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
@@ -219,8 +220,11 @@ func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error 
 	gateway := w.Gateway
 	if w.Underlay != "static" {
 		// Адрес под туннелем получен по DHCP — шлюз известен только из аренды,
-		// поэтому читаем его из таблицы маршрутизации.
-		found, err := s.underlayGateway(ctx, iface)
+		// поэтому читаем его из таблицы маршрутизации. Клиент DHCP запущен
+		// строкой выше и обмен с сервером ещё идёт: без ожидания включение
+		// L2TP на холодной подложке отказывало всегда — маршрута к этому
+		// моменту просто не существовало.
+		found, err := s.waitUnderlayGateway(ctx, iface)
 		if err != nil {
 			return err
 		}
@@ -389,6 +393,42 @@ func (s *WAN) healthLNSRoutes(ctx context.Context, w config.WAN, iface string) e
 
 // underlayGateway читает шлюз, который выдал клиент DHCP на интерфейсе под
 // туннелем.
+// waitUnderlayGateway ждёт шлюз, который принесёт аренда DHCP.
+//
+// Пределы те же, что у ожидания самой аренды: клиент только что запущен, и
+// однократная проверка сразу за запуском всегда заставала таблицу пустой.
+func (s *WAN) waitUnderlayGateway(ctx context.Context, iface string) (string, error) {
+	timeout := s.DHCPTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	interval := s.DHCPPoll
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	deadline := time.Now().After
+	limit := time.Now().Add(timeout)
+	for {
+		gateway, err := s.underlayGateway(ctx, iface)
+		if err != nil {
+			return "", err
+		}
+		if gateway != "" {
+			return gateway, nil
+		}
+		if deadline(limit) {
+			return "", nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func (s *WAN) underlayGateway(ctx context.Context, iface string) (string, error) {
 	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default", "dev", iface)
 	if err != nil {

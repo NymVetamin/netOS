@@ -128,12 +128,17 @@ func channelInterface(ch config.Channel) string {
 	return ""
 }
 
+// serverInterface — селектор интерфейса сервера VPN для правил зоны.
+//
+// У ocserv это шаблон: настройка device задаёт только начало имени, номер
+// рабочего процесса ocserv дописывает сам, и точный «-i vpns3» не совпадал ни
+// с одним пакетом — разрешённый трафик клиента доходил до запрета по умолчанию.
 func serverInterface(s config.VPNServer) string {
 	switch s.Type {
 	case "wireguard":
 		return fmt.Sprintf("wg-srv%d", s.Index)
 	case "ocserv":
-		return fmt.Sprintf("vpns%d", s.Index)
+		return fmt.Sprintf("vpns%d+", s.Index)
 	case "ikev2":
 		return fmt.Sprintf("xfrm-srv%d", s.Index)
 	}
@@ -374,6 +379,20 @@ func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
 	sel := extra + selectors(r)
 	if r.Log {
 		b.line("-A %s%s -j LOG --log-prefix %q --log-level 4", chain, sel, "netos "+r.Name+": ")
+	}
+	if r.Action == "continue" {
+		// «Передать дальше по списку» — это правило без перехода: пакет
+		// считается счётчиком и проверяется следующей строкой. RETURN здесь не
+		// годится и стоял тут ошибочно: во встроенной цепочке он завершает
+		// проверку и отдаёт пакет политике по умолчанию, то есть следующее
+		// запрещающее правило не срабатывало вовсе.
+		if strings.TrimSpace(sel) == "" {
+			// Правило без единого условия: iptables нужен хотя бы один match,
+			// иначе строку не из чего собрать.
+			sel = fmt.Sprintf(" -m comment --comment %q", truncate(r.Name, 240))
+		}
+		b.line("-A %s%s", chain, sel)
+		return
 	}
 	b.line("-A %s%s -j %s", chain, sel, target(r.Action))
 }
@@ -747,7 +766,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			if !peer.Enabled || peer.Channel == "" || peer.Channel == "direct" {
 				continue
 			}
-			match := " -i " + vpnservers.InterfaceName(server) + " -s " + peer.Address + "/32"
+			match := " -i " + vpnservers.MatchInterfaceName(server) + " -s " + peer.Address + "/32"
 			if server.Type == "ikev2" {
 				match = " -s " + peer.Address + "/32 -m policy --dir in --pol ipsec"
 			}
@@ -758,7 +777,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			})
 		}
 		if server.DefaultChannel != "" && server.DefaultChannel != "direct" {
-			match := " -i " + vpnservers.InterfaceName(server)
+			match := " -i " + vpnservers.MatchInterfaceName(server)
 			if server.Type == "ikev2" {
 				match = " -s " + subnetOf(server.Subnet) + " -m policy --dir in --pol ipsec"
 			}
@@ -817,7 +836,7 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 				}
 				fmt.Fprint(&s, " -m policy --dir in --pol ipsec")
 			} else {
-				fmt.Fprintf(&s, " -i %s", vpnservers.InterfaceName(server))
+				fmt.Fprintf(&s, " -i %s", vpnservers.MatchInterfaceName(server))
 			}
 			if p.VPNPeer != "" {
 				for _, peer := range server.Peers {
@@ -904,6 +923,9 @@ func target(action string) string {
 	case "reject":
 		return "REJECT --reject-with icmp-port-unreachable"
 	case "continue":
+		// Правило с этим действием печатает emitRule без -j вовсе; сюда
+		// значение попадать не должно, но RETURN как запасной вариант остаётся
+		// самым безобидным из существующих переходов.
 		return "RETURN"
 	default:
 		return "DROP"

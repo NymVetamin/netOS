@@ -139,19 +139,23 @@ export function Dashboard({ config }: { config: any }) {
         </TableWrap>
       </Card>
 
-      <Card title="Службы">
+      {/* Здесь только применённое состояние: карточка описывает то, что
+          работает на роутере сейчас. Пока она строилась из редактируемого
+          черновика, выключенные, но не применённые DHCP и DNS показывались
+          выключенными, хотя продолжали обслуживать сеть. */}
+      <Card title="Службы" subtitle="Состояние применённой конфигурации">
         <div className="row wrap" style={{ gap: "1.5rem" }}>
-          <ServiceInfo label="DHCP" value={config.dhcp?.enabled ? config.dhcp.provider : "выключен"} />
-          <ServiceInfo label="DNS" value={config.dns?.enabled ? config.dns.provider : "выключен"} />
+          <ServiceInfo label="DHCP" value={status?.dhcp_enabled ? status.dhcp_provider : "выключен"} />
+          <ServiceInfo label="DNS" value={status?.dns_enabled ? status.dns_provider : "выключен"} />
           <ServiceInfo
             label="Файрволл"
-            value={config.firewall?.enabled ? "включён" : "выключен"}
-            tone={config.firewall?.enabled ? "ok" : "danger"}
+            value={status?.firewall_enabled ? "включён" : "выключен"}
+            tone={status?.firewall_enabled ? "ok" : "danger"}
           />
           <ServiceInfo
             label="IPv6"
-            value={config.ipv6?.mode === "off" ? "подавлен" : "разрешён"}
-            tone={config.ipv6?.mode === "off" ? "ok" : "warn"}
+            value={status?.ipv6_mode === "off" ? "подавлен" : "разрешён"}
+            tone={status?.ipv6_mode === "off" ? "ok" : "warn"}
           />
         </div>
       </Card>
