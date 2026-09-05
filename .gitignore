@@ -4,6 +4,8 @@
 
 # Go
 /backend/netosd
+/backend/netosd-linux-*
+/dist/
 *.exe
 *.test
 *.out
@@ -21,7 +23,9 @@ npm-debug.log*
 
 # Кэши Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.venv/
 
 # Локальные и временные файлы
 *.swp
@@ -30,12 +34,28 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+*.log
+*.tsbuildinfo
+
+# Локальные настройки агентов и артефакты экспериментальных QA-прогонов
+/.claude/
+/scripts/router-lab/
+/docs/testing/
+/CLAUDE_TEST_*.md
+.playwright-cli/
+playwright-report/
+test-results/
 
 # Ничего, что содержит секреты, в репозиторий попадать не должно
 *.key
 *.crt
 *.pem
+.env
+.env.*
+!.env.example
 initial-credentials
 netos.db
 netos.db-*
 *.txt
+*.api
+/openrc.sh
