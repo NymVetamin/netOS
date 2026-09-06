@@ -219,18 +219,33 @@ func (m *Manager) readSystemBaseline() (*systemBaseline, error) {
 	if err := json.Unmarshal(data, &b); err != nil {
 		return nil, fmt.Errorf("разбор системного baseline: %w", err)
 	}
-	if b.Version != 1 || b.IPTables4 == "" || b.Sysctl == nil {
+	var fields struct {
+		IPTables4 *string `json:"iptables4"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if b.Version != 1 || fields.IPTables4 == nil || b.Sysctl == nil {
 		return nil, errors.New("системный baseline неполон или имеет неизвестную версию")
 	}
 	return &b, nil
 }
 
 func (m *Manager) restoreBaselineFirewall(ctx context.Context, b *systemBaseline) error {
-	if err := m.Run(ctx, command{name: "iptables-restore", stdin: b.IPTables4, feedStdin: true}); err != nil {
+	// Empty iptables-save output is valid on a fresh host. Empty restore input
+	// is a no-op, so explicitly clear the tables managed by netOS.
+	rules4, rules6 := b.IPTables4, b.IPTables6
+	if strings.TrimSpace(rules4) == "" {
+		rules4 = emptyFirewall4
+	}
+	if strings.TrimSpace(rules6) == "" {
+		rules6 = emptyFirewall6
+	}
+	if err := m.Run(ctx, command{name: "iptables-restore", stdin: rules4, feedStdin: true}); err != nil {
 		return fmt.Errorf("восстановление IPv4 firewall: %w", err)
 	}
 	if b.IPTables6Exists {
-		if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: b.IPTables6, feedStdin: true}); err != nil {
+		if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: rules6, feedStdin: true}); err != nil {
 			return fmt.Errorf("восстановление IPv6 firewall: %w", err)
 		}
 	}

@@ -275,7 +275,7 @@ func TestCaptureSystemBaselineRejectsEveryMandatoryProbeFailure(t *testing.T) {
 }
 
 func TestReadSystemBaselineRejectsMalformedAndIncompleteState(t *testing.T) {
-	for name, content := range map[string]string{"malformed": "{", "incomplete": `{"version":1,"sysctl":{}}`} {
+	for name, content := range map[string]string{"malformed": "{", "incomplete": `{"version":1,"sysctl":{}}`, "null": `{"version":1,"iptables4":null,"sysctl":{}}`} {
 		t.Run(name, func(t *testing.T) {
 			m, _ := testManager()
 			sandbox(t, m)
@@ -456,9 +456,8 @@ func TestRestoreBaselineRoutingSkipsDynamicRoutesAndSurvivesFailures(t *testing.
 	}
 }
 
-// Пустой снимок IPv6 firewall — это пустой поток, а не stdin вызывающей
-// оболочки: иначе ip6tables-restore вычитывал следующие строки скрипта.
-func TestRestoreBaselineFirewallFeedsEmptySnapshotAsEmptyStdin(t *testing.T) {
+// Empty snapshots must clear managed rules without reading the caller's stdin.
+func TestRestoreBaselineFirewallClearsEmptySnapshot(t *testing.T) {
 	m, _ := testManager()
 	fed := map[string]bool{}
 	m.Run = func(_ context.Context, c command) error {
@@ -466,13 +465,36 @@ func TestRestoreBaselineFirewallFeedsEmptySnapshotAsEmptyStdin(t *testing.T) {
 			t.Fatalf("%s читает stdin вызывающего", c.name)
 		}
 		fed[c.name] = true
+		if !strings.Contains(c.stdin, ":INPUT ACCEPT") || !strings.Contains(c.stdin, "COMMIT") {
+			t.Fatalf("empty snapshot did not reset firewall: %q", c.stdin)
+		}
 		return nil
 	}
-	b := &systemBaseline{IPTables4: "*filter\nCOMMIT\n", IPTables6: "", IPTables6Exists: true}
+	b := &systemBaseline{IPTables4: "", IPTables6: "", IPTables6Exists: true}
 	if err := m.restoreBaselineFirewall(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if !fed["ip6tables-restore"] || !fed["iptables-restore"] {
 		t.Fatalf("не обе семьи восстановлены: %v", fed)
+	}
+}
+
+func TestReadSystemBaselineAcceptsCapturedEmptyFirewall(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	path := filepath.Join(m.sys(systemBaselineDir), "state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(systemBaseline{Version: 1, Sysctl: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, err := m.readSystemBaseline()
+	if err != nil || b == nil {
+		t.Fatalf("valid empty baseline rejected: %v", err)
 	}
 }

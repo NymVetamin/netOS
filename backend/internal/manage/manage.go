@@ -1139,15 +1139,16 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 	return nil
 }
 
+const emptyFirewall4 = "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n" +
+	"*nat\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n" +
+	"*mangle\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n"
+const emptyFirewall6 = "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
+
 func (m *Manager) clearNetOSFirewall(ctx context.Context) error {
-	clear4 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n" +
-		"*nat\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n" +
-		"*mangle\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n"
-	clear6 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
-	if err := m.Run(ctx, command{name: "iptables-restore", stdin: clear4, feedStdin: true}); err != nil {
+	if err := m.Run(ctx, command{name: "iptables-restore", stdin: emptyFirewall4, feedStdin: true}); err != nil {
 		return fmt.Errorf("очистка IPv4 firewall: %w", err)
 	}
-	if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: clear6, feedStdin: true}); err != nil {
+	if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: emptyFirewall6, feedStdin: true}); err != nil {
 		return fmt.Errorf("очистка IPv6 firewall: %w", err)
 	}
 	return nil
