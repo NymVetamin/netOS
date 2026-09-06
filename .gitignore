@@ -41,7 +41,8 @@ __pycache__/
 /.claude/
 /scripts/router-lab/
 /docs/testing/
-/CLAUDE_TEST_*.md
+/CLAUDE_TEST_*
+/CODEX_TEST_*
 .playwright-cli/
 playwright-report/
 test-results/
@@ -59,3 +60,4 @@ netos.db-*
 *.txt
 *.api
 /openrc.sh
+/features.md
