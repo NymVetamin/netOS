@@ -63,15 +63,16 @@ type command struct {
 }
 
 type Manager struct {
-	In      io.Reader
-	Out     io.Writer
-	Err     io.Writer
-	Version string
-	EUID    func() int
-	Now     func() time.Time
-	Run     func(context.Context, command) error
-	Output  func(context.Context, string, ...string) (string, error)
-	Sleep   func(time.Duration)
+	In                 io.Reader
+	Out                io.Writer
+	Err                io.Writer
+	Version            string
+	EUID               func() int
+	Now                func() time.Time
+	Run                func(context.Context, command) error
+	Output             func(context.Context, string, ...string) (string, error)
+	Sleep              func(time.Duration)
+	AcquireMaintenance func() (func(), error)
 	// RecordRestoreAudit appends the completion record after the restored
 	// database has replaced the old one. Tests may replace it with a recorder.
 	RecordRestoreAudit func(string) error
@@ -119,6 +120,7 @@ func New(version string) *Manager {
 	m.Run = m.runOS
 	m.Output = m.outputOS
 	m.RecordRestoreAudit = m.recordRestoreAudit
+	m.AcquireMaintenance = m.lockMaintenance
 	return m
 }
 
@@ -138,6 +140,19 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		m.help()
 		return nil
+	}
+	// systemd serializes panel jobs, but independent CLI processes can bypass
+	// that queue. Keep ownership across the whole operation, including rollback.
+	switch args[0] {
+	case "backup", "restore", "reset", "uninstall", "update", "reinstall", "internal-panel-activate", "password-reset", "start", "stop", "restart":
+		if err := m.requireRoot(); err != nil {
+			return err
+		}
+		release, err := m.AcquireMaintenance()
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
 
 	switch args[0] {

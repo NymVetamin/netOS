@@ -25,6 +25,7 @@ func testManager() (*Manager, *bytes.Buffer) {
 	m.Run = func(context.Context, command) error { return nil }
 	m.Output = func(context.Context, string, ...string) (string, error) { return "", nil }
 	m.RecordRestoreAudit = func(string) error { return nil }
+	m.AcquireMaintenance = func() (func(), error) { return func() {}, nil }
 	// Ожидание дефолтного маршрута опрашивает таблицу раз в секунду. С живым
 	// time.Sleep каждый тест удаления стоил бы два десятка секунд.
 	m.Sleep = func(time.Duration) {}
