@@ -87,9 +87,40 @@ restore_path() {
 wait_netosd_ready() {
     wait_limit=$1
     wait_count=0
+    legacy_port=""
+    # Released v0.06 starts HTTPS only after the synchronous startup Apply,
+    # but predates the readiness marker and -panel-port. Keep the marker
+    # mandatory for newer binaries; an unhealthy modern daemon must not fall
+    # back to a weaker compatibility check.
+    if ! "$BIN_PATH" -h 2>&1 | grep -- '-panel-port' >/dev/null; then
+        case "$("$BIN_PATH" -version 2>/dev/null)" in
+            'netOS v0.06')
+                legacy_port=$("$BIN_PATH" -render config 2>/dev/null | awk '
+                    /^[[:space:]]*"panel":[[:space:]]*\{/ { panel=1; next }
+                    panel && !found && /^[[:space:]]*"port":[[:space:]]*[0-9]+/ {
+                        gsub(/[^0-9]/, ""); port=$0; found=1
+                    }
+                    END { if (found) print port }') || return 1
+                case "$legacy_port" in ''|*[!0-9]*) return 1 ;; esac
+                [ "$legacy_port" -ge 1 ] && [ "$legacy_port" -le 65535 ] || return 1
+                ;;
+            *) return 1 ;;
+        esac
+    fi
     while [ "$wait_count" -lt "$wait_limit" ]; do
-        if systemctl is-active --quiet netosd && [ -s /run/netosd.ready ]; then
-            return 0
+        if systemctl is-active --quiet netosd; then
+            if [ -z "$legacy_port" ]; then
+                [ -s /run/netosd.ready ] && return 0
+            else
+                legacy_pid=$(systemctl show netosd --property=MainPID --value)
+                case "$legacy_pid" in ''|0|*[!0-9]*) legacy_pid=invalid ;; esac
+                # A different process on the configured port cannot vouch for
+                # netosd. Only probe a listener owned by its current MainPID.
+                if ss -H -ltnp "sport = :$legacy_port" | grep -F "pid=$legacy_pid," >/dev/null; then
+                    legacy_ping=$(curl --noproxy '*' -kfsS --connect-timeout 1 --max-time 2 "https://127.0.0.1:$legacy_port/api/ping" 2>/dev/null) || legacy_ping=""
+                    [ "$legacy_ping" = '{"ok":true,"service":"netos"}' ] && return 0
+                fi
+            fi
         fi
         wait_count=$((wait_count + 1))
         sleep 1
@@ -439,8 +470,9 @@ if ! systemctl restart netosd; then
 fi
 
 # `Type=simple` становится active до стартового Apply. Готовность подтверждает
-# только свежий marker: daemon пишет его после Apply, запуска TLS listener и
-# собственного HTTPS probe. 360 секунд также покрывают медленный ACME HTTP-01.
+# свежий marker: daemon пишет его после Apply, запуска TLS listener и
+# собственного HTTPS probe. Для v0.06 выше проверяется принадлежащий netosd
+# HTTPS listener после синхронного Apply. 360 секунд покрывают ACME HTTP-01.
 if ! wait_netosd_ready 360; then
     START_OK=0
 fi
