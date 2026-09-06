@@ -154,6 +154,8 @@ async function request<T>(
 }
 
 export const api = {
+  vpnServerCertificate: (id: string) =>
+    request<string>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificate`),
   hasToken: () => csrfToken !== null,
 
   async login(username: string, password: string) {

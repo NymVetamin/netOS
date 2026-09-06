@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch } from "../ui";
 
@@ -36,6 +36,33 @@ function wireGuardClientConfig(server: any, peer: any, privateKey: string, serve
   return `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\n${dns}${mtu}\n[Peer]\nPublicKey = ${serverPublicKey}\n${preshared}Endpoint = ${server.config?.public_endpoint || ""}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = 25\n`;
 }
 
+function VPNCertificate({ server }: { server: any }) {
+  const [error, setError] = useState("");
+  const [certificateBusy, setCertificateBusy] = useState(false);
+
+  async function downloadCertificate() {
+    setError("");
+    setCertificateBusy(true);
+    try {
+      const body = await api.vpnServerCertificate(server.id);
+      const url = URL.createObjectURL(new Blob([body], { type: "application/x-x509-ca-cert" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `netos-${server.type}-${server.index}-ca.crt`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError && err.status === 404
+        ? "Сертификат ещё не создан. Сначала примените настройки VPN-сервера."
+        : err instanceof Error ? err.message : "Не удалось скачать сертификат");
+    } finally {
+      setCertificateBusy(false);
+    }
+  }
+
+  return <><button type="button" className="btn ghost sm" disabled={!server.enabled || certificateBusy} onClick={() => void downloadCertificate()}>Скачать сертификат</button>{error && <span role="alert" style={{ display: "block", color: "var(--danger)" }}>{error}</span>}</>;
+}
+
 export function VPNServersPage({ config, patch }: Props) {
   const servers = config.vpn_servers || [];
   const wireguardInstalled = (config.components || []).some((item: any) => item.id === "wireguard" && item.installed);
@@ -44,7 +71,6 @@ export function VPNServersPage({ config, patch }: Props) {
 	const strongswanInstalled = (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
   const [clientSecrets, setClientSecrets] = useState<Record<string, ClientSecret>>({});
   const [error, setError] = useState("");
-
   async function addServer(type: "wireguard" | "xray" | "ocserv" | "ikev2") {
     setError("");
     let generatedWireGuardKey = "";
@@ -125,7 +151,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 			<Field label="DNS для клиентов" hint="По одному IPv4-адресу в строке"><textarea className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
 			<Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.split_routes || []).join("\n")} onChange={(e) => setConfig("split_routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
 		</div>
-		<Notice tone="info" title="Настройка клиента">Импортируйте сертификат как доверенный корневой, затем создайте IKEv2-подключение к публичному адресу с логином и паролем EAP-MSCHAPv2. <button type="button" className="btn ghost sm" disabled={!server.enabled} onClick={() => window.location.assign(`/api/vpn-servers/${encodeURIComponent(server.id)}/certificate`)}>Скачать сертификат</button></Notice>
+		<Notice tone="info" title="Настройка клиента">Импортируйте сертификат как доверенный корневой, затем создайте IKEv2-подключение к публичному адресу с логином и паролем EAP-MSCHAPv2. <VPNCertificate server={server} /></Notice>
 		<Notice tone="warn" title="Один активный пользователь">Пакет strongSwan в Debian не умеет надёжно закреплять адрес встроенного пула за EAP-логином. Чтобы персональный канал и правила firewall не применились к другому человеку, одновременно можно разрешить только одного пользователя IKEv2.</Notice>
 		<div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
 		{(server.peers || []).length === 0 ? <Empty>Добавьте пользователя IKEv2.</Empty> : (server.peers || []).map((peer: any) =>
@@ -164,7 +190,7 @@ function OcservServer({ server, config, installed, patch }: any) {
       <Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.routes || []).join("\n")} onChange={(e) => setConfig("routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
       <Field label="Приветствие"><input value={cfg.banner || ""} onChange={(e) => setConfig("banner", e.target.value)} /></Field>
     </div>
-    <Notice tone="info" title="Сертификат сервера">netOS автоматически выпускает отдельный самоподписанный сертификат. После первого применения импортируйте его в доверенные на клиентском устройстве. <button type="button" className="btn ghost sm" disabled={!server.enabled} onClick={() => window.location.assign(`/api/vpn-servers/${encodeURIComponent(server.id)}/certificate`)}>Скачать сертификат</button></Notice>
+    <Notice tone="info" title="Сертификат сервера">netOS автоматически выпускает отдельный самоподписанный сертификат. После первого применения импортируйте его в доверенные на клиентском устройстве. <VPNCertificate server={server} /></Notice>
     <div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
     {(server.peers || []).length === 0 ? <Empty>Добавьте пользователя OpenConnect.</Empty> : (server.peers || []).map((peer: any) =>
       <OcservPeer key={peer.id} peer={peer} channels={channels} update={update} />)}

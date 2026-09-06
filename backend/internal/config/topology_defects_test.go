@@ -24,7 +24,7 @@ func TestDuplicateStaticRouteIsRejected(t *testing.T) {
 		{ID: "r2", Name: "через ISP2", Enabled: true, Destination: "198.18.35.1/32", Gateway: "198.18.34.1"},
 	}
 	res := cfg.Validate()
-	p, ok := problemAt(res, "routing.static[1]")
+	p, ok := problemAt(res, "routing.static[1].destination")
 	if !ok || p.Severity != "error" {
 		t.Fatalf("конфликт маршрутов пропущен: %+v", res.Problems)
 	}

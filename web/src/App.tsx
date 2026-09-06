@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, ConfigResponse, PlanAction, Problem, Session } from "./api";
 import { Notice, Spinner } from "./ui";
 import { Dashboard } from "./pages/Dashboard";
@@ -532,13 +532,27 @@ function ApplyBar({
   errorCount: number;
   problems: Problem[];
   onFlush: () => Promise<void>;
-  onReload: () => void;
+  onReload: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [plan, setPlan] = useState<PlanAction[] | null>(null);
   const [remaining, setRemaining] = useState(0);
   const timerRef = useRef<number | undefined>(undefined);
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const update = () => document.documentElement.style.setProperty("--applybar-height", `${bar.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(bar);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--applybar-height");
+    };
+  }, [dirty, pending]);
 
   useEffect(() => {
     if (!dirty) setPlan(null);
@@ -568,13 +582,14 @@ function ApplyBar({
 
   if (pending) {
     return (
-      <div className="applybar">
+      <div className="applybar" ref={barRef}>
         <div className="msg">
           <strong>Подтвердите изменения</strong>
           <div className="dim">
             Если связь с роутером потеряна, ничего не нажимайте — конфигурация вернётся
             автоматически через <span className="countdown">{remaining}</span> с.
           </div>
+          {error && <div role="alert" style={{ color: "var(--danger)" }}>{error}</div>}
         </div>
         <div className="actions">
           <button
@@ -582,9 +597,13 @@ function ApplyBar({
             disabled={busy}
             onClick={async () => {
               setBusy(true);
+              setError("");
               try {
                 await api.rollback();
-                onReload();
+                await onReload();
+              } catch (err) {
+                setError(err instanceof ApiError ? err.message : "Не удалось откатить изменения");
+                await onReload();
               } finally {
                 setBusy(false);
               }
@@ -597,9 +616,13 @@ function ApplyBar({
             disabled={busy}
             onClick={async () => {
               setBusy(true);
+              setError("");
               try {
                 await api.confirm();
-                onReload();
+                await onReload();
+              } catch (err) {
+                setError(err instanceof ApiError ? err.message : "Не удалось подтвердить изменения");
+                await onReload();
               } finally {
                 setBusy(false);
               }
@@ -615,7 +638,7 @@ function ApplyBar({
   if (!dirty) return null;
 
   return (
-    <div className="applybar">
+    <div className="applybar" ref={barRef}>
       <div className="msg">
         <strong>Есть несохранённые изменения</strong>
         <div className="dim">
@@ -653,7 +676,9 @@ function ApplyBar({
             setBusy(true);
             try {
               await api.discardDraft();
-              onReload();
+              await onReload();
+            } catch (err) {
+              setError(err instanceof ApiError ? err.message : "Не удалось отменить черновик");
             } finally {
               setBusy(false);
             }

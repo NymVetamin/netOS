@@ -81,6 +81,33 @@ func renderWireGuard(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
+func wireGuardServersActive(cfg *config.Config) bool {
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "wireguard" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderWireGuardServers(cfg *config.Config) (string, error) {
+	var b bytes.Buffer
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "wireguard" {
+			continue
+		}
+		text, err := vpnservers.RenderWireGuard(server)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s (%s) ---\n%s\n", server.Name, vpnservers.InterfaceName(server), text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных серверов WireGuard.\n")
+	}
+	return b.String(), nil
+}
+
 func xrayActive(cfg *config.Config) bool {
 	for _, ch := range cfg.Channels {
 		if ch.Enabled && ch.Type == "xray" {
@@ -229,6 +256,10 @@ var artifacts = []Artifact{
 	{
 		ID: "wireguard", Title: "Конфигурация WireGuard",
 		Active: wireGuardActive, Render: renderWireGuard,
+	},
+	{
+		ID: "wireguard-servers", Title: "Входящие серверы WireGuard",
+		Active: wireGuardServersActive, Render: renderWireGuardServers,
 	},
 	{
 		ID: "xray", Title: "Конфигурация Xray",

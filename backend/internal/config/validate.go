@@ -1132,6 +1132,8 @@ func (c *Config) validateRouting(r *ValidationResult) {
 				r.errf(path+".gateway", "некорректный адрес шлюза")
 			} else if destinationFamily, ok := routeDestinationFamily(route.Destination); ok && destinationFamily != gateway.Is6() {
 				r.errf(path+".gateway", "семейство адреса шлюза должно совпадать с назначением маршрута")
+			} else if route.Enabled && !c.staticGatewayConnected(route, gateway) {
+				r.warnf(path+".gateway", "достижимость шлюза %s не подтверждается настроенными подсетями: проверьте адрес и интерфейс; без динамического или прямого маршрута ядро может отклонить применение", route.Gateway)
 			}
 		}
 		if route.Gateway == "" && route.Interface == "" && route.Type == "" {
@@ -1640,12 +1642,22 @@ func (c *Config) validateDNS(r *ValidationResult) {
 	upstreamByID := map[string]Upstream{}
 	channelOwner := map[string]string{}
 	secure := 0
+	enabledUpstreams := 0
 	upstreamIDs := map[string]bool{}
 	unboundHasPlain := false
 	unboundHasDoT := false
 
 	for i, u := range c.DNS.Upstreams {
 		path := fmt.Sprintf("dns.upstreams[%d]", i)
+		if u.Enabled {
+			enabledUpstreams++
+		}
+		if c.DNS.Enabled && u.Enabled && c.DNS.Provider == "dnsmasq" && u.Type == "plain" {
+			host, _, _ := strings.Cut(u.Address, "#")
+			if _, err := netip.ParseAddr(host); err != nil && validDNSHost(host) {
+				r.warnf(path+".address", "имя DNS-сервера должно разрешаться системным DNS до запуска dnsmasq; иначе применение завершится ошибкой. Для независимого запуска укажите IP-адрес")
+			}
+		}
 		if u.ID == "" || upstreamIDs[u.ID] {
 			r.errf(path+".id", "пустой или повторяющийся идентификатор апстрима")
 		}
@@ -1693,6 +1705,9 @@ func (c *Config) validateDNS(r *ValidationResult) {
 	}
 	if c.DNS.Enabled && c.DNS.Provider == "unbound" && unboundHasPlain && unboundHasDoT {
 		r.errf("dns.upstreams", "unbound не поддерживает одновременное использование открытых DNS и DoT-апстримов: выберите один тип для всех включённых серверов")
+	}
+	if c.DNS.Enabled && enabledUpstreams == 0 && (c.DNS.Provider == "dnsmasq" || c.DNS.Provider == "dnsproxy") {
+		r.warnf("dns.upstreams", "нет включённых вышестоящих DNS-серверов: внешние имена не будут разрешаться")
 	}
 
 	recordIDs := map[string]bool{}
@@ -1892,7 +1907,10 @@ func validateDNSUpstreamAddress(provider string, up Upstream) error {
 		}
 		endpoint, tlsName, hasTLSName := strings.Cut(raw, "#")
 		host, port, hasPort := strings.Cut(endpoint, "@")
-		if !validDNSHost(host) || (hasPort && !inPortRange(port)) || strings.Contains(port, "@") {
+		if _, err := netip.ParseAddr(host); err != nil {
+			return fmt.Errorf("для unbound укажите IP-адрес DNS-сервера; имя проверки TLS задаётся после #")
+		}
+		if (hasPort && !inPortRange(port)) || strings.Contains(port, "@") {
 			return fmt.Errorf("некорректный адрес DNS-сервера")
 		}
 		if hasTLSName && !validDNSName(tlsName) {
@@ -2351,6 +2369,18 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if err != nil || !subnet.Addr().Is4() {
 			r.errf(path+".subnet", "подсеть должна быть в формате 10.9.0.1/24")
 		} else {
+			if s.Enabled {
+				for _, network := range c.Networks {
+					if prefix, err := netip.ParsePrefix(network.RouterAddress); network.Enabled && err == nil && prefix.Overlaps(subnet) {
+						r.errf(path+".subnet", "VPN-подсеть пересекается с сегментом %q (%s)", network.Name, prefix.Masked())
+					}
+				}
+				for _, other := range c.VPNServers[:i] {
+					if prefix, err := netip.ParsePrefix(other.Subnet); other.Enabled && err == nil && prefix.Overlaps(subnet) {
+						r.errf(path+".subnet", "подсеть пересекается с VPN-сервером %q (%s)", other.Name, prefix.Masked())
+					}
+				}
+			}
 			if subnet.Bits() > 30 {
 				r.errf(path+".subnet", "в VPN-подсети должно быть место для сервера и хотя бы одного клиента")
 			}
