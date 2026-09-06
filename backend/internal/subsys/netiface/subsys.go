@@ -165,7 +165,7 @@ func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface confi
 			return fmt.Errorf("создание VLAN %s: %w", iface.Name, err)
 		}
 	case "bond":
-		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", iface.Name, "type", "bond"); err != nil {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", iface.Name, "type", "bond", "mode", config.BondMode); err != nil {
 			return fmt.Errorf("создание bond %s: %w", iface.Name, err)
 		}
 	}
@@ -1851,6 +1851,13 @@ func describeMismatch(cfg *config.Config, iface config.Interface) string {
 	}
 	if kind != iface.Type {
 		return fmt.Sprintf("это %s, а не %s", kind, iface.Type)
+	}
+	if iface.Type == "bond" {
+		if data, err := os.ReadFile(filepath.Join(sysClassNet, iface.Name, "bonding", "mode")); err == nil {
+			if fields := strings.Fields(string(data)); len(fields) > 0 && fields[0] != config.BondMode {
+				return fmt.Sprintf("режим агрегации %s вместо %s", fields[0], config.BondMode)
+			}
+		}
 	}
 	if iface.Type != "vlan" {
 		return ""

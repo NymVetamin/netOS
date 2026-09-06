@@ -377,8 +377,12 @@ func (s *Subsystem) terminateRevokedIKEv2(ctx context.Context, servers []config.
 		if sa.uniqueID == "" || allowed[sa.identity] {
 			continue
 		}
-		if _, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--terminate", "--ike-id", sa.uniqueID,
+		if output, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--terminate", "--ike-id", sa.uniqueID,
 			"--uri", "unix:///run/netos-strongswan/charon.vici"); err != nil {
+			// The client may disconnect between list-sas and terminate.
+			if strings.Contains(output, "no matching SAs to terminate found") {
+				continue
+			}
 			return fmt.Errorf("разрыв соединения отозванного пользователя IKEv2: %w", err)
 		}
 	}
@@ -391,34 +395,48 @@ type ikev2SA struct {
 }
 
 // parseIKEv2SAs достаёт из машинного вывода swanctl номер соединения и то, под
-// какой учётной записью оно установлено. Формат --raw — плоские пары
-// ключ=значение, и нужны из них ровно две.
+// какой учётной записью оно установлено. CHILD_SA имеет собственный uniqueid
+// во вложенной секции: он не является номером IKE_SA. EAP identity важнее
+// remote-id, который клиент вправе задать отличным от имени пользователя.
 func parseIKEv2SAs(raw string) []ikev2SA {
 	var out []ikev2SA
 	current := ikev2SA{}
-	flush := func() {
-		if current.uniqueID != "" {
-			out = append(out, current)
+	depth, identityPriority := 0, 0
+	for _, token := range strings.Fields(strings.NewReplacer("{", " { ", "}", " } ").Replace(raw)) {
+		switch token {
+		case "{":
+			depth++
+			if depth == 2 {
+				current = ikev2SA{}
+				identityPriority = 0
+			}
+			continue
+		case "}":
+			if depth == 2 && current.uniqueID != "" {
+				out = append(out, current)
+			}
+			depth--
+			continue
 		}
-		current = ikev2SA{}
-	}
-	for _, token := range strings.Fields(raw) {
-		key, value, ok := strings.Cut(strings.Trim(token, "[]{},"), "=")
+		if depth != 2 {
+			continue
+		}
+		key, value, ok := strings.Cut(token, "=")
 		if !ok {
 			continue
 		}
 		value = strings.Trim(value, `"`)
 		switch key {
 		case "uniqueid":
-			flush()
 			current.uniqueID = value
 		case "remote-eap-id", "remote-xauth-id", "remote-id":
-			if current.identity == "" {
+			priority := map[string]int{"remote-id": 1, "remote-xauth-id": 2, "remote-eap-id": 3}[key]
+			if value != "" && priority > identityPriority {
 				current.identity = value
+				identityPriority = priority
 			}
 		}
 	}
-	flush()
 	return out
 }
 

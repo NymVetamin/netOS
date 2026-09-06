@@ -64,7 +64,7 @@ func renderNetdev(iface config.Interface) string {
 	case "bond":
 		w("")
 		w("[Bond]")
-		w("Mode=802.3ad")
+		w("Mode=%s", config.BondMode)
 	case "vlan":
 		w("")
 		w("[VLAN]")

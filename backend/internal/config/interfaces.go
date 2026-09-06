@@ -4,6 +4,10 @@ import (
 	"strconv"
 )
 
+// BondMode is shared by direct runtime management and both boot renderers.
+// Preserve the mode used by existing netOS bonds; LACP requires peer setup.
+const BondMode = "balance-rr"
+
 // Ссылки между интерфейсами хранятся по идентификатору, а не по имени.
 //
 // Имя интерфейса администратор меняет в панели в любой момент, и ссылка по

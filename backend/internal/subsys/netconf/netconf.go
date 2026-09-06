@@ -148,6 +148,28 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	// A missing backend must not leave NetworkManager/networkd half-reconfigured.
 	switch backend {
 	case "ifupdown":
+		// Install hooks before touching ownership or starting networking. Core
+		// ifupdown silently ignores bridge/bond/VLAN directives without them.
+		packages := []string{"ifupdown"}
+		needed := map[string]bool{}
+		for _, iface := range cfg.Interfaces {
+			switch iface.Type {
+			case "bridge":
+				needed["bridge-utils"] = true
+			case "bond":
+				needed["ifenslave"] = true
+			case "vlan":
+				needed["vlan"] = true
+			}
+		}
+		for _, name := range []string{"bridge-utils", "ifenslave", "vlan"} {
+			if needed[name] {
+				packages = append(packages, name)
+			}
+		}
+		if _, err := system.NewPackages(s.Runner).Ensure(ctx, packages...); err != nil {
+			return fmt.Errorf("подготовка ifupdown: %w", err)
+		}
 		if err := s.requireUnit(ctx, "networking.service", "ifupdown"); err != nil {
 			return err
 		}

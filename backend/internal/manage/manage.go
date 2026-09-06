@@ -684,10 +684,10 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	m.removePolicyRules(ctx)
 	m.removeOwnedPolicySets(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
-		return err
+		return m.recoverReset(err)
 	}
 	if err := m.removeOwnedAddresses(ctx); err != nil {
-		return err
+		return m.recoverReset(err)
 	}
 	m.removeVirtualInterfaces(ctx)
 	for _, path := range []string{
@@ -751,6 +751,17 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 // ровно затем, чтобы узнать пароль, и путь к файлу — это лишний шаг. Файл
 // после показа удаляется: прочитанный пароль не должен лежать на диске
 // открытым текстом.
+// Ownership and the old database still exist at this point. A fresh daemon
+// startup reconciles the services and addresses removed by the failed reset.
+func (m *Manager) recoverReset(cause error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
+		return fmt.Errorf("%v; запуск после неудачного сброса: %w", cause, err)
+	}
+	return cause
+}
+
 func (m *Manager) printCredentials() {
 	credentials := filepath.Join(m.StateDir, "initial-credentials")
 	// Файл появляется не сразу: демон сначала применяет всю конфигурацию и
@@ -1680,6 +1691,8 @@ func (m *Manager) bestEffortInput(ctx context.Context, input, name string, args 
 func (m *Manager) runOS(ctx context.Context, spec command) error {
 	cmd := exec.CommandContext(ctx, spec.name, spec.args...)
 	cmd.Stdout, cmd.Stderr = m.Out, m.Err
+	var stderr strings.Builder
+	cmd.Stderr = io.MultiWriter(m.Err, &stderr)
 	if spec.silent {
 		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	}
@@ -1689,7 +1702,13 @@ func (m *Manager) runOS(ctx context.Context, spec command) error {
 		cmd.Stdin = m.In
 	}
 	cmd.Env = append(os.Environ(), spec.env...)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) outputOS(ctx context.Context, name string, args ...string) (string, error) {

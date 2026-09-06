@@ -75,7 +75,7 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		if slaves := p.namesOf(iface.Members); len(slaves) > 0 {
 			w("    bond-slaves %s", strings.Join(slaves, " "))
 		}
-		w("    bond-mode 802.3ad")
+		w("    bond-mode %s", config.BondMode)
 	}
 
 	if iface.MTU > 0 {

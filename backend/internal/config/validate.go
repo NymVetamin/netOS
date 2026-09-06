@@ -608,6 +608,9 @@ func (c *Config) validateTopology(r *ValidationResult) {
 				r.errf(path+".members", "порт %q указан дважды", member.Name)
 			}
 			seen[m] = true
+			if iface.Type == "bond" && iface.MTU > 0 && member.MTU > 0 && iface.MTU != member.MTU {
+				r.errf(path+".members", "MTU порта %q (%d) должен совпадать с MTU агрегации %q (%d)", member.Name, member.MTU, iface.Name, iface.MTU)
+			}
 			if iface.Type == "bond" && member.MAC != "" {
 				r.errf(path+".members", "порт %q наследует MAC агрегации: уберите MAC порта и задайте его на агрегации %q", member.Name, iface.Name)
 			}
