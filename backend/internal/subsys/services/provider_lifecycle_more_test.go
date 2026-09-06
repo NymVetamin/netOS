@@ -645,3 +645,25 @@ func TestUnboundHealthRunsCheckconfAgainstActiveConfiguration(t *testing.T) {
 		t.Fatalf("failed active checkconf passed Health: %v", err)
 	}
 }
+
+// Kea не создаёт каталог своей базы аренд: без него демон падает при первом
+// же включении, и применение конфигурации откатывается целиком.
+func TestKeaApplyCreatesLeaseDirectory(t *testing.T) {
+	useProviderPaths(t)
+	r := newProviderRunner()
+	cfg := providerTestConfig()
+	cfg.DHCP.Provider = "kea"
+	// На живой машине база аренд лежит в /var/lib/kea, и этого каталога может
+	// не быть: профиль AppArmor не позволяет держать её в другом месте.
+	keaLeasePath = filepath.Join(filepath.Dir(keaLeasePath), "kea", "netos-leases4.csv")
+	if err := NewKeaDHCP(r).Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Dir(keaLeasePath))
+	if err != nil {
+		t.Fatalf("каталог базы аренд не создан: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("путь базы аренд не каталог")
+	}
+}

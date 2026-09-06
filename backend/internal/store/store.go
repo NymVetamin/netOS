@@ -242,6 +242,24 @@ func (s *Store) SetRevisionState(id int64, state string) error {
 	return nil
 }
 
+// ResolveStaleApplying закрывает ревизии, оставшиеся в состоянии applying от
+// прошлой жизни демона, и возвращает их количество.
+//
+// Состояние applying означает «применение идёт прямо сейчас», и пережить
+// перезапуск оно не может: демон поднимается на своей ревизии, а всё, что было
+// начато до него, к системе отношения уже не имеет. Пока такие записи
+// оставались, история показывала применение, которое давно ничем не
+// закончилось, а PruneRevisions никогда их не удалял.
+func (s *Store) ResolveStaleApplying(exceptID int64) (int64, error) {
+	result, err := s.db.Exec(
+		`UPDATE revisions SET state = ? WHERE state = ? AND id <> ?`,
+		StateRolledBack, StateApplying, exceptID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // ActiveRevision возвращает применённую сейчас конфигурацию. Используется при
 // старте демона для восстановления состояния системы.
 func (s *Store) ActiveRevision() (*Revision, error) {

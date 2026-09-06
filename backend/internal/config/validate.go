@@ -1311,6 +1311,15 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 	for _, i := range c.Interfaces {
 		ifaceNames[i.Name] = true
 	}
+	// Сессия PPPoE или L2TP интерфейсом в конфигурации не описана — её создаёт
+	// pppd при подключении, — но пакеты клиентов уходят именно через неё.
+	// Правило подмены адреса, оставленное на физическом порту провайдера,
+	// оставляет локальную сеть без выхода наружу.
+	for _, w := range c.WANs {
+		if w.Proto == "pppoe" || w.Proto == "l2tp" {
+			ifaceNames["ppp-"+w.ID] = true
+		}
+	}
 
 	for i, n := range c.Firewall.NAT {
 		path := fmt.Sprintf("firewall.nat[%d]", i)

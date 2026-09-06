@@ -603,9 +603,26 @@ function RuleRow({
 // Трансляция адресов
 // ---------------------------------------------------------------------------
 
+// Интерфейсы, между которыми можно выбирать в правилах трансляции. Помимо
+// объявленных портов, мостов и VLAN сюда входят сессии PPPoE и L2TP: пакеты
+// клиентов уходят через ppp-<id>, а не через физический порт провайдера, и
+// правило, оставленное на порту, оставляло локальную сеть без выхода наружу.
+function natInterfaceOptions(config: any): { key: string; name: string; hint?: string }[] {
+  const options = (config.interfaces || []).map((x: any) => ({ key: String(x.id), name: String(x.name) }));
+  for (const wan of config.wans || []) {
+    if (wan.proto !== "pppoe" && wan.proto !== "l2tp") continue;
+    options.push({
+      key: `wan:${wan.id}`,
+      name: `ppp-${wan.id}`,
+      hint: `сессия аплинка «${wan.name || wan.id}»`,
+    });
+  }
+  return options;
+}
+
 function NATSection({ config, patch }: { config: any; patch: Patch }) {
   const nat: any[] = config.firewall?.nat || [];
-  const interfaces: any[] = config.interfaces || [];
+  const interfaces = natInterfaceOptions(config);
   const source = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction !== "destination");
   const dest = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction === "destination");
 
@@ -705,9 +722,9 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       onChange={(e) => patch((d) => (d.firewall.nat[i].interface = e.target.value))}
                     >
                       <option value="">— выберите —</option>
-                      {interfaces.map((x: any) => (
-                        <option key={x.id} value={x.name}>
-                          {x.name}
+                      {interfaces.map((x) => (
+                        <option key={x.key} value={x.name}>
+                          {x.hint ? `${x.name} — ${x.hint}` : x.name}
                         </option>
                       ))}
                     </select>
@@ -821,9 +838,9 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       onChange={(e) => patch((d) => (d.firewall.nat[i].interface = e.target.value))}
                     >
                       <option value="">любой</option>
-                      {interfaces.map((x: any) => (
-                        <option key={x.id} value={x.name}>
-                          {x.name}
+                      {interfaces.map((x) => (
+                        <option key={x.key} value={x.name}>
+                          {x.hint ? `${x.name} — ${x.hint}` : x.name}
                         </option>
                       ))}
                     </select>

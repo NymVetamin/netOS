@@ -51,6 +51,11 @@ type command struct {
 	args  []string
 	env   []string
 	stdin string
+	// feedStdin означает, что stdin команды задаёт вызывающий, даже когда
+	// текст пуст. Без этого признака пустой снимок означал бы «читай из stdin
+	// самой netos», и ip6tables-restore вычитывал следующие строки скрипта,
+	// которым её запустили: удаление падало на «line 1 failed».
+	feedStdin bool
 	// silent прячет вывод команды. Нужен там, где неудача ожидаема и ничего не
 	// значит: systemctl честно пишет «Unit NetworkManager.service not found» на
 	// машине, где его нет, и это выглядело бы сбоем удаления.
@@ -1071,10 +1076,10 @@ func (m *Manager) clearNetOSFirewall(ctx context.Context) error {
 		"*nat\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n" +
 		"*mangle\n:PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\nCOMMIT\n"
 	clear6 := "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
-	if err := m.Run(ctx, command{name: "iptables-restore", stdin: clear4}); err != nil {
+	if err := m.Run(ctx, command{name: "iptables-restore", stdin: clear4, feedStdin: true}); err != nil {
 		return fmt.Errorf("очистка IPv4 firewall: %w", err)
 	}
-	if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: clear6}); err != nil {
+	if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: clear6, feedStdin: true}); err != nil {
 		return fmt.Errorf("очистка IPv6 firewall: %w", err)
 	}
 	return nil
@@ -1623,7 +1628,7 @@ func (m *Manager) bestEffort(ctx context.Context, name string, args ...string) {
 }
 
 func (m *Manager) bestEffortInput(ctx context.Context, input, name string, args ...string) {
-	if err := m.Run(ctx, command{name: name, args: args, stdin: input}); err != nil {
+	if err := m.Run(ctx, command{name: name, args: args, stdin: input, feedStdin: true}); err != nil {
 		fmt.Fprintf(m.Err, "Предупреждение: %s: %v\n", name, err)
 	}
 }
@@ -1634,7 +1639,7 @@ func (m *Manager) runOS(ctx context.Context, spec command) error {
 	if spec.silent {
 		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	}
-	if spec.stdin != "" {
+	if spec.feedStdin || spec.stdin != "" {
 		cmd.Stdin = strings.NewReader(spec.stdin)
 	} else {
 		cmd.Stdin = m.In

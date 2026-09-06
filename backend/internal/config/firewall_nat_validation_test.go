@@ -69,3 +69,28 @@ func TestGenericPortSpecificationsRejectDescendingRanges(t *testing.T) {
 		t.Fatalf("descending generic range accepted: %+v", result.Problems)
 	}
 }
+
+// Клиенты выходят наружу через сессию PPPoE или L2TP, а не через физический
+// порт провайдера. Имя ppp-<id> в конфигурации интерфейсом не описано, но
+// правило подмены адреса на нём — единственное рабочее.
+func TestSourceNATAcceptsPPPSessionInterface(t *testing.T) {
+	cfg := Default()
+	cfg.Interfaces = []Interface{
+		{ID: "wan-if", Name: "eth3", Type: "physical", Enabled: true},
+		{ID: "lan-if", Name: "eth6", Type: "physical", Enabled: true},
+	}
+	cfg.WANs = []WAN{{
+		ID: "wan-a", Index: 1, Name: "Провайдер A", Interface: "wan-if", Enabled: true,
+		Proto: "pppoe", Username: "user", Password: "secret", Metric: 100,
+	}}
+	cfg.Firewall.NAT = []NATRule{{
+		ID: "snat", Name: "выход наружу", Enabled: true, Direction: "source",
+		Interface: "ppp-wan-a", Source: "10.60.0.0/16",
+	}}
+	result := cfg.Validate()
+	for _, problem := range result.Problems {
+		if problem.Path == "firewall.nat[0].interface" {
+			t.Fatalf("интерфейс PPP-сессии отвергнут: %+v", problem)
+		}
+	}
+}

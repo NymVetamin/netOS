@@ -301,6 +301,11 @@ type Result struct {
 	Revision     int64     `json:"revision"`
 }
 
+// ErrPendingConfirmation означает, что применение отклонено до того, как
+// что-либо изменилось: предыдущая транзакция ещё ждёт подтверждения. Живое
+// состояние осталось прежним, и говорить об откате здесь нельзя.
+var ErrPendingConfirmation = errors.New("предыдущее применение ещё не подтверждено")
+
 // Apply применяет конфигурацию целиком.
 //
 // Если needConfirm истинно, запускается таймер отката длиной
@@ -322,7 +327,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	// что ожидает пользователь.
 	if e.pending != nil {
 		e.mu.Unlock()
-		return nil, fmt.Errorf("предыдущее применение ещё не подтверждено")
+		return nil, ErrPendingConfirmation
 	}
 	previous := e.current
 	e.mu.Unlock()

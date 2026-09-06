@@ -374,3 +374,20 @@ func TestNetworkManagerKeepsInterfacesNetOSDoesNotOwn(t *testing.T) {
 		t.Fatalf("отобран чужой интерфейс:\n%s", out)
 	}
 }
+
+// В режиме прямого управления состав моста строит netOS, и networkd не должен
+// разбирать его при перечитывании конфигурации: без KeepMaster он выводил порт
+// из моста при каждом networkctl reload, оставляя проводной сегмент без связи.
+func TestDirectBackendKeepsNetOSBuiltMasters(t *testing.T) {
+	cfg := routerConfig()
+	cfg.System.NetworkBackend = "netos"
+	files := passiveFiles(cfg)
+	for name, content := range files {
+		if !strings.Contains(content, "KeepMaster=yes") {
+			t.Fatalf("%s не запрещает networkd разбирать состав мостов:\n%s", name, content)
+		}
+	}
+	if _, ok := files["05-netos-eth1.network"]; !ok {
+		t.Fatalf("нет описания порта моста: %v", files)
+	}
+}

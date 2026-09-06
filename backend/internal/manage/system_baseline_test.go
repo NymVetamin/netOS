@@ -414,3 +414,65 @@ func TestUninstallKeepDataRequestsFreshFutureBaseline(t *testing.T) {
 		}
 	})
 }
+
+// Динамический маршрут из baseline не восстанавливается: «expires 1621sec» на
+// входе — ошибка, а не атрибут, и удаление обрывалось с уже выключенным
+// юнитом. Неудача с отдельным маршрутом тоже не должна ронять удаление.
+func TestRestoreBaselineRoutingSkipsDynamicRoutesAndSurvivesFailures(t *testing.T) {
+	m, out := testManager()
+	var commands []string
+	m.Run = func(_ context.Context, c command) error {
+		joined := c.name + " " + strings.Join(c.args, " ")
+		commands = append(commands, joined)
+		if strings.Contains(joined, "198.51.100.0/24") {
+			return errors.New("injected")
+		}
+		return nil
+	}
+	b := &systemBaseline{
+		StaticRoutes4: []string{
+			"10.0.0.0/8 via 192.0.2.1 dev eth0 proto static",
+			"198.51.100.0/24 via 192.0.2.9 dev eth0 proto static",
+		},
+		DefaultRoutes6: []string{
+			"default nhid 176979784 via fe80::21c:73ff:fe3b:419d dev eth0 proto ra metric 100 expires 1621sec pref medium",
+		},
+		DefaultRoutes4: []string{"default via 192.0.2.1 dev eth0 proto dhcp metric 100"},
+	}
+	if err := m.restoreBaselineRouting(context.Background(), b); err != nil {
+		t.Fatalf("восстановление прервано: %v", err)
+	}
+	joined := strings.Join(commands, "\n")
+	if !strings.Contains(joined, "route replace 10.0.0.0/8") {
+		t.Fatalf("статический маршрут не восстановлен:\n%s", joined)
+	}
+	for _, unwanted := range []string{"expires", "proto ra", "proto dhcp"} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("динамический маршрут восстанавливался (%s):\n%s", unwanted, joined)
+		}
+	}
+	if !strings.Contains(out.String(), "198.51.100.0/24") {
+		t.Fatalf("неудача с маршрутом осталась незамеченной: %q", out.String())
+	}
+}
+
+// Пустой снимок IPv6 firewall — это пустой поток, а не stdin вызывающей
+// оболочки: иначе ip6tables-restore вычитывал следующие строки скрипта.
+func TestRestoreBaselineFirewallFeedsEmptySnapshotAsEmptyStdin(t *testing.T) {
+	m, _ := testManager()
+	fed := map[string]bool{}
+	m.Run = func(_ context.Context, c command) error {
+		if !c.feedStdin {
+			t.Fatalf("%s читает stdin вызывающего", c.name)
+		}
+		fed[c.name] = true
+		return nil
+	}
+	b := &systemBaseline{IPTables4: "*filter\nCOMMIT\n", IPTables6: "", IPTables6Exists: true}
+	if err := m.restoreBaselineFirewall(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	if !fed["ip6tables-restore"] || !fed["iptables-restore"] {
+		t.Fatalf("не обе семьи восстановлены: %v", fed)
+	}
+}

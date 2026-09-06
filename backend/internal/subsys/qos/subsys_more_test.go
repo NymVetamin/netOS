@@ -654,3 +654,36 @@ func TestApplyClientsRejectsStateAndDesiredErrors(t *testing.T) {
 		t.Fatalf("nil client ownership was not persisted as []: %+v err=%v", names, err)
 	}
 }
+
+// После перезагрузки и после восстановления копии временные IFB исчезают, а
+// запись о принадлежности остаётся. Пока создание решалось по записи, netosd
+// уходил в цикл перезапусков на «устройство не найдено».
+func TestApplyRecreatesOwnedIFBLostWithReboot(t *testing.T) {
+	stateDir := t.TempDir()
+	runner := &fakeRunner{links: map[string]bool{"eth9": true}}
+	s := New(runner, stateDir)
+	cfg := testConfig("dhcp")
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Перезагрузка: IFB не переживает её, запись о принадлежности переживает.
+	rebooted := &fakeRunner{links: map[string]bool{"eth9": true}}
+	after := New(rebooted, stateDir)
+	owned, err := after.readOwned()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owned) != 1 || owned[0].IFB != "ifb-netos-3" {
+		t.Fatalf("запись о принадлежности не сохранилась: %+v", owned)
+	}
+	if err := after.Apply(context.Background(), cfg); err != nil {
+		t.Fatalf("применение после перезагрузки: %v", err)
+	}
+	if !strings.Contains(strings.Join(rebooted.commands, "\n"), "ip link add name ifb-netos-3 type ifb") {
+		t.Fatalf("пропавший IFB не создан заново:\n%s", strings.Join(rebooted.commands, "\n"))
+	}
+	if err := after.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+}

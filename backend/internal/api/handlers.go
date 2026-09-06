@@ -1147,6 +1147,18 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	result, err := s.Engine.Apply(applyCtx, cfg, revID, true)
+	if errors.Is(err, apply.ErrPendingConfirmation) {
+		// Здесь ничего не менялось: предыдущая транзакция всё ещё ждёт
+		// подтверждения. Сообщать об откате было бы неправдой.
+		_ = s.Store.SetRevisionState(revID, store.StateRolledBack)
+		_ = s.Store.Audit(store.AuditEntry{
+			User: username, Action: "apply", Target: strconv.FormatInt(revID, 10),
+			Detail: err.Error(), SourceIP: clientIP(r), Success: false,
+		})
+		writeError(w, http.StatusConflict,
+			"%v: подтвердите или откатите его, конфигурация не менялась", err)
+		return
+	}
 	if err != nil {
 		_ = s.Store.SetRevisionState(revID, store.StateRolledBack)
 		_ = s.Store.Audit(store.AuditEntry{

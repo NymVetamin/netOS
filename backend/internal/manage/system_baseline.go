@@ -225,11 +225,11 @@ func (m *Manager) readSystemBaseline() (*systemBaseline, error) {
 }
 
 func (m *Manager) restoreBaselineFirewall(ctx context.Context, b *systemBaseline) error {
-	if err := m.Run(ctx, command{name: "iptables-restore", stdin: b.IPTables4}); err != nil {
+	if err := m.Run(ctx, command{name: "iptables-restore", stdin: b.IPTables4, feedStdin: true}); err != nil {
 		return fmt.Errorf("восстановление IPv4 firewall: %w", err)
 	}
 	if b.IPTables6Exists {
-		if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: b.IPTables6}); err != nil {
+		if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: b.IPTables6, feedStdin: true}); err != nil {
 			return fmt.Errorf("восстановление IPv6 firewall: %w", err)
 		}
 	}
@@ -250,9 +250,16 @@ func (m *Manager) restoreBaselineRouting(ctx context.Context, b *systemBaseline)
 				continue
 			}
 			seen[line] = true
-			args := append([]string{item.family, "route", "replace"}, strings.Fields(line)...)
+			fields, restorable := baselineRouteFields(line)
+			if !restorable {
+				continue
+			}
+			args := append([]string{item.family, "route", "replace"}, fields...)
 			if err := m.run(ctx, "ip", args...); err != nil {
-				return fmt.Errorf("восстановление маршрута %q: %w", line, err)
+				// Маршрут, который не удалось вернуть, — не повод бросить
+				// удаление на середине: unit к этому моменту уже выключен, и
+				// прерывание оставило бы систему без остального baseline.
+				fmt.Fprintf(m.Out, "Предупреждение: маршрут %q не восстановлен: %v\n", line, err)
 			}
 		}
 	}
@@ -272,6 +279,34 @@ func (m *Manager) restoreBaselineRouting(ctx context.Context, b *systemBaseline)
 		}
 	}
 	return nil
+}
+
+// baselineRouteFields готовит сохранённую строку «ip route show» к обратной
+// подстановке через «ip route replace».
+//
+// Динамические маршруты не восстанавливаются вовсе: их ставит не netOS, а
+// ядро, RA или клиент DHCP, и после удаления они появятся сами. Попытка
+// вернуть такой маршрут не просто лишняя — она проваливалась: вывод содержит
+// «expires 1621sec», а на входе это не атрибут, а ошибка «expires value is
+// invalid». Удаление обрывалось с уже выключенным юнитом и наполовину
+// возвращённой системой.
+func baselineRouteFields(line string) ([]string, bool) {
+	fields := strings.Fields(line)
+	for i, field := range fields {
+		if field == "expires" {
+			return nil, false
+		}
+		if field == "proto" && i+1 < len(fields) {
+			switch fields[i+1] {
+			case "ra", "dhcp", "kernel", "redirect":
+				return nil, false
+			}
+		}
+	}
+	if len(fields) == 0 {
+		return nil, false
+	}
+	return fields, true
 }
 
 func (m *Manager) restoreBaselineSysctl(b *systemBaseline) error {

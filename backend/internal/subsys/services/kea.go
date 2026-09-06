@@ -189,6 +189,13 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := d.ensureUnit(ctx); err != nil {
 		return err
 	}
+	// Каталог базы аренд Kea сама не создаёт: без него демон падает с
+	// DHCPSRV_MEMFILE_FAILED_TO_OPEN, и первый же переход на Kea
+	// заканчивался откатом всей конфигурации. В пакете Debian каталог есть
+	// не всегда, а профиль AppArmor не оставляет выбора, где держать базу.
+	if err := os.MkdirAll(filepath.Dir(keaLeasePath), 0o750); err != nil {
+		return fmt.Errorf("каталог базы аренд Kea: %w", err)
+	}
 	// Файл аренд, оставшийся от прежней установки, маска юнита уже не
 	// исправит: права выставляем сами. Отсутствие файла — норма, Kea создаст
 	// его при первом старте, уже под маской 0077.

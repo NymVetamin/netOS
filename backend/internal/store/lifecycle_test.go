@@ -281,3 +281,45 @@ func TestAuditDevicesAndPing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Состояние applying перезапуск демона не переживает: история иначе показывала
+// применение, которое давно ничем не закончилось.
+func TestResolveStaleApplyingClosesEveryOtherTransaction(t *testing.T) {
+	st := openTestStore(t)
+	var ids []int64
+	for i := 0; i < 3; i++ {
+		cfg := config.Default()
+		cfg.System.Hostname = fmt.Sprintf("router-%d", i)
+		id, err := st.CreateRevision(cfg, "admin", fmt.Sprint(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		if err := st.SetRevisionState(id, StateApplying); err != nil {
+			t.Fatal(err)
+		}
+	}
+	closed, err := st.ResolveStaleApplying(ids[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed != 2 {
+		t.Fatalf("закрыто %d ревизий, ожидалось 2", closed)
+	}
+	for _, id := range ids[:2] {
+		rev, err := st.Revision(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rev.State != StateRolledBack {
+			t.Fatalf("ревизия %d осталась в состоянии %s", id, rev.State)
+		}
+	}
+	current, err := st.Revision(ids[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State != StateApplying {
+		t.Fatalf("текущая ревизия закрыта: %s", current.State)
+	}
+}

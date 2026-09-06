@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -519,6 +520,15 @@ func canonicalRuleTokens(line string) string {
 		if negated != "" {
 			rest = append(rest, "!")
 		}
+		if i+1 < len(tokens) {
+			if replacement, skip, handled := canonicalOption(token, tokens[i+1]); handled {
+				i++
+				if !skip {
+					rest = append(rest, replacement...)
+				}
+				continue
+			}
+		}
 		if token == "-j" && i+1 < len(tokens) && tokens[i+1] == "LOG" {
 			logTarget = true
 		}
@@ -537,6 +547,70 @@ func canonicalRuleTokens(line string) string {
 	}
 	out = append(out, rest...)
 	return strings.Join(out, " ")
+}
+
+// canonicalOption приводит к одному виду опции, которые реализация поверх nft
+// печатает иначе, чем они были заданы. Возвращает замену, признак того, что
+// опцию надо выбросить целиком, и признак того, что опция вообще опознана.
+//
+// Каждое приведение здесь — не косметика: без него верное правило считалось
+// несовпавшим, и вся конфигурация откатывалась.
+func canonicalOption(token, value string) (replacement []string, skip, handled bool) {
+	switch token {
+	case "--set-mark", "--set-xmark":
+		// MARK --set-mark 0x1001 ядро хранит как --set-xmark 0x1001/0xffffffff:
+		// установка значения — это запись с полной маской.
+		return []string{"--set-xmark", canonicalMarkValue(value, "0xffffffff")}, false, true
+	case "--mark":
+		return []string{"--mark", canonicalMarkValue(value, "")}, false, true
+	case "--nfmask", "--ctmask":
+		// CONNMARK печатает маски всегда, а по умолчанию они полные.
+		if canonicalMarkNumber(value) == "0xffffffff" {
+			return nil, true, true
+		}
+		return []string{token, canonicalMarkNumber(value)}, false, true
+	case "--timestart", "--timestop":
+		// -m time дописывает секунды к времени вида 12:00.
+		if strings.Count(value, ":") == 1 {
+			return []string{token, value + ":00"}, false, true
+		}
+		return []string{token, value}, false, true
+	case "--datestart", "--datestop":
+		// Границы диапазона по умолчанию печатаются, даже когда их не задавали.
+		if value == "1970-01-01T00:00:00" || value == "2038-01-19T03:14:07" {
+			return nil, true, true
+		}
+		return []string{token, value}, false, true
+	case "--probability":
+		// Вероятность хранится 32-битной дробью, и обратно печатается с
+		// ошибкой квантования — она на порядки меньше шестого знака.
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return []string{token, fmt.Sprintf("%.6f", parsed)}, false, true
+		}
+		return []string{token, value}, false, true
+	}
+	return nil, false, false
+}
+
+// canonicalMarkValue печатает метку и её маску в том виде, в каком их выводит
+// iptables-save: шестнадцатеричными, с маской, когда она задана.
+func canonicalMarkValue(value, defaultMask string) string {
+	mark, mask, hasMask := strings.Cut(value, "/")
+	if !hasMask {
+		mask = defaultMask
+	}
+	if mask == "" {
+		return canonicalMarkNumber(mark)
+	}
+	return canonicalMarkNumber(mark) + "/" + canonicalMarkNumber(mask)
+}
+
+func canonicalMarkNumber(value string) string {
+	parsed, err := strconv.ParseUint(value, 0, 64)
+	if err != nil {
+		return value
+	}
+	return fmt.Sprintf("0x%x", parsed)
 }
 
 // canonicalAddress дописывает длину префикса: адрес хоста iptables-save

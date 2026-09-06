@@ -57,6 +57,9 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 		}
 		switch {
 		case strings.HasPrefix(dev, "ifb-netos-"):
+			if !f.links[dev] {
+				return "", fmt.Errorf("Cannot find device %q", dev)
+			}
 			return "qdisc cake 8002: root bandwidth 47.5Mbit diffserv4 nat wash ingress", nil
 		case dev == "lan0":
 			return "qdisc htb 1: root default 1\nqdisc ingress ffff: parent ffff:fff1", nil

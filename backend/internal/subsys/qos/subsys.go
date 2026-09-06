@@ -166,12 +166,22 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	// Check all targets before changing an existing queue. This keeps a typo or
 	// an IFB collision from tearing down a working configuration.
+	//
+	// Здесь же выясняется, какие IFB существуют на самом деле. Запись о
+	// принадлежности переживает перезагрузку, а сами IFB — нет: они временные
+	// и после перезагрузки или восстановления копии исчезают. Пока создание
+	// решалось по записи, netosd после каждой такой перезагрузки уходил в
+	// цикл перезапусков на «устройство не найдено», унося с собой панель.
+	existingIFB := map[string]bool{}
 	for _, item := range wanted {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "show", "dev", item.Interface); err != nil {
 			return fmt.Errorf("интерфейс %s для %s недоступен: %w", item.Interface, item.WAN, err)
 		}
-		if _, err := s.Runner.Run(ctx, "ip", "link", "show", "dev", item.IFB); err == nil && !ownedIFB[item.IFB] {
-			return fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", item.IFB)
+		if _, err := s.Runner.Run(ctx, "ip", "link", "show", "dev", item.IFB); err == nil {
+			if !ownedIFB[item.IFB] {
+				return fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", item.IFB)
+			}
+			existingIFB[item.IFB] = true
 		}
 	}
 
@@ -192,10 +202,10 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		settings[item.WAN] = item
 	}
 	for _, item := range wanted {
-		if err := s.applyLink(ctx, item, settings[item.WAN], ownedIFB[item.IFB]); err != nil {
-			if !ownedIFB[item.IFB] {
+		if err := s.applyLink(ctx, item, settings[item.WAN], existingIFB[item.IFB]); err != nil {
+			if !existingIFB[item.IFB] {
 				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
-					recovery := append(append([]ownedLink(nil), previous...), item)
+					recovery := ownedWith(previous, item)
 					stateErr := s.writeOwned(recovery)
 					return fmt.Errorf("QoS %s: %w; уборка нового объекта: %v; сохранение ownership: %v", item.WAN, err, cleanupErr, stateErr)
 				}
@@ -206,7 +216,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := s.writeOwned(wanted); err != nil {
 		var cleanupErrs []string
 		for _, item := range wanted {
-			if !ownedIFB[item.IFB] {
+			if !existingIFB[item.IFB] {
 				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
 					cleanupErrs = append(cleanupErrs, cleanupErr.Error())
 				}
@@ -218,6 +228,17 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	return s.applyClients(ctx, cfg)
+}
+
+// ownedWith добавляет к списку принадлежности объект, которого в нём ещё нет:
+// уборка могла не удаться и у объекта, о котором запись уже есть.
+func ownedWith(previous []ownedLink, item ownedLink) []ownedLink {
+	for _, existing := range previous {
+		if existing == item {
+			return append([]ownedLink(nil), previous...)
+		}
+	}
+	return append(append([]ownedLink(nil), previous...), item)
 }
 
 func desiredLinks(cfg *config.Config) ([]ownedLink, error) {
@@ -248,8 +269,8 @@ func desiredLinks(cfg *config.Config) ([]ownedLink, error) {
 	return result, nil
 }
 
-func (s *Subsystem) applyLink(ctx context.Context, item ownedLink, setting config.QoSWAN, ifbOwned bool) error {
-	if !ifbOwned {
+func (s *Subsystem) applyLink(ctx context.Context, item ownedLink, setting config.QoSWAN, ifbExists bool) error {
+	if !ifbExists {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", item.IFB, "type", "ifb"); err != nil {
 			return fmt.Errorf("создание %s: %w", item.IFB, err)
 		}
