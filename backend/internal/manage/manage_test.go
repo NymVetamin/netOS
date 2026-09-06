@@ -325,7 +325,7 @@ func TestReinstallBehavesLikeUpdate(t *testing.T) {
 func TestUpdateRefusesMissingReleaseInsteadOfBuildingFromSource(t *testing.T) {
 	m, _ := testManager()
 	m.Output = func(context.Context, string, ...string) (string, error) {
-		return "", errors.New("not found")
+		return "HTTP/2 404\r\n", errors.New("curl: (22) HTTP 404")
 	}
 	var started bool
 	m.Run = func(_ context.Context, spec command) error {
@@ -351,7 +351,7 @@ func TestUpdateBuildsFromSourceWhenAskedExplicitly(t *testing.T) {
 	t.Setenv("NETOS_FROM_SOURCE", "1")
 	m, _ := testManager()
 	m.Output = func(context.Context, string, ...string) (string, error) {
-		return "", errors.New("not found")
+		return "HTTP/2 404\r\n", errors.New("curl: (22) HTTP 404")
 	}
 	var installer command
 	m.Run = func(_ context.Context, spec command) error {

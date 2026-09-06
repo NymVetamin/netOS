@@ -503,6 +503,9 @@ func TestPPPoEFakeServiceLifecycleIsIdempotentAndCleans(t *testing.T) {
 	if runner.active[unit] {
 		t.Fatal("PPPoE unit remains active")
 	}
+	if !strings.Contains(strings.Join(runner.commands, "\n"), "systemctl reset-failed "+unit) {
+		t.Fatal("removed PPPoE unit retains failed state")
+	}
 	if _, err := os.Stat(pppoeConfPath(w.ID)); !os.IsNotExist(err) {
 		t.Fatalf("PPPoE config remains: %v", err)
 	}
@@ -543,6 +546,9 @@ func TestL2TPFakeServiceLifecycleIsIdempotentAndCleans(t *testing.T) {
 	}
 	if runner.active[unit] {
 		t.Fatal("L2TP unit remains active")
+	}
+	if !strings.Contains(strings.Join(runner.commands, "\n"), "systemctl reset-failed "+unit) {
+		t.Fatal("removed L2TP unit retains failed state")
 	}
 	for _, path := range []string{l2tpConfPath(w.ID), l2tpPPPPath(w.ID)} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {

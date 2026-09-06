@@ -27,6 +27,16 @@ func (s *Systemd) Stop(ctx context.Context, unit string) error {
 	return s.systemctl(ctx, "stop", unit)
 }
 
+// ResetFailed forgets a stopped service's diagnostic state. An already
+// unloaded unit has no failed state to retain.
+func (s *Systemd) ResetFailed(ctx context.Context, unit string) error {
+	err := s.systemctl(ctx, "reset-failed", unit)
+	if err != nil && !unitMissing(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *Systemd) Restart(ctx context.Context, unit string) error {
 	return s.systemctl(ctx, "restart", unit)
 }

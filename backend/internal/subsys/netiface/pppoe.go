@@ -203,6 +203,9 @@ func (s *WAN) cleanupPPPoE(ctx context.Context, wanted map[string]bool) error {
 		if linkExists(PPPoEInterface(id)) {
 			return fmt.Errorf("интерфейс %s остался после остановки %s", PPPoEInterface(id), base)
 		}
+		if err := system.NewSystemd(s.Runner).ResetFailed(ctx, base); err != nil {
+			return fmt.Errorf("очистка failed-state %s: %w", base, err)
+		}
 		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("удаление %s: %w", unitPath, err)
 		}

@@ -24,7 +24,7 @@ func TestChannelPoliciesMarkConnectionsInPriorityOrder(t *testing.T) {
 	}
 	for _, want := range []string{
 		":NETOS-POLICY - [0:0]",
-		"-A PREROUTING -j CONNMARK --restore-mark",
+		"-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark",
 		"-p tcp -m multiport --dports 443",
 		"-j MARK --set-mark 0x1007",
 		"-m mark --mark 0x1007 -j CONNMARK --save-mark",

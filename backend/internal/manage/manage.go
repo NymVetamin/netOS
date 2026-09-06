@@ -547,7 +547,17 @@ func (m *Manager) install(ctx context.Context, version string, force bool) error
 	// администратор просил обновиться, а не запускать сборочный конвейер на
 	// работающем роутере. Поэтому отсутствие релиза — отказ с объяснением, а
 	// сборка включается явно.
-	if _, err := m.Output(ctx, "curl", "-4", "-fsSIL", "--retry", "2", releaseURL(resolvedVersion)); err != nil {
+	if headers, err := m.Output(ctx, "curl", "-4", "-fsSIL", "--retry", "2", releaseURL(resolvedVersion)); err != nil {
+		status := ""
+		for _, line := range strings.Split(headers, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && strings.HasPrefix(fields[0], "HTTP/") {
+				status = fields[1]
+			}
+		}
+		if status != "404" {
+			return fmt.Errorf("не удалось проверить доступность релиза %s: %w", name, err)
+		}
 		if !fromSource {
 			return fmt.Errorf("готового релиза %s нет. Укажите существующую версию "+
 				"или соберите из исходников явно: NETOS_FROM_SOURCE=1 netos update", name)
@@ -672,6 +682,13 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	}
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
+	m.removeOwnedPolicySets(ctx)
+	if err := m.removeOwnedQoS(ctx); err != nil {
+		return err
+	}
+	if err := m.removeOwnedAddresses(ctx); err != nil {
+		return err
+	}
 	m.removeVirtualInterfaces(ctx)
 	for _, path := range []string{
 		m.sys("/etc/network/interfaces.d/netos.conf"),
@@ -887,7 +904,12 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
 	m.removeOwnedPolicySets(ctx)
-	m.removeOwnedQoS(ctx)
+	if err := m.removeOwnedQoS(ctx); err != nil {
+		return m.rollbackRestore(ctx, safety, err)
+	}
+	if err := m.removeOwnedAddresses(ctx); err != nil {
+		return m.rollbackRestore(ctx, safety, err)
+	}
 	m.removeVirtualInterfaces(ctx)
 
 	// Каталоги очищаются перед распаковкой: tar кладёт файлы поверх, и без
@@ -923,7 +945,27 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	_ = m.stopDaemon(rollbackCtx)
+	if err := m.stopDaemon(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; остановка перед rollback: %w", cause, err)
+	}
+	// Keep the failed attempt's ownership until its live objects are gone.
+	if err := m.removeComponentUnits(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; очистка компонентов перед rollback: %w", cause, err)
+	}
+	if err := m.clearNetOSFirewall(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; очистка firewall перед rollback: %w", cause, err)
+	}
+	if err := m.removeOwnedQoS(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; очистка QoS перед rollback: %w", cause, err)
+	}
+	if err := m.removeOwnedAddresses(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; очистка адресов перед rollback: %w", cause, err)
+	}
+	m.removeOwnedPolicySets(rollbackCtx)
+	m.removePolicyRules(rollbackCtx)
+	m.bestEffort(rollbackCtx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
+	m.bestEffort(rollbackCtx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
+	m.removeVirtualInterfaces(rollbackCtx)
 	for _, target := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if err := os.RemoveAll(target); err != nil {
 			return fmt.Errorf("%v; rollback из %s не удался при очистке %s: %w", cause, safety, target, err)
@@ -1148,7 +1190,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
-	m.removeOwnedQoS(ctx)
+	if err := m.removeOwnedQoS(ctx); err != nil {
+		return err
+	}
 	m.removeVirtualInterfaces(ctx)
 	if baseline != nil {
 		if err := m.restoreBaselineRouting(ctx, baseline); err != nil {

@@ -441,7 +441,7 @@ func missingTrafficObject(err error) bool {
 		return false
 	}
 	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "no such") || strings.Contains(text, "not found") || strings.Contains(text, "cannot find") || strings.Contains(text, "handle of zero")
+	return strings.Contains(text, "no such") || strings.Contains(text, "not found") || strings.Contains(text, "cannot find") || strings.Contains(text, "handle of zero") || strings.Contains(text, "error: invalid handle.")
 }
 
 func (s *Subsystem) ownedPath() string { return filepath.Join(s.StateDir, "owned-qos.json") }

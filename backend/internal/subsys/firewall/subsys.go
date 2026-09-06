@@ -556,6 +556,12 @@ func canonicalRuleTokens(line string) string {
 // Каждое приведение здесь — не косметика: без него верное правило считалось
 // несовпавшим, и вся конфигурация откатывалась.
 func canonicalOption(token, value string) (replacement []string, skip, handled bool) {
+	if token == "--comment" || token == "--log-prefix" {
+		if decoded, err := strconv.Unquote(value); err == nil {
+			value = decoded
+		}
+		return []string{token, strconv.Quote(value)}, false, true
+	}
 	switch token {
 	case "--set-mark", "--set-xmark":
 		// MARK --set-mark 0x1001 ядро хранит как --set-xmark 0x1001/0xffffffff:

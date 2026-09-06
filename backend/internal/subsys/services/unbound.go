@@ -243,18 +243,34 @@ func (u *Unbound) renderLocalZones(b *strings.Builder, cfg *config.Config) {
 // перенаправления. transparent на конкретную зону возвращает разрешение
 // обычному пути, то есть нашему forward-zone.
 func (u *Unbound) renderLocalZoneOverrides(b *strings.Builder, cfg *config.Config) {
-	if !backendLocalDNSNeeded(cfg) {
-		return
+	var zones []string
+	if backendLocalDNSNeeded(cfg) {
+		zones = localZones(cfg)
 	}
-	zones := localZones(cfg)
+	for _, rule := range cfg.DNS.SplitRules {
+		if !rule.Enabled {
+			continue
+		}
+		for _, up := range cfg.DNS.Upstreams {
+			if up.ID == rule.Upstream && up.Enabled {
+				zones = append(zones, rule.Domains...)
+				break
+			}
+		}
+	}
 	if len(zones) == 0 {
 		return
 	}
 	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
 	w("")
 	w("    # --- зоны, которые обслуживает dnsmasq, а не встроенные ответы unbound ---")
+	seen := map[string]bool{}
 	for _, zone := range zones {
-		w("    local-zone: \"%s.\" transparent", strings.Trim(zone, "."))
+		zone = strings.ToLower(strings.Trim(zone, "."))
+		if zone != "" && !seen[zone] {
+			w("    local-zone: \"%s.\" transparent", zone)
+			seen[zone] = true
+		}
 	}
 }
 

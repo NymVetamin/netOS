@@ -608,6 +608,9 @@ func (c *Config) validateTopology(r *ValidationResult) {
 				r.errf(path+".members", "порт %q указан дважды", member.Name)
 			}
 			seen[m] = true
+			if iface.Type == "bond" && member.MAC != "" {
+				r.errf(path+".members", "порт %q наследует MAC агрегации: уберите MAC порта и задайте его на агрегации %q", member.Name, iface.Name)
+			}
 
 			// Мост в мост ядро не вкладывает: подчинить можно только порт.
 			if member.Type == "bridge" {

@@ -43,6 +43,13 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 	}
 	wanted := map[string]bool{}
 	for _, ch := range enabledChannels(cfg) {
+		// Recreating a TUN device removes its routes. Repair its own table
+		// even with probes disabled or while a fallback rule is selected.
+		if s.linkExists(InterfaceName(ch)) {
+			if err := s.ensureRoutes(ctx, ch, InterfaceName(ch)); err != nil {
+				s.warnf("Канал %s: восстановление маршрута: %v", ch.Name, err)
+			}
+		}
 		if !ch.Probe.Enabled {
 			continue
 		}

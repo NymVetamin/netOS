@@ -468,6 +468,9 @@ func (s *WAN) cleanupL2TP(ctx context.Context, wanted map[string]bool) error {
 		if linkExists(L2TPInterface(id)) {
 			return fmt.Errorf("интерфейс %s остался после остановки %s", L2TPInterface(id), base)
 		}
+		if err := system.NewSystemd(s.Runner).ResetFailed(ctx, base); err != nil {
+			return fmt.Errorf("очистка failed-state %s: %w", base, err)
+		}
 		for _, path := range []string{unitPath, l2tpConfPath(id), l2tpPPPPath(id)} {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("удаление %s: %w", path, err)

@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
@@ -378,7 +379,8 @@ func (b *builder) blockedClients(cfg *config.Config) {
 func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
 	sel := extra + selectors(r)
 	if r.Log {
-		b.line("-A %s%s -j LOG --log-prefix %q --log-level 4", chain, sel, "netos "+r.Name+": ")
+		// iptables-nft's save conversion preserves only 28 prefix bytes.
+		b.line("-A %s%s -j LOG --log-prefix %q --log-level 4", chain, sel, truncate("netos "+r.Name+": ", 28))
 	}
 	if r.Action == "continue" {
 		// «Передать дальше по списку» — это правило без перехода: пакет
@@ -667,10 +669,27 @@ func (b *builder) multiWANPolicies(cfg *config.Config) {
 	}
 	b.line(":NETOS-MULTIWAN - [0:0]")
 	if cfg.MultiWAN.StickyConnections {
-		b.line("-A PREROUTING -j CONNMARK --restore-mark")
-		b.line("-A PREROUTING -m mark --mark 0 -j NETOS-MULTIWAN")
+		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
+		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-MULTIWAN")
 	} else {
-		b.line("-A PREROUTING -j NETOS-MULTIWAN")
+		// TCP cannot change its NAT egress mid-connection. Even with
+		// optional flow stickiness disabled, keep the TCP handshake and data
+		// on the same WAN; datagrams may still be balanced per packet.
+		b.line("-A PREROUTING -m conntrack --ctproto 6 --ctdir ORIGINAL -j CONNMARK --restore-mark")
+		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-MULTIWAN")
+	}
+	// Incoming WAN connections and traffic to the router/internal segments
+	// must use their normal routes, even when balancing is not sticky.
+	for _, wan := range wans {
+		if iface := wanInterface(cfg, wan); iface != "" {
+			b.line("-A NETOS-MULTIWAN -i %s -j RETURN", iface)
+		}
+	}
+	b.line("-A NETOS-MULTIWAN -m addrtype --dst-type LOCAL -j RETURN")
+	for _, network := range cfg.Networks {
+		if network.Enabled {
+			b.line("-A NETOS-MULTIWAN -d %s -j RETURN", subnetOf(network.RouterAddress))
+		}
 	}
 	remaining := total
 	for i, wan := range wans {
@@ -683,6 +702,8 @@ func (b *builder) multiWANPolicies(cfg *config.Config) {
 		}
 		if cfg.MultiWAN.StickyConnections {
 			b.line("-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark", mark)
+		} else {
+			b.line("-A NETOS-MULTIWAN -m conntrack --ctproto 6 -m mark --mark %s -j CONNMARK --save-mark", mark)
 		}
 		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j RETURN", mark)
 		remaining -= wan.Weight
@@ -805,8 +826,8 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	}
 
 	b.line(":NETOS-POLICY - [0:0]")
-	b.line("-A PREROUTING -j CONNMARK --restore-mark")
-	b.line("-A PREROUTING -m mark --mark 0 -j NETOS-POLICY")
+	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
+	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-POLICY")
 	for _, rule := range rules {
 		if rule.channel == "" || rule.channel == "direct" {
 			b.line("-A NETOS-POLICY%s -m comment --comment %q -j RETURN", rule.match, truncate(rule.comment, 240))
@@ -957,6 +978,9 @@ func subnetOf(cidr string) string {
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
+	}
+	for max > 0 && !utf8.ValidString(s[:max]) {
+		max--
 	}
 	return s[:max]
 }

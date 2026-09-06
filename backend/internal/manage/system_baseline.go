@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -477,40 +478,87 @@ func legacyUnambiguousNetOSLink(name string) bool {
 	return false
 }
 
-func (m *Manager) removeOwnedQoS(ctx context.Context) {
+// Remove exact owned addresses, preserving unrelated management addresses.
+func (m *Manager) removeOwnedAddresses(ctx context.Context) error {
+	for _, filename := range []string{"owned-network-addresses.json", "owned-wan-addresses.json"} {
+		data, err := os.ReadFile(filepath.Join(m.StateDir, "generated", filename))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var records []struct {
+			Interface string `json:"interface"`
+			Address   string `json:"address"`
+		}
+		if err := json.Unmarshal(data, &records); err != nil {
+			return err
+		}
+		for _, item := range records {
+			prefix, err := netip.ParsePrefix(item.Address)
+			if err != nil || !validLinkName(item.Interface) {
+				return fmt.Errorf("invalid address ownership in %s", filename)
+			}
+			family := "-4"
+			if prefix.Addr().Is6() {
+				family = "-6"
+			}
+			if err := m.run(ctx, "ip", family, "addr", "del", item.Address, "dev", item.Interface); err != nil {
+				text := strings.ToLower(err.Error())
+				if !strings.Contains(text, "cannot assign requested address") && !strings.Contains(text, "cannot find device") && !strings.Contains(text, "no such") {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager) removeOwnedQoS(ctx context.Context) error {
 	interfaces := map[string]bool{}
 	wanPath := filepath.Join(m.StateDir, "generated", "owned-qos.json")
 	if data, err := os.ReadFile(wanPath); err == nil {
 		var records []ownedLinkRecord
 		if err := json.Unmarshal(data, &records); err != nil {
-			fmt.Fprintf(m.Err, "Предупреждение: чтение QoS ownership %s: %v\n", wanPath, err)
+			return fmt.Errorf("чтение QoS ownership %s: %w", wanPath, err)
 		} else {
 			for _, record := range records {
-				if validLinkName(record.Interface) {
-					interfaces[record.Interface] = true
+				if !validLinkName(record.Interface) {
+					return fmt.Errorf("invalid QoS interface in %s", wanPath)
 				}
+				interfaces[record.Interface] = true
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		fmt.Fprintf(m.Err, "Предупреждение: чтение QoS ownership %s: %v\n", wanPath, err)
+		return err
 	}
 	clientPath := filepath.Join(m.StateDir, "generated", "owned-qos-clients.json")
 	if data, err := os.ReadFile(clientPath); err == nil {
 		var names []string
 		if err := json.Unmarshal(data, &names); err != nil {
-			fmt.Fprintf(m.Err, "Предупреждение: чтение QoS ownership %s: %v\n", clientPath, err)
+			return fmt.Errorf("чтение QoS ownership %s: %w", clientPath, err)
 		} else {
 			for _, name := range names {
-				if validLinkName(name) {
-					interfaces[name] = true
+				if !validLinkName(name) {
+					return fmt.Errorf("invalid QoS interface in %s", clientPath)
 				}
+				interfaces[name] = true
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		fmt.Fprintf(m.Err, "Предупреждение: чтение QoS ownership %s: %v\n", clientPath, err)
+		return err
 	}
 	for name := range interfaces {
-		m.bestEffort(ctx, "tc", "qdisc", "del", "dev", name, "root")
-		m.bestEffort(ctx, "tc", "qdisc", "del", "dev", name, "ingress")
+		// Delete redirect filters before their destination IFB can be removed.
+		for _, kind := range []string{"ingress", "root"} {
+			if err := m.run(ctx, "tc", "qdisc", "del", "dev", name, kind); err != nil {
+				text := strings.ToLower(err.Error())
+				if !strings.Contains(text, "no such") && !strings.Contains(text, "not found") && !strings.Contains(text, "cannot find") && !strings.Contains(text, "handle of zero") && !strings.Contains(text, "error: invalid handle.") {
+					return err
+				}
+			}
+		}
 	}
+	return nil
 }
