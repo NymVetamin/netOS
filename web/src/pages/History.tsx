@@ -9,11 +9,21 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
   const [audit, setAudit] = useState<any[]>([]);
   const [busy, setBusy] = useState(0);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [r, a] = await Promise.all([api.revisions(), api.audit(60)]);
-    setRevisions(r.revisions || []);
-    setAudit(a.entries || []);
+    setLoading(true);
+    setLoadError("");
+    try {
+      const [r, a] = await Promise.all([api.revisions(), api.audit(60)]);
+      setRevisions(r.revisions || []);
+      setAudit(a.entries || []);
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : "Не удалось загрузить историю");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -28,9 +38,15 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
       </div>
 
       {error && <Notice tone="danger" title="Не удалось загрузить ревизию">{error}</Notice>}
+      {loadError && (
+        <Notice tone="danger" title="Не удалось загрузить историю">
+          <p>{loadError}</p>
+          <button className="btn sm" onClick={() => void load()}>Повторить загрузку</button>
+        </Notice>
+      )}
 
       <Card title="Ревизии" subtitle="Каждое применение сохраняется отдельной версией" tight>
-        {revisions.length === 0 ? (
+        {loading ? <Empty>Загрузка ревизий…</Empty> : loadError ? null : revisions.length === 0 ? (
           <Empty>История пуста</Empty>
         ) : (
           <TableWrap>
@@ -91,7 +107,7 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
       </Card>
 
       <Card title="Журнал действий" tight>
-        {audit.length === 0 ? (
+        {loading ? <Empty>Загрузка журнала…</Empty> : loadError ? null : audit.length === 0 ? (
           <Empty>Записей нет</Empty>
         ) : (
           <TableWrap>
