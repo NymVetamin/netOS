@@ -1624,6 +1624,21 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 			seenIP[res.IP] = true
 			if !c.addressInNetwork(res.Network, addr) {
 				r.errf(path+".ip", "адрес не принадлежит подсети выбранного сегмента")
+			} else {
+				for _, n := range c.Networks {
+					if n.ID != res.Network {
+						continue
+					}
+					prefix, err := netip.ParsePrefix(n.RouterAddress)
+					if err != nil || !prefix.Addr().Is4() {
+						continue
+					}
+					if addr == prefix.Addr() || res.IP == n.DHCPPool.Gateway {
+						r.errf(path+".ip", "клиенту нельзя закрепить адрес роутера или DHCP-шлюза")
+					} else if prefix.Bits() <= 30 && (addr == prefix.Masked().Addr() || addr == ipv4Broadcast(prefix)) {
+						r.errf(path+".ip", "клиенту нельзя закрепить адрес сети или широковещательный адрес")
+					}
+				}
 			}
 		}
 		if !networks[res.Network] {
