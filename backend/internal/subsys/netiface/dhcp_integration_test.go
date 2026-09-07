@@ -180,6 +180,45 @@ func TestIntegrationDHCPRenewWithoutRouterRemovesOnlyOwnedDefault(t *testing.T) 
 	}
 }
 
+func TestIntegrationL2TPGatewayIgnoresStaleStaticRoute(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root are required")
+	}
+	if _, err := exec.LookPath("ip"); err != nil {
+		t.Skip("ip is not installed")
+	}
+	const namespace = "netos-l2tp-gwqa"
+	const iface = "wanqa0"
+	if _, err := os.Stat("/run/netns/" + namespace); err == nil {
+		t.Fatal("integration namespace already exists")
+	}
+	runner := system.NewExec()
+	mustRunVPNStyle(t, runner, "ip", "netns", "add", namespace)
+	t.Cleanup(func() { _, _ = runner.Run(context.Background(), "ip", "netns", "delete", namespace) })
+	ns := func(args ...string) {
+		t.Helper()
+		mustRunVPNStyle(t, runner, "ip", append([]string{"-n", namespace}, args...)...)
+	}
+	ns("link", "add", iface, "type", "dummy")
+	ns("link", "set", iface, "up")
+	ns("addr", "add", "192.0.2.2/24", "dev", iface)
+	ns("route", "add", "default", "via", "192.0.2.1", "dev", iface, "proto", "static", "metric", "100")
+	s := NewWAN(netifaceRunnerFunc(func(ctx context.Context, name string, args ...string) (string, error) {
+		if name == "ip" {
+			args = append([]string{"-n", namespace}, args...)
+		}
+		return runner.Run(ctx, name, args...)
+	}))
+	if gateway, err := s.underlayGateway(context.Background(), iface); err != nil || gateway != "" {
+		t.Fatalf("old static route mistaken for DHCP lease: gateway=%q err=%v", gateway, err)
+	}
+	// The old, more-preferred static default can coexist until Apply cleanup.
+	ns("route", "add", "default", "via", "192.0.2.254", "dev", iface, "proto", "dhcp", "metric", "310")
+	if gateway, err := s.waitUnderlayGateway(context.Background(), iface); err != nil || gateway != "192.0.2.254" {
+		t.Fatalf("wrong DHCP underlay gateway: gateway=%q err=%v", gateway, err)
+	}
+}
+
 func assertAddressPresent(t *testing.T, runner system.Runner, iface, address string) {
 	t.Helper()
 	addresses, err := addressesOf(context.Background(), runner, iface)

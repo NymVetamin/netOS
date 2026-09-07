@@ -430,7 +430,9 @@ func (s *WAN) waitUnderlayGateway(ctx context.Context, iface string) (string, er
 }
 
 func (s *WAN) underlayGateway(ctx context.Context, iface string) (string, error) {
-	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default", "dev", iface)
+	// The previous static default remains until Apply cleanup. It is not
+	// evidence that the new DHCP client has received its gateway yet.
+	out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default", "dev", iface, "proto", "dhcp")
 	if err != nil {
 		return "", fmt.Errorf("чтение шлюза на %s: %w", iface, err)
 	}
