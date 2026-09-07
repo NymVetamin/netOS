@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatBytes, formatUptime } from "../api";
-import { Badge, Card, Empty, Tile, TableWrap } from "../ui";
+import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
 
 // Сводка: то, на что администратор смотрит первым делом, когда что-то не
 // работает. Поэтому здесь состояние аплинка, клиенты и счётчики интерфейсов,
@@ -8,19 +8,32 @@ import { Badge, Card, Empty, Tile, TableWrap } from "../ui";
 export function Dashboard({ config }: { config: any }) {
   const [status, setStatus] = useState<any>(null);
   const [statistics, setStatistics] = useState<any[]>([]);
+  const [statusError, setStatusError] = useState(false);
+  const [statisticsError, setStatisticsError] = useState(false);
 
   const wanInterfaces = (config.wans || [])
     .filter((w: any) => w.enabled)
     .map((w: any) => wanInterfaceName(config, w));
 
   useEffect(() => {
-    const load = () => {
-      api.status().then(setStatus).catch(() => {});
-      api.statistics(24, wanInterfaces).then((result) => setStatistics(result.points || [])).catch(() => {});
+    let cancelled = false;
+    let busy = false;
+    const load = async () => {
+      if (busy) return;
+      busy = true;
+      await Promise.all([
+        api.status().then((result) => {
+          if (!cancelled) { setStatus(result); setStatusError(false); }
+        }).catch(() => { if (!cancelled) setStatusError(true); }),
+        api.statistics(24, wanInterfaces).then((result) => {
+          if (!cancelled) { setStatistics(result.points || []); setStatisticsError(false); }
+        }).catch(() => { if (!cancelled) setStatisticsError(true); }),
+      ]);
+      busy = false;
     };
     load();
     const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    return () => { cancelled = true; clearInterval(t); };
   }, [wanInterfaces.join(",")]);
 
   const interfaces: any[] = status?.interfaces || [];
@@ -34,6 +47,15 @@ export function Dashboard({ config }: { config: any }) {
         <p>Состояние роутера {config.system?.hostname}</p>
       </div>
 
+      {statusError && (
+        <Notice tone="danger" title="Не удалось обновить состояние роутера">
+          {status ? "Показаны последние полученные данные. " : ""}
+          Повторная попытка выполняется автоматически.
+        </Notice>
+      )}
+      {!status ? (
+        statusError ? null : <Empty>Загрузка состояния роутера…</Empty>
+      ) : <>
       <div className="tiles">
         <Tile
           label="Аплинк"
@@ -95,7 +117,8 @@ export function Dashboard({ config }: { config: any }) {
       </Card>
 
       <Card title="Скорость интернета" subtitle="Фактический трафик всех включённых интернет-каналов за 24 часа">
-        <TrafficChart points={statistics} interfaces={wanInterfaces} />
+        {statisticsError ? <Empty>Не удалось обновить статистику. Повторная попытка выполняется автоматически.</Empty> :
+          <TrafficChart points={statistics} interfaces={wanInterfaces} />}
       </Card>
 
       <Card title="Интерфейсы" subtitle="Счётчики с момента запуска системы" tight>
@@ -159,6 +182,7 @@ export function Dashboard({ config }: { config: any }) {
           />
         </div>
       </Card>
+      </>}
     </>
   );
 }
