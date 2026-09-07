@@ -217,6 +217,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [page, setPage] = useState<PageID>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [cfg, setCfg] = useState<any>(null);
+  const [configGeneration, setConfigGeneration] = useState(0);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState<{ until?: string } | null>(null);
@@ -235,6 +236,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
   const applyServerState = useCallback((res: ConfigResponse) => {
     setCfg(res.config);
+    // Refresh local channel editors on authoritative reloads (rollback,
+    // discard, history), never on debounced saves or individual keystrokes.
+    setConfigGeneration((generation) => generation + 1);
     setProblems(res.problems || []);
     setDirty(res.dirty);
     setRollback(res.rollback || null);
@@ -458,7 +462,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 <NetworkPage config={cfg} patch={patch} problems={problems} />
               )}
               {page === "routing" && <RoutingPage config={cfg} patch={patch} />}
-              {page === "channels" && <ChannelsPage config={cfg} patch={patch} />}
+              {page === "channels" && <ChannelsPage key={configGeneration} config={cfg} patch={patch} />}
               {page === "vpn-servers" && <VPNServersPage config={cfg} patch={patch} />}
               {page === "wifi" && <WiFiPage config={cfg} patch={patch} />}
               {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}
