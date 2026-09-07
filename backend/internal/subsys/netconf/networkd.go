@@ -51,6 +51,11 @@ func renderNetdev(iface config.Interface) string {
 	}
 	if iface.MAC != "" {
 		w("MACAddress=%s", iface.MAC)
+	} else if iface.Type == "bridge" || iface.Type == "bond" {
+		// Omitting this makes networkd generate its own MAC when it starts,
+		// replacing the live netOS address and stranding clients' ARP caches.
+		// Keep VLAN's default inheritance from its parent unchanged.
+		w("MACAddress=none")
 	}
 
 	switch iface.Type {
