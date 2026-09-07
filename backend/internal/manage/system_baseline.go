@@ -495,6 +495,10 @@ func legacyUnambiguousNetOSLink(name string) bool {
 
 // Remove exact owned addresses, preserving unrelated management addresses.
 func (m *Manager) removeOwnedAddresses(ctx context.Context) error {
+	return m.removeOwnedAddressesExcept(ctx, "", "")
+}
+
+func (m *Manager) removeOwnedAddressesExcept(ctx context.Context, keepInterface, keepAddress string) error {
 	for _, filename := range []string{"owned-network-addresses.json", "owned-wan-addresses.json"} {
 		data, err := os.ReadFile(filepath.Join(m.StateDir, "generated", filename))
 		if os.IsNotExist(err) {
@@ -514,6 +518,9 @@ func (m *Manager) removeOwnedAddresses(ctx context.Context) error {
 			prefix, err := netip.ParsePrefix(item.Address)
 			if err != nil || !validLinkName(item.Interface) {
 				return fmt.Errorf("invalid address ownership in %s", filename)
+			}
+			if item.Interface == keepInterface && item.Address == keepAddress {
+				continue
 			}
 			family := "-4"
 			if prefix.Addr().Is6() {

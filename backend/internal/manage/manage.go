@@ -662,6 +662,10 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	case !yes:
 		makeBackup = m.confirm("Сделать резервную копию перед сбросом?")
 	}
+	uplink, err := m.captureResetUplink(ctx)
+	if err != nil {
+		return err
+	}
 
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
@@ -695,13 +699,18 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	} else if resolvedWanted {
 		m.quiet(ctx, "systemctl", "enable", "--now", "systemd-resolved.service")
 	}
+	if len(uplink.route) != 0 {
+		if err := m.run(ctx, "ip", uplink.route...); err != nil {
+			return m.recoverReset(fmt.Errorf("сохранение аплинка перед сбросом: %w", err))
+		}
+	}
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
 	m.removeOwnedPolicySets(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return m.recoverReset(err)
 	}
-	if err := m.removeOwnedAddresses(ctx); err != nil {
+	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
 		return m.recoverReset(err)
 	}
 	m.removeVirtualInterfaces(ctx)
