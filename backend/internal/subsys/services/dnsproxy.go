@@ -121,6 +121,8 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 		w("cache-size: %d", cfg.DNS.CacheSize*128)
 	}
 	if cfg.DNS.DNSSEC {
+		// dnsproxy requests DNSSEC records (DO); signature validation belongs
+		// to the upstream resolver, unlike Unbound's local validation.
 		w("dnssec: true")
 	}
 	if cfg.IPv6.FilterAAAA {

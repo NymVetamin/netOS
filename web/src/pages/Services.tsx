@@ -299,11 +299,19 @@ function DNSSection({
           {provider !== "dnsmasq" && (
             <Switch
               checked={config.dns?.dnssec}
-              label="Проверять DNSSEC"
+              label={provider === "dnsproxy" ? "Запрашивать данные DNSSEC" : "Проверять DNSSEC"}
               onChange={(v) => patch((d) => (d.dns.dnssec = v))}
             />
           )}
         </div>
+
+        {provider === "dnsproxy" && config.dns?.dnssec && (
+          <Notice tone="info" title="Проверка подписей зависит от вышестоящего резолвера">
+            dnsproxy запрашивает данные DNSSEC, но сам не проверяет подписи.
+            Выберите вышестоящий резолвер с проверкой DNSSEC или Unbound для
+            проверки подписей на роутере.
+          </Notice>
+        )}
 
         {provider === "dnsproxy" && (
           <Field label="Bootstrap DNS" hint="Для разрешения имён DoH/DoT/DoQ-серверов; по одному IP-адресу в строке">
