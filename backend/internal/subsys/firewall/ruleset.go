@@ -248,6 +248,14 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			if r.Flow != h.flow && r.Flow != "any" {
 				continue
 			}
+			// A global source still permits a restricted destination zone.
+			// An empty destination zone must match no interfaces, not all traffic.
+			if h.flow == "forward" && r.DstZone != "" {
+				for _, out := range zones[r.DstZone] {
+					b.emitRule(h.builtin, r, " -o "+out)
+				}
+				continue
+			}
 			b.emitRule(h.builtin, r, "")
 		}
 	}
