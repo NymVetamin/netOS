@@ -125,6 +125,61 @@ func mustRunVPNStyle(t *testing.T, runner system.Runner, name string, args ...st
 	}
 }
 
+func TestIntegrationDHCPRenewWithoutRouterRemovesOnlyOwnedDefault(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root are required")
+	}
+	for _, command := range []string{"ip", "sh", "logger"} {
+		if _, err := exec.LookPath(command); err != nil {
+			t.Skipf("%s is not installed", command)
+		}
+	}
+	const namespace = "netos-dhcp-renewqa"
+	const iface = "dhcpqa0"
+	runner := system.NewExec()
+	// An existing namespace belongs to somebody else; never remove it.
+	if _, err := os.Stat("/run/netns/" + namespace); err == nil {
+		t.Fatal("integration namespace already exists")
+	}
+	mustRunVPNStyle(t, runner, "ip", "netns", "add", namespace)
+	t.Cleanup(func() { _, _ = runner.Run(context.Background(), "ip", "netns", "delete", namespace) })
+	ns := func(args ...string) {
+		t.Helper()
+		mustRunVPNStyle(t, runner, "ip", append([]string{"-n", namespace}, args...)...)
+	}
+	ns("link", "add", iface, "type", "dummy")
+	ns("link", "set", iface, "up")
+	ns("addr", "add", "192.0.2.2/24", "dev", iface)
+	ns("route", "add", "default", "via", "192.0.2.1", "dev", iface, "proto", "static", "metric", "99")
+	ns("route", "add", "default", "via", "192.0.2.1", "dev", iface, "proto", "dhcp", "metric", "4200")
+	root := t.TempDir()
+	oldRuntime := dhcpRuntimeDir
+	dhcpRuntimeDir = root
+	t.Cleanup(func() { dhcpRuntimeDir = oldRuntime })
+	script := filepath.Join(root, "renew.sh")
+	if err := os.WriteFile(script, []byte(renderDHCPScript(4200)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, gateway := range []string{"", "192.0.2.1", ""} {
+		mustRunVPNStyle(t, runner, "ip", "netns", "exec", namespace, "env", "interface="+iface,
+			"ip=192.0.2.2", "mask=24", "router="+gateway, "sh", script, "renew")
+		routes, err := runner.Run(context.Background(), "ip", "-n", namespace, "-4", "route", "show", "default")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(routes, "proto static metric 99") {
+			t.Fatalf("foreign default disappeared: %s", routes)
+		}
+		if strings.Contains(routes, "proto dhcp metric 4200") != (gateway != "") {
+			t.Fatalf("renew gateway=%q left wrong DHCP default: %s", gateway, routes)
+		}
+		addresses, err := runner.Run(context.Background(), "ip", "-n", namespace, "-4", "addr", "show", "dev", iface)
+		if err != nil || !strings.Contains(addresses, "192.0.2.2/24") {
+			t.Fatalf("renew lost the leased address: %s, %v", addresses, err)
+		}
+	}
+}
+
 func assertAddressPresent(t *testing.T, runner system.Runner, iface, address string) {
 	t.Helper()
 	addresses, err := addressesOf(context.Background(), runner, iface)
