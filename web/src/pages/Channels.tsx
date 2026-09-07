@@ -510,7 +510,7 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
                         <Field label="Дни недели" hint="Пусто — каждый день">
                           <div className="row wrap">
                             {POLICY_DAYS.map(([day, title]) => <label key={day} className="row" style={{ gap: ".25rem" }}>
-                              <input type="checkbox" checked={(policy.schedule.days || []).includes(day)} onChange={(e) => updatePolicyDay(patch, policy.id, day, e.target.checked)} /> {title}
+                              <input type="checkbox" aria-label={title} checked={(policy.schedule.days || []).includes(day)} onChange={(e) => updatePolicyDay(patch, policy.id, day, e.target.checked)} /> {title}
                             </label>)}
                           </div>
                         </Field>

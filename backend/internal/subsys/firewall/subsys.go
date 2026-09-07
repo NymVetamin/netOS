@@ -578,7 +578,22 @@ func canonicalOption(token, value string) (replacement []string, skip, handled b
 	case "--timestart", "--timestop":
 		// -m time дописывает секунды к времени вида 12:00.
 		if strings.Count(value, ":") == 1 {
-			return []string{token, value + ":00"}, false, true
+			value += ":00"
+		}
+		// With only one bound, iptables-save also prints the other bound's
+		// default. Explicit defaults and omitted bounds select the same time.
+		if token == "--timestart" && value == "00:00:00" || token == "--timestop" && value == "23:59:59" {
+			return nil, true, true
+		}
+		return []string{token, value}, false, true
+	case "--weekdays":
+		// The kernel sorts the weekday mask and omits it when every day is
+		// selected. Checkbox click order must not cause a false drift report.
+		days := strings.Split(value, ",")
+		sort.Strings(days)
+		value = strings.Join(days, ",")
+		if value == "Fri,Mon,Sat,Sun,Thu,Tue,Wed" {
+			return nil, true, true
 		}
 		return []string{token, value}, false, true
 	case "--datestart", "--datestop":

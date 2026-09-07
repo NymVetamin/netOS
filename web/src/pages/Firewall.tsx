@@ -427,6 +427,7 @@ function RuleForm({
                   <label key={day.id} className="row" style={{ gap: "0.25rem" }}>
                     <input
                       type="checkbox"
+                      aria-label={day.title}
                       checked={(r.schedule.days || []).includes(day.id)}
                       onChange={(e) => {
                         const days = r.schedule.days || [];
