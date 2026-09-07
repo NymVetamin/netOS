@@ -608,7 +608,9 @@ func (b *builder) natDestination(n config.NATRule) {
 		if n.DestPort != "" {
 			dest = n.DestIP + ":" + n.DestPort
 		}
-		b.line("-A PREROUTING%s -p %s --dport %s -m comment --comment %q -j DNAT --to-destination %s",
+		// Port forwarding addresses the router itself. Without this match an
+		// unrestricted ingress also redirects ordinary LAN-to-Internet traffic.
+		b.line("-A PREROUTING%s -p %s --dport %s -m addrtype --dst-type LOCAL -m comment --comment %q -j DNAT --to-destination %s",
 			sel.String(), proto, iptablesPortSpec(n.ExtPort), truncate(n.Name, 240), dest)
 	}
 }
