@@ -271,7 +271,9 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	for _, c := range chains {
 		b.line("# --- %s: %s ---", c.chain, describeChain(c.zone, c.hook))
 
-		if c.hook.flow == "forward" && c.zone.Name == "lan" {
+		// A local segment can be assigned to VPN or a custom zone too.
+		// Its isolation setting must still precede that zone's allow rules.
+		if c.hook.flow == "forward" {
 			b.isolation(cfg, c.chain)
 		}
 
