@@ -166,7 +166,7 @@ func (c *Controller) Health(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	var expected []int
-	if cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "balance" {
+	if cfg.MultiWAN.Enabled {
 		for _, wan := range cfg.WANs {
 			if wan.Enabled {
 				expected = append(expected, wan.Index)
@@ -199,7 +199,11 @@ func (c *Controller) Health(ctx context.Context, cfg *config.Config) error {
 		if !hasBlackholeDefault(routes) {
 			return fmt.Errorf("в таблице balance %s нет защитного blackhole default", wan.Name)
 		}
-		if !hasBalanceRule(rules, fmt.Sprint(Priority(wan)), fmt.Sprintf("0x%x", Mark(wan)), table) {
+		ruleOK := hasBalanceRule(rules, fmt.Sprint(Priority(wan)), fmt.Sprintf("0x%x", Mark(wan)), table)
+		if cfg.MultiWAN.Mode == "failover" {
+			ruleOK = hasProbeRule(rules, fmt.Sprint(Priority(wan)), interfaceName(cfg, wan), table)
+		}
+		if !ruleOK {
 			return fmt.Errorf("правило balance %s отсутствует или указывает не в ту таблицу", wan.Name)
 		}
 	}
@@ -307,6 +311,12 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 			}
 			state.Next = time.Now().Add(interval)
 			iface := interfaceName(cfg, wan)
+			if cfg.MultiWAN.Mode == "failover" {
+				if err := c.refreshProbeRoute(ctx, wan, iface); err != nil {
+					c.Logger.Warnf("Multi-WAN: маршрут проверки %s: %v", wan.Name, err)
+					continue
+				}
+			}
 			ok := iface != "" && c.Probe(ctx, wan, iface)
 			if c.record(ctx, wan, iface, state, ok, cfg.MultiWAN.Mode == "failover") {
 				balanceChanged = true
@@ -624,9 +634,10 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 	type desiredTable struct {
 		wan   config.WAN
 		route string
+		iface string
 	}
 	var desired []desiredTable
-	if cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "balance" {
+	if cfg.MultiWAN.Enabled {
 		var live []string
 		for _, wan := range cfg.WANs {
 			if !wan.Enabled {
@@ -636,6 +647,9 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 			line, err := c.defaultRoute(ctx, interfaceName(cfg, wan))
 			if err != nil {
 				return fmt.Errorf("маршрут аплинка %s: %w", wan.Name, err)
+			}
+			if cfg.MultiWAN.Mode == "failover" && line == "" {
+				line = c.suppressed[wan.ID]
 			}
 			live = append(live, line)
 		}
@@ -655,10 +669,14 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 			}
 			route := live[i]
 			i++
-			if st := c.states[wan.ID]; st != nil && st.Down {
+			if st := c.states[wan.ID]; cfg.MultiWAN.Mode == "balance" && st != nil && st.Down {
 				route = fallback
 			}
-			desired = append(desired, desiredTable{wan: wan, route: route})
+			iface := ""
+			if cfg.MultiWAN.Mode == "failover" {
+				iface = interfaceName(cfg, wan)
+			}
+			desired = append(desired, desiredTable{wan: wan, route: route, iface: iface})
 		}
 	}
 	indices := map[int]bool{}
@@ -689,7 +707,7 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 		kernelByIndex[snapshot.index] = snapshot
 	}
 	for _, item := range desired {
-		if err := c.ensureBalanceTable(ctx, item.wan, item.route); err != nil {
+		if err := c.ensureBalanceTable(ctx, item.wan, item.route, item.iface); err != nil {
 			return rollback(err)
 		}
 	}
@@ -736,13 +754,17 @@ func enabledWANs(cfg *config.Config) []config.WAN {
 	return out
 }
 
-func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, route string) error {
+func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, route string, probeInterface ...string) error {
 	table := fmt.Sprint(Table(wan))
 	priority := fmt.Sprint(Priority(wan))
 	mark := fmt.Sprintf("0x%x", Mark(wan))
 	_, _ = c.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table)
 	if route != "" {
-		args := append([]string{"-4", "route", "replace"}, strings.Fields(route)...)
+		fields := strings.Fields(route)
+		if len(probeInterface) > 0 && probeInterface[0] != "" {
+			fields = probeRouteFields(route)
+		}
+		args := append([]string{"-4", "route", "replace"}, fields...)
 		args = append(args, "table", table)
 		if _, err := c.Runner.Run(ctx, "ip", args...); err != nil {
 			return fmt.Errorf("таблица аплинка %s: %w", wan.Name, err)
@@ -755,13 +777,88 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	if err != nil {
 		return err
 	}
-	if !hasBalanceRule(rules, priority, mark, table) {
+	selector := []string{"fwmark", mark}
+	ruleOK := hasBalanceRule(rules, priority, mark, table)
+	if len(probeInterface) > 0 && probeInterface[0] != "" {
+		selector = []string{"oif", probeInterface[0]}
+		ruleOK = hasProbeRule(rules, priority, probeInterface[0], table)
+	}
+	if !ruleOK {
 		_, _ = c.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority)
-		if _, err := c.Runner.Run(ctx, "ip", "-4", "rule", "add", "fwmark", mark, "priority", priority, "lookup", table); err != nil {
+		args := append([]string{"-4", "rule", "add"}, selector...)
+		args = append(args, "priority", priority, "lookup", table)
+		if _, err := c.Runner.Run(ctx, "ip", args...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// A withdrawn main-table default must remain usable by interface-bound health
+// probes. The oif policy applies to locally bound sockets, not forwarded client
+// traffic, so recovery checks cannot send ordinary traffic through a failed WAN.
+// Refresh the owned table before probing to follow DHCP gateway/metric changes.
+func (c *Controller) refreshProbeRoute(ctx context.Context, wan config.WAN, iface string) error {
+	if wan.Index <= 0 || iface == "" {
+		return nil
+	}
+	if _, err := os.Stat(c.balanceOwnedPath()); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	line, err := c.defaultRoute(ctx, iface)
+	if err != nil {
+		return err
+	}
+	if line == "" {
+		line = c.suppressed[wan.ID]
+	}
+	if line == "" {
+		return nil
+	}
+	args := append([]string{"-4", "route", "replace"}, probeRouteFields(line)...)
+	args = append(args, "table", fmt.Sprint(Table(wan)))
+	_, err = c.Runner.Run(ctx, "ip", args...)
+	return err
+}
+
+func probeRouteFields(route string) []string {
+	// A probe table has one usable default. Keep a stable metric so a DHCP
+	// metric change replaces that default instead of leaving the old one behind.
+	fields := strings.Fields(route)
+	var result []string
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "metric" && i+1 < len(fields) {
+			i++
+			continue
+		}
+		result = append(result, fields[i])
+	}
+	return result
+}
+
+func hasProbeRule(rules, priority, iface, table string) bool {
+	for _, line := range strings.Split(rules, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), priority+":") {
+			continue
+		}
+		fields := strings.Fields(line)
+		ifaceOK, tableOK := false, false
+		for i := 0; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "oif":
+				ifaceOK = fields[i+1] == iface
+			case "lookup", "table":
+				tableOK = fields[i+1] == table
+			}
+		}
+		if ifaceOK && tableOK {
+			return true
+		}
+	}
+	return false
 }
 
 func hasBalanceRule(rules, priority, mark, table string) bool {

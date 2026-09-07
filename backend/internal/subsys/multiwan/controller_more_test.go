@@ -82,19 +82,24 @@ func (r *balanceStateRunner) Run(_ context.Context, name string, args ...string)
 	case strings.HasPrefix(joined, "-4 rule del priority "):
 		delete(r.rules, args[len(args)-1])
 	case strings.HasPrefix(joined, "-4 rule add "):
-		priority, mark, table := "", "", ""
+		priority, mark, table, oif := "", "", "", ""
 		for i := 0; i+1 < len(args); i++ {
 			switch args[i] {
 			case "priority":
 				priority = args[i+1]
 			case "fwmark":
 				mark = args[i+1]
+			case "oif":
+				oif = args[i+1]
 			case "lookup", "table":
 				table = args[i+1]
 			}
 		}
 		if priority != "" {
 			r.rules[priority] = priority + ": from all fwmark " + mark + " lookup " + table
+			if oif != "" {
+				r.rules[priority] = priority + ": from all oif " + oif + " lookup " + table
+			}
 		}
 	}
 	return "", nil
@@ -403,6 +408,9 @@ func TestHealthAndPlanDetectBalanceDrift(t *testing.T) {
 
 func TestHealthValidatesSuppressedRouteState(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "multiwan-balance.json"), []byte("[1]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	state := filepath.Join(dir, "multiwan-suppressed.json")
 	if err := os.WriteFile(state, []byte("{\"primary\":\"default via 192.0.2.1 dev wan0 metric 100\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -415,6 +423,12 @@ func TestHealthValidatesSuppressedRouteState(t *testing.T) {
 	r := &responseRunner{respond: func(command string) (string, error) {
 		if strings.Contains(command, "route show default dev wan0") {
 			return live, nil
+		}
+		if command == "ip -4 rule show" {
+			return "30001: from all oif wan0 lookup 3001\n", nil
+		}
+		if command == "ip -4 route show table 3001" {
+			return "default via 192.0.2.1 dev wan0\nblackhole default metric 32767\n", nil
 		}
 		return "", nil
 	}}
