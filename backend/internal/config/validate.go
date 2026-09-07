@@ -1161,7 +1161,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		if !route.Enabled {
 			continue
 		}
-		key := fmt.Sprintf("%s\x00%s\x00%d", route.Destination, route.Table, route.Metric)
+		key := staticRouteConflictKey(route)
 		if prev, taken := routeKeys[key]; taken {
 			table := route.Table
 			if table == "" {
@@ -1203,6 +1203,27 @@ func (c *Config) validateRouting(r *ValidationResult) {
 			r.errf(path+".interface", "некорректное имя входного интерфейса")
 		}
 	}
+}
+
+// Compare kernel route identities, not their spelling in the configuration.
+// A bare host and /32 or /128 are the same destination; an omitted table is main.
+func staticRouteConflictKey(route StaticRoute) string {
+	destination, table := route.Destination, route.Table
+	if destination == "default" {
+		destination = "0.0.0.0/0"
+		if gateway, err := netip.ParseAddr(route.Gateway); err == nil && gateway.Is6() {
+			destination = "::/0"
+		}
+	}
+	if prefix, err := netip.ParsePrefix(destination); err == nil {
+		destination = prefix.Masked().String()
+	} else if address, err := netip.ParseAddr(destination); err == nil {
+		destination = netip.PrefixFrom(address, address.BitLen()).String()
+	}
+	if table == "main" {
+		table = ""
+	}
+	return fmt.Sprintf("%s\x00%s\x00%d", destination, table, route.Metric)
 }
 
 func routeDestinationFamily(destination string) (is6 bool, ok bool) {
