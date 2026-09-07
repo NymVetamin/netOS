@@ -686,9 +686,11 @@ func (b *builder) multiWANPolicies(cfg *config.Config) {
 		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
 		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-MULTIWAN")
 	} else {
-		// TCP cannot change its NAT egress mid-connection. Even with
-		// optional flow stickiness disabled, keep the TCP handshake and data
-		// on the same WAN; datagrams may still be balanced per packet.
+		// NAT mappings belong to one egress, including UDP/ICMP mappings.
+		// Moving a masqueraded flow between WANs loses packets and changes
+		// its external endpoint. Preserve translated flows even when optional
+		// stickiness is off; keep TCP stable before NAT is established too.
+		b.line("-A PREROUTING -m conntrack --ctstate SNAT --ctdir ORIGINAL -j CONNMARK --restore-mark")
 		b.line("-A PREROUTING -m conntrack --ctproto 6 --ctdir ORIGINAL -j CONNMARK --restore-mark")
 		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-MULTIWAN")
 	}
@@ -714,11 +716,9 @@ func (b *builder) multiWANPolicies(cfg *config.Config) {
 			probability := float64(wan.Weight) / float64(remaining)
 			b.line("-A NETOS-MULTIWAN -m statistic --mode random --probability %.6f -j MARK --set-mark %s", probability, mark)
 		}
-		if cfg.MultiWAN.StickyConnections {
-			b.line("-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark", mark)
-		} else {
-			b.line("-A NETOS-MULTIWAN -m conntrack --ctproto 6 -m mark --mark %s -j CONNMARK --save-mark", mark)
-		}
+		// The first packet has no SNAT state yet. Remember its selected WAN
+		// now so subsequent translated packets can restore it before routing.
+		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark", mark)
 		b.line("-A NETOS-MULTIWAN -m mark --mark %s -j RETURN", mark)
 		remaining -= wan.Weight
 	}

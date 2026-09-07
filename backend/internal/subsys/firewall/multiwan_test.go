@@ -42,17 +42,16 @@ func TestMultiWANBalanceCanDisableStickyConnections(t *testing.T) {
 	}
 	for _, want := range []string{
 		"-A PREROUTING -m conntrack --ctproto 6 --ctdir ORIGINAL -j CONNMARK --restore-mark",
-		"-A NETOS-MULTIWAN -m conntrack --ctproto 6 -m mark --mark 0x3001 -j CONNMARK --save-mark",
-		"-A NETOS-MULTIWAN -m conntrack --ctproto 6 -m mark --mark 0x3002 -j CONNMARK --save-mark",
+		"-A PREROUTING -m conntrack --ctstate SNAT --ctdir ORIGINAL -j CONNMARK --restore-mark",
+		"-A NETOS-MULTIWAN -m mark --mark 0x3001 -j CONNMARK --save-mark",
+		"-A NETOS-MULTIWAN -m mark --mark 0x3002 -j CONNMARK --save-mark",
 	} {
 		if !strings.Contains(rules.IPv4, want) {
-			t.Errorf("TCP NAT path is not retained: %s", want)
+			t.Errorf("NAT path is not retained for all protocols: %s", want)
 		}
 	}
 	for _, forbidden := range []string{
 		"-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark",
-		"-A NETOS-MULTIWAN -m mark --mark 0x3001 -j CONNMARK --save-mark",
-		"-A NETOS-MULTIWAN -m mark --mark 0x3002 -j CONNMARK --save-mark",
 	} {
 		if strings.Contains(rules.IPv4, forbidden) {
 			t.Errorf("sticky-only rule remains when disabled: %q", forbidden)

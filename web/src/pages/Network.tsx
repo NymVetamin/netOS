@@ -84,7 +84,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
             <option value="balance">Балансировка по весам</option>
           </select>
         </Field>
-        <Field label="Соединения" hint="Установленные соединения не перескакивают между аплинками">
+        <Field label="Соединения" hint="TCP и соединения с подменой адреса (NAT) всегда сохраняют аплинк, чтобы не терять пакеты">
           <Switch
             checked={config.multiwan?.sticky_connections !== false}
             label="Закреплять до завершения"
