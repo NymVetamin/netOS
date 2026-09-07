@@ -330,6 +330,9 @@ func TestDHCPHealthChecksLeaseFileState(t *testing.T) {
 			if err := tc.apply(context.Background(), cfg); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Remove(tc.lease()); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			if err := os.MkdirAll(tc.lease(), 0o700); err != nil {
 				t.Fatal(err)
 			}

@@ -429,6 +429,21 @@ func (d *Dnsmasq) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRe
 	if err != nil {
 		return err
 	}
+	if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" {
+		// dnsmasq creates a missing lease file as 0644,
+		// even with UMask=0077 in the unit. Create it privately before startup
+		// without truncating existing leases.
+		if err := os.MkdirAll(filepath.Dir(dnsmasqLeasePath), 0o700); err != nil {
+			return fmt.Errorf("каталог аренд dnsmasq: %w", err)
+		}
+		lease, err := os.OpenFile(dnsmasqLeasePath, os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("файл аренд dnsmasq: %w", err)
+		}
+		if err := lease.Close(); err != nil {
+			return fmt.Errorf("закрытие файла аренд dnsmasq: %w", err)
+		}
+	}
 	if err := os.Chmod(dnsmasqLeasePath, 0o600); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("права файла аренд dnsmasq: %w", err)
 	}
