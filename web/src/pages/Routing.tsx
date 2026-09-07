@@ -12,12 +12,34 @@ type RoutesResponse = { routes: string; rules: string; parsed: RouteEntry[] };
 // каждого клиента, поэтому таблицы и правила показаны явно, а не спрятаны.
 export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   const [live, setLive] = useState<RoutesResponse | null>(null);
+  const [liveError, setLiveError] = useState("");
 
   useEffect(() => {
-    const load = () => api.routes().then(setLive).catch(() => {});
+    let cancelled = false;
+    let inFlight = false;
+    const load = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const result = await api.routes();
+        if (!cancelled) {
+          setLive(result);
+          setLiveError("");
+        }
+      } catch (cause) {
+        if (!cancelled) {
+          setLiveError(cause instanceof Error ? cause.message : "Не удалось прочитать маршруты");
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
     load();
     const t = setInterval(load, 10000);
-    return () => clearInterval(t);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
   }, []);
 
   const routing = config.routing || { static: [], tables: [], rules: [] };
@@ -475,13 +497,21 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         </div>
       </Card>
 
+      {liveError && (
+        <Notice tone="danger" title="Не удалось обновить действующие маршруты">
+          <p>{liveError}</p>
+          {live && <p>Показаны последние полученные маршруты и правила. Данные могут быть устаревшими.</p>}
+          <p>Повторная попытка выполняется автоматически каждые 10 секунд.</p>
+        </Notice>
+      )}
+
       <Card
         title="Действующие маршруты"
         subtitle="Всё, что сейчас в таблице маршрутизации, включая полученные автоматически"
         tight
       >
         {!live ? (
-          <Empty>Загрузка…</Empty>
+          <Empty>{liveError ? "Действующие маршруты недоступны" : "Загрузка…"}</Empty>
         ) : (live.parsed || []).length === 0 ? (
           <Empty>Таблица пуста</Empty>
         ) : (
@@ -520,7 +550,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
       </Card>
 
       <Card title="Правила выбора таблиц в ядре" tight>
-        <pre className="output">{live?.rules || "загрузка…"}</pre>
+        <pre className="output">
+          {live ? live.rules || "Правил нет" : liveError ? "Правила недоступны" : "загрузка…"}
+        </pre>
       </Card>
 
       {(config.channels || []).filter((c: any) => c.type !== "direct").length === 0 && (
