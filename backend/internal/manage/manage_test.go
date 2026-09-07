@@ -476,6 +476,41 @@ func TestStopDaemonReportsRealFailure(t *testing.T) {
 	}
 }
 
+func TestUninstallClearsOwnedBridgeIPv6AndReportsFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			var removed []string
+			m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+				if name == "ebtables-save" {
+					return "*filter\n:INPUT ACCEPT\n:FORWARD ACCEPT\n:OUTPUT ACCEPT\n:NETOS-IPV6 DROP\n-A FORWARD -p IPv6 -j NETOS-IPV6\n-A FORWARD -p IPv4 -j ACCEPT\n", nil
+				}
+				if name == "ebtables" {
+					removed = append(removed, strings.Join(args, " "))
+					if fail {
+						return "", errors.New("bridge cleanup failed")
+					}
+				}
+				return "", nil
+			}
+			err := m.uninstall(context.Background(), true, true)
+			if fail {
+				if err == nil || !strings.Contains(err.Error(), "bridge cleanup failed") {
+					t.Fatalf("cleanup error lost: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(removed, "\n") != "-D FORWARD -p IPv6 -j NETOS-IPV6\n-F NETOS-IPV6\n-X NETOS-IPV6" {
+				t.Fatalf("cleanup changed foreign rules or retained owned chain: %v", removed)
+			}
+		})
+	}
+}
+
 func TestUninstallRemovesKeaLeaseDataUnlessKept(t *testing.T) {
 	for _, keepData := range []bool{false, true} {
 		t.Run(fmt.Sprintf("keep=%v", keepData), func(t *testing.T) {

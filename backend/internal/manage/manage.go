@@ -25,6 +25,7 @@ import (
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
+	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/services"
 )
@@ -1228,6 +1229,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	m.removePolicyRules(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return err
+	}
+	if err := firewall.ClearBridgeIPv6(ctx, m.Output); err != nil {
+		return fmt.Errorf("удаление Ethernet-фильтра IPv6: %w", err)
 	}
 	m.removeVirtualInterfaces(ctx)
 	if baseline != nil {

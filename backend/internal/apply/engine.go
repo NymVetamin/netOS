@@ -60,6 +60,7 @@ var Order = []string{
 	"components",
 	"system",
 	"sysctl",
+	"bridge-ipv6",
 	// netconf идёт перед подсистемами, назначающими адреса, и это существенно.
 	// В режиме прямого управления он отбирает интерфейсы у systemd-networkd,
 	// а тот при этом снимает выданные им адреса. Разрыв закрывается тем, что
@@ -113,6 +114,7 @@ var connectivitySubsystems = map[string]bool{
 	"policy":      true,
 	"firewall":    true,
 	"ipv6":        true,
+	"bridge-ipv6": true,
 	"wifi":        true,
 	"vpn-servers": true,
 }

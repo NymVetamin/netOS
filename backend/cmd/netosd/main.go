@@ -461,6 +461,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		hostsettings.New(runner),
 		sysctl.NewCore(runner),
 		sysctl.NewIPv6(runner),
+		firewall.NewBridgeIPv6(runner),
 		netiface.NewInterfaces(runner),
 		netiface.NewNetworks(runner),
 		netiface.NewWAN(runner),
