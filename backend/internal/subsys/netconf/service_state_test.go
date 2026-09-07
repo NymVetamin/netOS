@@ -18,6 +18,9 @@ type backendUnitRunner struct {
 func (r *backendUnitRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	command := name + " " + strings.Join(args, " ")
 	r.commands = append(r.commands, command)
+	if name == "ifquery" {
+		return "lo\neth0\nbr-lan\nvl-guest\nbond1\n", nil
+	}
 	if name == "dpkg-query" {
 		return "install ok installed", nil
 	}

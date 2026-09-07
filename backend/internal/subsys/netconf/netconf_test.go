@@ -36,11 +36,11 @@ func TestIfupdownDescribesSegmentsAndLeavesUplinkToNetOS(t *testing.T) {
 	// Сегменты обязаны существовать с загрузки.
 	for _, want := range []string{
 		"auto br-lan",
-		"iface br-lan inet static",
-		"address 192.168.10.1/24",
+		"iface br-lan inet manual",
+		"up ip -4 address replace 192.168.10.1/24 dev br-lan",
 		"bridge_ports eth1 eth2",
 		"auto vl-guest",
-		"address 192.168.20.1/24",
+		"up ip -4 address replace 192.168.20.1/24 dev vl-guest",
 		"vlan-raw-device br-lan",
 	} {
 		if !strings.Contains(out, want) {
@@ -299,7 +299,7 @@ func TestEachBackendProducesItsOwnDescription(t *testing.T) {
 
 	cfg.System.NetworkBackend = "ifupdown"
 	ifupdown := render(cfg)
-	if !strings.Contains(ifupdown, "iface br-lan inet static") {
+	if !strings.Contains(ifupdown, "up ip -4 address replace 192.168.10.1/24 dev br-lan") {
 		t.Fatal("ifupdown ничего не сгенерировал")
 	}
 

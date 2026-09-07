@@ -421,17 +421,76 @@ func (s *Subsystem) reloadNetworkManager(ctx context.Context) error {
 }
 
 func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error {
-	// Настройку взял на себя ifupdown — описания для networkd быть не должно.
-	if err := s.syncNetworkdFiles(ctx, nil); err != nil {
-		return err
-	}
 	content := []byte(renderIfupdown(cfg))
 	if system.FileChanged(ifupdownPath, content) {
 		if err := system.WriteFileAtomic(ifupdownPath, content, 0o644); err != nil {
 			return err
 		}
 	}
+	if err := s.verifyIfupdownInput(ctx, cfg); err != nil {
+		return err
+	}
+	// Leave the current networkd configuration intact until ifupdown's real
+	// input has been checked; otherwise a rejected switch can release links.
+	if err := s.syncNetworkdFiles(ctx, nil); err != nil {
+		return err
+	}
 	return s.activateBackend(ctx, "ifupdown")
+}
+
+// ifupdown has no priority-based override. A valid generated file is useless
+// when interfaces does not include it, and a legacy DHCP stanza starts a
+// second address owner even when the generated uplink is manual.
+func (s *Subsystem) verifyIfupdownInput(ctx context.Context, cfg *config.Config) error {
+	paths, err := filepath.Glob(filepath.Join(ifupdownDir, "*"))
+	if err != nil {
+		return err
+	}
+	paths = append(paths, ifupdownMain)
+	for _, path := range paths {
+		if path == ifupdownPath {
+			continue
+		}
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, name := range managedInterfaces(cfg) {
+			if mentionsInterface(string(data), name) {
+				return fmt.Errorf("ifupdown: %s уже настраивает интерфейс %s; уберите конфликтующее объявление перед переключением на networking", path, name)
+			}
+		}
+	}
+	listed, err := s.Runner.Run(ctx, "ifquery", "-i", ifupdownMain, "--list", "--allow", "auto")
+	if err != nil {
+		return fmt.Errorf("проверка входной конфигурации ifupdown: %w", err)
+	}
+	active := make(map[string]bool)
+	for _, name := range strings.Fields(listed) {
+		active[name] = true
+	}
+	for _, line := range strings.Split(renderIfupdown(cfg), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "auto" {
+			continue
+		}
+		for _, name := range fields[1:] {
+			if !active[name] {
+				return fmt.Errorf("ifupdown не читает интерфейс %s из %s; добавьте в %s строку source %s", name, ifupdownPath, ifupdownMain, ifupdownPath)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Subsystem) applyNetworkd(ctx context.Context, cfg *config.Config) error {
@@ -622,6 +681,7 @@ func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 // eth0 не должен находиться внутри eth0.100.
 func mentionsInterface(content, name string) bool {
 	for _, line := range strings.Split(content, "\n") {
+		line, _, _ = strings.Cut(line, "#")
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
@@ -871,6 +931,11 @@ func (s *Subsystem) filesHealth(ctx context.Context, cfg *config.Config) error {
 	backend := cfg.System.NetworkBackend
 	if err := exact(ifupdownPath, []byte(renderIfupdown(cfg)), backend == "ifupdown"); err != nil {
 		return err
+	}
+	if backend == "ifupdown" {
+		if err := s.verifyIfupdownInput(ctx, cfg); err != nil {
+			return err
+		}
 	}
 	wanted := map[string]string(nil)
 	if backend == "networkd" {

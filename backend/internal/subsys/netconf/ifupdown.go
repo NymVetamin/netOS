@@ -45,8 +45,12 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 	} else {
 		w("auto %s", iface.Name)
 		if hasAddress {
-			w("iface %s inet static", iface.Name)
-			w("    address %s", address)
+			// netOS may already have applied the address before networking
+			// starts (including at boot). inet static uses ip address add,
+			// which fails on that existing address and fails the whole unit.
+			w("iface %s inet manual", iface.Name)
+			w("    up ip -4 address replace %s dev %s", address, iface.Name)
+			w("    down ip -4 address del %s dev %s 2>/dev/null || true", address, iface.Name)
 		} else {
 			if p.managedByNetOS(iface) {
 				w("# аплинк: адрес и маршрут назначает netOS")
@@ -66,9 +70,8 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 			w("    bridge_ports %s", strings.Join(members, " "))
 		}
 		w("    bridge_stp on")
-		// Без задержки бридж не пропускает трафик первые секунды после
-		// поднятия, и клиент успевает не получить адрес по DHCP.
-		w("    bridge_fd 0")
+		// With STP enabled the kernel requires a delay of at least 2 seconds.
+		w("    bridge_fd 2")
 	case "vlan":
 		w("    vlan-raw-device %s", p.name(iface.Parent))
 	case "bond":
@@ -84,4 +87,5 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 	if iface.MAC != "" {
 		w("    hwaddress ether %s", iface.MAC)
 	}
+	w("    up ip link set dev %s up", iface.Name)
 }

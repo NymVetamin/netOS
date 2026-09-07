@@ -30,14 +30,18 @@ func useTemporaryPaths(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
 	oldIfupdown, oldNetworkd := ifupdownPath, networkdDir
+	oldMain, oldDir := ifupdownMain, ifupdownDir
 	oldWait, oldOwnership, oldNM := waitOnlineDropIn, networkdOwnershipDropIn, nmConfPath
 	ifupdownPath = filepath.Join(root, "network", "interfaces.d", "netos.conf")
+	ifupdownDir = filepath.Dir(ifupdownPath)
+	ifupdownMain = filepath.Join(root, "network", "interfaces")
 	networkdDir = filepath.Join(root, "systemd", "network")
 	waitOnlineDropIn = filepath.Join(root, "systemd", "wait-online.d", "99-netos.conf")
 	networkdOwnershipDropIn = filepath.Join(root, "systemd", "networkd.conf.d", "99-netos.conf")
 	nmConfPath = filepath.Join(root, "NetworkManager", "conf.d", "99-netos.conf")
 	t.Cleanup(func() {
 		ifupdownPath, networkdDir = oldIfupdown, oldNetworkd
+		ifupdownMain, ifupdownDir = oldMain, oldDir
 		waitOnlineDropIn, networkdOwnershipDropIn, nmConfPath = oldWait, oldOwnership, oldNM
 	})
 }
