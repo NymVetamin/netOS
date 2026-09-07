@@ -103,15 +103,15 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
                 {(qos.wans || []).map((item: any, index: number) => (
                   <tr key={item.wan + index}>
                     <td>
-                      <select value={item.wan} onChange={(e) => patch((d) => (d.qos.wans[index].wan = e.target.value))}>
+                      <select aria-label={`Интернет-канал QoS ${index + 1}`} value={item.wan} onChange={(e) => patch((d) => (d.qos.wans[index].wan = e.target.value))}>
                         <option value="">— выберите —</option>
                         {enabledWANs.map((wan: any) => <option key={wan.id} value={wan.id}>{wan.name || wan.id}</option>)}
                       </select>
                     </td>
-                    <td><input type="number" min={64} max={10000000} value={item.upload_kbit || 0} onChange={(e) => patch((d) => (d.qos.wans[index].upload_kbit = Number(e.target.value)))} /></td>
-                    <td><input type="number" min={64} max={10000000} value={item.download_kbit || 0} onChange={(e) => patch((d) => (d.qos.wans[index].download_kbit = Number(e.target.value)))} /></td>
+                    <td><input aria-label={`Отдача QoS ${index + 1}, Кбит/с`} type="number" min={64} max={10000000} value={item.upload_kbit || 0} onChange={(e) => patch((d) => (d.qos.wans[index].upload_kbit = Number(e.target.value)))} /></td>
+                    <td><input aria-label={`Загрузка QoS ${index + 1}, Кбит/с`} type="number" min={64} max={10000000} value={item.download_kbit || 0} onChange={(e) => patch((d) => (d.qos.wans[index].download_kbit = Number(e.target.value)))} /></td>
                     <td>
-                      <select value={item.diffserv || "diffserv4"} onChange={(e) => patch((d) => (d.qos.wans[index].diffserv = e.target.value))}>
+                      <select aria-label={`Приоритеты QoS ${index + 1}`} value={item.diffserv || "diffserv4"} onChange={(e) => patch((d) => (d.qos.wans[index].diffserv = e.target.value))}>
                         <option value="besteffort">Без приоритетов</option>
                         <option value="diffserv3">3 класса</option>
                         <option value="diffserv4">4 класса — рекомендуется</option>

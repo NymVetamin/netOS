@@ -138,7 +138,12 @@ export function Dashboard({ config }: { config: any }) {
             <tbody>
               {interfaces.map((i) => (
                 <tr key={i.name}>
-                  <td className="mono">{i.name}</td>
+                  <td>
+                    <span className="mono">{i.name}</span>
+                    {i.name.startsWith("ifb-netos-") && (
+                      <div className="faint" style={{ fontSize: 12 }}>Служебный интерфейс QoS: входящий трафик</div>
+                    )}
+                  </td>
                   <td>
                     <Badge tone={i.up ? "ok" : "neutral"}>{i.up ? "up" : "down"}</Badge>
                   </td>
