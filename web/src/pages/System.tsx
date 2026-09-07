@@ -87,7 +87,7 @@ export function SystemPage({
               onChange={(e) => patch((d) => (d.system.hostname = e.target.value))}
             />
           </Field>
-          <Field label="Часовой пояс" hint="Влияет на расписания правил и время в журналах">
+          <Field label="Часовой пояс" hint="Влияет на время в журналах. Расписания правил задаются в UTC.">
             <input
               type="text"
               value={config.system?.timezone || ""}

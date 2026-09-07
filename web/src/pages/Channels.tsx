@@ -514,8 +514,8 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
                             </label>)}
                           </div>
                         </Field>
-                        <Field label="Начало"><input type="time" value={policy.schedule.time_start || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_start", e.target.value)} /></Field>
-                        <Field label="Окончание"><input type="time" value={policy.schedule.time_stop || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_stop", e.target.value)} /></Field>
+                        <Field label="Начало (UTC)"><input type="time" value={policy.schedule.time_start || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_start", e.target.value)} /></Field>
+                        <Field label="Окончание (UTC)"><input type="time" value={policy.schedule.time_stop || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_stop", e.target.value)} /></Field>
                       </div>}
                     </details>
                   </td>
