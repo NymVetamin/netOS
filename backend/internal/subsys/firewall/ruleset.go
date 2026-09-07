@@ -382,7 +382,9 @@ func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
 	sel := extra + selectors(r)
 	if r.Log {
 		// iptables-nft's save conversion preserves only 28 prefix bytes.
-		b.line("-A %s%s -j LOG --log-prefix %q --log-level 4", chain, sel, truncate("netos "+r.Name+": ", 28))
+		// Limit only logging: every matching packet must still reach the
+		// action below after this rule's log allowance is exhausted.
+		b.line("-A %s%s -m limit --limit 5/sec --limit-burst 10 -j LOG --log-prefix %q --log-level 4", chain, sel, truncate("netos "+r.Name+": ", 28))
 	}
 	if r.Action == "continue" {
 		// «Передать дальше по списку» — это правило без перехода: пакет
