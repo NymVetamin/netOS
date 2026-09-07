@@ -204,6 +204,21 @@ func main() {
 		}
 	}
 
+	// A preview must finish before revision bookkeeping, administrator setup,
+	// background controllers and the HTTP listener. In particular, combining
+	// -dry-run with -apply must not mark a draft as an active revision.
+	if *dryRun {
+		result, err := engine.Apply(ctx, cfg, revID, false)
+		if err != nil {
+			log.Fatalf("предварительная проверка не удалась: %v", err)
+		}
+		printPlan(result.Applied)
+		if *applyNow {
+			printSummary(cfg)
+		}
+		return
+	}
+
 	// Ревизии, застрявшие в applying от прошлой жизни демона, закрываются до
 	// первого применения: их транзакция перезапуск не пережила, и история
 	// иначе показывала бы вечно длящееся применение.

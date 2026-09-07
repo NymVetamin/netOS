@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/api"
 	"github.com/netos-router/netos/internal/apply"
@@ -395,6 +397,48 @@ func runMainCLI(t *testing.T, argv0 string, args ...string) (string, error) {
 	)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+func TestMainDryRunExitsWithoutActivatingRevisionOrStartingPanel(t *testing.T) {
+	for _, applyFlag := range []bool{false, true} {
+		t.Run(fmt.Sprint("apply=", applyFlag), func(t *testing.T) {
+			root := t.TempDir()
+			dbPath := filepath.Join(root, "netos.db")
+			st, err := store.Open(dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			id, err := st.CreateRevision(config.Default(), "test", "preview only")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			args := []string{"-test.run=^TestMainCLIProcess$", "--", "-db", dbPath, "-dry-run"}
+			if applyFlag {
+				args = append(args, "-apply")
+			}
+			cmd := exec.CommandContext(ctx, os.Args[0], args...)
+			cmd.Env = append(os.Environ(), "NETOS_MAIN_HELPER=1", "NETOS_MAIN_ROOT="+root, "NETOS_MAIN_ARGV0=netosd")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("dry-run did not exit successfully: %v\n%s", err, output)
+			}
+			rev, err := st.Revision(id)
+			if err != nil || rev.State != store.StateDraft {
+				t.Fatalf("preview activated revision: %+v, %v", rev, err)
+			}
+			for _, name := range []string{"initial-credentials", "tls", "netosd.ready"} {
+				if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+					t.Fatalf("preview created %s: %v", name, err)
+				}
+			}
+			if users, err := st.CountUsers(); err != nil || users != 0 {
+				t.Fatalf("preview created admin: %d users, %v", users, err)
+			}
+		})
+	}
 }
 
 func TestMainCLIEndToEnd(t *testing.T) {
