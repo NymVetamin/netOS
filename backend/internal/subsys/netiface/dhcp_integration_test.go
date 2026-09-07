@@ -219,6 +219,96 @@ func TestIntegrationL2TPGatewayIgnoresStaleStaticRoute(t *testing.T) {
 	}
 }
 
+func TestIntegrationL2TPRoutesFollowDHCPLease(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root are required")
+	}
+	const namespace = "netos-l2tp-renewqa"
+	const iface = "lnsqa0"
+	if _, err := os.Stat("/run/netns/" + namespace); err == nil {
+		t.Fatal("integration namespace already exists")
+	}
+	runner := system.NewExec()
+	mustRunVPNStyle(t, runner, "ip", "netns", "add", namespace)
+	t.Cleanup(func() { _, _ = runner.Run(context.Background(), "ip", "netns", "delete", namespace) })
+	nsRunner := netifaceRunnerFunc(func(ctx context.Context, name string, args ...string) (string, error) {
+		if name == "systemctl" {
+			return "", nil
+		}
+		if name == "ip" {
+			args = append([]string{"-n", namespace}, args...)
+		}
+		return runner.Run(ctx, name, args...)
+	})
+	for _, args := range [][]string{
+		{"link", "add", iface, "type", "dummy"}, {"link", "set", iface, "up"},
+		{"addr", "add", "192.0.2.2/24", "dev", iface},
+		{"route", "add", "203.0.113.99/32", "via", "192.0.2.1", "dev", iface, "proto", "static"},
+	} {
+		mustRunVPNStyle(t, nsRunner, "ip", args...)
+	}
+	root := t.TempDir()
+	oldScript, oldUnits, oldRuntime := dhcpScriptDir, systemdUnitDir, dhcpRuntimeDir
+	dhcpScriptDir, systemdUnitDir, dhcpRuntimeDir = root, root, root
+	t.Cleanup(func() { dhcpScriptDir, systemdUnitDir, dhcpRuntimeDir = oldScript, oldUnits, oldRuntime })
+	s := NewWAN(nsRunner)
+	s.OwnedLNSRoutePath = filepath.Join(root, "owned.json")
+	w := config.WAN{ID: "qa", Name: "QA", Proto: "l2tp", Server: "203.0.113.7", Metric: 300}
+	if _, _, err := s.ensureDHCPClientFiles(context.Background(), underlayWAN(w), iface); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "udhcpc-"+iface+".sh")
+	for _, event := range []struct{ kind, gateway string }{
+		{"bound", "192.0.2.1"}, {"renew", "192.0.2.254"}, {"renew", ""},
+		{"renew", "192.0.2.254"}, {"release", ""}, {"bound", "192.0.2.1"}, {"deconfig", ""},
+	} {
+		mustRunVPNStyle(t, runner, "ip", "netns", "exec", namespace, "env", "interface="+iface,
+			"ip=192.0.2.2", "mask=24", "router="+event.gateway, "sh", script, event.kind)
+		if event.kind == "bound" {
+			if err := s.routeToLNS(context.Background(), w, iface); err != nil {
+				t.Fatal(err)
+			}
+		}
+		routes, err := nsRunner.Run(context.Background(), "ip", "-4", "route", "show", "203.0.113.7/32")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.gateway == "" {
+			if strings.TrimSpace(routes) != "" {
+				t.Fatalf("%s retained LNS route: %s", event.kind, routes)
+			}
+		} else {
+			if !strings.Contains(routes, "via "+event.gateway+" dev "+iface) {
+				t.Fatalf("%s gateway=%s: stale or missing LNS route: %s", event.kind, event.gateway, routes)
+			}
+			if err := s.healthLNSRoutes(context.Background(), w, iface); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// A static route outside the configured LNS destinations must survive.
+	// Address deconfiguration can remove all dependent routes; recreate the lease
+	// before checking the renew/withdraw ownership case independently.
+	mustRunVPNStyle(t, nsRunner, "ip", "addr", "replace", "192.0.2.2/24", "dev", iface)
+	mustRunVPNStyle(t, nsRunner, "ip", "route", "replace", "203.0.113.99/32", "via", "192.0.2.1", "dev", iface, "proto", "static")
+	mustRunVPNStyle(t, runner, "ip", "netns", "exec", namespace, "env", "interface="+iface, "ip=192.0.2.2", "mask=24", "router=", "sh", script, "renew")
+	routes, _ := nsRunner.Run(context.Background(), "ip", "-4", "route", "show", "203.0.113.99/32")
+	if !strings.Contains(routes, "proto static") {
+		t.Fatalf("foreign route removed: %s", routes)
+	}
+	// Cleanup must use destination/interface ownership, since the persisted
+	// gateway predates this renewal (also true after a netosd restart).
+	mustRunVPNStyle(t, runner, "ip", "netns", "exec", namespace, "env", "interface="+iface, "ip=192.0.2.2", "mask=24", "router=192.0.2.254", "sh", script, "renew")
+	s.lnsRouteWanted = nil
+	if err := s.syncLNSRouteOwnership(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	routes, _ = nsRunner.Run(context.Background(), "ip", "-4", "route", "show", "203.0.113.7/32")
+	if strings.TrimSpace(routes) != "" {
+		t.Fatalf("renewed LNS route leaked after cleanup: %s", routes)
+	}
+}
+
 func assertAddressPresent(t *testing.T, runner system.Runner, iface, address string) {
 	t.Helper()
 	addresses, err := addressesOf(context.Background(), runner, iface)

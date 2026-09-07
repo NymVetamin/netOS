@@ -911,6 +911,7 @@ type WAN struct {
 	Runner            system.Runner
 	OwnedLNSRoutePath string
 	lnsRouteWanted    map[string]ownedLNSRoute
+	lnsResolved       map[string][]string
 	// OwnedAddressPath persists the exact static addresses assigned by the WAN
 	// subsystem. Physical links are not owned by netOS, so their addresses must
 	// be tracked explicitly to remove them when an uplink is deleted or changes
@@ -956,6 +957,7 @@ type ownedLNSRoute struct {
 	Destination string `json:"destination"`
 	Gateway     string `json:"gateway"`
 	Interface   string `json:"interface"`
+	DHCP        bool   `json:"dhcp,omitempty"`
 }
 
 func (s *WAN) Name() string { return "wan" }
@@ -989,6 +991,7 @@ func (s *WAN) Plan(old, new *config.Config) ([]apply.Action, error) {
 
 func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	s.lnsRouteWanted = map[string]ownedLNSRoute{}
+	s.lnsResolved = nil
 	s.balancing = cfg.MultiWAN.Enabled
 	// Fail before looking at host interfaces. Besides producing a useful error
 	// on incomplete/test systems, this prevents an unsupported enabled uplink

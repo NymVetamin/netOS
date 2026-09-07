@@ -216,6 +216,31 @@ func (s *WAN) ensureL2TP(ctx context.Context, w config.WAN, iface string) error 
 }
 
 // routeToLNS прокладывает маршрут до концентратора через сеть провайдера.
+func (s *WAN) resolveLNS(server string) ([]string, error) {
+	if destinations, ok := s.lnsResolved[server]; ok {
+		return destinations, nil
+	}
+	addrs, err := net.LookupHost(server)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось определить адрес концентратора %s: %w", server, err)
+	}
+	var destinations []string
+	for _, addr := range addrs {
+		if ip := net.ParseIP(addr); ip != nil && ip.To4() != nil {
+			destinations = append(destinations, ip.String()+"/32")
+		}
+	}
+	if len(destinations) == 0 {
+		return nil, fmt.Errorf("для концентратора %s не найден IPv4-адрес", server)
+	}
+	sort.Strings(destinations)
+	if s.lnsResolved == nil {
+		s.lnsResolved = map[string][]string{}
+	}
+	s.lnsResolved[server] = destinations
+	return destinations, nil
+}
+
 func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error {
 	gateway := w.Gateway
 	if w.Underlay != "static" {
@@ -235,19 +260,17 @@ func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error 
 			"аплинк %s: не найден шлюз сети провайдера, через который идти к %s", w.Name, w.Server)
 	}
 
-	addrs, err := net.LookupHost(w.Server)
+	destinations, err := s.resolveLNS(w.Server)
 	if err != nil {
-		return fmt.Errorf("не удалось определить адрес концентратора %s: %w", w.Server, err)
+		return err
 	}
-	foundIPv4 := false
-	for _, addr := range addrs {
-		ip := net.ParseIP(addr)
-		if ip == nil || ip.To4() == nil {
-			// IPv6 подавляется на всех уровнях, туннель по нему не поднимаем.
-			continue
+	if w.Underlay != "static" {
+		if err := s.ensureDHCPClient(ctx, underlayWAN(w), iface); err != nil {
+			return err
 		}
-		foundIPv4 = true
-		item := ownedLNSRoute{Destination: ip.String() + "/32", Gateway: gateway, Interface: iface}
+	}
+	for _, destination := range destinations {
+		item := ownedLNSRoute{Destination: destination, Gateway: gateway, Interface: iface, DHCP: w.Underlay != "static"}
 		if err := s.rememberLNSRoute(item); err != nil {
 			return err
 		}
@@ -255,22 +278,27 @@ func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error 
 			s.lnsRouteWanted = map[string]ownedLNSRoute{}
 		}
 		s.lnsRouteWanted[lnsRouteKey(item)] = item
+		// The DHCP event script owns both initial installation and renewal.
+		// Writing a gateway sampled earlier here could race with a newer lease.
+		if item.DHCP {
+			continue
+		}
 		out, showErr := s.Runner.Run(ctx, "ip", "-4", "route", "show", item.Destination)
 		if showErr == nil && routeLineMatches(out, item) {
 			continue
 		}
 		if _, err := s.Runner.Run(ctx, "ip", "route", "replace", item.Destination,
 			"via", gateway, "dev", iface, "proto", fmt.Sprint(config.RouteProto)); err != nil {
-			return fmt.Errorf("маршрут до концентратора %s: %w", ip, err)
+			return fmt.Errorf("маршрут до концентратора %s: %w", destination, err)
 		}
-	}
-	if !foundIPv4 {
-		return fmt.Errorf("для концентратора %s не найден IPv4-адрес", w.Server)
 	}
 	return nil
 }
 
 func lnsRouteKey(item ownedLNSRoute) string {
+	if item.DHCP {
+		return item.Destination + "\x00dhcp\x00" + item.Interface
+	}
 	return item.Destination + "\x00" + item.Gateway + "\x00" + item.Interface
 }
 
@@ -314,7 +342,9 @@ func (s *WAN) rememberLNSRoute(item ownedLNSRoute) error {
 	}
 	byKey := map[string]ownedLNSRoute{lnsRouteKey(item): item}
 	for _, route := range previous {
-		byKey[lnsRouteKey(route)] = route
+		if lnsRouteKey(route) != lnsRouteKey(item) {
+			byKey[lnsRouteKey(route)] = route
+		}
 	}
 	combined := make([]ownedLNSRoute, 0, len(byKey))
 	for _, route := range byKey {
@@ -329,11 +359,24 @@ func (s *WAN) syncLNSRouteOwnership(ctx context.Context) error {
 		return err
 	}
 	for _, item := range previous {
-		if _, wanted := s.lnsRouteWanted[lnsRouteKey(item)]; wanted {
+		// A replacement in the same routing slot already superseded this
+		// record, including static/DHCP transitions. Do not delete it again.
+		wanted := false
+		for _, current := range s.lnsRouteWanted {
+			if current.Destination == item.Destination && current.Interface == item.Interface {
+				wanted = true
+				break
+			}
+		}
+		if wanted {
 			continue
 		}
-		if _, err := s.Runner.Run(ctx, "ip", "-4", "route", "del", item.Destination,
-			"via", item.Gateway, "dev", item.Interface, "proto", fmt.Sprint(config.RouteProto)); err != nil {
+		args := []string{"-4", "route", "del", item.Destination}
+		if !item.DHCP {
+			args = append(args, "via", item.Gateway)
+		}
+		args = append(args, "dev", item.Interface, "proto", fmt.Sprint(config.RouteProto))
+		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 			out, showErr := s.Runner.Run(ctx, "ip", "-4", "route", "show", item.Destination)
 			if showErr != nil || routeLineMatches(out, item) {
 				return fmt.Errorf("удаление старого маршрута L2TP %s: %w", item.Destination, err)
@@ -362,7 +405,7 @@ func routeLineMatches(out string, item ownedLNSRoute) bool {
 				dev = fields[i+1]
 			}
 		}
-		if via == item.Gateway && dev == item.Interface {
+		if (item.DHCP || via == item.Gateway) && dev == item.Interface {
 			return true
 		}
 	}
@@ -380,6 +423,16 @@ func (s *WAN) healthLNSRoutes(ctx context.Context, w config.WAN, iface string) e
 			continue
 		}
 		found = true
+		if item.DHCP {
+			gateway, err := s.underlayGateway(ctx, iface)
+			if err != nil {
+				return err
+			}
+			if gateway == "" {
+				return fmt.Errorf("аплинк %s: отсутствует шлюз DHCP для L2TP", w.Name)
+			}
+			item.Gateway, item.DHCP = gateway, false
+		}
 		out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", item.Destination)
 		if err != nil || !routeLineMatches(out, item) {
 			return fmt.Errorf("аплинк %s: маршрут L2TP до %s через %s dev %s отсутствует", w.Name, item.Destination, item.Gateway, item.Interface)

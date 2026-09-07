@@ -29,7 +29,7 @@ var (
 //
 // Метрика маршрута зашивается в скрипт: она разная у разных аплинков и именно
 // ею определяется, какой из них станет основным при нескольких подключениях.
-func renderDHCPScript(metric int) string {
+func renderDHCPScript(metric int, lnsDestinations ...string) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 
@@ -40,9 +40,16 @@ func renderDHCPScript(metric int) string {
 	w("")
 	w("METRIC=%d", metric)
 	w("STATE=%s/netos-dhcp-$interface.address", dhcpRuntimeDir)
+	// Destinations are resolved IPv4 literals, never untrusted shell text.
+	clearLNS := func() {
+		for _, destination := range lnsDestinations {
+			w("        ip -4 route flush %s dev \"$interface\" proto %d 2>/dev/null || true", destination, config.RouteProto)
+		}
+	}
 	w("")
 	w("case \"$1\" in")
 	w("    deconfig)")
+	clearLNS()
 	w("        if [ -s \"$STATE\" ]; then")
 	w("            old=$(cat \"$STATE\")")
 	w("            ip -4 addr del \"$old\" dev \"$interface\" 2>/dev/null || true")
@@ -57,6 +64,7 @@ func renderDHCPScript(metric int) string {
 	w("        ;;")
 	w("")
 	w("    release)")
+	clearLNS()
 	w("        # Остановка клиента: убираем за собой, но состояние линка")
 	w("        # оставляем тому, кто им владеет, — подсистеме интерфейсов.")
 	w("        if [ -s \"$STATE\" ]; then")
@@ -80,9 +88,13 @@ func renderDHCPScript(metric int) string {
 	w("        if [ -n \"$router\" ]; then")
 	w("            for gw in $router; do")
 	w("                ip -4 route replace default via \"$gw\" dev \"$interface\" metric \"$METRIC\" proto dhcp")
+	for _, destination := range lnsDestinations {
+		w("                ip -4 route replace %s via \"$gw\" dev \"$interface\" proto %d", destination, config.RouteProto)
+	}
 	w("                break")
 	w("            done")
 	w("        else")
+	clearLNS()
 	w("            # A renewed lease can withdraw the router option. Remove only")
 	w("            # this client's default; static defaults and other WANs survive.")
 	w("            ip -4 route flush default dev \"$interface\" proto dhcp metric \"$METRIC\" 2>/dev/null || true")
@@ -141,7 +153,14 @@ func systemdEscape(name string) string {
 // ensureDHCPClientFiles создаёт скрипт и юнит для интерфейса.
 func (s *WAN) ensureDHCPClientFiles(ctx context.Context, w config.WAN, iface string) (string, bool, error) {
 	scriptPath := filepath.Join(dhcpScriptDir, "udhcpc-"+iface+".sh")
-	script := []byte(renderDHCPScript(w.Metric))
+	var destinations []string
+	if w.Proto == "l2tp" && w.Underlay != "static" {
+		// DNS may itself require this underlay. Start DHCP without LNS
+		// destinations when resolution is unavailable; routeToLNS retries
+		// after the lease and installs the completed event script.
+		destinations, _ = s.resolveLNS(w.Server)
+	}
+	script := []byte(renderDHCPScript(w.Metric, destinations...))
 	scriptChanged, err := system.WriteFileAtomicIfChanged(scriptPath, script, 0o755)
 	if err != nil {
 		return "", false, fmt.Errorf("запись скрипта DHCP: %w", err)
