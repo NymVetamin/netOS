@@ -103,6 +103,17 @@ function ThemeIcon({ theme }: { theme: string }) {
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
+  const [sessionEnded, setSessionEnded] = useState(false);
+  const onLogout = useCallback(() => setSession(null), []);
+  const onLogin = useCallback((next: Session) => {
+    setSessionEnded(false);
+    setSession(next);
+  }, []);
+
+  useEffect(() => api.onUnauthorized(() => {
+    setSessionEnded(true);
+    setSession(null);
+  }), []);
 
   useEffect(() => {
     // Cookie сессии переживает перезагрузку страницы, а CSRF-токен живёт
@@ -123,17 +134,17 @@ export default function App() {
   }
 
   if (!session || !api.hasToken()) {
-    return <Login onSuccess={setSession} />;
+    return <Login onSuccess={onLogin} sessionEnded={sessionEnded} />;
   }
 
-  return <Shell session={session} onLogout={() => setSession(null)} />;
+  return <Shell session={session} onLogout={onLogout} />;
 }
 
 // ---------------------------------------------------------------------------
 // Вход
 // ---------------------------------------------------------------------------
 
-function Login({ onSuccess }: { onSuccess: (s: Session) => void }) {
+function Login({ onSuccess, sessionEnded = false }: { onSuccess: (s: Session) => void; sessionEnded?: boolean }) {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -166,6 +177,8 @@ function Login({ onSuccess }: { onSuccess: (s: Session) => void }) {
         </div>
 
         <div style={{ height: "1.2rem" }} />
+
+        {sessionEnded && <Notice title="Сессия завершена. Войдите снова" tone="warn">Несохранённые правки не применены.</Notice>}
 
         <div className="field">
           <label htmlFor="u">Пользователь</label>
@@ -234,6 +247,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const syncGeneration = useRef(0);
 
+  useEffect(() => () => {
+    syncGeneration.current++;
+    pendingCfg.current = null;
+    window.clearTimeout(saveTimer.current);
+  }, []);
+
   const applyServerState = useCallback((res: ConfigResponse) => {
     setCfg(res.config);
     // Refresh local channel editors on authoritative reloads (rollback,
@@ -247,12 +266,15 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   }, []);
 
   const reload = useCallback(async () => {
-    syncGeneration.current++;
+    const generation = ++syncGeneration.current;
     pendingCfg.current = null;
     window.clearTimeout(saveTimer.current);
     try {
-      applyServerState(await api.getConfig());
+      const res = await api.getConfig();
+      if (generation !== syncGeneration.current) return;
+      applyServerState(res);
     } catch (err) {
+      if (generation !== syncGeneration.current) return;
       if (err instanceof ApiError && err.status === 401) onLogout();
     }
   }, [applyServerState, onLogout]);
@@ -284,8 +306,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     if (!next) return;
     pendingCfg.current = null;
 
+    const generation = syncGeneration.current;
     const job = saveChain.current.then(async () => {
-      const generation = syncGeneration.current;
+      if (generation !== syncGeneration.current) return;
       try {
         const res = await api.saveConfig(next);
         if (generation !== syncGeneration.current) return;

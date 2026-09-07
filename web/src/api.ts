@@ -81,6 +81,14 @@ export type Session = {
 };
 
 let csrfToken: string | null = null;
+const unauthorizedListeners = new Set<() => void>();
+
+function invalidateSession(requestToken: string | null) {
+  // A late response from the previous login must not end a newer session.
+  if (csrfToken === null || csrfToken !== requestToken) return;
+  csrfToken = null;
+  for (const listener of unauthorizedListeners) listener();
+}
 let draftVersion: number | null = null;
 // Last configuration known to be active (not merely a draft). It lets an open
 // tab distinguish a harmless backend restart from a genuine concurrent edit.
@@ -104,6 +112,7 @@ async function request<T>(
   extraHeaders?: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<T> {
+  let requestToken = csrfToken;
   const headers: Record<string, string> = { ...(extraHeaders || {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (csrfToken && method !== "GET") headers["X-NetOS-CSRF"] = csrfToken;
@@ -136,11 +145,16 @@ async function request<T>(
       const session = await refreshed.json() as Session;
       if (session.csrf_token) {
         csrfToken = session.csrf_token;
+        requestToken = csrfToken;
         headers["X-NetOS-CSRF"] = csrfToken;
         res = await send();
       }
+    } else if (refreshed?.status === 401) {
+      res = refreshed;
     }
   }
+
+  if (res.status === 401 && path !== "/api/login") invalidateSession(requestToken);
 
   const text = await res.text();
   const isJSON = res.headers.get("content-type")?.includes("application/json");
@@ -154,6 +168,10 @@ async function request<T>(
 }
 
 export const api = {
+  onUnauthorized(listener: () => void) {
+    unauthorizedListeners.add(listener);
+    return () => { unauthorizedListeners.delete(listener); };
+  },
   vpnServerCertificate: (id: string) =>
     request<string>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificate`),
   hasToken: () => csrfToken !== null,
