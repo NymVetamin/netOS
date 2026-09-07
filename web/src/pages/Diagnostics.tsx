@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { Card, Empty, TableWrap } from "../ui";
+import { Card, Empty, Notice, TableWrap } from "../ui";
 
 // Диагностика показывает, во что превратилась конфигурация: настоящие правила
 // iptables, конфиги работающих демонов, таблицу маршрутов. Администратор
@@ -24,9 +24,14 @@ export function DiagnosticsPage() {
   const [loadedTab, setLoadedTab] = useState("");
   const [error, setError] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState("");
+  const [listAttempt, setListAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setListLoading(true);
+    setListError("");
     (async () => {
       try {
         const list = await api.renderList();
@@ -34,20 +39,20 @@ export function DiagnosticsPage() {
         setArtifacts(list);
         // Первым открывается первый же артефакт — им всегда оказывается то, что
         // определяет доступность машины: правила iptables.
-        setLoading(true);
         setTab(list.length > 0 ? list[0].id : ROUTES);
       } catch (cause) {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : "Не удалось загрузить список диагностики");
-          setLoadedTab(ROUTES);
+          setListError(cause instanceof Error ? cause.message : "Не удалось загрузить список диагностики");
           setTab(ROUTES);
         }
+      } finally {
+        if (!cancelled) setListLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [listAttempt]);
 
   useEffect(() => {
     if (!tab) return;
@@ -107,7 +112,7 @@ export function DiagnosticsPage() {
     setTab(id);
   };
 
-  const pending = loading || loadedTab !== tab;
+  const pending = listLoading || loading || loadedTab !== tab;
 
   async function copyContent() {
     setCopyStatus("");
@@ -137,6 +142,16 @@ export function DiagnosticsPage() {
         <h1>Диагностика</h1>
         <p>Что получилось из настроек на самом деле</p>
       </div>
+
+      {listLoading && <Empty>Загрузка списка диагностики…</Empty>}
+      {listError && (
+        <Notice tone="danger" title="Не удалось загрузить список диагностики">
+          <p>{listError}</p>
+          <button className="btn sm" onClick={() => setListAttempt((attempt) => attempt + 1)}>
+            Повторить загрузку
+          </button>
+        </Notice>
+      )}
 
       <div className="row wrap" style={{ marginBottom: "1rem", gap: "0.4rem" }}>
         {tabs.map((t) => (
