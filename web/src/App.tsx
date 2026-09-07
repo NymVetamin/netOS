@@ -239,6 +239,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     // Refresh local channel editors on authoritative reloads (rollback,
     // discard, history), never on debounced saves or individual keystrokes.
     setConfigGeneration((generation) => generation + 1);
+    setSaveError("");
     setProblems(res.problems || []);
     setDirty(res.dirty);
     setRollback(res.rollback || null);
