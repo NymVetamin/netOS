@@ -489,7 +489,7 @@ func selectors(r config.FirewallRule) string {
 		fmt.Fprintf(&s, " -m multiport --dports %s", iptablesPortSpec(r.DstPort))
 	}
 	if r.ConnState != "" {
-		fmt.Fprintf(&s, " -m conntrack --ctstate %s", strings.ToUpper(r.ConnState))
+		fmt.Fprintf(&s, " -m conntrack --ctstate %s", strings.ToUpper(trimListItems(r.ConnState)))
 	}
 	if r.Schedule != nil {
 		s.WriteString(scheduleMatch(*r.Schedule))
@@ -918,7 +918,17 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 // ожидает двоеточие: 8000:8010. Для --to-destination исходная запись
 // сохраняется, поскольку там синтаксис другой.
 func iptablesPortSpec(spec string) string {
-	return strings.ReplaceAll(spec, "-", ":")
+	return strings.ReplaceAll(trimListItems(spec), "-", ":")
+}
+
+// Validation permits whitespace around comma-separated states and ports.
+// Keep the normalized list in one iptables argument.
+func trimListItems(value string) string {
+	items := strings.Split(value, ",")
+	for i := range items {
+		items[i] = strings.TrimSpace(items[i])
+	}
+	return strings.Join(items, ",")
 }
 
 // ---------------------------------------------------------------------------
