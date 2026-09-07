@@ -537,8 +537,11 @@ func (c *Config) validateInterfaces(r *ValidationResult) {
 			r.errf(path+".mtu", "MTU вне разумного диапазона 576-9216")
 		}
 		if iface.MAC != "" {
-			if _, err := net.ParseMAC(iface.MAC); err != nil {
+			mac, err := net.ParseMAC(iface.MAC)
+			if err != nil {
 				r.errf(path+".mac", "некорректный MAC-адрес")
+			} else if len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" {
+				r.errf(path+".mac", "нужен ненулевой индивидуальный Ethernet MAC-адрес из шести байтов")
 			}
 		}
 	}
@@ -724,6 +727,9 @@ func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]stri
 				iface.Name, own)
 		}
 		if n.Enabled {
+			if !iface.Enabled {
+				r.errf(path+".interface", "интерфейс %q выключен: включите его либо сначала выключите или перенесите сегмент %q", iface.Name, n.Name)
+			}
 			claim(path, n.Interface, use{"network", "сегмент «" + n.Name + "»"})
 		}
 	}
