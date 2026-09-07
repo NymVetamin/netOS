@@ -195,6 +195,7 @@ func parseISCLeases(f *os.File) ([]Lease, error) {
 }
 
 func parseKeaLeases(f *os.File) ([]Lease, error) {
+	now := time.Now().Unix()
 	r := csv.NewReader(f)
 	rows, err := r.ReadAll()
 	if err != nil || len(rows) == 0 {
@@ -211,18 +212,36 @@ func parseKeaLeases(f *os.File) ([]Lease, error) {
 		}
 		return row[i]
 	}
-	var out []Lease
+	latest := map[string]Lease{}
 	for _, row := range rows[1:] {
 		ip, mac := field(row, "address"), strings.ToLower(field(row, "hwaddr"))
-		if ip == "" || mac == "" {
+		if ip == "" {
+			continue
+		}
+		// Kea appends updates and deletion records. Even an inactive latest
+		// record must supersede the previous lease for this address.
+		delete(latest, ip)
+		if mac == "" {
 			continue
 		}
 		if state := field(row, "state"); state != "" && state != "0" {
 			continue
 		}
-		expires, _ := strconv.ParseInt(field(row, "expire"), 10, 64)
-		out = append(out, Lease{IP: ip, MAC: mac, Hostname: field(row, "hostname"), Expires: time.Unix(expires, 0)})
+		lifetime, err := strconv.ParseInt(field(row, "valid_lifetime"), 10, 64)
+		if err != nil || lifetime <= 0 {
+			continue
+		}
+		expires, err := strconv.ParseInt(field(row, "expire"), 10, 64)
+		if err != nil || expires <= now {
+			continue
+		}
+		latest[ip] = Lease{IP: ip, MAC: mac, Hostname: field(row, "hostname"), Expires: time.Unix(expires, 0)}
 	}
+	var out []Lease
+	for _, lease := range latest {
+		out = append(out, lease)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
 	return out, nil
 }
 

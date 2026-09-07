@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestParseISCLeases(t *testing.T) {
 }
 
 func TestParseKeaLeases(t *testing.T) {
-	f := leaseFile(t, "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state\n192.168.1.21,AA:BB:CC:DD:EE:01,,3600,1787065200,1,0,0,laptop,0\n")
+	f := leaseFile(t, fmt.Sprintf("address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state\n192.168.1.21,AA:BB:CC:DD:EE:01,,3600,%d,1,0,0,laptop,0\n", time.Now().Add(time.Hour).Unix()))
 	defer f.Close()
 	got, err := parseKeaLeases(f)
 	if err != nil || len(got) != 1 {
@@ -54,5 +55,38 @@ func TestParseKeaLeases(t *testing.T) {
 	}
 	if got[0].MAC != "aa:bb:cc:dd:ee:01" || got[0].Hostname != "laptop" {
 		t.Fatalf("неверная аренда: %+v", got[0])
+	}
+}
+
+func TestParseKeaLeaseJournal(t *testing.T) {
+	future := time.Now().Add(time.Hour).Unix()
+	past := time.Now().Add(-time.Hour).Unix()
+	row := func(mac string, lifetime, expiry int64, hostname, state string) string {
+		return fmt.Sprintf("192.168.1.21,%s,,%d,%d,1,0,0,%s,%s\n", mac, lifetime, expiry, hostname, state)
+	}
+	active := row("aa:bb:cc:dd:ee:01", 3600, future, "old", "0")
+	for _, tc := range []struct {
+		name, journal, hostname string
+		count                   int
+	}{
+		{"renewal", active + row("aa:bb:cc:dd:ee:02", 7200, future+3600, "new", "0"), "new", 1},
+		{"release", active + row("aa:bb:cc:dd:ee:01", 0, past, "old", "0"), "", 0},
+		{"release without MAC", active + row("", 0, past, "", "0"), "", 0},
+		{"declined", active + row("aa:bb:cc:dd:ee:01", 3600, future, "old", "1"), "", 0},
+		{"reclaimed", active + row("aa:bb:cc:dd:ee:01", 3600, future, "old", "2"), "", 0},
+		{"expired latest supersedes future record", active + row("aa:bb:cc:dd:ee:01", 3600, past, "old", "0"), "", 0},
+		{"reacquired after release", active + row("", 0, past, "", "0") + row("aa:bb:cc:dd:ee:02", 3600, future, "\"new, host\"", "0"), "new, host", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := leaseFile(t, "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state\n"+tc.journal)
+			defer f.Close()
+			got, err := parseKeaLeases(f)
+			if err != nil || len(got) != tc.count {
+				t.Fatalf("leases=%+v err=%v; want %d leases", got, err, tc.count)
+			}
+			if tc.count > 0 && (got[0].Hostname != tc.hostname || got[0].MAC != "aa:bb:cc:dd:ee:02") {
+				t.Fatalf("latest lease not returned: %+v", got[0])
+			}
+		})
 	}
 }
