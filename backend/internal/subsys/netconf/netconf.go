@@ -198,9 +198,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	if backend != "netos" && backend != "" {
-		// Требование к ожиданию сети снимает только прямое управление:
-		// в остальных режимах адреса назначает сам механизм системы.
+	if backend == "ifupdown" {
 		if err := s.syncWaitOnline(ctx, false); err != nil {
 			return err
 		}
@@ -321,8 +319,8 @@ func (s *Subsystem) syncWaitOnline(ctx context.Context, needed bool) error {
 func renderWaitOnlineDropIn() string {
 	return `# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.
 #
-# Требование к состоянию линка снято: адреса при прямом управлении назначает
-# netOS, и решает RequiredForOnline в файлах /etc/systemd/network/05-netos-*.
+# Адреса аплинков назначает netOS при любом выбранном механизме.
+# Ожидание определяется RequiredForOnline в /etc/systemd/network/05-netos-*.
 [Service]
 ExecStart=
 ExecStart=/usr/lib/systemd/systemd-networkd-wait-online
@@ -495,6 +493,9 @@ func (s *Subsystem) verifyIfupdownInput(ctx context.Context, cfg *config.Config)
 
 func (s *Subsystem) applyNetworkd(ctx context.Context, cfg *config.Config) error {
 	if err := s.syncNetworkdFiles(ctx, renderNetworkd(cfg)); err != nil {
+		return err
+	}
+	if err := s.syncWaitOnline(ctx, true); err != nil {
 		return err
 	}
 	return s.activateBackend(ctx, "networkd")
@@ -966,7 +967,7 @@ func (s *Subsystem) filesHealth(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 	}
-	waitNeeded := (backend == "netos" || backend == "") && networkdPresent && s.unitActive(ctx, "systemd-networkd.service")
+	waitNeeded := backend != "ifupdown" && networkdPresent && s.unitActive(ctx, "systemd-networkd.service")
 	return exact(waitOnlineDropIn, []byte(renderWaitOnlineDropIn()), waitNeeded)
 }
 

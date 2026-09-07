@@ -213,8 +213,8 @@ func TestApplyNetOSAndSwitchToNetworkd(t *testing.T) {
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(waitOnlineDropIn); !os.IsNotExist(err) {
-		t.Fatalf("networkd retained netos wait-online drop-in: %v", err)
+	if _, err := os.Stat(waitOnlineDropIn); err != nil {
+		t.Fatalf("networkd lost WAN wait-online protection: %v", err)
 	}
 }
 

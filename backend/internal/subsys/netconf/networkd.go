@@ -58,9 +58,9 @@ func renderNetdev(iface config.Interface) string {
 		w("")
 		w("[Bridge]")
 		w("STP=yes")
-		// Без нулевой задержки бридж молчит первые секунды после поднятия, и
-		// клиент успевает не получить адрес по DHCP.
-		w("ForwardDelaySec=0")
+		// Zero is invalid with STP enabled; use the kernel's minimum so
+		// networkd can apply the bridge parameters during creation as well.
+		w("ForwardDelaySec=2s")
 	case "bond":
 		w("")
 		w("[Bond]")
@@ -121,6 +121,15 @@ func renderNetwork(p plan, iface config.Interface) string {
 	// Линк держим поднятым даже без адреса: на аплинке по нему пойдёт разговор
 	// клиента DHCP или PPPoE, а на пустом бридже — трафик каналов.
 	w("ActivationPolicy=up")
+	if !iface.Enabled {
+		w("RequiredForOnline=no")
+	} else if _, addressed := p.Address[iface.Name]; addressed {
+		w("RequiredForOnline=routable")
+	} else {
+		// WAN addresses belong to netOS, which may start after cloud-init
+		// waits for network-online. Requiring an address creates a boot cycle.
+		w("RequiredForOnline=carrier")
+	}
 	if iface.MTU > 0 && iface.Type == "physical" {
 		w("MTUBytes=%d", iface.MTU)
 	}
