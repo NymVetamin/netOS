@@ -65,7 +65,9 @@ case "${reason:-}" in
     mtu="${INTERNAL_IP4_MTU:-%d}"
     ip link set dev "$TUNDEV" mtu "$mtu" up
     ip -4 addr flush dev "$TUNDEV"
-    ip -4 addr add "$INTERNAL_IP4_ADDRESS/$prefix" dev "$TUNDEV"
+    # Channel routes belong to its policy table. A connected route in main
+    # would keep direct/fallback traffic inside this tunnel after probe failure.
+    ip -4 addr add "$INTERNAL_IP4_ADDRESS/$prefix" dev "$TUNDEV" noprefixroute
     ;;
   disconnect)
     ;;
