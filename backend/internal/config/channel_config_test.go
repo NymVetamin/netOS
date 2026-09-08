@@ -131,6 +131,41 @@ func TestPolicyMayUseEnabledWireGuardChannel(t *testing.T) {
 	}
 }
 
+func TestXrayPolicyRejectsLocalICMPReplies(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "xray", Installed: true}, {ID: "wireguard", Installed: true}}
+	cfg.Channels = append(cfg.Channels, Channel{
+		ID: "xr-policy", Index: 3, Name: "Xray", Enabled: true,
+		Type: "xray", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"outbound": map[string]any{"protocol": "freedom", "settings": map[string]any{}}},
+	}, validWireGuardChannel())
+	for _, tc := range []struct {
+		name, channel, protocol, severity string
+		enabled                           bool
+	}{
+		{"xray ICMP", "xr-policy", "icmp", "error", true},
+		{"disabled draft", "xr-policy", "icmp", "warning", false},
+		{"xray TCP", "xr-policy", "tcp", "", true},
+		{"xray UDP", "xr-policy", "udp", "", true},
+		{"xray any", "xr-policy", "any", "", true},
+		{"WireGuard ICMP", "wg-home", "icmp", "", true},
+		{"direct ICMP", "direct", "icmp", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg.Policies = []Policy{{ID: "test", Name: "Test", Enabled: tc.enabled, Channel: tc.channel, Protocol: tc.protocol}}
+			severity := ""
+			for _, p := range cfg.Validate().Problems {
+				if p.Path == "policies[0].protocol" {
+					severity = p.Severity
+				}
+			}
+			if severity != tc.severity {
+				t.Fatalf("severity=%q, want %q", severity, tc.severity)
+			}
+		})
+	}
+}
+
 func TestPolicyRejectsUnsupportedSelectorAndDisabledChannel(t *testing.T) {
 	cfg := Default()
 	ch := validWireGuardChannel()

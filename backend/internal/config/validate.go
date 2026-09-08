@@ -2256,6 +2256,10 @@ func (c *Config) validateOpenConnectChannel(r *ValidationResult, path string, ch
 
 func (c *Config) validatePolicies(r *ValidationResult) {
 	channels := c.usableChannelIDs()
+	channelTypes := map[string]string{}
+	for _, channel := range c.Channels {
+		channelTypes[channel.ID] = channel.Type
+	}
 	networks := c.networkIDs()
 	servers := map[string]bool{}
 	serverTypes := map[string]string{}
@@ -2278,6 +2282,13 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 		ids[p.ID] = true
 		if !channels[p.Channel] {
 			r.errf(path+".channel", "канал %q не существует или выключен", p.Channel)
+		}
+		if p.Protocol == "icmp" && channelTypes[p.Channel] == "xray" {
+			report := r.warnf
+			if p.Enabled {
+				report = r.errf
+			}
+			report(path+".protocol", "Xray не передаёт ICMP: локальный TUN отвечает без удалённого сервера; выберите другой канал или TCP/UDP")
 		}
 		if p.Network != "" && !networks[p.Network] {
 			r.errf(path+".network", "неизвестный сегмент %q", p.Network)
