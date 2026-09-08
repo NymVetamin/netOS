@@ -652,11 +652,13 @@ func (b *builder) channelLocalReplies(cfg *config.Config) {
 		}
 		// INPUT only sees connections to the router itself. Remember the
 		// incoming tunnel for replies without marking forwarded return traffic.
-		b.line("-A INPUT -i %s -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x%x", channels.InterfaceName(ch), channels.Mark(ch))
+		b.line("-A INPUT -i %s -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x%x", channels.InterfaceName(ch), uint32(channels.Mark(ch))|0x80000000)
 	}
-	// Restoring only reply packets leaves independently originated traffic
-	// (including tunnel transports and DNS upstreams) to its own policies.
-	b.line("-A OUTPUT -m conntrack --ctdir REPLY -j CONNMARK --restore-mark")
+	// The high connmark bit identifies connections accepted by INPUT. A
+	// forwarded flow also has a channel mark, but its locally generated ICMP
+	// errors must go back to the LAN sender, not follow that channel's default
+	// route. Never copy the discriminator into the routing mark itself.
+	b.line("-A OUTPUT -m conntrack --ctdir REPLY -m connmark --mark 0x80000000/0x80000000 -j CONNMARK --restore-mark --nfmask 0x7fffffff --ctmask 0x7fffffff")
 }
 
 func (b *builder) dnsChannelPolicies(cfg *config.Config) {
@@ -668,7 +670,7 @@ func (b *builder) dnsChannelPolicies(cfg *config.Config) {
 	if len(bindings) == 0 {
 		return
 	}
-	b.line("-A OUTPUT -j CONNMARK --restore-mark")
+	b.line("-A OUTPUT -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
 	for _, binding := range bindings {
 		ch, ok := channelByID[binding.ChannelID]
 		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray") {

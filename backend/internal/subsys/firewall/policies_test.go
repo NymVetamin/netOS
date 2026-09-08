@@ -146,9 +146,9 @@ func TestLocalTunnelRepliesKeepIncomingChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"-A INPUT -i wg-ch1 -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x1001",
-		"-A INPUT -i tun-ch2 -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x1002",
-		"-A OUTPUT -m conntrack --ctdir REPLY -j CONNMARK --restore-mark",
+		"-A INPUT -i wg-ch1 -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x80001001",
+		"-A INPUT -i tun-ch2 -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x80001002",
+		"-A OUTPUT -m conntrack --ctdir REPLY -m connmark --mark 0x80000000/0x80000000 -j CONNMARK --restore-mark --nfmask 0x7fffffff --ctmask 0x7fffffff",
 	} {
 		if !strings.Contains(rules.IPv4, want) {
 			t.Errorf("missing %s", want)
