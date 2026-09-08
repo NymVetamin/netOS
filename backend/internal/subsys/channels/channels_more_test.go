@@ -78,6 +78,8 @@ func (r *serviceLifecycleRunner) Run(_ context.Context, name string, args ...str
 	if name == "ip" {
 		joined := strings.Join(args, " ")
 		switch {
+		case joined == "-j -4 addr show dev tun-ch3":
+			return `[{"flags":["UP","POINTOPOINT"],"addr_info":[{"family":"inet","local":"203.0.113.177"}]}]`, nil
 		case joined == "-4 rule show":
 			return r.rules, nil
 		case strings.Contains(joined, "rule add fwmark 0x1003"):

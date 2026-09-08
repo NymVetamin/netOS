@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -162,15 +163,15 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 		}
 	}
 	deadline := time.Now().Add(20 * time.Second)
-	for !s.linkExists(InterfaceName(ch)) && time.Now().Before(deadline) {
+	for !s.openConnectReady(ctx, InterfaceName(ch)) {
+		if !time.Now().Before(deadline) {
+			return false, fmt.Errorf("OpenConnect не подготовил интерфейс %s (UP и IPv4-адрес)", InterfaceName(ch))
+		}
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
-	}
-	if !s.linkExists(InterfaceName(ch)) {
-		return false, fmt.Errorf("OpenConnect не создал интерфейс %s", InterfaceName(ch))
 	}
 	created = !existedBefore
 	if disableIPv6 {
@@ -185,6 +186,35 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 		return created, err
 	}
 	return created, nil
+}
+
+// OpenConnect creates the TUN before its connect script brings it up and
+// assigns an address. Existence alone is not sufficient to install routes.
+func (s *Subsystem) openConnectReady(ctx context.Context, name string) bool {
+	out, err := s.Runner.Run(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
+	if err != nil {
+		return false
+	}
+	var links []struct {
+		Flags     []string `json:"flags"`
+		Addresses []struct {
+			Family string `json:"family"`
+			Local  string `json:"local"`
+		} `json:"addr_info"`
+	}
+	if json.Unmarshal([]byte(out), &links) != nil || len(links) != 1 {
+		return false
+	}
+	up := false
+	for _, flag := range links[0].Flags {
+		up = up || flag == "UP"
+	}
+	for _, addr := range links[0].Addresses {
+		if up && addr.Family == "inet" && addr.Local != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Subsystem) cleanupOpenConnect(ctx context.Context, ch config.Channel) {
