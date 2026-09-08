@@ -63,7 +63,12 @@ set -eu
 case "${reason:-}" in
   connect|reconnect)
     prefix="${INTERNAL_IP4_NETMASKLEN:-32}"
-    mtu="${INTERNAL_IP4_MTU:-%d}"
+    mtu=%d
+    # The server may ignore the requested MTU. Keep the configured upper
+    # bound while respecting a smaller negotiated tunnel MTU.
+    if [ -n "${INTERNAL_IP4_MTU:-}" ] && [ "$INTERNAL_IP4_MTU" -gt 0 ] && [ "$INTERNAL_IP4_MTU" -lt "$mtu" ]; then
+      mtu="$INTERNAL_IP4_MTU"
+    fi
     ip link set dev "$TUNDEV" mtu "$mtu" up
     ip -4 addr flush dev "$TUNDEV"
     # Channel routes belong to its policy table. A connected route in main
