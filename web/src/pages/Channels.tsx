@@ -149,7 +149,7 @@ export function ChannelsPage({ config, patch }: Props) {
             <Notice key={channel.id} tone="warn" title={`Неподдерживаемый канал: ${channel.type || "без типа"}`}>
               <strong>{channel.name || channel.id}</strong>
               <p>Этот сохранённый канал нельзя включить в текущей версии. Его настройки сохранены; канал можно удалить.</p>
-              {isChannelReferenced(config, channel.id) && <p>Сначала уберите ссылки на канал в настройках устройств, сегментов и политик.</p>}
+              {isChannelReferenced(config, channel.id) && <p>Сначала уберите ссылки на канал в настройках устройств, сегментов, политик, запасных каналов, DNS и VPN-доступа.</p>}
               <button type="button" className="btn ghost sm" aria-label={`Удалить канал ${channel.name || channel.id}`} disabled={isChannelReferenced(config, channel.id)} onClick={() => patch((draft) => {
                 draft.channels = draft.channels.filter((item: any) => item.id !== channel.id);
               })}>Удалить</button>
@@ -516,5 +516,10 @@ function updatePolicyDay(patch: Props["patch"], id: string, day: string, checked
 function isChannelReferenced(config: any, id: string) {
   return (config.clients || []).some((item: any) => item.channel === id) ||
     (config.networks || []).some((item: any) => item.default_channel === id) ||
-    (config.policies || []).some((item: any) => item.channel === id);
+    (config.policies || []).some((item: any) => item.channel === id) ||
+    (config.channels || []).some((item: any) => item.id !== id && item.fallback === id) ||
+    (config.dns?.upstreams || []).some((item: any) => item.channel === id) ||
+    (config.dns?.split_rules || []).some((item: any) => item.channel === id) ||
+    (config.vpn_servers || []).some((server: any) => server.default_channel === id ||
+      (server.peers || []).some((peer: any) => peer.channel === id));
 }
