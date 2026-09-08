@@ -259,7 +259,7 @@ chmod 0644 /etc/apt/apt.conf.d/99netos
 # Debian их нет. Сам netOS без них обходится — параметры ядра он пишет прямо в
 # /proc/sys, — но администратор, пришедший на роутер руками, ожидает найти
 # sysctl и modprobe на месте.
-PACKAGES="iptables iproute2 ca-certificates curl busybox procps kmod bash-completion systemd-timesyncd"
+PACKAGES="iptables iproute2 conntrack ca-certificates curl busybox procps kmod bash-completion systemd-timesyncd"
 if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     PACKAGES="$PACKAGES git nodejs npm"
 fi

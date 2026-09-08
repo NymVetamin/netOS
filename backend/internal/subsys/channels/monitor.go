@@ -163,12 +163,12 @@ func (s *Subsystem) removeChannelRule(ctx context.Context, ch config.Channel) er
 		return fmt.Errorf("чтение правил канала: %w", err)
 	}
 	if !hasRulePriority(out, priority) {
-		return nil
+		return s.refreshChannelUDP(ctx, ch, false)
 	}
 	if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority); err != nil {
 		return fmt.Errorf("удаление правила канала: %w", err)
 	}
-	return nil
+	return s.refreshChannelUDP(ctx, ch, true)
 }
 
 func (s *Subsystem) restoreChannel(ctx context.Context, ch config.Channel) error {

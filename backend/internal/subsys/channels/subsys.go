@@ -181,6 +181,7 @@ type Subsystem struct {
 
 	mu          sync.Mutex
 	states      map[string]*channelState
+	pendingUDP  map[string]bool
 	pausedUntil time.Time
 }
 
@@ -635,7 +636,7 @@ func (s *Subsystem) ensureRuleTable(ctx context.Context, ch config.Channel, look
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if hasChannelRuleLine(line, priority, mark, table, tableName) {
-			return nil
+			return s.refreshChannelUDP(ctx, ch, false)
 		}
 	}
 	if hasRulePriority(out, priority) {
@@ -647,7 +648,7 @@ func (s *Subsystem) ensureRuleTable(ctx context.Context, ch config.Channel, look
 		"priority", priority, "lookup", table); err != nil {
 		return fmt.Errorf("правило канала: %w", err)
 	}
-	return nil
+	return s.refreshChannelUDP(ctx, ch, true)
 }
 
 func hasRulePriority(out, priority string) bool {
