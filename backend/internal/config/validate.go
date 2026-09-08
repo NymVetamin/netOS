@@ -2668,7 +2668,7 @@ func safeObjectID(value string) bool {
 }
 
 func validTimezone(value string) bool {
-	if value == "" || len(value) > 128 || strings.HasPrefix(value, "/") || strings.Contains(value, "..") {
+	if value == "" || value == "Local" || len(value) > 128 || strings.HasPrefix(value, "/") || strings.Contains(value, "..") {
 		return false
 	}
 	for _, ch := range value {
@@ -2678,7 +2678,10 @@ func validTimezone(value string) bool {
 		}
 		return false
 	}
-	return true
+	// A syntactically safe name may still be absent from the timezone database.
+	// Reject it before apply would fail in timedatectl and trigger rollback.
+	_, err := time.LoadLocation(value)
+	return err == nil
 }
 
 func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServer) {
