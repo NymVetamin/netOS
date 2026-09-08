@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
 import { newID } from "../id";
-import { Badge, Card, Empty, TableWrap } from "../ui";
+import { Badge, Card, Empty, Notice, TableWrap } from "../ui";
 
 // Для каждого клиента можно переопределить канал сегмента. Явные политики
 // всё равно стоят выше этой настройки.
@@ -14,18 +14,38 @@ export function Clients({
 }) {
   const [clients, setClients] = useState<any[]>([]);
   const [leases, setLeases] = useState<any[]>([]);
-
-  async function load() {
-    const [c, l] = await Promise.all([api.clients(), api.leases()]);
-    setClients(c.clients || []);
-    setLeases(l.leases || []);
-  }
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function load() {
+      setLoading(true);
+      try {
+        const [c, l] = await Promise.all([api.clients(), api.leases()]);
+        if (stopped) return;
+        setClients(c.clients || []);
+        setLeases(l.leases || []);
+        setLoaded(true);
+        setLoadError("");
+      } catch (error) {
+        if (!stopped) setLoadError(error instanceof Error ? error.message : "Не удалось получить данные");
+      } finally {
+        if (!stopped) {
+          setLoading(false);
+          timer = setTimeout(load, 8000);
+        }
+      }
+    }
     load();
-    const t = setInterval(load, 8000);
-    return () => clearInterval(t);
-  }, []);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [reloadKey]);
 
   const leaseByMAC = new Map(leases.map((l) => [l.mac, l]));
 
@@ -68,10 +88,16 @@ export function Clients({
 
       <Card
         title="Устройства"
-        subtitle={`${clients.filter((c) => c.online).length} в сети из ${clients.length}`}
+        subtitle={loadError && loaded ? "Показаны последние полученные данные" : loaded ? `${clients.filter((c) => c.online).length} в сети из ${clients.length}` : loading ? "Загрузка данных" : "Данные недоступны"}
         tight
       >
-        {clients.length === 0 ? (
+        {loadError && (
+          <Notice tone="danger" title="Не удалось загрузить данные устройств">
+            <p>{loadError}</p>
+            <button className="btn sm" disabled={loading} onClick={() => setReloadKey((key) => key + 1)}>Повторить</button>
+          </Notice>
+        )}
+        {!loaded && loading ? <Empty>Загрузка устройств…</Empty> : !loaded ? null : clients.length === 0 ? (
           <Empty>Устройств пока не видно</Empty>
         ) : (
           <TableWrap>
