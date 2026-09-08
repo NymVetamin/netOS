@@ -45,8 +45,8 @@ func localDNSNeeded(cfg *config.Config) bool {
 // включённого сегмента и интерфейсы серверов VPN — клиент, получивший в
 // профиле адрес роутера, вправе рассчитывать, что имена по нему разрешаются.
 //
-// ocserv сюда не попадает: имя его устройства складывается из настройки и
-// номера рабочего процесса, и заранее оно неизвестно.
+// Для ocserv используем wildcard: номер рабочего устройства появляется
+// только при подключении клиента. bind-dynamic подхватит его без перезапуска.
 func dnsListenInterfaces(cfg *config.Config) []string {
 	ifaceByID := make(map[string]string, len(cfg.Interfaces))
 	for _, iface := range cfg.Interfaces {
@@ -75,6 +75,8 @@ func dnsListenInterfaces(cfg *config.Config) []string {
 			add(fmt.Sprintf("wg-srv%d", server.Index))
 		case "ikev2":
 			add(fmt.Sprintf("xfrm-srv%d", server.Index))
+		case "ocserv":
+			add(fmt.Sprintf("vpns%d*", server.Index))
 		}
 	}
 	return out
