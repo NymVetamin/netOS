@@ -2,6 +2,30 @@ package config
 
 import "testing"
 
+func TestDNSChannelEndpointProviderSyntax(t *testing.T) {
+	for _, tc := range []struct {
+		provider, kind, address string
+		port                    int
+	}{
+		{"dnsmasq", "plain", "203.0.113.1#5358", 5358},
+		{"dnsmasq", "plain", "203.0.113.1", 53},
+		{"unbound", "plain", "203.0.113.1@5358", 5358},
+		{"unbound", "dot", "203.0.113.1@8853#dns.example", 8853},
+		{"unbound", "dot", "203.0.113.1#5358", 853},
+		{"dnsproxy", "plain", "203.0.113.1:5358", 5358},
+	} {
+		got, err := DNSUpstreamEndpoints(Upstream{Type: tc.kind, Address: tc.address}, tc.provider)
+		if err != nil || len(got) == 0 {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+		for _, endpoint := range got {
+			if endpoint.Port != tc.port {
+				t.Errorf("%+v: wrong endpoint %+v", tc, endpoint)
+			}
+		}
+	}
+}
+
 func TestDNSUpstreamEndpoints(t *testing.T) {
 	tests := []struct {
 		up        Upstream
@@ -15,7 +39,7 @@ func TestDNSUpstreamEndpoints(t *testing.T) {
 		{Upstream{ID: "doq", Type: "doq", Address: "quic://94.140.14.14:853"}, 853, 1},
 	}
 	for _, tt := range tests {
-		got, err := DNSUpstreamEndpoints(tt.up)
+		got, err := DNSUpstreamEndpoints(tt.up, "")
 		if err != nil {
 			t.Fatalf("%s: %v", tt.up.ID, err)
 		}
@@ -23,7 +47,7 @@ func TestDNSUpstreamEndpoints(t *testing.T) {
 			t.Fatalf("%s: %+v", tt.up.ID, got)
 		}
 	}
-	if _, err := DNSUpstreamEndpoints(Upstream{Type: "doh", Address: "https://dns.google/dns-query"}); err == nil {
+	if _, err := DNSUpstreamEndpoints(Upstream{Type: "doh", Address: "https://dns.google/dns-query"}, "dnsproxy"); err == nil {
 		t.Fatal("hostname-only channel binding accepted")
 	}
 }

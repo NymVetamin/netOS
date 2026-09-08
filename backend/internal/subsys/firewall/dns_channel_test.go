@@ -7,6 +7,31 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
+func TestDnsmasqCustomPortChannelRules(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		cfg := config.Default()
+		cfg.DNS.Provider = "dnsmasq"
+		cfg.Channels = append(cfg.Channels, config.Channel{ID: "wg-dns", Index: 7, Enabled: true, Type: "wireguard"})
+		cfg.DNS.Upstreams = []config.Upstream{{ID: "dns", Type: "plain", Address: "203.0.113.1#5358", Channel: "wg-dns", Enabled: true}}
+		if split {
+			cfg.DNS.Upstreams[0].Channel = "direct"
+			cfg.DNS.SplitRules = []config.DNSSplitRule{{ID: "split", Enabled: true, Domains: []string{"example.test"}, Upstream: "dns", Channel: "wg-dns"}}
+		}
+		rules, err := Build(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, protocol := range []string{"udp", "tcp"} {
+			if !strings.Contains(rules.IPv4, "-d 203.0.113.1 -p "+protocol+" --dport 5358") {
+				t.Fatalf("split=%v: missing custom %s port rule", split, protocol)
+			}
+			if strings.Contains(rules.IPv4, "-d 203.0.113.1 -p "+protocol+" --dport 53 ") {
+				t.Fatal("custom DNS incorrectly bound to port 53")
+			}
+		}
+	}
+}
+
 func TestDNSUpstreamIsMarkedForItsChannel(t *testing.T) {
 	cfg := config.Default()
 	cfg.Channels = append(cfg.Channels, config.Channel{ID: "wg-dns", Index: 7, Name: "DNS VPN", Enabled: true, Type: "wireguard"})

@@ -21,7 +21,7 @@ type DNSChannelBinding struct {
 // A literal address is deliberately required for channel binding: resolving the
 // resolver through itself would create a bootstrap loop and iptables cannot
 // route a hostname.
-func DNSUpstreamEndpoints(up Upstream) ([]DNSChannelBinding, error) {
+func DNSUpstreamEndpoints(up Upstream, provider string) ([]DNSChannelBinding, error) {
 	raw := strings.TrimSpace(up.Address)
 	defaultPort := 53
 	protocols := []string{"udp", "tcp"}
@@ -35,7 +35,18 @@ func DNSUpstreamEndpoints(up Upstream) ([]DNSChannelBinding, error) {
 	}
 
 	host, port := "", defaultPort
-	if strings.Contains(raw, "://") {
+	if provider == "dnsmasq" {
+		var portText string
+		var custom bool
+		host, portText, custom = strings.Cut(raw, "#")
+		if custom {
+			p, err := strconv.Atoi(portText)
+			if err != nil {
+				return nil, err
+			}
+			port = p
+		}
+	} else if strings.Contains(raw, "://") {
 		parsed, err := url.Parse(raw)
 		if err != nil {
 			return nil, err
@@ -102,7 +113,7 @@ func (c *Config) DNSChannelBindings() []DNSChannelBinding {
 		if !up.Enabled || channel == "" {
 			continue
 		}
-		bindings, err := DNSUpstreamEndpoints(up)
+		bindings, err := DNSUpstreamEndpoints(up, c.DNS.Provider)
 		if err != nil {
 			continue // validation reports the actionable error before Apply
 		}

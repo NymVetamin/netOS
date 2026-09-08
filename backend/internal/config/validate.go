@@ -1739,7 +1739,7 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		} else if u.Channel != "" {
 			channelOwner[u.ID] = u.Channel
 			if u.Channel != "direct" {
-				if _, err := DNSUpstreamEndpoints(u); err != nil {
+				if _, err := DNSUpstreamEndpoints(u, c.DNS.Provider); err != nil {
 					r.errf(path+".address", "%v", err)
 				}
 			}
@@ -1844,7 +1844,7 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			channelOwner[rule.Upstream] = rule.Channel
 			if rule.Channel != "direct" {
 				if up, ok := upstreamByID[rule.Upstream]; ok {
-					if _, err := DNSUpstreamEndpoints(up); err != nil {
+					if _, err := DNSUpstreamEndpoints(up, c.DNS.Provider); err != nil {
 						r.errf(path+".upstream", "%v", err)
 					}
 				}
