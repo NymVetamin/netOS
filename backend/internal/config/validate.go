@@ -2067,7 +2067,11 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		switch ch.Type {
 		case "direct", "wireguard", "xray", "openconnect", "l2tp", "ikev2":
 		default:
-			r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
+			if ch.Enabled {
+				r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
+			} else {
+				r.warnf(path+".type", "неизвестный тип канала %q: настройки сохранены, включение недоступно", ch.Type)
+			}
 		}
 		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" {
 			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
