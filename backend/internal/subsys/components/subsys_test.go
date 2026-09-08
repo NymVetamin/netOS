@@ -66,6 +66,26 @@ func TestComponentStateDistinguishesPartialInstallation(t *testing.T) {
 	}
 }
 
+func TestWiFiInstallationRequiresRegulatoryDatabase(t *testing.T) {
+	info, ok := config.ComponentByID("hostapd")
+	if !ok {
+		t.Fatal("Wi-Fi component missing")
+	}
+	s := New(&componentRunner{}, testLogger{})
+	snapshot := componentLiveSnapshot{
+		packages: map[string]bool{"hostapd": true, "iw": true},
+		disabled: map[string]bool{"hostapd.service": true},
+	}
+	any, all := s.componentStateFrom(context.Background(), info, snapshot, true)
+	if !any || all {
+		t.Fatalf("Wi-Fi without regulatory.db must need repair: any=%v all=%v", any, all)
+	}
+	snapshot.packages["wireless-regdb"] = true
+	if _, all := s.componentStateFrom(context.Background(), info, snapshot, true); !all {
+		t.Fatal("Wi-Fi with the regulatory database should be complete")
+	}
+}
+
 func TestRemoveDoesNotPurgeEssentialPackage(t *testing.T) {
 	runner := &componentRunner{}
 	s := New(runner, nil)

@@ -167,7 +167,7 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "hostapd", Title: "Точка доступа Wi-Fi", Group: "Беспроводная сеть",
 		Description: "Раздача Wi-Fi с беспроводной карты роутера: WPA2 и WPA3, несколько сетей на одном радио.",
-		Packages:    []string{"hostapd", "iw"},
+		Packages:    []string{"hostapd", "iw", "wireless-regdb"},
 		Units:       []string{"hostapd.service"},
 		RunUnits:    []string{"netos-hostapd-*.service"},
 		Provides:    []string{"wifi"},

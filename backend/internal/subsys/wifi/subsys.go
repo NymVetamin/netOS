@@ -199,6 +199,12 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", name)
 	if changed || strings.TrimSpace(active) != "active" || !apReady {
+		// cfg80211 caches a failed regulatory.db load. Installing wireless-regdb
+		// after the driver is loaded needs an explicit reload before hostapd
+		// can apply the configured country without rebooting the router.
+		if _, err := s.Runner.Run(ctx, "iw", "reg", "reload"); err != nil {
+			return fmt.Errorf("обновление базы региональных правил Wi-Fi: %w", err)
+		}
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", name); err != nil {
 			return fmt.Errorf("запуск hostapd: %w", err)
 		}

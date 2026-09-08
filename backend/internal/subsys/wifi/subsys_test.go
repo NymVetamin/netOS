@@ -2,6 +2,7 @@ package wifi
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -132,5 +133,40 @@ func TestApplyHealthAndCleanup(t *testing.T) {
 	}
 	if _, err := os.Stat(conf); !os.IsNotExist(err) {
 		t.Fatalf("config was not removed: %v", err)
+	}
+}
+
+func TestRegulatoryReloadPrecedesAPRestart(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reload succeeds", true: "reload fails"}[fail], func(t *testing.T) {
+			runner := &fakeRunner{errors: map[string]error{}}
+			if fail {
+				runner.errors["iw reg reload"] = errors.New("regulatory database unavailable")
+			}
+			s := New(runner, filepath.Join(t.TempDir(), "state"))
+			s.UnitDir = filepath.Join(t.TempDir(), "units")
+			err := s.Apply(context.Background(), wifiConfig())
+			if fail && (err == nil || !strings.Contains(err.Error(), "regulatory database unavailable")) {
+				t.Fatalf("reload failure must propagate: %v", err)
+			}
+			if !fail && err != nil {
+				t.Fatal(err)
+			}
+			reloaded, restarted := false, false
+			for _, cmd := range runner.commands {
+				if cmd == "iw reg reload" {
+					reloaded = true
+				}
+				if strings.HasPrefix(cmd, "systemctl restart netos-hostapd-") {
+					restarted = true
+					if !reloaded || fail {
+						t.Fatal("AP restarted without a successful regulatory reload")
+					}
+				}
+			}
+			if !reloaded || restarted == fail {
+				t.Fatalf("unexpected reload/restart: %v/%v", reloaded, restarted)
+			}
+		})
 	}
 }
