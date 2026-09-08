@@ -76,6 +76,13 @@ func (r *policyRunner) Run(_ context.Context, name string, args ...string) (stri
 			return "", fmt.Errorf("set is in use")
 		}
 		delete(r.sets, args[1])
+	case "flush":
+		set, ok := r.sets[args[1]]
+		if !ok {
+			return "", fmt.Errorf("does not exist")
+		}
+		set.entries = nil
+		r.sets[args[1]] = set
 	}
 	return "", nil
 }

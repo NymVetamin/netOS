@@ -311,18 +311,30 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		saved[name] = data
 	}
 	mutated := map[string]bool{}
+	flushed := map[string]bool{}
 	rollback := func(cause error) error {
 		var failures []string
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		for _, name := range sortedNames(mutated) {
+			if flushed[name] {
+				if _, err := s.Runner.Run(rollbackCtx, "ipset", "flush", name); err != nil {
+					failures = append(failures, err.Error())
+				}
+				continue
+			}
 			if _, err := s.Runner.Run(rollbackCtx, "ipset", "destroy", name); err != nil && !strings.Contains(strings.ToLower(err.Error()), "does not exist") {
 				failures = append(failures, err.Error())
 			}
 		}
 		var restore strings.Builder
 		for _, name := range sortedNames(mutated) {
-			restore.WriteString(saved[name])
+			for _, line := range strings.SplitAfter(saved[name], "\n") {
+				if flushed[name] && strings.HasPrefix(line, "create ") {
+					continue
+				}
+				restore.WriteString(line)
+			}
 		}
 		if restore.Len() > 0 {
 			if _, err := s.Runner.RunInput(rollbackCtx, restore.String(), "ipset", "restore"); err != nil {
@@ -344,10 +356,18 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			if err != nil {
 				return rollback(err)
 			}
-			if setHealthy(detail, item) && ownedByName[item.Name].Definition == item.Definition {
+			if setHealthy(detail, item) {
+				if ownedByName[item.Name].Definition != item.Definition {
+					// Firewall still references this set. Only the learned addresses
+					// belong to the previous domain definition, not its kernel identity.
+					mutated[item.Name] = true
+					flushed[item.Name] = true
+					if _, err := s.Runner.Run(ctx, "ipset", "flush", item.Name); err != nil {
+						return rollback(err)
+					}
+				}
 				continue
 			}
-			mutated[item.Name] = true
 			if _, err := s.Runner.Run(ctx, "ipset", "destroy", item.Name); err != nil {
 				return rollback(err)
 			}
