@@ -55,3 +55,39 @@ func TestXrayUnitIsHardenedAndValidatesConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderWireGuardDoesNotAllowGlobalNetworkMutation(t *testing.T) {
+	for _, mode := range []string{"omitted", "false", "true"} {
+		t.Run(mode, func(t *testing.T) {
+			ch := testXrayChannel()
+			settings := map[string]any{"secretKey": "fixture", "address": []any{"192.0.2.2/32"}}
+			if mode != "omitted" {
+				settings["noKernelTun"] = mode == "true"
+			}
+			ch.Config["outbound"] = map[string]any{"protocol": "wireguard", "settings": settings}
+			before, _ := json.Marshal(ch)
+			data, err := RenderXray(ch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document struct {
+				Outbounds []struct {
+					Settings map[string]any `json:"settings"`
+				} `json:"outbounds"`
+			}
+			if err := json.Unmarshal(data, &document); err != nil {
+				t.Fatal(err)
+			}
+			if len(document.Outbounds) != 1 || document.Outbounds[0].Settings["noKernelTun"] != true {
+				t.Fatal("WireGuard outbound can change router-wide sysctls")
+			}
+			if document.Outbounds[0].Settings["secretKey"] != "fixture" {
+				t.Fatal("lost WireGuard settings")
+			}
+			after, _ := json.Marshal(ch)
+			if string(before) != string(after) {
+				t.Fatal("renderer mutated saved outbound")
+			}
+		})
+	}
+}

@@ -45,6 +45,17 @@ func RenderXray(ch config.Channel) ([]byte, error) {
 		return nil, err
 	}
 	outbound["tag"] = "proxy"
+	if outbound["protocol"] == "wireguard" {
+		// Xray's kernel WireGuard TUN changes global rp_filter (and, for
+		// IPv6 peers, disable_ipv6). netOS owns those settings and channel
+		// routing, so keep this nested outbound in the userspace stack.
+		settings, ok := outbound["settings"].(map[string]any)
+		if !ok {
+			settings = map[string]any{}
+			outbound["settings"] = settings
+		}
+		settings["noKernelTun"] = true
+	}
 	mtu := xr.MTU
 	if mtu == 0 {
 		mtu = 1400
