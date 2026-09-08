@@ -628,6 +628,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
 	b.channelPolicies(cfg)
+	b.channelLocalReplies(cfg)
 	b.dnsChannelPolicies(cfg)
 	b.multiWANPolicies(cfg)
 
@@ -642,6 +643,20 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+func (b *builder) channelLocalReplies(cfg *config.Config) {
+	for _, ch := range cfg.Channels {
+		if !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect") {
+			continue
+		}
+		// INPUT only sees connections to the router itself. Remember the
+		// incoming tunnel for replies without marking forwarded return traffic.
+		b.line("-A INPUT -i %s -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x%x", channels.InterfaceName(ch), channels.Mark(ch))
+	}
+	// Restoring only reply packets leaves independently originated traffic
+	// (including tunnel transports and DNS upstreams) to its own policies.
+	b.line("-A OUTPUT -m conntrack --ctdir REPLY -j CONNMARK --restore-mark")
 }
 
 func (b *builder) dnsChannelPolicies(cfg *config.Config) {

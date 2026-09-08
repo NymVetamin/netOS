@@ -133,3 +133,33 @@ func TestDomainPolicyMatchesOwnedDestinationIPSet(t *testing.T) {
 		t.Fatalf("missing %q:\n%s", want, rules.IPv4)
 	}
 }
+
+func TestLocalTunnelRepliesKeepIncomingChannel(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = append(cfg.Channels,
+		config.Channel{ID: "wg", Index: 1, Enabled: true, Type: "wireguard"},
+		config.Channel{ID: "oc", Index: 2, Enabled: true, Type: "openconnect"},
+		config.Channel{ID: "off", Index: 3, Enabled: false, Type: "wireguard"},
+	)
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"-A INPUT -i wg-ch1 -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x1001",
+		"-A INPUT -i tun-ch2 -m conntrack --ctdir ORIGINAL -j CONNMARK --set-mark 0x1002",
+		"-A OUTPUT -m conntrack --ctdir REPLY -j CONNMARK --restore-mark",
+	} {
+		if !strings.Contains(rules.IPv4, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	for _, line := range strings.Split(rules.IPv4, "\n") {
+		if strings.Contains(line, "-i wg-ch3") {
+			t.Fatal("disabled channel owns reply route")
+		}
+		if strings.Contains(line, "--set-mark") && strings.Contains(line, "-i wg-ch1") && !strings.HasPrefix(line, "-A INPUT ") {
+			t.Fatal("incoming tunnel mark can loop forwarded traffic")
+		}
+	}
+}
