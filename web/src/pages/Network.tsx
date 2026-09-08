@@ -828,6 +828,8 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                   {i.type !== "physical" && (
                     <button
                       className="btn ghost sm"
+                      disabled={isInterfaceReferenced(config, i.id)}
+                      title={isInterfaceReferenced(config, i.id) ? "Интерфейс или его VLAN используется в маршрутизации, правилах защиты или NAT" : undefined}
                       onClick={() => patch((d) => removeInterface(d, i.id))}
                     >
                       Удалить
@@ -1149,10 +1151,30 @@ function renameVLANChildren(draft: any, parentID: string, oldName: string, newNa
   }
 }
 
-// removeInterface убирает интерфейс вместе со всеми ссылками на него. Без
-// уборки оставались бы мост с несуществующим портом и VLAN без родителя —
-// конфигурация, которую нельзя применить.
+function isInterfaceReferenced(config: any, id: string): boolean {
+  // Removing a parent also removes its VLANs. Include references to those
+  // names, even in disabled rules, so saved settings remain usable.
+  const removed = new Set([id]);
+  const interfaces: any[] = config.interfaces || [];
+  let previousSize = 0;
+  while (previousSize !== removed.size) {
+    previousSize = removed.size;
+    for (const iface of interfaces) {
+      if (iface.type === "vlan" && removed.has(iface.parent)) removed.add(iface.id);
+    }
+  }
+  const names = new Set(interfaces.filter((iface) => removed.has(iface.id)).map((iface) => iface.name));
+  return [
+    ...(config.routing?.static || []),
+    ...(config.routing?.rules || []),
+    ...(config.firewall?.rules || []),
+    ...(config.firewall?.nat || []),
+  ].some((rule: any) => rule.interface && names.has(rule.interface));
+}
+
+// Remove dependent topology only when no route or firewall rule needs it.
 function removeInterface(draft: any, id: string) {
+  if (isInterfaceReferenced(draft, id)) return;
   draft.interfaces = (draft.interfaces || []).filter((i: any) => i.id !== id);
   // VLAN живёт только вместе с родителем: без него настраивать нечего.
   const orphans = (draft.interfaces || []).filter(
