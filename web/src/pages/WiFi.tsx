@@ -26,13 +26,16 @@ export function WiFiPage({ config, patch }: Props) {
 }
 
 function RadioEditor({ radio, config, installed, patch }: any) {
-  const networks = (config.networks || []).filter((item: any) => item.enabled);
+  const networks = (config.networks || []).filter((item: any) => item.enabled).map((item: any) => ({
+    ...item,
+    wifiBridge: (config.interfaces || []).some((iface: any) => iface.id === item.interface && iface.type === "bridge"),
+  }));
   const update = (mutate: (item: any) => void) => patch((draft: any) => mutate(draft.wifi.find((item: any) => item.id === radio.id)));
 
   function addSSID() {
     update((draft) => {
       draft.ssids = draft.ssids || [];
-      draft.ssids.push({ id: newID("ssid"), ssid: `netOS ${draft.ssids.length + 1}`, enabled: false, security: "wpa2/wpa3", password: "", network: networks[0]?.id || "", hidden: false, isolate: false });
+      draft.ssids.push({ id: newID("ssid"), ssid: `netOS ${draft.ssids.length + 1}`, enabled: false, security: "wpa2/wpa3", password: "", network: networks.find((item: any) => item.wifiBridge)?.id || "", hidden: false, isolate: false });
     });
   }
 
@@ -61,7 +64,7 @@ function SSIDEditor({ ssid, networks, update }: any) {
     <div className="row" style={{ justifyContent: "space-between" }}><strong>{ssid.ssid || "Новая сеть"}</strong><div className="row"><Switch checked={!!ssid.enabled} label="Транслировать" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={ssid.enabled} onClick={() => update((draft: any) => { draft.ssids = draft.ssids.filter((item: any) => item.id !== ssid.id); })}>Удалить</button></div></div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Имя сети (SSID)"><input value={ssid.ssid || ""} maxLength={32} onChange={(e) => edit((draft) => draft.ssid = e.target.value)} /></Field>
-      <Field label="Сегмент"><select value={ssid.network || ""} onChange={(e) => edit((draft) => draft.network = e.target.value)}><option value="">Выберите сегмент</option>{networks.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Сегмент" hint="Для Wi-Fi нужен сегмент на мосте. Мост можно создать в разделе «Сеть»."><select value={ssid.network || ""} onChange={(e) => edit((draft) => draft.network = e.target.value)}><option value="">Выберите сегмент</option>{networks.map((item: any) => <option key={item.id} value={item.id} disabled={!item.wifiBridge}>{item.name}{item.wifiBridge ? "" : " — нужен мост"}</option>)}</select></Field>
       <Field label="Защита"><select value={ssid.security || "wpa2/wpa3"} onChange={(e) => edit((draft) => draft.security = e.target.value)}><option value="wpa2/wpa3">WPA2/WPA3</option><option value="wpa3">WPA3</option><option value="wpa2">WPA2</option><option value="open">Открытая сеть</option></select></Field>
       {ssid.security !== "open" && <Field label="Пароль" hint="От 8 до 63 символов"><input type="password" minLength={8} maxLength={63} autoComplete="new-password" value={ssid.password || ""} onChange={(e) => edit((draft) => draft.password = e.target.value)} /></Field>}
       <Field label="Дополнительно"><div className="row"><Switch checked={!!ssid.hidden} label="Скрывать SSID" onChange={(value) => edit((draft) => draft.hidden = value)} /><Switch checked={!!ssid.isolate} label="Изолировать клиентов" onChange={(value) => edit((draft) => draft.isolate = value)} /></div></Field>

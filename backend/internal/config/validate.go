@@ -2823,8 +2823,14 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 func (c *Config) validateWiFi(r *ValidationResult) {
 	networks := c.networkIDs()
 	enabledNetworks := map[string]bool{}
+	bridgeInterfaces := map[string]bool{}
+	for _, iface := range c.Interfaces {
+		bridgeInterfaces[iface.ID] = iface.Type == "bridge"
+	}
+	bridgeNetworks := map[string]bool{}
 	for _, network := range c.Networks {
 		enabledNetworks[network.ID] = network.Enabled
+		bridgeNetworks[network.ID] = bridgeInterfaces[network.Interface]
 	}
 	radioIDs := map[string]bool{}
 	devices := map[string]bool{}
@@ -2914,6 +2920,8 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 				r.errf(spath+".network", "неизвестный сегмент %q", s.Network)
 			} else if s.Enabled && !enabledNetworks[s.Network] {
 				r.errf(spath+".network", "сегмент %q выключен", s.Network)
+			} else if s.Enabled && !bridgeNetworks[s.Network] {
+				r.errf(spath+".network", "для Wi-Fi нужен сегмент на интерфейсе-мосте; создайте мост и привяжите к нему сегмент")
 			}
 			switch s.Security {
 			case "open":

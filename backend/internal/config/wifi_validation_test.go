@@ -65,3 +65,22 @@ func TestWiFiRejectsEnabledSSIDOnDisabledSegment(t *testing.T) {
 	}
 	t.Fatalf("enabled SSID on disabled segment accepted: %+v", result.Problems)
 }
+
+func TestWiFiRequiresBridgeForEnabledSSID(t *testing.T) {
+	cfg := validWiFiSecurityConfig()
+	cfg.Interfaces[0].Type = "ethernet"
+	result := cfg.Validate()
+	found := false
+	for _, problem := range result.Problems {
+		if problem.Path == "wifi[0].ssids[0].network" && problem.Severity == "error" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Wi-Fi segment on a non-bridge interface was accepted")
+	}
+	cfg.Interfaces[0].Type = "bridge"
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("bridge-backed Wi-Fi segment rejected: %+v", result.Problems)
+	}
+}
