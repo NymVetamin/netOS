@@ -118,6 +118,7 @@ var Catalog = []ComponentInfo{
 		ID: "openconnect", Title: "OpenConnect", Group: "VPN",
 		Description: "Клиент для шлюзов Cisco AnyConnect, Pulse и Fortinet.",
 		Packages:    []string{"openconnect"},
+		RunUnits:    []string{"netos-openconnect-ch*.service"},
 		Provides:    []string{"vpn-client"},
 		SizeHint:    "около 2 МБ",
 	},
