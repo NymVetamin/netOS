@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 import { newID } from "../id";
+import { parseXrayLink } from "../xrayLink";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
 type Props = {
@@ -206,63 +207,6 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
       }} />
     </Field>
   </form>;
-}
-
-function parseXrayLink(value: string): any {
-  if (value.startsWith("vmess://")) {
-    const data = JSON.parse(decodeBase64(value.slice(8)));
-    const outbound: any = { protocol: "vmess", settings: { vnext: [{ address: data.add, port: Number(data.port), users: [{ id: data.id, alterId: Number(data.aid || 0), security: data.scy || "auto" }] }] } };
-    outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp });
-    return outbound;
-  }
-  if (value.startsWith("ss://") && !value.slice(5).includes("@")) {
-    const decoded = decodeBase64(value.slice(5).split("#")[0]);
-    const at = decoded.lastIndexOf("@");
-    if (at < 1) throw new Error("Некорректная Shadowsocks-ссылка");
-    return shadowsocksOutbound(decoded.slice(0, at), decoded.slice(at + 1));
-  }
-  const url = new URL(value);
-  const port = Number(url.port);
-  if (!url.hostname || !port) throw new Error("В ссылке нет сервера или порта");
-  if (url.protocol === "ss:") {
-    const credentials = decodeBase64(decodeURIComponent(url.username));
-    return shadowsocksOutbound(credentials, `${url.hostname}:${port}`);
-  }
-  const protocol = url.protocol.slice(0, -1);
-  if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan:// и ss://");
-  const user = decodeURIComponent(url.username);
-  const server: any = { address: url.hostname, port };
-  if (protocol === "vless") server.users = [{ id: user, encryption: url.searchParams.get("encryption") || "none", ...(url.searchParams.get("flow") ? { flow: url.searchParams.get("flow") } : {}) }];
-  else server.password = user;
-  const settings = protocol === "vless" ? { vnext: [server] } : { servers: [server] };
-  return { protocol, settings, streamSettings: streamSettings(url.searchParams.get("type") || "tcp", url.searchParams.get("security") || "none", {
-    host: url.searchParams.get("host"), path: url.searchParams.get("path"), sni: url.searchParams.get("sni"),
-    serviceName: url.searchParams.get("serviceName"), fingerprint: url.searchParams.get("fp"),
-    publicKey: url.searchParams.get("pbk"), shortId: url.searchParams.get("sid"), spiderX: url.searchParams.get("spx"),
-  }) };
-}
-
-function streamSettings(network: string, security: string, options: any): any {
-  const out: any = { network, security };
-  if (network === "ws") out.wsSettings = { path: options.path || "/", headers: options.host ? { Host: options.host } : {} };
-  if (network === "grpc") out.grpcSettings = { serviceName: options.serviceName || "" };
-  if (network === "xhttp") out.xhttpSettings = { path: options.path || "/", host: options.host || "" };
-  if (security === "tls") out.tlsSettings = { serverName: options.sni || options.host || "", fingerprint: options.fingerprint || "chrome" };
-  if (security === "reality") out.realitySettings = { serverName: options.sni || "", fingerprint: options.fingerprint || "chrome", password: options.publicKey || "", shortId: options.shortId || "", spiderX: options.spiderX || "" };
-  return out;
-}
-
-function shadowsocksOutbound(credentials: string, endpoint: string): any {
-  const split = credentials.indexOf(":");
-  const lastColon = endpoint.lastIndexOf(":");
-  if (split < 1 || lastColon < 1) throw new Error("Некорректная Shadowsocks-ссылка");
-  return { protocol: "shadowsocks", settings: { servers: [{ method: credentials.slice(0, split), password: credentials.slice(split + 1), address: endpoint.slice(0, lastColon), port: Number(endpoint.slice(lastColon + 1)) }] } };
-}
-
-function decodeBase64(value: string): string {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
-  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
 }
 
 function OpenConnectEditor({ channel, channels, installed, referenced, update, remove }: {
