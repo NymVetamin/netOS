@@ -155,7 +155,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 		<Notice tone="warn" title="Один активный пользователь">Пакет strongSwan в Debian не умеет надёжно закреплять адрес встроенного пула за EAP-логином. Чтобы персональный канал и правила firewall не применились к другому человеку, одновременно можно разрешить только одного пользователя IKEv2.</Notice>
 		<div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
 		{(server.peers || []).length === 0 ? <Empty>Добавьте пользователя IKEv2.</Empty> : (server.peers || []).map((peer: any) =>
-			<OcservPeer key={peer.id} peer={peer} channels={channels} update={update} canEnable={peer.enabled || enabledPeers === 0} />)}
+			<OcservPeer key={peer.id} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={peer.enabled || enabledPeers === 0} />)}
 	</form>;
 }
 
@@ -193,14 +193,14 @@ function OcservServer({ server, config, installed, patch }: any) {
     <Notice tone="info" title="Сертификат сервера">netOS автоматически выпускает отдельный самоподписанный сертификат. После первого применения импортируйте его в доверенные на клиентском устройстве. <VPNCertificate server={server} /></Notice>
     <div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Пользователи</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить пользователя</button></div>
     {(server.peers || []).length === 0 ? <Empty>Добавьте пользователя OpenConnect.</Empty> : (server.peers || []).map((peer: any) =>
-      <OcservPeer key={peer.id} peer={peer} channels={channels} update={update} />)}
+      <OcservPeer key={peer.id} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} />)}
   </form>;
 }
 
-function OcservPeer({ peer, channels, update, canEnable = true }: any) {
+function OcservPeer({ peer, referenced, channels, update, canEnable = true }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   return <div style={{ borderTop: "1px solid var(--line)", marginTop: "1rem", paddingTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} disabled={!canEnable} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
+    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} disabled={!canEnable} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>
@@ -257,11 +257,11 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
     </div>
     <div className="row" style={{ justifyContent: "space-between", marginTop: "1.2rem" }}><strong>Клиенты</strong><button type="button" className="btn ghost sm" onClick={addPeer}>Добавить устройство</button></div>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor key={peer.id} server={server} peer={peer} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </form>;
 }
 
-function XrayPeerEditor({ server, peer, channels, update, setError }: any) {
+function XrayPeerEditor({ server, peer, referenced, channels, update, setError }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   async function download() {
     const cfg = server.config || {};
@@ -276,7 +276,7 @@ function XrayPeerEditor({ server, peer, channels, update, setError }: any) {
     } catch (err: any) { setError(err?.message || "Не удалось создать ссылку подключения"); }
   }
   return <div style={{ borderTop: "1px solid var(--line)", marginTop: "1rem", paddingTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
+    <div className="row" style={{ justifyContent: "space-between" }}><strong>{peer.name}</strong><div className="row"><Switch checked={!!peer.enabled} label="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div></div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Устройство"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="UUID клиента"><div className="row"><input className="mono" value={peer.credentials?.uuid || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = e.target.value; })} /><button type="button" className="btn ghost sm" onClick={() => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = crypto.randomUUID(); })}>Новый</button></div></Field>
@@ -371,11 +371,11 @@ function WireGuardServer({ server, config, installed, patch, clientSecrets, setC
     </div>
     <div className="section-head"><div><strong>Устройства</strong><div className="hint">Одно нажатие создаёт ключи, адрес и готовый профиль</div></div><button type="button" className="btn primary" disabled={addingClient} onClick={() => void addPeer()}>{addingClient ? "Создаём профиль…" : "Добавить устройство"}</button></div>
     {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер — netOS сам подготовит всё необходимое.</Empty> : (server.peers || []).map((peer: any) =>
-      <PeerEditor key={peer.id} server={server} peer={peer} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
+      <PeerEditor key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
   </form>;
 }
 
-function PeerEditor({ server, peer, channels, update, secret, setSecret, removeSecret, setError }: any) {
+function PeerEditor({ server, peer, referenced, channels, update, secret, setSecret, removeSecret, setError }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   const preparedConfig = secret ? wireGuardClientConfig(server, peer, secret.privateKey, secret.serverPublicKey) : "";
   async function generateClient() {
@@ -411,7 +411,7 @@ function PeerEditor({ server, peer, channels, update, secret, setSecret, removeS
     try { await navigator.clipboard.writeText(preparedConfig); } catch { setError("Браузер не разрешил скопировать профиль. Скачайте файл конфигурации."); }
   }
   return <div className="peer-card">
-    <div className="peer-head"><div className="row wrap"><strong>{peer.name}</strong>{secret ? <Badge tone="ok">профиль готов</Badge> : <Badge tone="warn">нужно перевыпустить</Badge>}</div><div className="row wrap"><Switch checked={!!peer.enabled} label="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled} onClick={() => { removeSecret(); update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); }); }}>Удалить</button></div></div>
+    <div className="peer-head"><div className="row wrap"><strong>{peer.name}</strong>{secret ? <Badge tone="ok">профиль готов</Badge> : <Badge tone="warn">нужно перевыпустить</Badge>}</div><div className="row wrap"><Switch checked={!!peer.enabled} label="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} /><button type="button" className="btn ghost sm" disabled={peer.enabled || referenced} onClick={() => { removeSecret(); update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); }); }}>Удалить</button></div></div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Название устройства"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
@@ -424,4 +424,9 @@ function PeerEditor({ server, peer, channels, update, secret, setSecret, removeS
     </div> : <Notice tone="warn" title="Готовый профиль нельзя восстановить">Роутер хранит только публичный ключ. Нажмите «Перевыпустить профиль», чтобы безопасно создать новый закрытый ключ, QR-код и файл конфигурации.<div style={{ marginTop: "0.65rem" }}><button type="button" className="btn" onClick={() => void generateClient()}>Перевыпустить профиль</button></div></Notice>}
     <details className="advanced"><summary>Технические данные</summary><div className="form-grid"><Field label="Публичный ключ устройства"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; })} /></Field><Field label="Предварительный общий ключ"><input className="mono" type="password" autoComplete="off" value={peer.credentials?.preshared_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.preshared_key = e.target.value; })} /></Field></div></details>
   </div>;
+}
+
+function isPeerReferenced(config: any, serverID: string, peerID: string) {
+  return (config.policies || []).some((policy: any) =>
+    policy.vpn_server === serverID && policy.vpn_peer === peerID);
 }
