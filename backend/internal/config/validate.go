@@ -2083,6 +2083,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		}
 		if ch.Type == "xray" {
 			c.validateXrayChannel(r, path, ch)
+			if ch.Probe.Enabled && ch.Probe.Type == "icmp" {
+				r.errf(path+".probe.type", "ICMP не проверяет доступность Xray: локальный TUN отвечает без VPN-сервера; выберите HTTP или TCP")
+			}
 		}
 		if ch.Type != "direct" {
 			validateProbe(r, path+".probe", ch.Probe)

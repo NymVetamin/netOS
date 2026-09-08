@@ -29,7 +29,7 @@ const tcpConfirmWindow = 200 * time.Millisecond
 //
 // Полной проверки удалённой доступности это не даёт: цель, которая приняла
 // соединение и молчит, неотличима от цели, до которой соединение только
-// строится. Для таких случаев в настройках канала есть проверки ICMP и HTTP.
+// строится. Для проверки ответа удалённой службы используйте HTTP.
 func confirmTCPHandshake(conn net.Conn, timeout time.Duration) error {
 	defer conn.Close()
 

@@ -433,3 +433,18 @@ func TestProbeFamiliesHTTPAndTickLifecycle(t *testing.T) {
 }
 
 func ctx() context.Context { return context.Background() }
+
+func TestXrayLocalEchoCannotReportHealthy(t *testing.T) {
+	s, _ := newTestSubsystem(t)
+	calls := 0
+	s.Runner = channelRunnerFunc(func(context.Context, string, ...string) (string, error) { calls++; return "", nil })
+	for _, kind := range []string{"icmp", ""} {
+		ch := config.Channel{Type: "xray", Probe: config.Probe{Type: kind, Targets: []string{"192.0.2.1"}}}
+		if s.probe(context.Background(), ch, "tun-ch1") {
+			t.Fatalf("%q local echo reported remote health", kind)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("used local echo: %d commands", calls)
+	}
+}

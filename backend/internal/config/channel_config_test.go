@@ -143,3 +143,28 @@ func TestPolicyRejectsUnsupportedSelectorAndDisabledChannel(t *testing.T) {
 		t.Fatal("политика с неподдерживаемым селектором и выключенным каналом принята")
 	}
 }
+
+func TestXrayRejectsLocalICMPHealthProbe(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "xray", Installed: true}}
+	cfg.Channels = append(cfg.Channels, Channel{ID: "xr-health", Index: 3, Name: "Xray", Enabled: true, Type: "xray", Mode: "tun", FailMode: "block", Config: map[string]any{"outbound": map[string]any{"protocol": "freedom", "settings": map[string]any{}}}})
+	for _, kind := range []string{"icmp", "tcp", "http"} {
+		target := map[string]string{"icmp": "192.0.2.1", "tcp": "192.0.2.1:443", "http": "https://example.test/health"}[kind]
+		cfg.Channels[1].Probe = validProbeOf(kind, target)
+		found := false
+		for _, p := range cfg.Validate().Problems {
+			if p.Severity == "error" && p.Path == "channels[1].probe.type" {
+				found = true
+			}
+		}
+		if found != (kind == "icmp") {
+			t.Fatalf("%s: rejected=%v", kind, found)
+		}
+	}
+	cfg.Channels[1].Probe = Probe{Type: "icmp"}
+	for _, p := range cfg.Validate().Problems {
+		if p.Severity == "error" && p.Path == "channels[1].probe.type" {
+			t.Fatalf("disabled probe rejected: %+v", p)
+		}
+	}
+}

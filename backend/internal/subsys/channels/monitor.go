@@ -155,6 +155,11 @@ func (s *Subsystem) restoreChannel(ctx context.Context, ch config.Channel) error
 }
 
 func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) bool {
+	// Xray's TUN answers echo locally, even when its remote server is down.
+	// Guard persisted configurations too: a local reply must not restore a VPN.
+	if ch.Type == "xray" && (ch.Probe.Type == "icmp" || ch.Probe.Type == "") {
+		return false
+	}
 	timeout := ch.Probe.Timeout
 	if timeout <= 0 {
 		timeout = 3
