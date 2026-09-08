@@ -136,15 +136,21 @@ func TestBackupNowCreatesRealEmptyArchiveAndRestartsDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(m.BackupDir, "netos-backup-20260901-123456.tar.gz")
-	if err := validateBackupArchive(archive); err != nil {
-		t.Fatalf("empty backup is not a valid archive: %v", err)
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBackupArchive(archive); err == nil {
+		t.Fatal("empty test backup must not be accepted for restoration")
 	}
 	if err := m.Execute(context.Background(), []string{"backup"}); err != nil {
 		t.Fatal(err)
 	}
 	second := filepath.Join(m.BackupDir, "netos-backup-20260901-123456-2.tar.gz")
-	if err := validateBackupArchive(second); err != nil {
-		t.Fatalf("same-second backup is not a distinct valid archive: %v", err)
+	if _, err := os.Stat(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBackupArchive(second); err == nil {
+		t.Fatal("second empty test backup must not be accepted for restoration")
 	}
 	if !strings.Contains(out.String(), archive) || !strings.Contains(out.String(), second) || strings.Join(calls, "\n") != "systemctl stop netosd\nsystemctl start netosd\nsystemctl stop netosd\nsystemctl start netosd" {
 		t.Fatalf("output=%q calls=%v", out.String(), calls)

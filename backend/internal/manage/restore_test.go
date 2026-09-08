@@ -71,6 +71,35 @@ func TestBackupArchiveValidationAcceptsOwnedFiles(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsMissingDatabaseBeforeStoppingDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []tar.Header
+	}{
+		{"empty archive", nil},
+		{"configuration files only", []tar.Header{{Name: "etc/netos/tls/panel.crt", Typeflag: tar.TypeReg, Size: 4, Mode: 0o600}}},
+		{"database directory", []tar.Header{{Name: "var/lib/netos/netos.db", Typeflag: tar.TypeDir, Mode: 0o700}}},
+		{"empty database", []tar.Header{{Name: "var/lib/netos/netos.db", Typeflag: tar.TypeReg, Mode: 0o600}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			archive := writeTestBackup(t, tc.entries)
+			var commands []string
+			m.Run = func(_ context.Context, cmd command) error {
+				commands = append(commands, cmd.name)
+				return os.ErrPermission // Stop the reproduction before any destructive operation.
+			}
+			if err := m.Execute(context.Background(), []string{"restore", archive, "--yes"}); err == nil {
+				t.Fatal("archive without a usable database was accepted")
+			}
+			if len(commands) != 0 {
+				t.Fatalf("invalid backup reached service/filesystem mutation: %v", commands)
+			}
+		})
+	}
+}
+
 // Обновление до версии, которая уже стоит, — это несколько минут загрузки и
 // перезапуск службы ради нулевого результата. Проверка должна быть настоящей,
 // а не обещанием в справке.

@@ -1076,6 +1076,7 @@ func validateBackupArchive(filename string) error {
 	tr := tar.NewReader(gz)
 	var entries int
 	var total int64
+	var databaseFound bool
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -1104,10 +1105,21 @@ func validateBackupArchive(filename string) error {
 				return fmt.Errorf("распакованный объём превышает предел")
 			}
 			total += h.Size
+			if clean == "var/lib/netos/netos.db" {
+				if h.Size == 0 {
+					return fmt.Errorf("база данных в резервной копии пуста")
+				}
+				databaseFound = true
+			}
 		case tar.TypeDir:
 		default:
 			return fmt.Errorf("недопустимый тип файла для %q", h.Name)
 		}
+	}
+	// Starting netosd without its database creates a fresh installation. Reject
+	// incomplete archives before restore stops services or replaces live state.
+	if !databaseFound {
+		return fmt.Errorf("резервная копия не содержит базу данных var/lib/netos/netos.db")
 	}
 	return nil
 }
