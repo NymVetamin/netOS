@@ -147,7 +147,12 @@ export function ChannelsPage({ config, patch }: Props) {
             />
           ) : (
             <Notice key={channel.id} tone="warn" title={`Неподдерживаемый канал: ${channel.type || "без типа"}`}>
-              Этот сохранённый канал нельзя включить в текущей версии. Удалите его из конфигурации или выберите поддерживаемый тип.
+              <strong>{channel.name || channel.id}</strong>
+              <p>Этот сохранённый канал нельзя включить в текущей версии. Его настройки сохранены; канал можно удалить.</p>
+              {isChannelReferenced(config, channel.id) && <p>Сначала уберите ссылки на канал в настройках устройств, сегментов и политик.</p>}
+              <button type="button" className="btn ghost sm" aria-label={`Удалить канал ${channel.name || channel.id}`} disabled={isChannelReferenced(config, channel.id)} onClick={() => patch((draft) => {
+                draft.channels = draft.channels.filter((item: any) => item.id !== channel.id);
+              })}>Удалить</button>
             </Notice>
           ),
         )}
