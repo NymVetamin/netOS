@@ -31,7 +31,7 @@ func TestRenderIKEv2(t *testing.T) {
 	text := string(out)
 	for _, want := range []string{
 		"netos-srv4", "pools = netos-srv4", "id = vpn.example.test", "auth = eap-mschapv2",
-		"local_ts = 10.0.0.0/8", "if_id_out = 50004", "addrs = 10.40.0.2",
+		"local_ts = 10.0.0.0/8", "if_id_in = 50004", "if_id_out = 50004", "addrs = 10.40.0.2",
 		"dns = 10.40.0.1", "id = alice", "secret = 0s",
 	} {
 		if !strings.Contains(text, want) {

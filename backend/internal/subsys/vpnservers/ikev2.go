@@ -116,9 +116,9 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 		fmt.Fprintln(&b, "    children {")
 		fmt.Fprintf(&b, "      netos-srv%d {\n", server.Index)
 		fmt.Fprintf(&b, "        local_ts = %s\n", strings.Join(ts, ", "))
-		// Only outbound policies need the interface ID. Inbound IKEv2 traffic
-		// arrives on the physical interface after IPsec processing; attaching an
-		// inbound ID breaks UDP encapsulation on strongSwan 6.0.1.
+		// Deliver decrypted traffic through the VPN interface as well. Services
+		// such as dnsmasq use the arrival interface to admit VPN clients.
+		fmt.Fprintf(&b, "        if_id_in = %d\n", 50000+server.Index)
 		fmt.Fprintf(&b, "        if_id_out = %d\n", 50000+server.Index)
 		fmt.Fprintln(&b, "        esp_proposals = aes256gcm16-ecp384,aes256-sha256-modp2048")
 		fmt.Fprintln(&b, "        dpd_action = clear")
