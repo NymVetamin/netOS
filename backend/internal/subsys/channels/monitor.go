@@ -75,6 +75,15 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 			delete(s.states, id)
 		}
 	}
+	// A reserve can fail or recover while its parent stays down. Reconcile
+	// after all probes so routing follows the complete, current fallback chain.
+	for _, ch := range enabledChannels(cfg) {
+		if state := s.states[ch.ID]; state != nil && state.Down {
+			if err := s.failChannel(ctx, cfg, ch); err != nil {
+				s.warnf("Канал %s: обновление резервного маршрута: %v", ch.Name, err)
+			}
+		}
+	}
 }
 
 func (s *Subsystem) record(ctx context.Context, cfg *config.Config, ch config.Channel, state *channelState, ok bool) {
@@ -113,22 +122,37 @@ func (s *Subsystem) record(ctx context.Context, cfg *config.Config, ch config.Ch
 }
 
 func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch config.Channel) error {
-	switch ch.FailMode {
-	case "direct":
-		return s.removeChannelRule(ctx, ch)
-	case "fallback":
-		fallback, ok := channelByID(cfg, ch.Fallback)
-		if !ok || fallback.Type == "direct" {
-			return s.removeChannelRule(ctx, ch)
+	target := ch
+	seen := map[string]bool{}
+	for {
+		if seen[target.ID] {
+			return s.ensureRuleTable(ctx, ch, TableNumber(ch))
 		}
-		return s.ensureRuleTable(ctx, ch, TableNumber(fallback))
-	default: // block
-		// The channel table already has a lower-priority blackhole route. Keep
-		// the device route while the interface exists: packets still cannot
-		// fall through to the main WAN, and probes retain a path through which
-		// they can observe recovery. If the interface disappears, Linux removes
-		// its device route and the blackhole becomes active automatically.
-		return s.ensureRoutes(ctx, ch, InterfaceName(ch))
+		seen[target.ID] = true
+		switch target.FailMode {
+		case "direct":
+			return s.removeChannelRule(ctx, ch)
+		case "fallback":
+			fallback, ok := channelByID(cfg, target.Fallback)
+			if !ok {
+				return s.ensureRuleTable(ctx, ch, TableNumber(ch))
+			}
+			if fallback.Type == "direct" {
+				return s.removeChannelRule(ctx, ch)
+			}
+			if state := s.states[fallback.ID]; state != nil && state.Down {
+				target = fallback
+				continue
+			}
+			return s.ensureRuleTable(ctx, ch, TableNumber(fallback))
+		default: // block
+			// Retain the device route for recovery probes. The lower-priority
+			// blackhole prevents WAN fallthrough when the device disappears.
+			if err := s.ensureRoutes(ctx, target, InterfaceName(target)); err != nil {
+				return err
+			}
+			return s.ensureRuleTable(ctx, ch, TableNumber(target))
+		}
 	}
 }
 

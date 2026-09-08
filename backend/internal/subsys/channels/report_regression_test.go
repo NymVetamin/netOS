@@ -43,6 +43,12 @@ func TestReportXrayRestartRepairsOwnTableDuringFallback(t *testing.T) {
 	ch.Type = "xray"
 	ch.Probe.Enabled = true
 	ch.FailMode = "fallback"
+	ch.Fallback = "reserve"
+	reserve := *ch
+	reserve.ID, reserve.Index = "reserve", 2
+	reserve.Probe.Enabled = false
+	reserve.FailMode, reserve.Fallback = "block", ""
+	cfg.Channels = append(cfg.Channels, reserve)
 	if err := os.MkdirAll(filepath.Join(s.SysClassNet, "tun-ch1"), 0755); err != nil {
 		t.Fatal(err)
 	}

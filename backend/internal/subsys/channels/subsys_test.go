@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 )
@@ -234,5 +235,40 @@ func TestMonitorCanUseDirectOrFallback(t *testing.T) {
 	s.record(context.Background(), cfg, ch, &channelState{}, false)
 	if !strings.Contains(runner.rules, "lookup 1002") {
 		t.Fatalf("fallback table not selected: %q", runner.rules)
+	}
+}
+
+func TestMonitorFollowsReserveStateWithoutParentTransition(t *testing.T) {
+	s, runner := newTestSubsystem(t)
+	cfg := channelConfig()
+	primary := &cfg.Channels[1]
+	primary.Probe.Enabled = true
+	primary.FailMode, primary.Fallback = "fallback", "reserve"
+	reserve := *primary
+	reserve.ID, reserve.Index, reserve.Fallback = "reserve", 2, "direct"
+	cfg.Channels = append(cfg.Channels, reserve)
+	next := time.Now().Add(time.Hour)
+	s.states[primary.ID] = &channelState{Down: true, Next: next}
+	s.states[reserve.ID] = &channelState{Next: next}
+	for _, down := range []bool{false, true, false, true} {
+		s.states[reserve.ID].Down = down
+		s.tick(context.Background(), cfg)
+		if down && runner.rules != "" {
+			t.Fatalf("failed reserve did not reach direct: %s", runner.rules)
+		}
+		if !down && !strings.Contains(runner.rules, "lookup 1002") {
+			t.Fatalf("recovered reserve not selected: %s", runner.rules)
+		}
+	}
+	cfg.Channels[2].FailMode = "block"
+	s.tick(context.Background(), cfg)
+	if !strings.Contains(runner.rules, "lookup 1002") {
+		t.Fatalf("block reserve fell through to WAN: %s", runner.rules)
+	}
+	cfg.Channels[2].FailMode = "fallback"
+	cfg.Channels[2].Fallback = primary.ID
+	s.tick(context.Background(), cfg)
+	if !strings.Contains(runner.rules, "lookup 1001") {
+		t.Fatalf("invalid cycle did not retain isolated table: %s", runner.rules)
 	}
 }
