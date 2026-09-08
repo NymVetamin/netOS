@@ -8,6 +8,7 @@ import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
 export function Dashboard({ config }: { config: any }) {
   const [status, setStatus] = useState<any>(null);
   const [statistics, setStatistics] = useState<any[]>([]);
+  const [statisticsLoaded, setStatisticsLoaded] = useState(false);
   const [statusError, setStatusError] = useState(false);
   const [statisticsError, setStatisticsError] = useState(false);
 
@@ -18,6 +19,8 @@ export function Dashboard({ config }: { config: any }) {
   useEffect(() => {
     let cancelled = false;
     let busy = false;
+    setStatisticsLoaded(false);
+    setStatisticsError(false);
     const load = async () => {
       if (busy) return;
       busy = true;
@@ -26,7 +29,7 @@ export function Dashboard({ config }: { config: any }) {
           if (!cancelled) { setStatus(result); setStatusError(false); }
         }).catch(() => { if (!cancelled) setStatusError(true); }),
         api.statistics(24, wanInterfaces).then((result) => {
-          if (!cancelled) { setStatistics(result.points || []); setStatisticsError(false); }
+          if (!cancelled) { setStatistics(result.points || []); setStatisticsLoaded(true); setStatisticsError(false); }
         }).catch(() => { if (!cancelled) setStatisticsError(true); }),
       ]);
       busy = false;
@@ -118,7 +121,8 @@ export function Dashboard({ config }: { config: any }) {
 
       <Card title="Скорость интернета" subtitle="Фактический трафик всех включённых интернет-каналов за 24 часа">
         {statisticsError ? <Empty>Не удалось обновить статистику. Повторная попытка выполняется автоматически.</Empty> :
-          <TrafficChart points={statistics} interfaces={wanInterfaces} />}
+          !statisticsLoaded ? <Empty>Загрузка статистики…</Empty> :
+            <TrafficChart points={statistics} interfaces={wanInterfaces} />}
       </Card>
 
       <Card title="Интерфейсы" subtitle="Счётчики с момента запуска системы" tight>
