@@ -796,7 +796,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	clients := append([]config.Client(nil), cfg.Clients...)
 	sort.Slice(clients, func(i, j int) bool { return clients[i].ID < clients[j].ID })
 	for _, client := range clients {
-		if client.Blocked || client.Channel == "" || client.Channel == "direct" {
+		if client.Blocked || client.Channel == "" {
 			continue
 		}
 		rules = append(rules, policyRule{
@@ -815,7 +815,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 		peers := append([]config.VPNPeer(nil), server.Peers...)
 		sort.Slice(peers, func(i, j int) bool { return peers[i].ID < peers[j].ID })
 		for _, peer := range peers {
-			if !peer.Enabled || peer.Channel == "" || peer.Channel == "direct" {
+			if !peer.Enabled || peer.Channel == "" {
 				continue
 			}
 			match := " -i " + vpnservers.MatchInterfaceName(server) + " -s " + peer.Address + "/32"
