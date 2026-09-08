@@ -329,7 +329,8 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
     setError("");
     setMessage("");
     try {
-      await run();
+      const result = await run();
+      if (result?.scheduled) setStatus({ state: "activating", failed: false });
       setMessage(success);
       window.setTimeout(() => load().catch(() => {}), 4000);
     } catch (e: any) {
@@ -382,10 +383,11 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
         <div className="row wrap" style={{ marginTop: ".7rem" }}>
           <input aria-label="Подтверждение восстановления" style={{ maxWidth: 220 }} placeholder="Введите RESTORE" value={restoreConfirm} onChange={(e) => setRestoreConfirm(e.target.value)} />
           <button className="btn danger" disabled={busy || restoreConfirm !== "RESTORE"} onClick={() => action(async () => {
-            await api.restoreBackup(restoreName, restoreConfirm);
+            const result = await api.restoreBackup(restoreName, restoreConfirm);
             restoreObservedRunning.current = false;
             restoreScheduledAt.current = Date.now();
             setWaitingForRestore(true);
+            return result;
           }, "Восстановление запланировано")}>Восстановить</button>
           <button className="btn ghost" onClick={() => setRestoreName("")}>Отмена</button>
         </div>

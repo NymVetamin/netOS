@@ -171,18 +171,23 @@ func (m *Maintenance) scheduleCommand(ctx context.Context, command []string) err
 }
 
 func (m *Maintenance) Status(ctx context.Context) map[string]any {
+	// systemd-run accepts a job before its delayed service starts. The timer
+	// represents that pending operation, even if the previous service failed.
+	timer, timerErr := m.Runner.Run(ctx, "systemctl", "show", m.Unit+".timer",
+		"--property=ActiveState", "--property=SubState")
+	if timerErr == nil {
+		fields := maintenanceUnitFields(timer)
+		if fields["ActiveState"] == "activating" ||
+			(fields["ActiveState"] == "active" && fields["SubState"] == "waiting") {
+			return map[string]any{"state": "activating", "sub_state": "waiting", "result": "", "exit_code": "", "failed": false}
+		}
+	}
 	out, err := m.Runner.Run(ctx, "systemctl", "show", m.Unit+".service",
 		"--property=ActiveState", "--property=SubState", "--property=Result", "--property=ExecMainStatus")
 	if err != nil {
 		return map[string]any{"state": "idle"}
 	}
-	fields := map[string]string{}
-	for _, line := range strings.Split(out, "\n") {
-		key, value, ok := strings.Cut(line, "=")
-		if ok {
-			fields[key] = value
-		}
-	}
+	fields := maintenanceUnitFields(out)
 	state := fields["ActiveState"]
 	if state == "" {
 		state = "idle"
@@ -197,6 +202,16 @@ func (m *Maintenance) Status(ctx context.Context) map[string]any {
 		"state": state, "sub_state": fields["SubState"], "result": result,
 		"exit_code": fields["ExecMainStatus"], "failed": failed,
 	}
+}
+
+func maintenanceUnitFields(out string) map[string]string {
+	fields := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if key, value, ok := strings.Cut(line, "="); ok {
+			fields[key] = value
+		}
+	}
+	return fields
 }
 
 func validBackupName(name string) bool {
