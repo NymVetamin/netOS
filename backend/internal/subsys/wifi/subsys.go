@@ -27,9 +27,10 @@ type ownedRadio struct {
 }
 
 type Subsystem struct {
-	Runner   system.Runner
-	StateDir string
-	UnitDir  string
+	Runner      system.Runner
+	StateDir    string
+	UnitDir     string
+	SysClassNet string
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
@@ -213,7 +214,9 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 }
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
-	return s.health(ctx, cfg, 60)
+	// STP ports need two forward-delay intervals (normally 30 seconds)
+	// after hostapd attaches them. Association alone is not connectivity.
+	return s.health(ctx, cfg, 400)
 }
 
 func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int) error {
@@ -250,7 +253,7 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 			}
 			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName(radio))
 			allReady, primaryInfo := s.radioRuntimeMatches(ctx, cfg, radio)
-			allReady = strings.TrimSpace(active) == "active" && allReady && (radio.TxPower == 0 || txPowerMatches(primaryInfo, radio.TxPower))
+			allReady = strings.TrimSpace(active) == "active" && allReady && s.bridgePortsForwarding(radio) && (radio.TxPower == 0 || txPowerMatches(primaryInfo, radio.TxPower))
 			if allReady {
 				ready = true
 				break
@@ -271,6 +274,34 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 		}
 	}
 	return nil
+}
+
+func (s *Subsystem) bridgePortsForwarding(radio config.WiFiRadio) bool {
+	root := s.SysClassNet
+	if root == "" {
+		root = "/sys/class/net"
+	}
+	index := 0
+	for _, ssid := range radio.SSIDs {
+		if !ssid.Enabled {
+			continue
+		}
+		device := radio.Device
+		if index > 0 {
+			device = fmt.Sprintf("%s-n%d", radio.Device, index)
+		}
+		index++
+		// As with radioRuntimeMatches, absent devices are handled by the
+		// runner in tests on hosts without Wi-Fi hardware.
+		if _, err := os.Stat(filepath.Join(root, device)); os.IsNotExist(err) {
+			continue
+		}
+		state, err := os.ReadFile(filepath.Join(root, device, "brport", "state"))
+		if err != nil || strings.TrimSpace(string(state)) != "3" {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Subsystem) remove(ctx context.Context, item ownedRadio) error {
