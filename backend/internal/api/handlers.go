@@ -936,18 +936,17 @@ func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, ope
 	// это разрывает транзакцию посреди изменений: пакеты успевают удалиться,
 	// сеть — перестроиться наполовину, а новый процесс поднимается на прежней
 	// ревизии и переустанавливает всё обратно. Отказ здесь дешевле.
+	s.draftMu.Lock()
+	defer s.draftMu.Unlock()
+	if s.draftApplying {
+		writeError(w, http.StatusConflict, "идёт применение конфигурации: дождитесь его окончания")
+		return
+	}
 	if s.Engine != nil {
 		if pending, _ := s.Engine.Pending(); pending {
 			writeError(w, http.StatusConflict, "сначала подтвердите или откатите предыдущее применение")
 			return
 		}
-	}
-	s.draftMu.Lock()
-	applying := s.draftApplying
-	s.draftMu.Unlock()
-	if applying {
-		writeError(w, http.StatusConflict, "идёт применение конфигурации: дождитесь его окончания")
-		return
 	}
 	if err := s.Maintenance.Schedule(r.Context(), operation, argument); err != nil {
 		_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: action, Target: argument, Detail: err.Error(), Success: false})
@@ -1104,6 +1103,21 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.draftMu.Lock()
+	if s.draftApplying {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "идёт применение конфигурации: дождитесь его окончания")
+		return
+	}
+	// Scheduling holds the same lock until the maintenance timer exists.
+	// Checking it here closes both request orderings before creating a revision.
+	if s.Maintenance != nil {
+		state := s.Maintenance.Status(r.Context())["state"]
+		if state == "active" || state == "activating" {
+			s.draftMu.Unlock()
+			writeError(w, http.StatusConflict, "операция обслуживания уже выполняется: дождитесь её окончания")
+			return
+		}
+	}
 	if req.DraftVersion != s.draftVersion {
 		s.draftMu.Unlock()
 		writeError(w, http.StatusConflict, "черновик уже изменён в другой вкладке; обновите страницу")
