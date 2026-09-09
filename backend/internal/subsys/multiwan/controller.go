@@ -47,6 +47,7 @@ type Controller struct {
 	mu           sync.Mutex
 	states       map[string]*linkState
 	suppressed   map[string]string
+	knownRoutes  map[string]string
 	pausedUntil  time.Time
 	balanceDirty bool
 }
@@ -108,6 +109,7 @@ func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	c.suppressed = map[string]string{}
 	c.states = map[string]*linkState{}
+	c.knownRoutes = map[string]string{}
 	c.pausedUntil = time.Now().Add(15 * time.Second)
 	if err := c.save(); err != nil {
 		return err
@@ -115,6 +117,18 @@ func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := c.reconcileBalance(ctx, cfg); err != nil {
 		c.balanceDirty = cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "balance"
 		return err
+	}
+	for _, wan := range cfg.WANs {
+		if !wan.Enabled {
+			continue
+		}
+		line, err := c.defaultRoute(ctx, interfaceName(cfg, wan))
+		if err != nil {
+			return err
+		}
+		if line != "" {
+			c.knownRoutes[wan.ID] = line
+		}
 	}
 	c.balanceDirty = false
 	return nil
@@ -283,6 +297,9 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	if c.states == nil {
 		c.states = map[string]*linkState{}
 	}
+	if c.knownRoutes == nil {
+		c.knownRoutes = map[string]string{}
+	}
 	if c.suppressed == nil {
 		if err := c.load(); err != nil {
 			c.Logger.Warnf("Multi-WAN: состояние подавленных маршрутов не загружено: %v", err)
@@ -314,7 +331,6 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 			if cfg.MultiWAN.Mode == "failover" {
 				if err := c.refreshProbeRoute(ctx, wan, iface); err != nil {
 					c.Logger.Warnf("Multi-WAN: маршрут проверки %s: %v", wan.Name, err)
-					continue
 				}
 			}
 			ok := iface != "" && c.Probe(ctx, wan, iface)
@@ -346,6 +362,11 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 		delete(c.suppressed, id)
 		delete(c.states, id)
 		_ = c.save()
+	}
+	for id := range c.knownRoutes {
+		if !wanted[id] {
+			delete(c.knownRoutes, id)
+		}
 	}
 }
 
@@ -391,12 +412,18 @@ func (c *Controller) record(ctx context.Context, wan config.WAN, iface string, s
 		c.Logger.Warnf("Multi-WAN: маршрут %s: %v", wan.Name, err)
 		return false
 	}
+	live := line
+	if line == "" {
+		line = c.knownRoutes[wan.ID]
+	}
 	if line == "" {
 		return false
 	}
-	if _, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "del"}, strings.Fields(line)...)...); err != nil {
-		c.Logger.Warnf("Multi-WAN: отключение %s: %v", wan.Name, err)
-		return false
+	if live != "" {
+		if _, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "del"}, strings.Fields(line)...)...); err != nil {
+			c.Logger.Warnf("Multi-WAN: отключение %s: %v", wan.Name, err)
+			return false
+		}
 	}
 	c.suppressed[wan.ID] = line
 	state.Down = true
@@ -808,12 +835,20 @@ func (c *Controller) refreshProbeRoute(ctx context.Context, wan config.WAN, ifac
 		}
 		return err
 	}
+	if c.knownRoutes == nil {
+		c.knownRoutes = map[string]string{}
+	}
 	line, err := c.defaultRoute(ctx, iface)
 	if err != nil {
 		return err
 	}
 	if line == "" {
 		line = c.suppressed[wan.ID]
+	}
+	if line == "" {
+		line = c.knownRoutes[wan.ID]
+	} else {
+		c.knownRoutes[wan.ID] = line
 	}
 	if line == "" {
 		return nil
