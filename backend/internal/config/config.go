@@ -204,6 +204,8 @@ type Probe struct {
 	Enabled       bool     `json:"enabled"`
 	Type          string   `json:"type"` // icmp | tcp | http
 	Targets       []string `json:"targets"`
+	TCPRequest    string   `json:"tcp_request,omitempty"`
+	TCPResponse   string   `json:"tcp_response,omitempty"` // Required response prefix for an application-level TCP probe.
 	Interval      int      `json:"interval"`
 	Timeout       int      `json:"timeout"`
 	FailThreshold int      `json:"fail_threshold"`

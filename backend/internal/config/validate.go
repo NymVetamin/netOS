@@ -1013,6 +1013,9 @@ func (c *Config) validateWANs(r *ValidationResult) {
 			r.errf(path+".proto", "неизвестный тип подключения %q", w.Proto)
 		}
 		validateProbe(r, path+".probe", w.Probe)
+		if w.Probe.Enabled && (w.Probe.TCPRequest != "" || w.Probe.TCPResponse != "") {
+			r.errf(path+".probe", "проверка TCP с запросом и ответом доступна только для VPN-каналов")
+		}
 	}
 	if enabled == 0 && len(c.Networks) > 0 {
 		r.warnf("wans", "нет ни одного включённого аплинка — выхода в интернет не будет")
@@ -1042,6 +1045,12 @@ func (c *Config) validateWANs(r *ValidationResult) {
 func validateProbe(r *ValidationResult, path string, p Probe) {
 	if !p.Enabled {
 		return
+	}
+	if len(p.TCPRequest) > 4096 || len(p.TCPResponse) > 4096 {
+		r.errf(path+".tcp_response", "запрос и ожидаемый ответ TCP не должны превышать 4096 байт каждый")
+	}
+	if p.Type == "tcp" && p.TCPRequest != "" && p.TCPResponse == "" {
+		r.errf(path+".tcp_response", "укажите ожидаемое начало ответа TCP")
 	}
 	switch p.Type {
 	case "icmp", "tcp", "http":
@@ -2088,6 +2097,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		}
 		if ch.Type == "xray" {
 			c.validateXrayChannel(r, path, ch)
+			if ch.Probe.Enabled && ch.Probe.Type == "tcp" && ch.Probe.TCPResponse == "" {
+				r.errf(path+".probe.tcp_response", "для TCP через Xray нужно ожидаемое начало ответа удалённой службы; одно подключение к TUN не проверяет канал")
+			}
 			if ch.Probe.Enabled && ch.Probe.Type == "icmp" {
 				r.errf(path+".probe.type", "ICMP не проверяет доступность Xray: локальный TUN отвечает без VPN-сервера; выберите HTTP или TCP")
 			}

@@ -184,6 +184,9 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 	if ch.Type == "xray" && (ch.Probe.Type == "icmp" || ch.Probe.Type == "") {
 		return false
 	}
+	if ch.Type == "xray" && ch.Probe.Type == "tcp" && ch.Probe.TCPResponse == "" {
+		return false
+	}
 	timeout := ch.Probe.Timeout
 	if timeout <= 0 {
 		timeout = 3
@@ -198,7 +201,11 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 			if splitErr != nil {
 				continue
 			}
-			err = probeTCP(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second)
+			if ch.Probe.TCPResponse != "" {
+				err = probeTCPExchange(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second, ch.Probe.TCPRequest, ch.Probe.TCPResponse)
+			} else {
+				err = probeTCP(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second)
+			}
 		default:
 			family := "-4"
 			if ip := net.ParseIP(target); ip != nil && ip.To4() == nil {

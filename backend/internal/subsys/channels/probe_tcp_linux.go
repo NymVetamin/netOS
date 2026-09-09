@@ -14,7 +14,7 @@ import (
 // probeTCP only tests whether the TCP handshake succeeds. curl's telnet
 // handler waits for application data and therefore reports a healthy silent
 // service as a timeout. SO_BINDTODEVICE keeps the check inside the channel.
-func probeTCP(ctx context.Context, iface, address string, timeout time.Duration) error {
+func dialProbeTCP(ctx context.Context, iface, address string, timeout time.Duration) (net.Conn, error) {
 	dialer := net.Dialer{Timeout: timeout}
 	if iface != "" {
 		dialer.Control = func(_, _ string, raw syscall.RawConn) error {
@@ -27,9 +27,5 @@ func probeTCP(ctx context.Context, iface, address string, timeout time.Duration)
 			return sockErr
 		}
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return err
-	}
-	return confirmTCPHandshake(conn, timeout)
+	return dialer.DialContext(ctx, "tcp", address)
 }

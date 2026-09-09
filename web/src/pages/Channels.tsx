@@ -84,7 +84,7 @@ export function ChannelsPage({ config, patch }: Props) {
       draft.channels.push({
         id: newID("xray"), index, name: `Xray ${index}`, enabled: false,
         type: "xray", mode: "tun", fail_mode: "block", fallback: "",
-        probe: { enabled: true, type: "tcp", targets: ["1.1.1.1:443"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
+        probe: { enabled: true, type: "http", targets: ["https://www.cloudflare.com/cdn-cgi/trace"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: { mtu: 1400, outbound: { protocol: "vless", settings: { vnext: [] }, streamSettings: { network: "tcp", security: "none" } } },
       });
     });
@@ -198,6 +198,11 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
       {channel.probe?.enabled !== false && <>
         {channel.probe?.type === "icmp" && <Notice tone="warn" title="Выберите HTTP или TCP">ICMP получает локальный ответ Xray даже при недоступном VPN-сервере и не проверяет канал.</Notice>}
         <Field label="Тип проверки"><select value={channel.probe?.type || "tcp"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}>{channel.probe?.type === "icmp" && <option value="icmp" disabled>ICMP (недоступно для Xray)</option>}<option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
+        {channel.probe?.type === "tcp" && <>
+          <Notice tone="info" title="Нужен ответ удалённой службы">Укажите запрос, понятный выбранной службе, и ожидаемое начало её ответа. Если служба сама присылает приветствие, запрос можно оставить пустым. Молчание до таймаута считается отказом.</Notice>
+          <Field label="Запрос TCP" hint="Текст отправляется как введён, включая переводы строк. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_request || ""} onChange={(e) => update((draft) => draft.probe.tcp_request = e.target.value)} /></Field>
+          <Field label="Начало ответа TCP" hint="Обязательный точный текст в начале ответа удалённой службы. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_response || ""} onChange={(e) => update((draft) => draft.probe.tcp_response = e.target.value)} /></Field>
+        </>}
         <Field label="Цели" hint="По одной в строке"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field>
         <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => draft.probe.interval = Number(e.target.value))} /></Field>
         <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => draft.probe.timeout = Number(e.target.value))} /></Field>
