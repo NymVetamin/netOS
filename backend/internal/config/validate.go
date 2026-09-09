@@ -493,6 +493,7 @@ func (c *Config) validateComponents(r *ValidationResult) {
 func (c *Config) validateInterfaces(r *ValidationResult) {
 	names := map[string]bool{}
 	ids := map[string]bool{}
+	macOwners := map[string]string{}
 	for i, iface := range c.Interfaces {
 		path := fmt.Sprintf("interfaces[%d]", i)
 		if iface.ID == "" {
@@ -543,6 +544,10 @@ func (c *Config) validateInterfaces(r *ValidationResult) {
 				r.errf(path+".mac", "некорректный MAC-адрес")
 			} else if len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" {
 				r.errf(path+".mac", "нужен ненулевой индивидуальный Ethernet MAC-адрес из шести байтов")
+			} else if previous := macOwners[mac.String()]; previous != "" {
+				r.errf(path+".mac", "MAC-адрес %s уже задан интерфейсу %q", mac, previous)
+			} else {
+				macOwners[mac.String()] = iface.Name
 			}
 		}
 	}

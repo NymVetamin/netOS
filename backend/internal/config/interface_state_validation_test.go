@@ -36,3 +36,19 @@ func TestInterfaceMACRejectsUnusableEthernetAddresses(t *testing.T) {
 		}
 	}
 }
+
+func TestInterfaceMACRejectsDuplicateOverrides(t *testing.T) {
+	cfg := Default()
+	cfg.Interfaces = []Interface{
+		{ID: "first", Name: "eth0", Type: "physical", MAC: "02:91:13:00:00:06", Enabled: true},
+		{ID: "second", Name: "eth1", Type: "physical", MAC: "02-91-13-00-00-06", Enabled: true},
+	}
+	if !hasRemainingProblem(cfg, "interfaces[1].mac", "error") {
+		t.Fatal("duplicate interface MAC overrides accepted")
+	}
+
+	cfg.Interfaces[1].MAC = "02:91:13:00:00:07"
+	if hasRemainingProblem(cfg, "interfaces[1].mac", "error") {
+		t.Fatal("distinct interface MAC overrides rejected")
+	}
+}
