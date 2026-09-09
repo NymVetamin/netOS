@@ -171,9 +171,10 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 		}
 	}
 	apReady, info := s.radioRuntimeMatches(ctx, cfg, radio)
+	powerTarget := radioPowerTarget(info, radio.Device)
 	switch {
 	case radio.TxPower > 0 && !txPowerMatches(info, radio.TxPower):
-		if _, err := s.Runner.Run(ctx, "iw", "dev", radio.Device, "set", "txpower", "fixed", fmt.Sprint(radio.TxPower*100)); err != nil {
+		if _, err := s.Runner.Run(ctx, "iw", append(powerTarget, "set", "txpower", "fixed", fmt.Sprint(radio.TxPower*100))...); err != nil {
 			return fmt.Errorf("мощность передатчика: %w", err)
 		}
 	case radio.TxPower == 0:
@@ -184,7 +185,7 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 		// Отказ драйвера вернуться в автоматический режим не повод откатывать
 		// всю конфигурацию: мощность — не связность, а команда идемпотентна и
 		// повторится при следующем применении.
-		_, _ = s.Runner.Run(ctx, "iw", "dev", radio.Device, "set", "txpower", "auto")
+		_, _ = s.Runner.Run(ctx, "iw", append(powerTarget, "set", "txpower", "auto")...)
 	}
 	if changed {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -211,6 +212,23 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 		}
 	}
 	return nil
+}
+
+// Power belongs to the radio, including all its BSSes. Per-interface changes
+// can leave mac80211's shared hardware power unchanged until a channel restart.
+// Address the wiphy by index: its name can differ from the usual "phyN".
+func radioPowerTarget(info, device string) []string {
+	for _, line := range strings.Split(info, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "wiphy" {
+			if index, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+				return []string{fmt.Sprintf("phy#%d", index)}
+			}
+		}
+	}
+	// An unavailable interface may not have supplied an identity yet. Keep
+	// the command scoped to that device so its normal startup error is retained.
+	return []string{"dev", device}
 }
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
