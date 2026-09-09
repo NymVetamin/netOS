@@ -204,7 +204,7 @@ export function DiagnosticsPage() {
             <div>
               <h2>{tabs.find((t) => t.id === tab)?.title}</h2>
               <div className="sub">
-                {tab === ROUTES ? "Снято с живой системы" : "Сгенерировано из текущей конфигурации"}
+                {tab === ROUTES ? "Снято с живой системы" : "Сгенерировано из текущей конфигурации. Секреты скрыты."}
               </div>
             </div>
             <button className="btn sm" onClick={copyContent} disabled={pending || !!error}>

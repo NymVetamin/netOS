@@ -1559,6 +1559,11 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "неизвестный артефакт")
 		return
 	}
+	cfg, err := diagnosticConfig(cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось подготовить диагностику")
+		return
+	}
 	content, err := render.Render(kind, cfg)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
