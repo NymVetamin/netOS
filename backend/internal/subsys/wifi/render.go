@@ -105,7 +105,22 @@ func boolInt(value bool) int {
 	return 0
 }
 
-func renderUnit(radio config.WiFiRadio, conf string) string {
+func renderUnit(radio config.WiFiRadio, conf string, cfg *config.Config) string {
+	// hostapd creates a missing bridge itself and removes it on shutdown.
+	// At boot it can race netOS interface setup, so require every segment
+	// bridge to exist before letting hostapd take control of the radio.
+	var prerequisites strings.Builder
+	seen := map[string]bool{}
+	for _, ssid := range radio.SSIDs {
+		if !ssid.Enabled {
+			continue
+		}
+		bridge := bridgeFor(cfg, ssid)
+		if bridge != "" && !seen[bridge] {
+			fmt.Fprintf(&prerequisites, "ExecStartPre=/usr/bin/test -d /sys/class/net/%s/bridge\n", bridge)
+			seen[bridge] = true
+		}
+	}
 	return `[Unit]
 Description=netOS: Wi-Fi access point ` + radio.Device + `
 After=network.target
@@ -114,7 +129,7 @@ After=network.target
 Type=simple
 RuntimeDirectory=netos-hostapd-` + radioToken(radio.ID) + `
 RuntimeDirectoryMode=0755
-ExecStart=/usr/sbin/hostapd ` + conf + `
+` + prerequisites.String() + `ExecStart=/usr/sbin/hostapd ` + conf + `
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

@@ -156,7 +156,7 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 	if err != nil {
 		return err
 	}
-	unit := []byte(renderUnit(radio, confPath))
+	unit := []byte(renderUnit(radio, confPath, cfg))
 	confReady := wifiFileReady(confPath, conf, 0o600)
 	unitReady := wifiFileReady(unitPath, unit, 0o644)
 	changed := !confReady || !unitReady
@@ -238,7 +238,7 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 		if err != nil {
 			return err
 		}
-		unit := []byte(renderUnit(radio, confPath))
+		unit := []byte(renderUnit(radio, confPath, cfg))
 		if !wifiFileReady(confPath, conf, 0o600) || !wifiFileReady(unitPath, unit, 0o644) {
 			return fmt.Errorf("артефакты hostapd для %s не соответствуют конфигурации", radio.Device)
 		}
