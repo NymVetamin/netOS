@@ -64,6 +64,11 @@ func (r *wanIdempotencyRunner) Run(_ context.Context, name string, args ...strin
 		case "disable":
 			r.active[unit], r.enabled[unit] = false, false
 		}
+		if unit == "netos-dhcp-eth-test.service" && (args[0] == "restart" || (args[0] == "enable" && len(args) > 1 && args[1] == "--now")) {
+			r.addresses["192.0.2.12/24"] = true
+			r.defaultRoute = "default via 192.0.2.1 dev eth-test proto dhcp metric 20\n"
+			return "", os.WriteFile(filepath.Join(dhcpRuntimeDir, "netos-dhcp-eth-test.address"), []byte("192.0.2.12/24\n"), 0o600)
+		}
 		return "", nil
 	}
 	switch {
@@ -108,6 +113,9 @@ func (r *wanApplyMatrixRunner) Run(_ context.Context, name string, args ...strin
 	if r.failAt != "" && strings.Contains(command, r.failAt) {
 		return "", errors.New("injected failure")
 	}
+	if command == "ip -4 -o addr show dev eth-test" && r.active["netos-dhcp-eth-test.service"] {
+		return "2: eth-test inet 192.0.2.12/24 scope global eth-test\n", nil
+	}
 	if name != "systemctl" || len(args) == 0 {
 		return "", nil
 	}
@@ -126,6 +134,9 @@ func (r *wanApplyMatrixRunner) Run(_ context.Context, name string, args ...strin
 		r.active[unit] = true
 	case "disable":
 		r.active[unit] = false
+	}
+	if unit == "netos-dhcp-eth-test.service" && (args[0] == "restart" || (args[0] == "enable" && len(args) > 1 && args[1] == "--now")) {
+		return "", os.WriteFile(filepath.Join(dhcpRuntimeDir, "netos-dhcp-eth-test.address"), []byte("192.0.2.12/24\n"), 0o600)
 	}
 	return "", nil
 }

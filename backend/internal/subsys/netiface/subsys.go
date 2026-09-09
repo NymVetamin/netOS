@@ -1139,7 +1139,21 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := s.syncStaticRouteOwnership(ctx, staticWanted); err != nil {
 		return err
 	}
-	return s.syncLNSRouteOwnership(ctx)
+	if err := s.syncLNSRouteOwnership(ctx); err != nil {
+		return err
+	}
+	// The apply engine configures dependent routing before its final Health
+	// pass. Starting udhcpc only starts lease acquisition: do not let routing
+	// use a gateway until the lease is present in the kernel. Check after
+	// removing former static addresses, which can also affect connected routes.
+	for _, w := range cfg.WANs {
+		if w.Enabled && (w.Proto == "dhcp" || (w.Proto == "l2tp" && w.Underlay != "static")) {
+			if err := s.waitDHCP(ctx, ifaceName[w.Interface], w.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *WAN) setWANMTU(ctx context.Context, w config.WAN, name string, mtu int) error {
