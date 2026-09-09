@@ -58,6 +58,7 @@ func (c *Config) Validate() *ValidationResult {
 	}
 
 	c.validateObjectIDs(r)
+	c.validateHumanText(r)
 	c.validateSystem(r)
 	c.validateComponents(r)
 	c.validateInterfaces(r)
@@ -76,6 +77,97 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateDDNS(r)
 
 	return r
+}
+
+const (
+	maxHumanNameBytes    = 256
+	maxHumanCommentBytes = 1024
+)
+
+// validateHumanText keeps labels shown in one-line form controls representable
+// byte-for-byte. Browsers strip CR/LF from <input> values, so accepting those
+// characters in the API makes the stored value differ from what the operator
+// can see and edit. Explicit limits also avoid silently truncating labels in
+// generated firewall comments and service diagnostics.
+func (c *Config) validateHumanText(r *ValidationResult) {
+	check := func(path, value string, limit int) {
+		if value == "" {
+			return
+		}
+		if unsafeConfigText(value) {
+			r.errf(path, "значение не должно начинаться или заканчиваться пробелами либо содержать управляющие символы")
+			return
+		}
+		if len(value) > limit {
+			r.errf(path, "значение не должно превышать %d байт", limit)
+		}
+	}
+	name := func(path, value string) { check(path, value, maxHumanNameBytes) }
+	comment := func(path, value string) { check(path, value, maxHumanCommentBytes) }
+
+	for i, value := range c.Networks {
+		name(fmt.Sprintf("networks[%d].name", i), value.Name)
+	}
+	for i, value := range c.WANs {
+		name(fmt.Sprintf("wans[%d].name", i), value.Name)
+		name(fmt.Sprintf("wans[%d].service", i), value.Service)
+		name(fmt.Sprintf("wans[%d].ac", i), value.AC)
+	}
+	for i, value := range c.Routing.Static {
+		name(fmt.Sprintf("routing.static[%d].name", i), value.Name)
+		comment(fmt.Sprintf("routing.static[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.Routing.Tables {
+		comment(fmt.Sprintf("routing.tables[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.Routing.Rules {
+		name(fmt.Sprintf("routing.rules[%d].name", i), value.Name)
+		comment(fmt.Sprintf("routing.rules[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.Firewall.Zones {
+		name(fmt.Sprintf("firewall.zones[%d].title", i), value.Title)
+		comment(fmt.Sprintf("firewall.zones[%d].description", i), value.Description)
+	}
+	for i, value := range c.Firewall.Rules {
+		name(fmt.Sprintf("firewall.rules[%d].name", i), value.Name)
+		comment(fmt.Sprintf("firewall.rules[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.Firewall.NAT {
+		name(fmt.Sprintf("firewall.nat[%d].name", i), value.Name)
+		comment(fmt.Sprintf("firewall.nat[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.DHCP.Reservations {
+		comment(fmt.Sprintf("dhcp.reservations[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.DNS.Upstreams {
+		comment(fmt.Sprintf("dns.upstreams[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.DNS.Blocklists {
+		name(fmt.Sprintf("dns.blocklists[%d].name", i), value.Name)
+	}
+	for i, value := range c.Clients {
+		name(fmt.Sprintf("clients[%d].name", i), value.Name)
+		comment(fmt.Sprintf("clients[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.Channels {
+		name(fmt.Sprintf("channels[%d].name", i), value.Name)
+	}
+	for i, value := range c.Policies {
+		name(fmt.Sprintf("policies[%d].name", i), value.Name)
+		comment(fmt.Sprintf("policies[%d].comment", i), value.Comment)
+	}
+	for i, value := range c.VPNServers {
+		name(fmt.Sprintf("vpn_servers[%d].name", i), value.Name)
+		for j, peer := range value.Peers {
+			name(fmt.Sprintf("vpn_servers[%d].peers[%d].name", i, j), peer.Name)
+			comment(fmt.Sprintf("vpn_servers[%d].peers[%d].comment", i, j), peer.Comment)
+		}
+	}
+	for i, radio := range c.WiFi {
+		for j, ssid := range radio.SSIDs {
+			check(fmt.Sprintf("wifi[%d].ssids[%d].ssid", i, j), ssid.SSID, 32)
+		}
+	}
 }
 
 // validateObjectIDs applies one conservative syntax to identifiers that are
