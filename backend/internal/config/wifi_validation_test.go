@@ -54,6 +54,31 @@ func TestWiFiAcceptsStandardPrimaryChannels(t *testing.T) {
 	}
 }
 
+func TestWiFiCountryCodes(t *testing.T) {
+	for _, country := range []string{"ZZ", "AA", "EU", "QO", "XX", "00", "USA", "A[", ""} {
+		t.Run("reject_"+country, func(t *testing.T) {
+			cfg := validWiFiSecurityConfig()
+			cfg.WiFi[0].Country = country
+			result := cfg.Validate()
+			for _, problem := range result.Problems {
+				if problem.Path == "wifi[0].country" && problem.Severity == "error" {
+					return
+				}
+			}
+			t.Fatalf("unassigned or non-country code %q accepted: %+v", country, result.Problems)
+		})
+	}
+	for _, country := range []string{"FI", "RU", "US", "GB", "JP", "DE", "XK", "fi"} {
+		t.Run("accept_"+country, func(t *testing.T) {
+			cfg := validWiFiSecurityConfig()
+			cfg.WiFi[0].Country = country
+			if result := cfg.Validate(); result.HasErrors() {
+				t.Fatalf("country %q rejected: %+v", country, result.Problems)
+			}
+		})
+	}
+}
+
 func TestWiFiRejectsEnabledSSIDOnDisabledSegment(t *testing.T) {
 	cfg := validWiFiSecurityConfig()
 	cfg.Networks[0].Enabled = false

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/net/publicsuffix"
+	"golang.org/x/text/language"
 )
 
 // Problem — одна найденная проблема конфигурации. Path указывает на поле в
@@ -2874,6 +2875,11 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 		}
 		if len(radio.Country) != 2 || !asciiLetter(radio.Country[0]) || !asciiLetter(radio.Country[1]) {
 			r.errf(path+".country", "нужен двухбуквенный код страны")
+		} else if region, err := language.ParseRegion(radio.Country); err != nil || !region.IsCountry() {
+			// Two letters alone also admit unassigned codes such as ZZ and
+			// regional groups such as EU. hostapd can still start with these
+			// while the kernel retains a different regulatory domain.
+			r.errf(path+".country", "неизвестный код страны — укажите код страны, например RU или FI")
 		}
 		if radio.TxPower < 0 || radio.TxPower > 40 {
 			r.errf(path+".tx_power", "мощность должна быть в диапазоне 0-40 dBm")
