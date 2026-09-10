@@ -57,4 +57,12 @@ func TestRenderXrayRealityServerAndPeerChannel(t *testing.T) {
 	if strings.Contains(text, "223e4567") {
 		t.Fatal("disabled peer rendered into Xray config")
 	}
+	for _, raw := range document["outbounds"].([]any) {
+		outbound := raw.(map[string]any)
+		settings := outbound["settings"].(map[string]any)
+		finalRules := settings["finalRules"].([]any)
+		if len(finalRules) != 1 || finalRules[0].(map[string]any)["action"] != "allow" {
+			t.Fatalf("authenticated Reality outbound %q retains Xray's implicit private-address block: %#v", outbound["tag"], settings)
+		}
+	}
 }

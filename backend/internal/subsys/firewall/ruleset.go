@@ -670,7 +670,10 @@ func (b *builder) dnsChannelPolicies(cfg *config.Config) {
 	if len(bindings) == 0 {
 		return
 	}
-	b.line("-A OUTPUT -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
+	// Preserve an explicit SO_MARK set by local services (for example Xray
+	// Reality per-client outbounds). Restoring an empty connmark
+	// unconditionally would erase that channel selection before policy routing.
+	b.line("-A OUTPUT -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark")
 	for _, binding := range bindings {
 		ch, ok := channelByID[binding.ChannelID]
 		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray") {

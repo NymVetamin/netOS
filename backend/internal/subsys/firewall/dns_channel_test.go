@@ -41,7 +41,7 @@ func TestDNSUpstreamIsMarkedForItsChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"-A OUTPUT -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark",
+		"-A OUTPUT -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark",
 		"-d 1.1.1.1 -p udp --dport 53",
 		"-d 1.1.1.1 -p tcp --dport 53",
 		"--set-mark 0x1007",
@@ -51,6 +51,25 @@ func TestDNSUpstreamIsMarkedForItsChannel(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, rules.IPv4)
 		}
 	}
+}
+
+func TestDNSConnmarkRestorePreservesLocalSocketChannelMark(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = append(cfg.Channels, config.Channel{ID: "wg-dns", Index: 7, Enabled: true, Type: "wireguard"})
+	cfg.DNS.Upstreams = []config.Upstream{{ID: "dns", Type: "plain", Address: "1.1.1.1", Channel: "wg-dns", Enabled: true}}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(rules.IPv4, "\n") {
+		if strings.HasPrefix(line, "-A OUTPUT ") && strings.Contains(line, "--ctdir ORIGINAL") && strings.Contains(line, "CONNMARK --restore-mark") {
+			if !strings.Contains(line, "-m mark --mark 0") {
+				t.Fatalf("OUTPUT connmark restore can erase an explicit SO_MARK: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("missing OUTPUT connmark restore")
 }
 
 func TestForwardedICMPErrorsDoNotInheritChannelOutputRoute(t *testing.T) {

@@ -29,7 +29,12 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 		return nil, err
 	}
 	clients := make([]any, 0, len(server.Peers))
-	outbounds := []any{map[string]any{"tag": "direct", "protocol": "freedom", "settings": map[string]any{}}}
+	// Xray applies an implicit private/reserved-address block to freedom
+	// outbounds used by VLESS servers. Reality here is an authenticated VPN
+	// entry point, so netOS firewall policy is the authority for reachable
+	// destinations, just as it is for WireGuard and the other VPN servers.
+	freedomSettings := map[string]any{"finalRules": []any{map[string]any{"action": "allow"}}}
+	outbounds := []any{map[string]any{"tag": "direct", "protocol": "freedom", "settings": freedomSettings}}
 	rules := []any{}
 	channelByID := map[string]config.Channel{}
 	for _, channel := range cfg.Channels {
@@ -43,7 +48,7 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 			tag := "channel-" + channel.ID
 			if !tags[tag] {
 				outbounds = append(outbounds, map[string]any{
-					"tag": tag, "protocol": "freedom", "settings": map[string]any{},
+					"tag": tag, "protocol": "freedom", "settings": freedomSettings,
 					"streamSettings": map[string]any{"sockopt": map[string]any{"mark": channels.Mark(channel)}},
 				})
 				tags[tag] = true
