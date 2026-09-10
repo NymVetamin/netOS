@@ -71,9 +71,10 @@ func TestIntegrationInterfacesFullLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSysfsValue(t, "/sys/class/net/qabr0/bridge/stp_state", "1")
+	assertSysfsValue(t, "/sys/class/net/qabr0/bridge/forward_delay", "200")
 	// STP transitions through listening and learning before the carrier port
-	// forwards: two default forward-delay intervals (15 seconds each).
-	deadline := time.Now().Add(40 * time.Second)
+	// forwards: two configured two-second forward-delay intervals.
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile("/sys/class/net/qae0/carrier")
 		if err == nil && strings.TrimSpace(string(data)) == "1" {

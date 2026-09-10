@@ -148,10 +148,6 @@ func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface confi
 		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", iface.Name, "type", "bridge"); err != nil {
 			return fmt.Errorf("создание бриджа %s: %w", iface.Name, err)
 		}
-		// STP защищает от петли, если кто-то соединит два порта одного бриджа.
-		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "type", "bridge", "stp_state", "1"); err != nil {
-			return fmt.Errorf("включение STP на %s: %w", iface.Name, err)
-		}
 	case "vlan":
 		parent := cfg.InterfaceName(iface.Parent)
 		if parent == "" {
@@ -183,6 +179,17 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 	if iface.MTU > 0 {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "mtu", fmt.Sprint(iface.MTU)); err != nil {
 			return fmt.Errorf("установка MTU для %s: %w", iface.Name, err)
+		}
+	}
+	if iface.Type == "bridge" {
+		// STP protects against loops, while the kernel's 15-second default
+		// forward delay leaves wired clients offline for roughly 30 seconds
+		// after every boot. Use the same two-second minimum emitted by the
+		// systemd-networkd and ifupdown renderers. Apply it to existing bridges
+		// too, so upgrades repair the live setting without recreating the link.
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "type", "bridge",
+			"stp_state", "1", "forward_delay", "200"); err != nil {
+			return fmt.Errorf("настройка STP на %s: %w", iface.Name, err)
 		}
 	}
 	// Пустое поле означает «заводской адрес», и вернуть его обязаны мы: пока

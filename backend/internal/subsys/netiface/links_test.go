@@ -319,3 +319,18 @@ func TestMembersAndParentAreResolvedToNames(t *testing.T) {
 		t.Fatalf("в команды ip попал идентификатор вместо имени: %v", runner.commands)
 	}
 }
+
+func TestExistingBridgeGetsShortSTPForwardDelay(t *testing.T) {
+	newFakeNet(t, "lan:bridge")
+	runner := &linkRunner{}
+	s := &Interfaces{Runner: runner, OwnedPath: ownedFile(t, "lan")}
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "if-br", Name: "lan", Type: "bridge", Enabled: true}}
+
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.has("ip link set lan type bridge stp_state 1 forward_delay 200") {
+		t.Fatalf("мост не получил короткую задержку STP: %v", runner.commands)
+	}
+}
