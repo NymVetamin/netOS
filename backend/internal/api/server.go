@@ -75,6 +75,7 @@ type Server struct {
 	challengeServer   *http.Server
 	Listen            func(network, address string) (net.Listener, error)
 	ACMEFactory       acmeManagerFactory
+	ACMEWaitDNS       func(context.Context, string) error
 	ACMEHTTPAddress   string
 	ACMECheckInterval time.Duration
 	Ready             func() error
@@ -106,6 +107,7 @@ func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, lo
 		Logger:            logger,
 		Listen:            net.Listen,
 		ACMEFactory:       newProductionACMEManager,
+		ACMEWaitDNS:       waitForACMEDNS,
 		ACMEHTTPAddress:   ":80",
 		ACMECheckInterval: 6 * time.Hour,
 		csrfTokens:        map[string]string{},
@@ -260,6 +262,13 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 			return fmt.Errorf("проверка пользовательского сертификата: %w", err)
 		}
 	case "acme":
+		waitDNS := s.ACMEWaitDNS
+		if waitDNS == nil {
+			waitDNS = waitForACMEDNS
+		}
+		if err := waitDNS(ctx, cfg.System.Panel.TLS.Domain); err != nil {
+			return err
+		}
 		factory := s.ACMEFactory
 		if factory == nil {
 			factory = newProductionACMEManager

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -127,4 +128,32 @@ func prefetchACMECertificateContext(ctx context.Context, manager acmeCertificate
 	case result := <-done:
 		return result.cert, result.err
 	}
+}
+
+var (
+	acmeDNSLookup   = net.DefaultResolver.LookupHost
+	acmeDNSAttempts = 12
+	acmeDNSDelay    = time.Second
+)
+
+func waitForACMEDNS(ctx context.Context, domain string) error {
+	var lastErr error
+	for attempt := 0; attempt < acmeDNSAttempts; attempt++ {
+		if _, err := acmeDNSLookup(ctx, domain); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt+1 == acmeDNSAttempts {
+			break
+		}
+		timer := time.NewTimer(acmeDNSDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("ACME DNS readiness for %s: %w", domain, lastErr)
 }

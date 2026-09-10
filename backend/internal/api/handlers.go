@@ -860,6 +860,11 @@ func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) 
 			next.Firewall.Rules[i].DstPort = strconv.Itoa(input.Panel.Port)
 		}
 	}
+	// ACME HTTP-01 must be reachable before the replacement daemon starts:
+	// startup applies this prepared revision, then requests the certificate.
+	// Normalization also removes the temporary system rule when TLS mode changes
+	// back to custom or self-signed.
+	next.EnsureSystemRules()
 	if result := next.Validate(); result.HasErrors() {
 		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{
 			Error: "параметры панели содержат ошибки", Problems: result.Problems,

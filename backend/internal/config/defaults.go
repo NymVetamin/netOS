@@ -146,6 +146,7 @@ const (
 	RuleInvalidFwd     = "sys-invalid-fwd"
 	RuleSSH            = "sys-ssh"
 	RulePanel          = "sys-panel"
+	RuleACME           = "sys-acme"
 	RuleICMP           = "sys-icmp"
 	RuleDHCP           = "sys-dhcp"
 	RuleDNSUDP         = "sys-dns-udp"
@@ -155,8 +156,8 @@ const (
 
 // systemRules возвращает эталонный набор в том порядке, в каком он должен
 // стоять в начале списка.
-func systemRules(panelPort int) []FirewallRule {
-	return []FirewallRule{
+func systemRules(panelPort int, acme bool) []FirewallRule {
+	rules := []FirewallRule{
 		{
 			ID: RuleLoopback, Name: "Локальная петля", System: true, Enabled: true,
 			Zone: "global", Flow: "in", Action: "accept", Interface: "lo",
@@ -219,6 +220,14 @@ func systemRules(panelPort int) []FirewallRule {
 			Comment: "Разрешение пропускать пакеты. Адреса при этом не меняются — за подмену отвечает отдельное правило трансляции.",
 		},
 	}
+	if acme {
+		rules = append([]FirewallRule{{
+			ID: RuleACME, Name: "Проверка домена ACME", System: true, Enabled: true,
+			Zone: "global", Flow: "in", Action: "accept", Protocol: "tcp", DstPort: "80",
+			Comment: "HTTP-01 проверяет домен и продлевает сертификат панели в режиме ACME.",
+		}}, rules...)
+	}
+	return rules
 }
 
 // EnsureSystemRules достраивает недостающие системные правила и держит в
@@ -227,6 +236,18 @@ func systemRules(panelPort int) []FirewallRule {
 // Пользовательские правки сохраняются: выключенное правило останется
 // выключенным, суженный список источников — суженным.
 func (c *Config) EnsureSystemRules() {
+	// HTTP-01 нужен и при первом выпуске, и при каждом продлении сертификата.
+	// Правило полностью принадлежит режиму ACME: пересоздаём его канонически,
+	// чтобы его нельзя было случайно оставить после смены TLS-режима или
+	// сохранить выключенным, отрезав автоматическое продление.
+	withoutACME := c.Firewall.Rules[:0]
+	for _, rule := range c.Firewall.Rules {
+		if rule.ID != RuleACME {
+			withoutACME = append(withoutACME, rule)
+		}
+	}
+	c.Firewall.Rules = withoutACME
+
 	existing := map[string]int{}
 	for i, r := range c.Firewall.Rules {
 		if r.System {
@@ -235,7 +256,7 @@ func (c *Config) EnsureSystemRules() {
 	}
 
 	var missing []FirewallRule
-	for _, want := range systemRules(c.System.Panel.Port) {
+	for _, want := range systemRules(c.System.Panel.Port, c.System.Panel.TLS.Mode == "acme") {
 		idx, ok := existing[want.ID]
 		if !ok {
 			missing = append(missing, want)

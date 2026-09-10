@@ -57,6 +57,26 @@ func (m *fakeACMEManager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certi
 	return &cert, nil
 }
 
+func TestACMEWaitsForLocalDNSBeforeCreatingManager(t *testing.T) {
+	oldLookup, oldAttempts, oldDelay := acmeDNSLookup, acmeDNSAttempts, acmeDNSDelay
+	defer func() { acmeDNSLookup, acmeDNSAttempts, acmeDNSDelay = oldLookup, oldAttempts, oldDelay }()
+	lookups := 0
+	acmeDNSLookup = func(_ context.Context, host string) ([]string, error) {
+		lookups++
+		if lookups == 1 {
+			return nil, &net.DNSError{Err: "server misbehaving", Name: host, Server: "127.0.0.1:53"}
+		}
+		return []string{"192.0.2.1"}, nil
+	}
+	acmeDNSAttempts, acmeDNSDelay = 3, time.Millisecond
+	if err := waitForACMEDNS(context.Background(), "router.acme-valid.com"); err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 2 {
+		t.Fatalf("DNS lookups=%d, want 2", lookups)
+	}
+}
+
 func TestACMEIssuanceHonorsDaemonCancellation(t *testing.T) {
 	manager := newFakeACMEManager(t)
 	blocked := make(chan struct{})
@@ -65,6 +85,7 @@ func TestACMEIssuanceHonorsDaemonCancellation(t *testing.T) {
 	cfg.System.Panel.Port = freeTCPPort(t)
 	cfg.System.Panel.TLS = config.TLS{Mode: "acme", Domain: "router.acme-valid.com", AcceptTOS: true}
 	s := New(nil, nil, nil, &lifecycleLogger{})
+	s.ACMEWaitDNS = func(context.Context, string) error { return nil }
 	s.ACMEHTTPAddress = "127.0.0.1:0"
 	s.ACMEFactory = func(_, _, _ string) (acmeCertificateManager, error) { return manager, nil }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,6 +134,7 @@ func TestACMEPanelIssuesBeforeReadyAndServesTLS(t *testing.T) {
 	manager := newFakeACMEManager(t)
 	logger := &lifecycleLogger{}
 	s := New(nil, nil, nil, logger)
+	s.ACMEWaitDNS = func(context.Context, string) error { return nil }
 	s.ACMEHTTPAddress = "127.0.0.1:0"
 	s.ACMECheckInterval = 10 * time.Millisecond
 	var factoryCache, factoryDomain, factoryEmail string
@@ -245,6 +267,7 @@ func TestACMEIssuanceFailureNeverSignalsReadyAndReleasesChallengePort(t *testing
 	cfg.System.Panel.Port = freeTCPPort(t)
 	cfg.System.Panel.TLS = config.TLS{Mode: "acme", Domain: "router.acme-valid.com", AcceptTOS: true}
 	s := New(nil, nil, nil, &lifecycleLogger{})
+	s.ACMEWaitDNS = func(context.Context, string) error { return nil }
 	s.ACMEHTTPAddress = address
 	s.ACMEFactory = func(_, _, _ string) (acmeCertificateManager, error) { return manager, nil }
 	ready := false
@@ -271,6 +294,7 @@ func TestACMEChallengeCollisionFailsBeforeIssuance(t *testing.T) {
 	cfg.System.Panel.Port = freeTCPPort(t)
 	cfg.System.Panel.TLS = config.TLS{Mode: "acme", Domain: "router.acme-valid.com", AcceptTOS: true}
 	s := New(nil, nil, nil, &lifecycleLogger{})
+	s.ACMEWaitDNS = func(context.Context, string) error { return nil }
 	s.ACMEHTTPAddress = occupied.Addr().String()
 	s.ACMEFactory = func(_, _, _ string) (acmeCertificateManager, error) { return manager, nil }
 	err = s.Start(context.Background(), cfg, t.TempDir())

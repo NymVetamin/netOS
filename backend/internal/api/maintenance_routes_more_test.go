@@ -181,6 +181,15 @@ func TestPanelMaintenanceAcceptsCompleteACMEAndPreflightsHTTPPort(t *testing.T) 
 	if err != nil || prepared.Config.System.Panel.TLS.Domain != "router.acme-valid.com" || !prepared.Config.System.Panel.TLS.AcceptTOS {
 		t.Fatalf("prepared ACME revision=%+v err=%v", prepared, err)
 	}
+	var challengeRule bool
+	for _, rule := range prepared.Config.Firewall.Rules {
+		if rule.ID == "sys-acme" && rule.System && rule.Enabled && rule.Protocol == "tcp" && rule.DstPort == "80" {
+			challengeRule = true
+		}
+	}
+	if !challengeRule {
+		t.Fatal("prepared ACME revision does not allow the HTTP-01 challenge through the firewall")
+	}
 
 	// A foreign listener on port 80 is rejected before a revision is prepared.
 	s2, cookie2, csrf2 := newAuthedServer(t)
