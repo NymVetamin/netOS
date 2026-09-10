@@ -72,6 +72,10 @@ func coreGroups(cfg *config.Config) []group {
 					"нестрогая проверка обратного пути: строгая ломает policy-routing —\n" +
 						"ответный пакет, пришедший через другой канал, отбрасывался бы как подделка"},
 				{"net.ipv4.conf.default.rp_filter", "2", ""},
+				{"net.ipv4.conf.all.src_valid_mark", "1",
+					"учитывать fwmark при проверке обратного пути: иначе ответы на помеченные\n" +
+						"Multi-WAN соединения по PPP отбрасываются даже при нестрогом rp_filter"},
+				{"net.ipv4.conf.default.src_valid_mark", "1", ""},
 			},
 		},
 		{

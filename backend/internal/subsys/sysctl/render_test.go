@@ -20,6 +20,7 @@ func TestGeneratedFileExplainsItself(t *testing.T) {
 		"# ===== Маршрутизация =====",
 		"# ===== Управление перегрузкой =====",
 		"net.ipv4.ip_forward = 1",
+		"net.ipv4.conf.all.src_valid_mark = 1",
 		"net.ipv4.tcp_congestion_control = bbr",
 		"netos render sysctl",
 	} {
