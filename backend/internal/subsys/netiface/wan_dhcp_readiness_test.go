@@ -79,3 +79,70 @@ func TestWANApplyWaitsForDHCPAddressBeforeDependentSubsystems(t *testing.T) {
 		})
 	}
 }
+
+type delayedPPPRunner struct {
+	wanApplyMatrixRunner
+	polls      int
+	readyAfter int
+}
+
+func (r *delayedPPPRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if name == "ip" && strings.Join(args, " ") == "-4 -o addr show dev ppp-wan-test" {
+		r.polls++
+		if r.readyAfter > 0 && r.polls >= r.readyAfter {
+			return "9: ppp-wan-test inet 203.0.113.18 peer 203.0.113.17/32 scope global\n", nil
+		}
+		return "", nil
+	}
+	return r.wanApplyMatrixRunner.Run(ctx, name, args...)
+}
+
+func (r *delayedPPPRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+func TestWANApplyWaitsForPPPSessionBeforeDependentSubsystems(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		readyAfter int
+		wantError  bool
+	}{
+		{"delayed session", 3, false}, {"session never appears", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newFakeNet(t, "eth-test")
+			root := t.TempDir()
+			oldScripts, oldRuntime, oldUnits, oldConfs := dhcpScriptDir, dhcpRuntimeDir, systemdUnitDir, pppoeConfDir
+			dhcpScriptDir, dhcpRuntimeDir, systemdUnitDir = filepath.Join(root, "generated"), filepath.Join(root, "run"), filepath.Join(root, "units")
+			pppoeConfDir = dhcpScriptDir
+			t.Cleanup(func() {
+				dhcpScriptDir, dhcpRuntimeDir, systemdUnitDir, pppoeConfDir = oldScripts, oldRuntime, oldUnits, oldConfs
+			})
+			for _, dir := range []string{dhcpScriptDir, dhcpRuntimeDir, systemdUnitDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := &delayedPPPRunner{wanApplyMatrixRunner: wanApplyMatrixRunner{active: map[string]bool{}}, readyAfter: tc.readyAfter}
+			s := NewWAN(runner)
+			s.OwnedAddressPath, s.OwnedRoutePath, s.OwnedLNSRoutePath = filepath.Join(root, "addresses.json"), filepath.Join(root, "routes.json"), filepath.Join(root, "lns.json")
+			s.PPPoETimeout, s.PPPoePoll = 30*time.Millisecond, time.Millisecond
+			cfg := config.Default()
+			cfg.Interfaces = []config.Interface{{ID: "if-test", Name: "eth-test", Type: "physical", Enabled: true}}
+			cfg.WANs = []config.WAN{{ID: "wan-test", Name: "Delayed PPPoE", Interface: "if-test", Enabled: true, Proto: "pppoe", Username: "subscriber", Password: "secret", Metric: 200}}
+			err := s.Apply(context.Background(), cfg)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("Apply allowed dependent routing before the PPP interface existed")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if runner.polls < tc.readyAfter {
+					t.Fatalf("Apply returned before the PPP session was ready: polls=%d", runner.polls)
+				}
+			}
+		})
+	}
+}

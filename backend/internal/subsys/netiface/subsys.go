@@ -1154,8 +1154,19 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	// use a gateway until the lease is present in the kernel. Check after
 	// removing former static addresses, which can also affect connected routes.
 	for _, w := range cfg.WANs {
-		if w.Enabled && (w.Proto == "dhcp" || (w.Proto == "l2tp" && w.Underlay != "static")) {
+		if !w.Enabled {
+			continue
+		}
+		if w.Proto == "dhcp" || (w.Proto == "l2tp" && w.Underlay != "static") {
 			if err := s.waitDHCP(ctx, ifaceName[w.Interface], w.Name); err != nil {
+				return err
+			}
+		}
+		// PPP negotiation continues after systemctl reports the service as
+		// started. Multi-WAN and routing run immediately after WAN.Apply and
+		// require the PPP interface to exist, so expose no half-created uplink.
+		if w.Proto == "pppoe" || w.Proto == "l2tp" {
+			if err := s.waitPPPoE(ctx, w); err != nil {
 				return err
 			}
 		}

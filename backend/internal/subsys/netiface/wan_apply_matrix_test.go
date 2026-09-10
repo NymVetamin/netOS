@@ -88,6 +88,12 @@ func (r *wanIdempotencyRunner) Run(_ context.Context, name string, args ...strin
 			lines = append(lines, "2: eth-test inet "+address+" scope global eth-test")
 		}
 		return strings.Join(lines, "\n"), nil
+	case strings.HasPrefix(command, "ip -4 -o addr show dev ppp-"):
+		id := strings.TrimPrefix(args[len(args)-1], "ppp-")
+		if r.active["netos-pppoe-"+id+".service"] || r.active["netos-l2tp-"+id+".service"] {
+			return "9: " + args[len(args)-1] + " inet 203.0.113.18 peer 203.0.113.17/32 scope global\n", nil
+		}
+		return "", nil
 	case len(args) >= 5 && name == "ip" && args[0] == "addr" && (args[1] == "replace" || args[1] == "add"):
 		r.addresses[args[2]] = true
 	case command == "ip -4 route show default":
@@ -115,6 +121,16 @@ func (r *wanApplyMatrixRunner) Run(_ context.Context, name string, args ...strin
 	}
 	if command == "ip -4 -o addr show dev eth-test" && r.active["netos-dhcp-eth-test.service"] {
 		return "2: eth-test inet 192.0.2.12/24 scope global eth-test\n", nil
+	}
+	if strings.HasPrefix(command, "ip -4 -o addr show dev ppp-") {
+		unit := "netos-pppoe-" + strings.TrimPrefix(args[len(args)-1], "ppp-") + ".service"
+		if r.active[unit] {
+			return "9: " + args[len(args)-1] + " inet 203.0.113.18 peer 203.0.113.17/32 scope global\n", nil
+		}
+		l2tpUnit := "netos-l2tp-" + strings.TrimPrefix(args[len(args)-1], "ppp-") + ".service"
+		if r.active[l2tpUnit] {
+			return "9: " + args[len(args)-1] + " inet 203.0.113.18 peer 203.0.113.17/32 scope global\n", nil
+		}
 	}
 	if name != "systemctl" || len(args) == 0 {
 		return "", nil
