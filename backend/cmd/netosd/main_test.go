@@ -52,17 +52,29 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	old := os.Stdout
 	os.Stdout = w
-	defer func() { os.Stdout = old }()
+	defer func() {
+		os.Stdout = old
+		_ = w.Close()
+		_ = r.Close()
+	}()
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		data, err := io.ReadAll(r)
+		read <- readResult{data: data, err: err}
+	}()
 	fn()
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	data, err := io.ReadAll(r)
-	_ = r.Close()
-	if err != nil {
-		t.Fatal(err)
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
 	}
-	return string(data)
+	return string(result.data)
 }
 
 func TestReadyMessageDoesNotExposeInitialPassword(t *testing.T) {

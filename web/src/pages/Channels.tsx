@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import { newID } from "../id";
 import { parseXrayLink } from "../xrayLink";
+import { changeProbeType } from "../probeType";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 
 type Props = {
@@ -197,7 +198,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
       <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe = draft.probe || {}; draft.probe.enabled = enabled; })} /></Field>
       {channel.probe?.enabled !== false && <>
         {channel.probe?.type === "icmp" && <Notice tone="warn" title="Выберите HTTP или TCP">ICMP получает локальный ответ Xray даже при недоступном VPN-сервере и не проверяет канал.</Notice>}
-        <Field label="Тип проверки"><select value={channel.probe?.type || "tcp"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}>{channel.probe?.type === "icmp" && <option value="icmp" disabled>ICMP (недоступно для Xray)</option>}<option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
+        <Field label="Тип проверки"><select value={channel.probe?.type || "tcp"} onChange={(e) => update((draft) => changeProbeType(draft.probe, e.target.value))}>{channel.probe?.type === "icmp" && <option value="icmp" disabled>ICMP (недоступно для Xray)</option>}<option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
         {channel.probe?.type === "tcp" && <>
           <Notice tone="info" title="Нужен ответ удалённой службы">Укажите запрос, понятный выбранной службе, и ожидаемое начало её ответа. Если служба сама присылает приветствие, запрос можно оставить пустым. Молчание до таймаута считается отказом.</Notice>
           <Field label="Запрос TCP" hint="Текст отправляется как введён, включая переводы строк. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_request || ""} onChange={(e) => update((draft) => draft.probe.tcp_request = e.target.value)} /></Field>
