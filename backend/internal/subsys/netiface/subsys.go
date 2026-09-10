@@ -1339,7 +1339,7 @@ func (s *WAN) syncStaticRouteOwnership(ctx context.Context, wanted []ownedWANRou
 			"proto", fmt.Sprint(config.RouteProto))
 		if deleteErr != nil {
 			out, showErr := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default")
-			if showErr != nil || defaultRouteMatches(out, item.Interface, item.Gateway, item.Metric) {
+			if showErr != nil || ownedDefaultRouteMatches(out, item.Interface, item.Gateway, item.Metric) {
 				return fmt.Errorf("удаление старого маршрута WAN через %s dev %s metric %d: %w",
 					item.Gateway, item.Interface, item.Metric, deleteErr)
 			}

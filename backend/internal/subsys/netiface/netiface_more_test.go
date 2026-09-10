@@ -102,6 +102,35 @@ func TestStaticRouteCleanupFailureKeepsOldAndNewOwnership(t *testing.T) {
 	}
 }
 
+func TestStaticRouteCleanupAcceptsReplacementDHCPRoute(t *testing.T) {
+	runner := netifaceRunnerFunc(func(_ context.Context, name string, args ...string) (string, error) {
+		command := name + " " + strings.Join(args, " ")
+		if strings.Contains(command, "route del default") {
+			return "", errors.New("RTNETLINK answers: No such process")
+		}
+		if strings.Contains(command, "route show default") {
+			return "default via 192.0.2.1 dev eth0 proto dhcp metric 10\n", nil
+		}
+		return "", nil
+	})
+	s := NewWAN(runner)
+	s.OwnedRoutePath = filepath.Join(t.TempDir(), "owned-wan-routes.json")
+	previous := `[{"gateway":"192.0.2.1","interface":"eth0","metric":10}]`
+	if err := os.WriteFile(s.OwnedRoutePath, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.syncStaticRouteOwnership(context.Background(), nil); err != nil {
+		t.Fatalf("replacement DHCP route was mistaken for the stale netOS route: %v", err)
+	}
+	data, err := os.ReadFile(s.OwnedRoutePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "[]\n" {
+		t.Fatalf("stale ownership was not cleared: %s", data)
+	}
+}
+
 func TestApplyStaticPreservesUnownedAddresses(t *testing.T) {
 	var commands []string
 	runner := netifaceRunnerFunc(func(_ context.Context, name string, args ...string) (string, error) {
