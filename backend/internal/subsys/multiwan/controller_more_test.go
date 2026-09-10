@@ -164,6 +164,34 @@ func TestMetadataPlanAndInterfaceNames(t *testing.T) {
 	}
 }
 
+func TestApplyDropsSuppressedRouteFromPreviousWANInterface(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "multiwan-suppressed.json")
+	if err := os.WriteFile(state, []byte(`{"uplink":"default scope link metric 200 dev ppp-uplink"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &responseRunner{respond: func(command string) (string, error) {
+		if strings.Contains(command, "route replace default") && strings.Contains(command, "dev ppp-uplink") {
+			return "", errors.New(`Cannot find device "ppp-uplink"`)
+		}
+		return "", nil
+	}}
+	c := New(r, dir, &captureLogger{})
+	cfg := config.Default()
+	cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: "physical-uplink", Name: "eth1", Type: "physical"})
+	cfg.WANs = []config.WAN{{ID: "uplink", Index: 2, Interface: "physical-uplink", Enabled: true, Proto: "dhcp"}}
+
+	if err := c.Apply(context.Background(), cfg); err != nil {
+		t.Fatalf("Apply retained stale PPP route: %v", err)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("stale suppressed state remains: %v", err)
+	}
+	if commands := strings.Join(r.commands, "\n"); strings.Contains(commands, "route replace default scope link metric 200 dev ppp-uplink") {
+		t.Fatalf("stale PPP route was restored:\n%s", commands)
+	}
+}
+
 func TestProbeFamiliesProtocolsTargetsAndTimeouts(t *testing.T) {
 	r := &responseRunner{respond: func(command string) (string, error) {
 		if strings.Contains(command, "198.51.100.2") || strings.Contains(command, "https://ok.example") {

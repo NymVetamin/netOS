@@ -424,6 +424,9 @@ func (e *Engine) Confirm(commit func(int64) error) (int64, error) {
 	if e.pending == nil {
 		return 0, fmt.Errorf("нет применения, ожидающего подтверждения")
 	}
+	if !time.Now().Before(e.pending.deadline) {
+		return 0, fmt.Errorf("срок подтверждения применения истёк")
+	}
 	revision := e.pending.revision
 	if commit != nil {
 		if err := commit(revision); err != nil {

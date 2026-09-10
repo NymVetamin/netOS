@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 )
@@ -295,6 +296,28 @@ func TestConfirmFailureKeepsPendingThenSuccessClearsIt(t *testing.T) {
 	}
 	if _, err := e.Confirm(nil); err == nil {
 		t.Fatal("second Confirm succeeded")
+	}
+}
+
+func TestConfirmRejectsExpiredPendingAfterFailedRollback(t *testing.T) {
+	e := NewEngine(&recordingLogger{}, false)
+	_ = e.Register(flexibleSubsystem{name: "interfaces", plan: disruptivePlan})
+	_, _ = e.Apply(context.Background(), validConfig("old"), 1, false)
+	_, _ = e.Apply(context.Background(), validConfig("new"), 12, true)
+	e.mu.Lock()
+	e.pending.deadline = time.Now().Add(-time.Second)
+	e.pending.timer.Stop()
+	e.mu.Unlock()
+
+	committed := false
+	if _, err := e.Confirm(func(int64) error { committed = true; return nil }); err == nil || !strings.Contains(err.Error(), "истёк") {
+		t.Fatalf("expired confirmation error = %v", err)
+	}
+	if committed {
+		t.Fatal("expired revision was committed")
+	}
+	if pending, _ := e.Pending(); !pending {
+		t.Fatal("expired failed rollback transaction was discarded")
 	}
 }
 

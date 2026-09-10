@@ -102,7 +102,15 @@ func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := c.load(); err != nil {
 		return err
 	}
+	configuredInterfaces := make(map[string]string, len(cfg.WANs))
+	for _, wan := range cfg.WANs {
+		configuredInterfaces[wan.ID] = interfaceName(cfg, wan)
+	}
 	for id, line := range c.suppressed {
+		iface, configured := configuredInterfaces[id]
+		if configured && routeIface(line) != "" && routeIface(line) != iface {
+			continue
+		}
 		if err := c.restore(ctx, line); err != nil {
 			return fmt.Errorf("восстановление аплинка %s: %w", id, err)
 		}
@@ -469,6 +477,16 @@ func (c *Controller) restore(ctx context.Context, line string) error {
 	}
 	_, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "replace"}, strings.Fields(line)...)...)
 	return err
+}
+
+func routeIface(line string) string {
+	fields := strings.Fields(line)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "dev" {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 func (c *Controller) probe(ctx context.Context, wan config.WAN, iface string) bool {
