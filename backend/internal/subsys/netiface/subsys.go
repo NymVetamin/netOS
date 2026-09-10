@@ -1434,7 +1434,8 @@ func (s *WAN) applyStaticAddress(ctx context.Context, w config.WAN, iface string
 
 func (s *WAN) applyStaticRoute(ctx context.Context, w config.WAN, iface string) error {
 	if w.Gateway != "" {
-		if s.defaultRouteHealthy(ctx, iface, w.Gateway, w.Metric) {
+		out, err := s.Runner.Run(ctx, "ip", "-4", "route", "show", "default")
+		if err == nil && ownedDefaultRouteMatches(out, iface, w.Gateway, w.Metric) {
 			return nil
 		}
 		metric := fmt.Sprint(w.Metric)
@@ -1734,6 +1735,26 @@ func defaultRouteMatches(out, iface, gateway string, metric int) bool {
 			}
 		}
 		if gotIface == iface && gotMetric == metric && (gateway == "" || gotGateway == gateway) {
+			return true
+		}
+	}
+	return false
+}
+
+func ownedDefaultRouteMatches(out, iface, gateway string, metric int) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		protocol := ""
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "proto" {
+				protocol = fields[i+1]
+				break
+			}
+		}
+		if protocol != "netos" && protocol != fmt.Sprint(config.RouteProto) {
+			continue
+		}
+		if defaultRouteMatches(line, iface, gateway, metric) {
 			return true
 		}
 	}

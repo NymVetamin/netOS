@@ -663,7 +663,7 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	case !yes:
 		makeBackup = m.confirm("Сделать резервную копию перед сбросом?")
 	}
-	uplink, err := m.captureResetUplink(ctx)
+	uplink, err := m.captureManagementUplink(ctx, "сбросом")
 	if err != nil {
 		return err
 	}
@@ -701,7 +701,7 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 		m.quiet(ctx, "systemctl", "enable", "--now", "systemd-resolved.service")
 	}
 	if len(uplink.route) != 0 {
-		if err := m.run(ctx, "ip", uplink.route...); err != nil {
+		if err := m.protectManagementUplink(ctx, uplink); err != nil {
 			return m.recoverReset(fmt.Errorf("сохранение аплинка перед сбросом: %w", err))
 		}
 	}
@@ -912,6 +912,10 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 		fmt.Fprintln(m.Out, "Отменено.")
 		return nil
 	}
+	uplink, err := m.captureManagementUplink(ctx, "восстановлением")
+	if err != nil {
+		return err
+	}
 
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
@@ -925,26 +929,30 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 		_ = m.run(ctx, "systemctl", "start", "netosd")
 		return err
 	}
+	if err := m.protectManagementUplink(ctx, uplink); err != nil {
+		_ = m.run(ctx, "systemctl", "start", "netosd")
+		return fmt.Errorf("сохранение management uplink перед восстановлением: %w", err)
+	}
 
 	// Сначала снимаем живое состояние текущей конфигурации, пока её журналы
 	// ownership ещё доступны. После удаления StateDir новый демон увидит только
 	// восстановленную конфигурацию и уже не сможет отличить оставшиеся от
 	// текущей установки hostapd/WireGuard/QoS-объекты от чужих.
 	if err := m.removeComponentUnits(ctx); err != nil {
-		return m.rollbackRestore(ctx, safety, err)
+		return m.rollbackRestore(ctx, safety, err, uplink)
 	}
 	if err := m.clearNetOSFirewall(ctx); err != nil {
-		return m.rollbackRestore(ctx, safety, err)
+		return m.rollbackRestore(ctx, safety, err, uplink)
 	}
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
 	m.removePolicyRules(ctx)
 	m.removeOwnedPolicySets(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
-		return m.rollbackRestore(ctx, safety, err)
+		return m.rollbackRestore(ctx, safety, err, uplink)
 	}
-	if err := m.removeOwnedAddresses(ctx); err != nil {
-		return m.rollbackRestore(ctx, safety, err)
+	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
+		return m.rollbackRestore(ctx, safety, err, uplink)
 	}
 	m.removeVirtualInterfaces(ctx)
 
@@ -953,21 +961,21 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	// пользователи, которых в копии нет.
 	for _, path := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if err := os.RemoveAll(path); err != nil {
-			return m.rollbackRestore(ctx, safety, fmt.Errorf("очистка %s: %w", path, err))
+			return m.rollbackRestore(ctx, safety, fmt.Errorf("очистка %s: %w", path, err), uplink)
 		}
 	}
 	if err := m.run(ctx, "tar", "-C", string(filepath.Separator), "-xzf", selected); err != nil {
-		return m.rollbackRestore(ctx, safety, fmt.Errorf("распаковка %s: %w", selected, err))
+		return m.rollbackRestore(ctx, safety, fmt.Errorf("распаковка %s: %w", selected, err), uplink)
 	}
 
 	// Старый маркер принадлежит предыдущему процессу. Новый демон создаст его
 	// только после успешного Engine.Apply восстановленной ревизии.
 	_ = os.Remove(m.sys(m.ReadyFile))
 	if err := m.run(ctx, "systemctl", "start", "netosd"); err != nil {
-		return m.rollbackRestore(ctx, safety, fmt.Errorf("запуск после восстановления: %w", err))
+		return m.rollbackRestore(ctx, safety, fmt.Errorf("запуск после восстановления: %w", err), uplink)
 	}
 	if err := m.waitRuntimeReady(ctx, 240); err != nil {
-		return m.rollbackRestore(ctx, safety, fmt.Errorf("ожидание применения после восстановления: %w", err))
+		return m.rollbackRestore(ctx, safety, fmt.Errorf("ожидание применения после восстановления: %w", err), uplink)
 	}
 	if err := m.RecordRestoreAudit(selected); err != nil {
 		return fmt.Errorf("restore completed, but its audit record was not saved: %w", err)
@@ -978,7 +986,7 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	return nil
 }
 
-func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error) error {
+func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error, uplink managementUplink) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if err := m.stopDaemon(rollbackCtx); err != nil {
@@ -994,7 +1002,10 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error)
 	if err := m.removeOwnedQoS(rollbackCtx); err != nil {
 		return fmt.Errorf("%v; очистка QoS перед rollback: %w", cause, err)
 	}
-	if err := m.removeOwnedAddresses(rollbackCtx); err != nil {
+	if err := m.protectManagementUplink(rollbackCtx, uplink); err != nil {
+		return fmt.Errorf("%v; сохранение management uplink перед rollback: %w", cause, err)
+	}
+	if err := m.removeOwnedAddressesExcept(rollbackCtx, uplink.device, uplink.address); err != nil {
 		return fmt.Errorf("%v; очистка адресов перед rollback: %w", cause, err)
 	}
 	m.removeOwnedPolicySets(rollbackCtx)

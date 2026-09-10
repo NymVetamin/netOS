@@ -27,16 +27,32 @@ func (r mtuFailRunner) RunInput(ctx context.Context, _ string, name string, args
 
 type wanRunner struct {
 	commands []string
+	routes   string
 }
 
 func (r *wanRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	command := name + " " + strings.Join(args, " ")
 	r.commands = append(r.commands, command)
 	if strings.Contains(command, "route show") {
+		if r.routes != "" {
+			return r.routes, nil
+		}
 		return "default via 192.0.2.1 dev eth0 proto netos metric 10\n" +
 			"default via 198.51.100.1 dev eth1 proto netos metric 20\n", nil
 	}
 	return "", nil
+}
+
+func TestStaticWANReclaimsMatchingForeignDefaultRoute(t *testing.T) {
+	runner := &wanRunner{routes: "default via 192.0.2.1 dev eth0 proto boot metric 10\n"}
+	s := NewWAN(runner)
+	if err := s.applyStaticRoute(context.Background(), config.WAN{Gateway: "192.0.2.1", Metric: 10}, "eth0"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.commands, "\n")
+	if !strings.Contains(joined, "ip route replace default via 192.0.2.1 dev eth0 metric 10 proto 201") {
+		t.Fatalf("foreign matching route was not reclaimed: %s", joined)
+	}
 }
 
 func (r *wanRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {

@@ -9,19 +9,18 @@ import (
 	"strings"
 )
 
-// A factory bootstrap discovers the uplink from the live default route. Keep
-// that physical IPv4 uplink reachable while deleting the old configuration;
-// otherwise its now-addressless port is mistaken for the factory LAN.
-type resetUplink struct {
+// Destructive lifecycle operations keep the physical management uplink from
+// the live default route reachable while netOS replaces its runtime state.
+type managementUplink struct {
 	device, address string
 	route           []string
 }
 
-func (m *Manager) captureResetUplink(ctx context.Context) (resetUplink, error) {
-	var keep resetUplink
+func (m *Manager) captureManagementUplink(ctx context.Context, operation string) (managementUplink, error) {
+	var keep managementUplink
 	out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
 	if err != nil {
-		return keep, fmt.Errorf("чтение аплинка перед сбросом: %w", err)
+		return keep, fmt.Errorf("чтение аплинка перед %s: %w", operation, err)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
@@ -63,7 +62,7 @@ func (m *Manager) captureResetUplink(ctx context.Context) (resetUplink, error) {
 		}
 		addresses, err := m.Output(ctx, "ip", "-o", "-4", "addr", "show", "dev", device)
 		if err != nil {
-			return keep, fmt.Errorf("чтение адреса аплинка перед сбросом: %w", err)
+			return keep, fmt.Errorf("чтение адреса аплинка перед %s: %w", operation, err)
 		}
 		for _, addressLine := range strings.Split(addresses, "\n") {
 			parts := strings.Fields(addressLine)
@@ -88,4 +87,11 @@ func (m *Manager) captureResetUplink(ctx context.Context) (resetUplink, error) {
 		}
 	}
 	return keep, nil
+}
+
+func (m *Manager) protectManagementUplink(ctx context.Context, uplink managementUplink) error {
+	if len(uplink.route) == 0 {
+		return nil
+	}
+	return m.run(ctx, "ip", uplink.route...)
 }

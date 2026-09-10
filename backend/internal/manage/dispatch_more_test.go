@@ -334,7 +334,7 @@ func TestRestoreRollbackIgnoresCancelledCallerContext(t *testing.T) {
 
 	callerCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := m.rollbackRestore(callerCtx, safety, errors.New("target restore failed"))
+	err := m.rollbackRestore(callerCtx, safety, errors.New("target restore failed"), managementUplink{})
 	if err == nil || !strings.Contains(err.Error(), "автоматически восстановлено") {
 		t.Fatalf("rollback error=%v", err)
 	}

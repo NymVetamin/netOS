@@ -34,7 +34,7 @@ func TestReportResetAndRollbackCleanOwnedRuntime(t *testing.T) {
 				return nil
 			}
 			if rollback {
-				_ = m.rollbackRestore(context.Background(), "safety", errors.New("startup failure"))
+				_ = m.rollbackRestore(context.Background(), "safety", errors.New("startup failure"), managementUplink{})
 			} else {
 				if err := m.Execute(context.Background(), []string{"reset", "--yes", "--no-backup"}); err != nil {
 					t.Fatal(err)
@@ -81,7 +81,7 @@ func TestReportFailedQoSCleanupPreservesOwnership(t *testing.T) {
 			}
 			var err error
 			if rollback {
-				err = m.rollbackRestore(context.Background(), "safety", errors.New("startup failure"))
+				err = m.rollbackRestore(context.Background(), "safety", errors.New("startup failure"), managementUplink{})
 			} else {
 				err = m.Execute(context.Background(), []string{"reset", "--yes", "--no-backup"})
 			}
