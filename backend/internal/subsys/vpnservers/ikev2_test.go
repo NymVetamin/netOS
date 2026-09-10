@@ -1,11 +1,39 @@
 package vpnservers
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestIKEv2ConfigChangeRestartsInsteadOfReloadingLivePool(t *testing.T) {
+	s, _ := newTestSubsystem(t)
+	s.UnitDir = filepath.Join(t.TempDir(), "units")
+	runner := &vpnServiceRunner{active: map[string]bool{}, s: s}
+	s.Runner = runner
+	cfg, server := ikev2TestConfig()
+	if err := s.applyIKEv2(context.Background(), cfg, []config.VPNServer{server}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	runner.commands = nil
+	updated := server
+	updated.Peers = append([]config.VPNPeer(nil), server.Peers...)
+	updated.Peers[0].Credentials = map[string]string{"username": "bob", "password": "bob-secret"}
+	if err := s.applyIKEv2(context.Background(), cfg, []config.VPNServer{updated}, true); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	if strings.Contains(commands, "/usr/sbin/swanctl --load-all") {
+		t.Fatalf("changed IKEv2 pool was loaded into the live daemon:\n%s", commands)
+	}
+	if strings.Count(commands, "systemctl restart "+ikev2Unit) != 1 {
+		t.Fatalf("changed IKEv2 configuration did not restart the daemon exactly once:\n%s", commands)
+	}
+}
 
 func ikev2TestConfig() (*config.Config, config.VPNServer) {
 	cfg := config.Default()

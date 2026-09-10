@@ -317,11 +317,6 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 		return err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2Unit)
-	if strings.TrimSpace(active) == "active" && (confChanged || certChanged) {
-		if _, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--load-all", "--uri", "unix:///run/netos-strongswan/charon.vici", "--file", paths.candidate, "--noprompt"); err != nil {
-			return fmt.Errorf("проверка конфигурации strongSwan: %w", err)
-		}
-	}
 	if err := writeFile(paths.conf, conf, 0o600); err != nil {
 		return err
 	}
@@ -333,16 +328,17 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err := s.ensureUnitEnabled(ctx, ikev2Unit); err != nil {
 		return err
 	}
-	if unitChanged || daemonChanged || strings.TrimSpace(active) != "active" {
+	// Loading a changed pool into a live daemon fails while it has online
+	// leases. Restarting also disconnects sessions whose credentials were
+	// revoked and lets ExecStartPost validate the complete new configuration.
+	// The deferred rollback restores the previous files and service if startup
+	// rejects the candidate.
+	if unitChanged || daemonChanged || confChanged || certChanged || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", ikev2Unit); err != nil {
 			if strings.TrimSpace(active) != "active" {
 				s.cleanupIKEv2(ctx)
 			}
 			return fmt.Errorf("запуск strongSwan: %w", err)
-		}
-	} else if confChanged || certChanged {
-		if _, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--load-all", "--uri", "unix:///run/netos-strongswan/charon.vici", "--file", paths.conf, "--noprompt"); err != nil {
-			return err
 		}
 	}
 	return s.terminateRevokedIKEv2(ctx, servers)

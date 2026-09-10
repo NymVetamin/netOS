@@ -632,7 +632,7 @@ func TestExistingServiceVPNFailureRestoresPreviousWorkingState(t *testing.T) {
 		updated := server
 		updated.Peers = append([]config.VPNPeer(nil), server.Peers...)
 		updated.Peers[0].Credentials = map[string]string{"username": "alice", "password": "new-secret"}
-		runner.failOn, runner.failAt, runner.failSeen = "/usr/sbin/swanctl", 2, 0
+		runner.failOn, runner.failAt, runner.failSeen = "systemctl restart "+ikev2Unit, 1, 0
 		if err := s.applyIKEv2(context.Background(), cfg, []config.VPNServer{updated}, true); err == nil {
 			t.Fatal("IKEv2 update failure accepted")
 		}
