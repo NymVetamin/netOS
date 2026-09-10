@@ -38,6 +38,41 @@ func TestDnsmasqListensOnVPNServerInterfaces(t *testing.T) {
 	}
 }
 
+func TestAddressBoundResolversListenOnPersistentVPNServers(t *testing.T) {
+	cfg := config.Default()
+	cfg.DNS.Enabled = true
+	cfg.VPNServers = []config.VPNServer{
+		{ID: "wg", Type: "wireguard", Index: 1, Enabled: true, Subnet: "10.9.0.1/24"},
+		{ID: "ike", Type: "ikev2", Index: 2, Enabled: true, Subnet: "10.10.0.1/24"},
+		{ID: "oc", Type: "ocserv", Index: 3, Enabled: true, Subnet: "10.11.0.1/24"},
+		{ID: "off", Type: "wireguard", Index: 4, Subnet: "10.12.0.1/24"},
+	}
+
+	cfg.DNS.Provider = "dnsproxy"
+	dnsproxy := NewDnsproxy(nil).Render(cfg)
+	for _, want := range []string{`  - "10.9.0.1"`, `  - "10.10.0.1"`} {
+		if !strings.Contains(dnsproxy, want) {
+			t.Fatalf("dnsproxy does not listen on persistent VPN address %q:\n%s", want, dnsproxy)
+		}
+	}
+	for _, unwanted := range []string{"10.11.0.1", "10.12.0.1"} {
+		if strings.Contains(dnsproxy, unwanted) {
+			t.Fatalf("dnsproxy binds unavailable VPN address %s:\n%s", unwanted, dnsproxy)
+		}
+	}
+
+	cfg.DNS.Provider = "unbound"
+	unbound := NewUnbound(nil).Render(cfg)
+	for _, want := range []string{
+		"    interface: 10.9.0.1", "    access-control: 10.9.0.0/24 allow",
+		"    interface: 10.10.0.1", "    access-control: 10.10.0.0/24 allow",
+	} {
+		if !strings.Contains(unbound, want) {
+			t.Fatalf("unbound does not admit persistent VPN network %q:\n%s", want, unbound)
+		}
+	}
+}
+
 // Интерфейс не должен объявляться дважды: interface= в dnsmasq один на весь
 // процесс, а не на роль.
 func TestDnsmasqDoesNotRepeatInterfaces(t *testing.T) {

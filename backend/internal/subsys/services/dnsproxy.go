@@ -55,14 +55,11 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 	w("listen-addrs:")
 	w("  - \"127.0.0.1\"")
 	policyBackend := hasKernelDomainPolicies(cfg) && cfg.DNS.Provider == "dnsproxy"
-	for _, n := range cfg.Networks {
+	for _, network := range dnsListenNetworks(cfg) {
 		if policyBackend {
 			break
 		}
-		if !n.Enabled || n.RouterAddress == "" {
-			continue
-		}
-		w("  - %q", addressOf(n.RouterAddress))
+		w("  - %q", network.address)
 	}
 	w("listen-ports:")
 	if policyBackend {

@@ -82,6 +82,40 @@ func dnsListenInterfaces(cfg *config.Config) []string {
 	return out
 }
 
+type dnsListenNetwork struct {
+	address string
+	subnet  string
+}
+
+// dnsListenNetworks lists addresses that address-bound resolvers can safely
+// open. WireGuard and IKEv2 create their persistent interfaces before DNS is
+// applied. Ocserv worker interfaces exist only while a client is connected,
+// so they are handled by dnsmasq's bind-dynamic interface matching instead.
+func dnsListenNetworks(cfg *config.Config) []dnsListenNetwork {
+	seen := map[string]bool{}
+	out := []dnsListenNetwork{}
+	add := func(cidr string) {
+		address := addressOf(cidr)
+		subnet, err := subnetOf(cidr)
+		if address == "" || err != nil || seen[address] {
+			return
+		}
+		seen[address] = true
+		out = append(out, dnsListenNetwork{address: address, subnet: subnet})
+	}
+	for _, network := range cfg.Networks {
+		if network.Enabled {
+			add(network.RouterAddress)
+		}
+	}
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && (server.Type == "wireguard" || server.Type == "ikev2") {
+			add(server.Subnet)
+		}
+	}
+	return out
+}
+
 // Dnsmasq владеет процессом dnsmasq.
 type Dnsmasq struct {
 	Runner  system.Runner

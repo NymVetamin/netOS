@@ -92,19 +92,14 @@ func (u *Unbound) Render(cfg *config.Config) string {
 		w("    define-tag: \"netos-filter-aaaa\"")
 		renderUnboundAAAAClient(&b, "127.0.0.0/8")
 	}
-	for _, n := range cfg.Networks {
+	for _, network := range dnsListenNetworks(cfg) {
 		if policyBackend {
 			break
 		}
-		if !n.Enabled || n.RouterAddress == "" {
-			continue
-		}
-		w("    interface: %s", addressOf(n.RouterAddress))
-		if subnet, err := subnetOf(n.RouterAddress); err == nil {
-			w("    access-control: %s allow", subnet)
-			if cfg.IPv6.FilterAAAA {
-				renderUnboundAAAAClient(&b, subnet)
-			}
+		w("    interface: %s", network.address)
+		w("    access-control: %s allow", network.subnet)
+		if cfg.IPv6.FilterAAAA {
+			renderUnboundAAAAClient(&b, network.subnet)
 		}
 	}
 	if cfg.IPv6.FilterAAAA {
