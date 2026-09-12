@@ -75,11 +75,15 @@ func TestAddressInNetworkAllOutcomes(t *testing.T) {
 func TestXrayChannelEveryProtocolAndFailure(t *testing.T) {
 	protocols := []string{"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "freedom"}
 	for _, protocol := range protocols {
+		settings := map[string]any{}
+		if protocol == "hysteria" {
+			settings = map[string]any{"version": 2, "address": "vpn.example.test", "port": 443}
+		}
 		cfg := Default()
 		cfg.Components = []Component{{ID: "xray", Installed: true}}
 		cfg.Channels = append(cfg.Channels, Channel{
 			ID: "xray", Index: 1, Name: "Xray", Enabled: true, Type: "xray", Mode: "tun", FailMode: "block",
-			Config: map[string]any{"mtu": 576, "outbound": map[string]any{"protocol": protocol, "settings": map[string]any{}}},
+			Config: map[string]any{"mtu": 576, "outbound": map[string]any{"protocol": protocol, "settings": settings}},
 		})
 		if result := cfg.Validate(); result.HasErrors() {
 			t.Fatalf("valid Xray protocol %q rejected: %+v", protocol, result.Problems)
@@ -106,6 +110,12 @@ func TestXrayChannelEveryProtocolAndFailure(t *testing.T) {
 			c.Channels[1].Config["outbound"] = map[string]any{"protocol": "unknown", "settings": map[string]any{}}
 		}},
 		{"missing settings", "channels[1].config.outbound.settings", func(c *Config) { c.Channels[1].Config["outbound"] = map[string]any{"protocol": "freedom"} }},
+		{"hysteria missing endpoint", "channels[1].config.outbound.settings", func(c *Config) {
+			c.Channels[1].Config["outbound"] = map[string]any{"protocol": "hysteria", "settings": map[string]any{}}
+		}},
+		{"hysteria unsupported version", "channels[1].config.outbound.settings", func(c *Config) {
+			c.Channels[1].Config["outbound"] = map[string]any{"protocol": "hysteria", "settings": map[string]any{"version": 1, "address": "vpn.example.test", "port": 443}}
+		}},
 		{"unknown config", "channels[1].config", func(c *Config) { c.Channels[1].Config["unknown"] = true }},
 		{"unencodable", "channels[1].config", func(c *Config) { c.Channels[1].Config["mtu"] = func() {} }},
 	} {

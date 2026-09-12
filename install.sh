@@ -87,6 +87,8 @@ restore_path() {
 wait_netosd_ready() {
     wait_limit=$1
     wait_count=0
+    wait_deadline=$((SECONDS + wait_limit))
+    initial_restarts=$(systemctl show netosd --property=NRestarts --value)
     legacy_port=""
     # Released v0.06 starts HTTPS only after the synchronous startup Apply,
     # but predates the readiness marker and -panel-port. Keep the marker
@@ -107,7 +109,15 @@ wait_netosd_ready() {
             *) return 1 ;;
         esac
     fi
-    while [ "$wait_count" -lt "$wait_limit" ]; do
+    while [ "$wait_count" -lt "$wait_limit" ] && [ "$SECONDS" -lt "$wait_deadline" ]; do
+        # A slow initial Apply can need time (notably ACME). A crashed daemon
+        # cannot establish readiness: return to the transaction's rollback
+        # instead of letting Restart=always repeat a failed upgrade for minutes.
+        current_restarts=$(systemctl show netosd --property=NRestarts --value)
+        case "$initial_restarts:$current_restarts" in
+            *[!0-9:]*|:*|*:) : ;;
+            *) [ "$current_restarts" -le "$initial_restarts" ] || return 1 ;;
+        esac
         if systemctl is-active --quiet netosd; then
             if [ -z "$legacy_port" ]; then
                 [ -s /run/netosd.ready ] && return 0

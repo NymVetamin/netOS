@@ -227,7 +227,17 @@ function Login({ onSuccess, sessionEnded = false }: { onSuccess: (s: Session) =>
 const SAVE_DELAY_MS = 500;
 
 function Shell({ session, onLogout }: { session: Session; onLogout: () => void }) {
-  const [page, setPage] = useState<PageID>("dashboard");
+  const readPage = useCallback((): PageID => {
+    const id = window.location.hash.slice(1);
+    return NAV.flatMap((group) => group.items).some((item) => item.id === id)
+      && (session.role === "admin" || id !== "diagnostics") ? id as PageID : "dashboard";
+  }, [session.role]);
+  const [page, setPage] = useState<PageID>(readPage);
+  useEffect(() => {
+    const navigate = () => { setPage(readPage()); setMobileNavOpen(false); };
+    window.addEventListener("hashchange", navigate);
+    return () => window.removeEventListener("hashchange", navigate);
+  }, [readPage]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [cfg, setCfg] = useState<any>(null);
   const [configGeneration, setConfigGeneration] = useState(0);
@@ -236,6 +246,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [pending, setPending] = useState<{ until?: string } | null>(null);
   const [rollback, setRollback] = useState<any>(null);
   const [saveError, setSaveError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [theme, setTheme] = useState<string>(
     () => localStorage.getItem("netos-theme") || "auto",
   );
@@ -267,6 +279,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
   const reload = useCallback(async () => {
     const generation = ++syncGeneration.current;
+    setLoading(true);
+    setLoadError("");
     pendingCfg.current = null;
     window.clearTimeout(saveTimer.current);
     try {
@@ -276,6 +290,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     } catch (err) {
       if (generation !== syncGeneration.current) return;
       if (err instanceof ApiError && err.status === 401) onLogout();
+      else setLoadError(err instanceof ApiError ? err.message : "Нет связи с роутером");
+    } finally {
+      if (generation === syncGeneration.current) setLoading(false);
     }
   }, [applyServerState, onLogout]);
 
@@ -408,6 +425,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                   aria-label={item.label}
                   aria-current={page === item.id ? "page" : undefined}
                   onClick={() => {
+                    window.location.hash = item.id;
                     setPage(item.id);
                     setMobileNavOpen(false);
                   }}
@@ -476,7 +494,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             </Notice>
           )}
 
-          {!cfg ? (
+          {loadError && <Notice tone="danger" title="Не удалось загрузить конфигурацию">
+            <div role="alert">{loadError}</div>
+            <button className="btn" disabled={loading} onClick={() => void reload()}>Повторить</button>
+          </Notice>}
+
+          {!cfg ? (loadError ? null :
             <Spinner />
           ) : (
             <>

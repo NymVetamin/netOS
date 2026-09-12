@@ -58,3 +58,26 @@ func TestMultiWANBalanceCanDisableStickyConnections(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiWANFailoverNATsEveryEnabledWAN(t *testing.T) {
+	cfg := config.Default()
+	cfg.MultiWAN.Enabled, cfg.MultiWAN.Mode = true, "failover"
+	cfg.Interfaces = []config.Interface{{ID: "a", Name: "wan0"}, {ID: "b", Name: "wan1"}, {ID: "off", Name: "wan2"}}
+	cfg.WANs = []config.WAN{
+		{ID: "a", Index: 1, Interface: "a", Enabled: true, Proto: "static"},
+		{ID: "b", Index: 2, Interface: "b", Enabled: true, Proto: "static"},
+		{ID: "off", Index: 3, Interface: "off", Proto: "static"},
+	}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, iface := range []string{"wan0", "wan1"} {
+		if !strings.Contains(rules.IPv4, "POSTROUTING -o "+iface) {
+			t.Fatalf("backup clients cannot receive replies through %s: %s", iface, rules.IPv4)
+		}
+	}
+	if strings.Contains(rules.IPv4, "POSTROUTING -o wan2") || strings.Contains(rules.IPv4, "--probability") {
+		t.Fatal("failover enabled a disabled WAN or balancing")
+	}
+}

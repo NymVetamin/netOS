@@ -77,7 +77,8 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
       // иначе конфигурация останется ссылаться на то, чего на машине уже нет.
       if (!on) {
         if (d.dns?.provider === id) {
-          d.dns.provider = "";
+          // Keep provider-specific draft syntax while the service is disabled.
+          // Reinstalling can then restore the existing upstreams and options.
           d.dns.enabled = false;
         }
         if (d.dhcp?.provider === id) {

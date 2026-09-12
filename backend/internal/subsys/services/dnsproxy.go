@@ -54,7 +54,7 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 	// адресах подряд нельзя, иначе резолвер окажется открыт со стороны аплинка.
 	w("listen-addrs:")
 	w("  - \"127.0.0.1\"")
-	policyBackend := hasKernelDomainPolicies(cfg) && cfg.DNS.Provider == "dnsproxy"
+	policyBackend := dnsFrontendNeeded(cfg) && cfg.DNS.Provider == "dnsproxy"
 	for _, network := range dnsListenNetworks(cfg) {
 		if policyBackend {
 			break

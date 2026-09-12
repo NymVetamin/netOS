@@ -200,7 +200,7 @@ function DNSSection({
           />
         </div>
 
-        {providers.length > 1 && (
+        {(providers.length > 1 || (!!provider && !providers.includes(provider))) && (
           <Field label="Чем резолвить" hint="Выбор из установленных компонентов">
             <select
               value={provider}
@@ -213,6 +213,9 @@ function DNSSection({
               <option value="" disabled>
                 — выберите резолвер —
               </option>
+              {provider && !providers.includes(provider) && (
+                <option value={provider} disabled>{provider} — компонент не установлен</option>
+              )}
               {providers.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -562,7 +565,12 @@ function ResolutionChain({ config }: { config: any }) {
   const provider = config.dns?.provider || "";
   if (!config.dns?.enabled || !provider) return null;
 
-  const localDNS =
+  const xrayServers = new Set((config.vpn_servers || []).filter((s: any) => s.type === "xray").map((s: any) => s.id));
+  const dynamicFrontend = provider !== "dnsmasq" && (
+    (config.vpn_servers || []).some((s: any) => s.enabled && s.type === "ocserv") ||
+    (config.policies || []).some((p: any) => p.enabled && p.domains?.length && !xrayServers.has(p.vpn_server))
+  );
+  const localDNS = !dynamicFrontend &&
     config.dhcp?.enabled && config.dhcp?.provider === "dnsmasq" && provider !== "dnsmasq";
   const upstreams = (config.dns?.upstreams || []).filter((u: any) => u.enabled);
   const localDomain = config.dns?.local_domain || "";
@@ -583,10 +591,13 @@ function ResolutionChain({ config }: { config: any }) {
     step(
       "Клиенты сети и сам роутер",
       routerUsesOwn
-        ? `запрос на ${provider}, порт 53`
-        : `клиенты — на ${provider}, порт ${config.dns?.port}; роутер порт указать не может и идёт мимо`,
+        ? `запрос на ${dynamicFrontend ? "dnsmasq" : provider}, порт 53`
+        : `клиенты — на ${dynamicFrontend ? "dnsmasq" : provider}, порт ${config.dns?.port}; роутер порт указать не может и идёт мимо`,
     ),
   ];
+  if (dynamicFrontend) {
+    steps.push(step(provider, "внешние имена через выбранный резолвер; локальные имена обслуживает dnsmasq"));
+  }
   if (localDNS) {
     steps.push(
       step(

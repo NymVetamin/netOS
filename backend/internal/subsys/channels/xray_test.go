@@ -24,7 +24,9 @@ func testXrayChannel() config.Channel {
 }
 
 func TestRenderXrayOwnsTunAndPreservesOutbound(t *testing.T) {
-	data, err := RenderXray(testXrayChannel())
+	ch := testXrayChannel()
+	before, _ := json.Marshal(ch)
+	data, err := RenderXray(ch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +40,13 @@ func TestRenderXrayOwnsTunAndPreservesOutbound(t *testing.T) {
 			t.Errorf("нет %s:\n%s", want, text)
 		}
 	}
-	outbound := testXrayChannel().Config["outbound"].(map[string]any)
-	if _, changed := outbound["tag"]; changed {
+	proxy := document["outbounds"].([]any)[0].(map[string]any)
+	stream := proxy["streamSettings"].(map[string]any)
+	if stream["sockopt"].(map[string]any)["mark"] != float64(0x40000000) {
+		t.Fatal("proxy transport may re-enter DNS policy")
+	}
+	after, _ := json.Marshal(ch)
+	if string(before) != string(after) {
 		t.Fatal("renderer mutated the revision config")
 	}
 }

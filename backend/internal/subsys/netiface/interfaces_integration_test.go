@@ -45,6 +45,7 @@ func TestIntegrationInterfacesFullLifecycle(t *testing.T) {
 			_ = exec.Command("ip", "link", "delete", pair[1]).Run()
 		}
 		_ = os.Remove(ownedPath)
+		_ = os.Remove(ownedPath + ".macs")
 	}
 	cleanup()
 	t.Cleanup(cleanup)

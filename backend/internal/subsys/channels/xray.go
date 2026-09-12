@@ -45,6 +45,21 @@ func RenderXray(ch config.Channel) ([]byte, error) {
 		return nil, err
 	}
 	outbound["tag"] = "proxy"
+	// The proxy's own sockets must not re-enter DNS channel policy when the
+	// selected outbound connects to the same DNS endpoint as the resolver.
+	// A non-channel mark leaves transport routing in main and survives the
+	// firewall's mark-zero DNS selector.
+	stream, ok := outbound["streamSettings"].(map[string]any)
+	if !ok {
+		stream = map[string]any{}
+		outbound["streamSettings"] = stream
+	}
+	sockopt, ok := stream["sockopt"].(map[string]any)
+	if !ok {
+		sockopt = map[string]any{}
+		stream["sockopt"] = sockopt
+	}
+	sockopt["mark"] = 0x40000000
 	if outbound["protocol"] == "wireguard" {
 		// Xray's kernel WireGuard TUN changes global rp_filter (and, for
 		// IPv6 peers, disable_ipv6). netOS owns those settings and channel

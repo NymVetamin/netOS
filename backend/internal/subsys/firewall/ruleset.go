@@ -525,7 +525,7 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":INPUT ACCEPT [0:0]")
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
-	if cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "balance" {
+	if cfg.MultiWAN.Enabled {
 		for _, wan := range cfg.WANs {
 			if wan.Enabled {
 				b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE", wanInterface(cfg, wan), "NAT аплинка «"+wan.Name+"»")

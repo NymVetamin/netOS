@@ -130,8 +130,23 @@ func TestIntegrationBalanceBuildsRealTablesAndRules(t *testing.T) {
 	if strings.Contains(out, "default dev") || !strings.Contains(out, "blackhole default") {
 		t.Fatalf("all-down table can leak traffic:\n%s", out)
 	}
+	// A failed health target does not make the public management address
+	// unreachable: locally sourced replies keep the incoming WAN's table.
+	mustNS(t, "ip", "addr", "add", "192.0.2.2/24", "dev", "wan0")
+	cfg.MultiWAN.Mode = "failover"
+	if err := c.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	mustNS(t, "ip", "route", "del", "default", "dev", "wan0")
+	out = mustNS(t, "ip", "route", "get", "198.51.100.1", "from", "192.0.2.2")
+	if !strings.Contains(out, "dev wan0") {
+		t.Fatalf("management reply escaped through backup: %s", out)
+	}
 	if err := c.Apply(context.Background(), config.Default()); err != nil {
 		t.Fatal(err)
+	}
+	if out := mustNS(t, "ip", "rule", "show"); strings.Contains(out, "30001:") || strings.Contains(out, "30002:") {
+		t.Fatalf("source/probe rules survived disabling Multi-WAN: %s", out)
 	}
 }
 

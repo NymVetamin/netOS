@@ -2,6 +2,7 @@ package netiface
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,34 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestBridgeMACSurvivesRenameAndRestart(t *testing.T) {
+	newFakeNet(t, "brqa:bridge")
+	const existing = "02:11:22:33:44:55"
+	if err := os.WriteFile(filepath.Join(sysClassNet, "brqa", "address"), []byte(existing+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewInterfaces(&linkRunner{})
+	s.OwnedPath = ownedFile(t, "brqa")
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "stable-id", Name: "brqa", Type: "bridge", Enabled: true}}
+	macs, err := s.bridgeMACs(cfg)
+	if err != nil || macs["stable-id"] != existing {
+		t.Fatalf("upgrade changed the live gateway MAC: %v %v", macs, err)
+	}
+	cfg.Interfaces[0].Name = "brqa2"
+	s = &Interfaces{Runner: &linkRunner{}, OwnedPath: s.OwnedPath}
+	macs, err = s.bridgeMACs(cfg)
+	if err != nil || macs["stable-id"] != existing {
+		t.Fatalf("rename/restart lost gateway identity: %v %v", macs, err)
+	}
+	cfg.Interfaces[0].ID = "new-bridge"
+	macs, err = s.bridgeMACs(cfg)
+	parsed, parseErr := net.ParseMAC(macs["new-bridge"])
+	if err != nil || parseErr != nil || parsed[0]&3 != 2 || macs["new-bridge"] == existing {
+		t.Fatalf("new bridge did not get a unique local unicast MAC: %v %v", macs, err)
+	}
+}
 
 // fakeNet подменяет sysfs и /proc/net/vlan каталогом с вымышленными
 // интерфейсами: настоящие мосты и VLAN на машине разработчика создавать

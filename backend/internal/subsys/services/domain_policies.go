@@ -10,6 +10,24 @@ import (
 
 const policyDNSBackendPort = 5355
 
+// dnsFrontendNeeded also covers ocserv's transient worker interfaces. Neither
+// unbound nor dnsproxy can bind an address that appears only after a VPN login;
+// dnsmasq's bind-dynamic frontend follows those interfaces as clients connect.
+func dnsFrontendNeeded(cfg *config.Config) bool {
+	if cfg == nil || !cfg.DNS.Enabled {
+		return false
+	}
+	if hasKernelDomainPolicies(cfg) {
+		return true
+	}
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "ocserv" {
+			return true
+		}
+	}
+	return false
+}
+
 func hasKernelDomainPolicies(cfg *config.Config) bool {
 	if cfg == nil || !cfg.DNS.Enabled {
 		return false
@@ -66,5 +84,5 @@ func renderDomainPolicyIPSets(cfg *config.Config) []string {
 }
 
 func backendLocalDNSNeeded(cfg *config.Config) bool {
-	return localDNSNeeded(cfg) && !hasKernelDomainPolicies(cfg)
+	return localDNSNeeded(cfg) && !dnsFrontendNeeded(cfg)
 }

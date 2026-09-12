@@ -130,13 +130,13 @@ func NewDnsmasq(r system.Runner) *Dnsmasq {
 func (d *Dnsmasq) Needed(cfg *config.Config) bool {
 	dhcp := cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq"
 	dns := cfg.DNS.Enabled && cfg.DNS.Provider == "dnsmasq"
-	return dhcp || dns || hasKernelDomainPolicies(cfg)
+	return dhcp || dns || dnsFrontendNeeded(cfg)
 }
 
 // Render собирает конфигурацию dnsmasq целиком.
 func (d *Dnsmasq) Render(cfg *config.Config) string {
 	serveDHCP := cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq"
-	serveDNS := cfg.DNS.Enabled && (cfg.DNS.Provider == "dnsmasq" || hasKernelDomainPolicies(cfg))
+	serveDNS := cfg.DNS.Enabled && (cfg.DNS.Provider == "dnsmasq" || dnsFrontendNeeded(cfg))
 
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
@@ -213,7 +213,7 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	w("no-poll")
 	w("cache-size=%d", cfg.DNS.CacheSize)
 	domainPolicies := hasKernelDomainPolicies(cfg)
-	policyFrontend := domainPolicies && cfg.DNS.Provider != "dnsmasq"
+	policyFrontend := dnsFrontendNeeded(cfg) && cfg.DNS.Provider != "dnsmasq"
 	if domainPolicies {
 		w("max-ttl=%d", policy.DomainSetTimeout)
 		w("max-cache-ttl=%d", policy.DomainSetTimeout)

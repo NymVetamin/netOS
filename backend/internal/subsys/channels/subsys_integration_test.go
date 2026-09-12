@@ -140,6 +140,18 @@ func TestIntegrationXrayLifecycle(t *testing.T) {
 	if out, err := s.Runner.Run(context.Background(), "systemctl", "is-active", xrayUnitName(ch)); err != nil || strings.TrimSpace(out) != "active" {
 		t.Fatalf("Xray unit is not active: %q (%v)", out, err)
 	}
+	if err := s.failChannel(context.Background(), cfg, ch); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := s.Runner.Run(context.Background(), "ip", "-4", "route", "get", "198.51.100.1", "mark", "0x13e4"); err == nil {
+		t.Fatalf("failed Xray still routes marked client traffic: %s", out)
+	}
+	if err := s.restoreChannel(context.Background(), ch); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := s.Runner.Run(context.Background(), "ip", "-4", "route", "get", "198.51.100.1", "mark", "0x13e4"); err != nil || !strings.Contains(out, InterfaceName(ch)) {
+		t.Fatalf("recovered Xray did not restore marked traffic: %s %v", out, err)
+	}
 	if err := s.Apply(context.Background(), config.Default()); err != nil {
 		t.Fatal(err)
 	}

@@ -9,8 +9,10 @@ package netiface
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -91,6 +93,21 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
+	// Preserve bridge identity across recreation/rename. A new random MAC leaves
+	// clients sending to the old gateway until their ARP cache expires.
+	stable, err := s.bridgeMACs(cfg)
+	if err != nil {
+		return err
+	}
+	copyConfig := *cfg
+	copyConfig.Interfaces = append([]config.Interface(nil), cfg.Interfaces...)
+	for i := range copyConfig.Interfaces {
+		iface := &copyConfig.Interfaces[i]
+		if iface.Type == "bridge" && iface.MAC == "" {
+			iface.MAC = stable[iface.ID]
+		}
+	}
+	cfg = &copyConfig
 	// Лишнее убираем первым: переименованный мост занимает старое имя и держит
 	// порты, а VLAN, у которого сменили номер или родителя, перевесить нельзя —
 	// только пересоздать.
@@ -123,6 +140,55 @@ func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	return s.rememberOwned(cfg)
+}
+
+func (s *Interfaces) bridgeMACs(cfg *config.Config) (map[string]string, error) {
+	macs := map[string]string{}
+	if s.OwnedPath == "" {
+		return macs, nil
+	}
+	path := s.OwnedPath + ".macs"
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(data, &macs); err != nil {
+			return nil, fmt.Errorf("чтение MAC мостов: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if macs == nil {
+		macs = map[string]string{}
+	}
+	for _, iface := range cfg.Interfaces {
+		if iface.Type != "bridge" || iface.MAC != "" || iface.ID == "" {
+			continue
+		}
+		if _, err := net.ParseMAC(macs[iface.ID]); err == nil {
+			continue
+		}
+		// Adopt the existing address on upgrade before allocating a new one.
+		live, _ := os.ReadFile(filepath.Join(sysClassNet, iface.Name, "address"))
+		address := strings.TrimSpace(string(live))
+		if _, err := net.ParseMAC(address); err != nil {
+			bytes := make([]byte, 6)
+			if _, err := rand.Read(bytes); err != nil {
+				return nil, err
+			}
+			bytes[0] = (bytes[0] | 2) & 0xfe
+			address = net.HardwareAddr(bytes).String()
+		}
+		macs[iface.ID] = address
+	}
+	data, err = json.Marshal(macs)
+	if err != nil {
+		return nil, err
+	}
+	if system.FileChanged(path, data) {
+		if err := system.WriteFileAtomic(path, data, 0o600); err != nil {
+			return nil, err
+		}
+	}
+	return macs, nil
 }
 
 // ensure создаёт виртуальный интерфейс, если его ещё нет.

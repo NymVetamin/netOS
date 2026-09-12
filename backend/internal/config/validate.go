@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/mail"
@@ -1905,8 +1906,7 @@ func (c *Config) validateDNS(r *ValidationResult) {
 			"dnsproxy не отбрасывает ответы с приватными адресами: защита от DNS rebinding работать не будет — выберите dnsmasq или unbound")
 	}
 
-	if c.DNS.Enabled && c.DNS.Provider != "dnsmasq" &&
-		c.DHCP.Enabled && c.DHCP.Provider != "dnsmasq" {
+	if c.DNS.Enabled && c.DHCP.Enabled && c.DHCP.Provider != "dnsmasq" {
 		r.warnf("dhcp.provider",
 			"имена клиентов, выданные по DHCP, разрешаться не будут: отдать их резолверу умеет только dnsmasq — выберите его сервером DHCP или задавайте имена вручную в записях DNS")
 	}
@@ -2271,6 +2271,18 @@ func (c *Config) validateXrayChannel(r *ValidationResult, path string, ch Channe
 	if _, ok := xr.Outbound["settings"]; !ok {
 		r.errf(path+".config.outbound.settings", "укажите настройки исходящего подключения Xray")
 	}
+	if protocol == "hysteria" {
+		var settings struct {
+			Version int    `json:"version"`
+			Address string `json:"address"`
+			Port    int    `json:"port"`
+		}
+		data, err := json.Marshal(xr.Outbound["settings"])
+		if err != nil || json.Unmarshal(data, &settings) != nil || settings.Version != 2 ||
+			!validDNSHost(settings.Address) || settings.Port < 1 || settings.Port > 65535 {
+			r.errf(path+".config.outbound.settings", "Hysteria требует version: 2, адрес сервера address и порт port от 1 до 65535")
+		}
+	}
 }
 
 func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch Channel) {
@@ -2583,6 +2595,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 		if s.Type == "ocserv" {
 			c.validateOcservServer(r, path, s)
+			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
+				r.errf("dns.port", "порт 5355 занят внутренним DNS backend для клиентов OpenConnect")
+			}
 		}
 		if s.Type == "ikev2" {
 			c.validateIKEv2Server(r, path, s)

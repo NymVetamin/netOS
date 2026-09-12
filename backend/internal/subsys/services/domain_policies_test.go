@@ -82,6 +82,9 @@ func TestDomainPolicyStartsBackendBeforeDNSFrontend(t *testing.T) {
 	m := NewManager(r)
 	m.Resolv.Root = t.TempDir()
 	cfg := dnsDomainPolicyConfig("unbound")
+	if err := NewDHCP(m).Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	if err := NewDNS(m).Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}

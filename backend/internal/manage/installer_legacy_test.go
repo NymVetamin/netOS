@@ -31,6 +31,7 @@ func TestInstallerLegacyReadiness(t *testing.T) {
 		{"unknown old version", "unknown", "42", "9443", "good", false, false},
 		{"modern needs marker", "modern", "42", "9443", "good", false, false},
 		{"modern ready", "modern", "42", "9443", "error", true, true},
+		{"crashed daemon with stale marker", "crashed", "42", "9443", "error", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -45,12 +46,20 @@ func TestInstallerLegacyReadiness(t *testing.T) {
 BIN_PATH=fake_binary
 fake_binary() {
  case "$1" in
-  -h) if [ "$QA_MODE" = modern ]; then echo '  -panel-port'; fi ;;
+  -h) if [ "$QA_MODE" = modern ] || [ "$QA_MODE" = crashed ]; then echo '  -panel-port'; fi ;;
   -version) if [ "$QA_MODE" = unknown ]; then echo 'netOS unknown'; else echo 'netOS v0.06'; fi ;;
   -render) printf '{\n "system": {\n  "panel": {\n   "port": %s,\n   "commit_timeout": 30\n  }\n },\n "vpn_servers": [{"port": 1234}]\n}\n' "$QA_PORT" ;;
  esac
 }
-systemctl() { if [ "$1" = show ]; then echo 42; fi; }
+systemctl() {
+ case "$*" in
+  *NRestarts*)
+   if [ "$QA_MODE" = crashed ]; then
+    if [ -f "$QA_COUNTER" ]; then echo 1; else : > "$QA_COUNTER"; echo 0; fi
+   else echo 0; fi ;;
+  show*) echo 42 ;;
+ esac
+}
 ss() { printf 'LISTEN 0 128 *:%s *:* users:(("netosd",pid=%s,fd=12))\n' "$QA_PORT" "$QA_PID"; }
 curl() {
  [ "$QA_MODE" != modern ] || exit 90
@@ -64,7 +73,7 @@ sleep() { :; }
 				t.Fatal(err)
 			}
 			cmd := exec.Command("bash", path)
-			cmd.Env = append(os.Environ(), "QA_MODE="+tc.mode, "QA_PID="+tc.pid, "QA_PORT="+tc.port, "QA_PING="+tc.ping)
+			cmd.Env = append(os.Environ(), "QA_MODE="+tc.mode, "QA_PID="+tc.pid, "QA_PORT="+tc.port, "QA_PING="+tc.ping, "QA_COUNTER="+filepath.Join(dir, "counter"))
 			out, err := cmd.CombinedOutput()
 			if (err == nil) != tc.want {
 				t.Fatalf("ready=%v want=%v: %v\n%s", err == nil, tc.want, err, out)

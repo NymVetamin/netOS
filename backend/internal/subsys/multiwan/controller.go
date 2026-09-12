@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -586,8 +587,7 @@ func (c *Controller) captureBalanceKernel(ctx context.Context, indices map[int]b
 		prefix := fmt.Sprint(priorityBase+index) + ":"
 		for _, line := range strings.Split(rules, "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-				snapshot.rule = strings.TrimSpace(line)
-				break
+				snapshot.rule += strings.TrimSpace(line) + "\n"
 			}
 		}
 		snapshots = append(snapshots, snapshot)
@@ -629,9 +629,17 @@ func (c *Controller) restoreBalance(ctx context.Context, kernel []balanceKernelS
 				failures = append(failures, err.Error())
 			}
 		}
-		_, _ = c.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority)
-		if snapshot.rule != "" {
-			parts := strings.SplitN(snapshot.rule, ":", 2)
+		liveRules, err := c.Runner.Run(ctx, "ip", "-4", "rule", "show")
+		if err != nil {
+			failures = append(failures, err.Error())
+		} else if err := c.deleteRuleGroup(ctx, liveRules, priority); err != nil {
+			failures = append(failures, err.Error())
+		}
+		for _, rule := range strings.Split(strings.TrimSpace(snapshot.rule), "\n") {
+			if rule == "" {
+				continue
+			}
+			parts := strings.SplitN(rule, ":", 2)
 			if len(parts) != 2 {
 				failures = append(failures, "не удалось разобрать прежнее правило "+snapshot.rule)
 			} else {
@@ -759,7 +767,7 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 	for _, index := range previous {
 		if !wanted[index] {
 			if kernelByIndex[index].rule != "" {
-				if _, err := c.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(priorityBase+index)); err != nil {
+				if err := c.deleteRuleGroup(ctx, kernelByIndex[index].rule, fmt.Sprint(priorityBase+index)); err != nil {
 					return rollback(err)
 				}
 			}
@@ -824,19 +832,88 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	}
 	selector := []string{"fwmark", mark}
 	ruleOK := hasBalanceRule(rules, priority, mark, table)
+	var sources []string
 	if len(probeInterface) > 0 && probeInterface[0] != "" {
 		selector = []string{"oif", probeInterface[0]}
 		ruleOK = hasProbeRule(rules, priority, probeInterface[0], table)
+		addresses, err := c.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", probeInterface[0])
+		if err != nil {
+			return err
+		}
+		fields := strings.Fields(addresses)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "inet" {
+				prefix, err := netip.ParsePrefix(fields[i+1])
+				if err == nil && prefix.Addr().Is4() {
+					sources = append(sources, prefix.Addr().String())
+				}
+			}
+		}
+		for _, source := range sources {
+			ruleOK = ruleOK && hasSourceRule(rules, priority, source, table)
+		}
 	}
+	// The group contains one probe/mark rule and one rule per local WAN IP.
+	// Rebuild it when an address disappears, including a transition to balance.
+	count := 0
+	for _, line := range strings.Split(rules, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), priority+":") {
+			count++
+		}
+	}
+	ruleOK = ruleOK && count == 1+len(sources)
 	if !ruleOK {
-		_, _ = c.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority)
+		if err := c.deleteRuleGroup(ctx, rules, priority); err != nil {
+			return err
+		}
 		args := append([]string{"-4", "rule", "add"}, selector...)
 		args = append(args, "priority", priority, "lookup", table)
 		if _, err := c.Runner.Run(ctx, "ip", args...); err != nil {
 			return err
 		}
+		for _, source := range sources {
+			// Replies to an address on a failed-health WAN must still use that
+			// WAN. Its data-plane default may be withdrawn while SSH/TLS remains
+			// reachable; routing the replies via the backup breaks management.
+			if _, err := c.Runner.Run(ctx, "ip", "-4", "rule", "add", "from", source+"/32", "priority", priority, "lookup", table); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func (c *Controller) deleteRuleGroup(ctx context.Context, rules, priority string) error {
+	for _, line := range strings.Split(rules, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), priority+":") {
+			if _, err := c.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func hasSourceRule(rules, priority, source, table string) bool {
+	for _, line := range strings.Split(rules, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), priority+":") {
+			continue
+		}
+		fields := strings.Fields(line)
+		from, lookup := false, false
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "from" {
+				from = strings.TrimSuffix(fields[i+1], "/32") == source
+			}
+			if fields[i] == "lookup" || fields[i] == "table" {
+				lookup = fields[i+1] == table
+			}
+		}
+		if from && lookup {
+			return true
+		}
+	}
+	return false
 }
 
 // A withdrawn main-table default must remain usable by interface-bound health

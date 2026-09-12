@@ -26,3 +26,32 @@ func TestDnsmasqAcceptsDynamicOcservInterfaces(t *testing.T) {
 		t.Fatal("removed ocserv server left a DNS listener")
 	}
 }
+
+func TestOcservDNSFrontendAllProviders(t *testing.T) {
+	for _, provider := range []string{"unbound", "dnsproxy"} {
+		t.Run(provider, func(t *testing.T) {
+			cfg := dnsDomainPolicyConfig(provider)
+			cfg.Policies = nil
+			cfg.VPNServers = []config.VPNServer{{ID: "oc", Type: "ocserv", Index: 3, Enabled: true}}
+			front := NewDnsmasq(nil).Render(cfg)
+			if !NewDnsmasq(nil).Needed(cfg) || !strings.Contains(front, "interface=vpns3*") || !strings.Contains(front, "server=127.0.0.1#5355") {
+				t.Fatalf("VPN clients have no dynamic DNS listener: %s", front)
+			}
+			if strings.Contains(front, "ipset=/") || strings.Contains(front, "max-ttl=") {
+				t.Fatalf("VPN-only frontend enabled domain policy behavior: %s", front)
+			}
+			backend := NewUnbound(nil).Render(cfg)
+			want := "port: 5355"
+			if provider == "dnsproxy" {
+				backend, want = NewDnsproxy(nil).Render(cfg), "  - 5355"
+			}
+			if !strings.Contains(backend, want) || strings.Contains(backend, "192.168.50.1") {
+				t.Fatalf("backend conflicts with frontend: %s", backend)
+			}
+			cfg.VPNServers[0].Enabled = false
+			if dnsFrontendNeeded(cfg) || NewDnsmasq(nil).Needed(cfg) {
+				t.Fatal("disabled VPN retained an unnecessary frontend")
+			}
+		})
+	}
+}

@@ -36,6 +36,32 @@ func (r *fakeRunner) RunInput(ctx context.Context, _ string, name string, args .
 
 type testLogger struct{}
 
+func TestFailoverKeepsManagementRepliesOnTheirLocalWAN(t *testing.T) {
+	r := &responseRunner{respond: func(command string) (string, error) {
+		switch command {
+		case "ip -o -4 addr show dev wan0":
+			return "2: wan0 inet 192.0.2.2/24 scope global wan0\n2: wan0 inet 192.0.2.3/24 scope global secondary wan0", nil
+		case "ip -4 rule show":
+			return "30001: from all oif wan0 lookup 3001\n30001: from 192.0.2.9 lookup 3001\n", nil
+		}
+		return "", nil
+	}}
+	c := New(r, t.TempDir(), testLogger{})
+	wan := config.WAN{ID: "primary", Index: 1}
+	if err := c.ensureBalanceTable(context.Background(), wan, "default via 192.0.2.1 dev wan0", "wan0"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(r.commands, "\n")
+	for _, address := range []string{"192.0.2.2", "192.0.2.3"} {
+		if !strings.Contains(commands, "ip -4 rule add from "+address+"/32 priority 30001 lookup 3001") {
+			t.Fatalf("reply can escape via backup WAN: %s", commands)
+		}
+	}
+	if strings.Count(commands, "ip -4 rule del priority 30001") != 2 {
+		t.Fatalf("stale source rule survived: %s", commands)
+	}
+}
+
 func (testLogger) Infof(string, ...any) {}
 func (testLogger) Warnf(string, ...any) {}
 

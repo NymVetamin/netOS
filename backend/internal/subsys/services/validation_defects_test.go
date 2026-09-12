@@ -44,7 +44,7 @@ func TestAddressBoundResolversListenOnPersistentVPNServers(t *testing.T) {
 	cfg.VPNServers = []config.VPNServer{
 		{ID: "wg", Type: "wireguard", Index: 1, Enabled: true, Subnet: "10.9.0.1/24"},
 		{ID: "ike", Type: "ikev2", Index: 2, Enabled: true, Subnet: "10.10.0.1/24"},
-		{ID: "oc", Type: "ocserv", Index: 3, Enabled: true, Subnet: "10.11.0.1/24"},
+		{ID: "oc", Type: "ocserv", Index: 3, Subnet: "10.11.0.1/24"},
 		{ID: "off", Type: "wireguard", Index: 4, Subnet: "10.12.0.1/24"},
 	}
 

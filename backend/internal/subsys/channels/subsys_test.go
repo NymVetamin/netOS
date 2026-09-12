@@ -75,6 +75,8 @@ func (r *channelRunner) Run(_ context.Context, name string, args ...string) (str
 		r.routes = ""
 	case command == "ip -4 rule show":
 		return r.rules, nil
+	case command == "ip -4 rule add fwmark 0x1001 priority 10001 blackhole":
+		r.rules = "10001: from all fwmark 0x1001 blackhole\n"
 	case strings.Contains(command, "rule add fwmark 0x1001"):
 		lookup := args[len(args)-1]
 		r.rules = "10001: from all fwmark 0x1001 lookup " + lookup + "\n"
@@ -204,7 +206,7 @@ func TestMonitorAppliesBlockAndRestoresChannel(t *testing.T) {
 	ch.Probe.RiseThreshold = 1
 	state := &channelState{}
 	s.record(context.Background(), cfg, ch, state, false)
-	if !state.Down || !strings.Contains(runner.routes, "default dev wg-ch1") || !strings.Contains(runner.routes, "blackhole default") {
+	if !state.Down || !strings.Contains(runner.rules, "fwmark 0x1001 blackhole") || !strings.Contains(runner.routes, "default dev wg-ch1") {
 		t.Fatalf("kill-switch not applied: down=%v routes=%q", state.Down, runner.routes)
 	}
 	s.record(context.Background(), cfg, ch, state, true)
@@ -262,13 +264,13 @@ func TestMonitorFollowsReserveStateWithoutParentTransition(t *testing.T) {
 	}
 	cfg.Channels[2].FailMode = "block"
 	s.tick(context.Background(), cfg)
-	if !strings.Contains(runner.rules, "lookup 1002") {
+	if !strings.Contains(runner.rules, "fwmark 0x1001 blackhole") {
 		t.Fatalf("block reserve fell through to WAN: %s", runner.rules)
 	}
 	cfg.Channels[2].FailMode = "fallback"
 	cfg.Channels[2].Fallback = primary.ID
 	s.tick(context.Background(), cfg)
-	if !strings.Contains(runner.rules, "lookup 1001") {
+	if !strings.Contains(runner.rules, "fwmark 0x1001 blackhole") {
 		t.Fatalf("invalid cycle did not retain isolated table: %s", runner.rules)
 	}
 }

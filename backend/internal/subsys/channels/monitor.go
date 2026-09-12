@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
@@ -126,7 +127,7 @@ func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch conf
 	seen := map[string]bool{}
 	for {
 		if seen[target.ID] {
-			return s.ensureRuleTable(ctx, ch, TableNumber(ch))
+			return s.ensureBlockedRule(ctx, ch)
 		}
 		seen[target.ID] = true
 		switch target.FailMode {
@@ -135,7 +136,7 @@ func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch conf
 		case "fallback":
 			fallback, ok := channelByID(cfg, target.Fallback)
 			if !ok {
-				return s.ensureRuleTable(ctx, ch, TableNumber(ch))
+				return s.ensureBlockedRule(ctx, ch)
 			}
 			if fallback.Type == "direct" {
 				return s.removeChannelRule(ctx, ch)
@@ -146,14 +147,35 @@ func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch conf
 			}
 			return s.ensureRuleTable(ctx, ch, TableNumber(fallback))
 		default: // block
-			// Retain the device route for recovery probes. The lower-priority
-			// blackhole prevents WAN fallthrough when the device disappears.
-			if err := s.ensureRoutes(ctx, target, InterfaceName(target)); err != nil {
-				return err
-			}
-			return s.ensureRuleTable(ctx, ch, TableNumber(target))
+			// Recovery probes bind to the device without the client fwmark.
+			// Block marked traffic at the rule, keeping probe routes usable.
+			return s.ensureBlockedRule(ctx, ch)
 		}
 	}
+}
+
+func (s *Subsystem) ensureBlockedRule(ctx context.Context, ch config.Channel) error {
+	priority := fmt.Sprint(Priority(ch))
+	mark := fmt.Sprintf("0x%x", Mark(ch))
+	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), priority+":") &&
+			strings.Contains(line, "fwmark "+mark+" ") && strings.HasSuffix(strings.TrimSpace(line), "blackhole") {
+			return s.refreshChannelUDP(ctx, ch, false)
+		}
+	}
+	if hasRulePriority(out, priority) {
+		if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority); err != nil {
+			return err
+		}
+	}
+	if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "add", "fwmark", mark, "priority", priority, "blackhole"); err != nil {
+		return err
+	}
+	return s.refreshChannelUDP(ctx, ch, true)
 }
 
 func (s *Subsystem) removeChannelRule(ctx context.Context, ch config.Channel) error {
