@@ -324,7 +324,13 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     Добавьте файл подкачки или поставьте готовый релиз, убрав NETOS_FROM_SOURCE."
     fi
 
-    SRC=$(mktemp -d)
+    # /tmp is commonly a small tmpfs on routers. Keeping the downloaded Go
+    # toolchain, module cache and compiler work tree there can exhaust it even
+    # when the persistent filesystem has several gigabytes free. Source builds
+    # are sizeable and non-secret, so use the disk-backed /var/tmp and point
+    # Go/npm temporary files into the same transaction-owned directory.
+    SRC=$(mktemp -d /var/tmp/netos-source.XXXXXX)
+    install -d -m 0700 "$SRC/tmp"
     GO_VERSION="1.27.0"
     GO_ARCHIVE="$SRC/go.tar.gz"
     GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz"
@@ -358,6 +364,7 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     fi
     CANDIDATE="$SRC/netosd"
     (
+        export TMPDIR="$SRC/tmp"
         cd "$SRC/netos/web"
         npm ci
         npm run build
