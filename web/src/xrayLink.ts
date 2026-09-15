@@ -28,6 +28,7 @@ export function parseXrayLink(value: string): any {
   if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan:// и ss://");
   const user = decodeURIComponent(url.username);
   requireText(user, "В ссылке нет идентификатора пользователя или пароля");
+  if (protocol === "vless" && !isUUID(user)) throw new Error("Идентификатор пользователя VLESS должен быть UUID");
   const server: any = { address: url.hostname, port };
   if (protocol === "vless") server.users = [{ id: user, encryption: url.searchParams.get("encryption") || "none", ...(url.searchParams.get("flow") ? { flow: url.searchParams.get("flow") } : {}) }];
   else server.password = user;
@@ -59,6 +60,10 @@ function shadowsocksOutbound(credentials: string, endpoint: string): any {
   requireText(address, "В ссылке нет сервера");
   const port = parsePort(endpoint.slice(lastColon + 1));
   return { protocol: "shadowsocks", settings: { servers: [{ method, password, address, port }] } };
+}
+
+function isUUID(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function requireText(value: unknown, message: string): asserts value is string {

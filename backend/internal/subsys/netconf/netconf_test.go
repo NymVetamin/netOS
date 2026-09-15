@@ -75,6 +75,20 @@ func TestIfupdownMembersAreRaisedByTheirBridge(t *testing.T) {
 	}
 }
 
+func TestIfupdownDoesNotStartDisabledInterfacesAtBoot(t *testing.T) {
+	cfg := routerConfig()
+	cfg.Interfaces = append(cfg.Interfaces, config.Interface{
+		ID: "radio", Name: "wlan2", Type: "physical", Enabled: false,
+	})
+	out := renderIfupdown(cfg)
+	if !strings.Contains(out, "iface wlan2 inet manual") {
+		t.Fatalf("disabled interface disappeared from conflict inventory:\n%s", out)
+	}
+	if strings.Contains(out, "auto wlan2\n") || strings.Contains(out, "up ip link set dev wlan2 up") {
+		t.Fatalf("disabled interface is activated at boot:\n%s", out)
+	}
+}
+
 func TestIfupdownIsStableAcrossReordering(t *testing.T) {
 	first := renderIfupdown(routerConfig())
 

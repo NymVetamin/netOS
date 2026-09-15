@@ -331,11 +331,18 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     info "загружаю Go $GO_VERSION"
     curl -4 -fsSL --retry 3 -o "$GO_ARCHIVE" "$GO_URL" \
         || die "не удалось загрузить Go $GO_VERSION"
-    curl -4 -fsSL --retry 3 -o "$GO_ARCHIVE.sha256" "$GO_URL.sha256" \
-        || die "не удалось загрузить контрольную сумму Go $GO_VERSION"
-    EXPECTED=$(tr -d '[:space:]' < "$GO_ARCHIVE.sha256")
+    # go.dev publishes checksums in its signed release catalog, not beside
+    # archives as <archive>.sha256 (that URL is an HTML page). Node is already
+    # a source-build dependency, so parse the official JSON without adding jq.
+    EXPECTED=$(curl -4 -fsSL --retry 3 'https://go.dev/dl/?mode=json&include=all' | \
+        node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=process.argv[1];for(const r of JSON.parse(s))for(const f of r.files||[])if(f.filename===n){process.stdout.write(f.sha256||"");return}})' \
+        "go${GO_VERSION}.linux-${GOARCH}.tar.gz") \
+        || die "не удалось получить контрольную сумму Go $GO_VERSION"
+    printf '%s' "$EXPECTED" | grep -Eq '^[0-9a-fA-F]{64}$' \
+        || die "контрольная сумма Go $GO_VERSION отсутствует в каталоге go.dev"
     ACTUAL=$(sha256sum "$GO_ARCHIVE" | awk '{print $1}')
-    [ "$EXPECTED" = "$ACTUAL" ] || die "контрольная сумма Go не совпадает"
+    [ "$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')" = "$ACTUAL" ] \
+        || die "контрольная сумма Go не совпадает"
     tar -C "$SRC" -xzf "$GO_ARCHIVE" || die "не удалось распаковать Go"
 
     if [ "$VERSION" = "latest" ]; then

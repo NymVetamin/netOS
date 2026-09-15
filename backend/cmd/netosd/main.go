@@ -228,6 +228,18 @@ func main() {
 		logger.Infof("закрыто незавершённых ревизий: %d", stale)
 	}
 
+	// Network managers load generated files before netosd starts. After a hard
+	// reboot during provisional Apply those files may describe the unconfirmed
+	// revision even though the database correctly points at the previous active
+	// one. Restore that active management path before the component subsystem
+	// attempts DNS or external downloads, otherwise startup can crash-loop
+	// without ever reaching the normal network stages.
+	if err := engine.RecoverStartupConnectivity(ctx, cfg); err != nil {
+		// The full Apply below still gets its normal chance (for example, it may
+		// first install a package required by a restored network backend).
+		logger.Warnf("раннее восстановление связности не удалось: %v", err)
+	}
+
 	// Применение при старте подтверждения не требует: подтверждать некому.
 	logger.Infof("применяю конфигурацию (ревизия %d)", revID)
 	transitioned := false

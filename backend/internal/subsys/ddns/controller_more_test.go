@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,22 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestProviderTransportErrorRedactsRequestCredentials(t *testing.T) {
+	cfg := baseConfig("duckdns").DDNS
+	err := &url.Error{
+		Op:  "Get",
+		URL: "https://www.duckdns.org/update?domains=router&token=" + cfg.Token,
+		Err: errors.New("dial failed for token " + cfg.Token),
+	}
+	message := redactedProviderError(err, cfg)
+	if strings.Contains(message, cfg.Token) || strings.Contains(message, "duckdns.org/update?") {
+		t.Fatalf("DDNS credential escaped into status: %q", message)
+	}
+	if !strings.Contains(message, "dial failed") {
+		t.Fatalf("useful transport cause was lost: %q", message)
+	}
+}
 
 func TestStatusJSONOmitsDatesBeforeFirstAttempt(t *testing.T) {
 	data, err := json.Marshal(Status{Enabled: true, Provider: "duckdns"})

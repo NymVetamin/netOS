@@ -249,12 +249,9 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	}
 
 	// Апстримы. Порядок в конфиге определяет порядок опроса.
-	for _, u := range cfg.DNS.Upstreams {
+	for _, u := range rootDNSUpstreams(cfg) {
 		if policyFrontend {
 			break
-		}
-		if !u.Enabled {
-			continue
 		}
 		if u.Type != "plain" {
 			// DoT/DoH dnsmasq не умеет — такие апстримы обслуживает

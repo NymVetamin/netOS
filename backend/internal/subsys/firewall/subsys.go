@@ -154,8 +154,45 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	if _, err := s.Runner.RunInput(ctx, rs.IPv4, s.restoreCmd()); err != nil {
 		return s.rollbackApply(ctx, fmt.Errorf("применение правил iptables: %w", err), previous4, previous6, previousLive)
 	}
+	// A MAC DROP rule prevents new packets from the client, but replies in an
+	// already established conntrack entry are accepted before the reply-side
+	// packet can be matched by source MAC. Remove those entries when applying a
+	// block so the UI's "blocked" state takes effect for existing TCP and UDP
+	// sessions as well. This is deliberately best-effort: a stale/empty neighbor
+	// cache must not make an otherwise valid firewall transaction fail.
+	s.dropBlockedClientConnections(ctx, cfg)
 
 	return nil
+}
+
+func (s *Subsystem) dropBlockedClientConnections(ctx context.Context, cfg *config.Config) {
+	blocked := map[string]bool{}
+	for _, client := range cfg.Clients {
+		if client.Blocked && client.MAC != "" {
+			blocked[strings.ToLower(client.MAC)] = true
+		}
+	}
+	if len(blocked) == 0 {
+		return
+	}
+	out, err := s.Runner.Run(ctx, "ip", "-4", "neigh", "show")
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		for i := 1; i+1 < len(fields); i++ {
+			if fields[i] != "lladdr" || !blocked[strings.ToLower(fields[i+1])] {
+				continue
+			}
+			if ip, err := netip.ParseAddr(fields[0]); err == nil && ip.Is4() && !seen[ip.String()] {
+				seen[ip.String()] = true
+				_, _ = s.Runner.Run(ctx, "conntrack", "-D", "-s", ip.String())
+			}
+			break
+		}
+	}
 }
 
 // Health проверяет, что цепочки netOS действительно на месте. Если что-то

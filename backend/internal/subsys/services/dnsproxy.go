@@ -96,10 +96,7 @@ func (d *Dnsproxy) Render(cfg *config.Config) string {
 			w("  - \"[/%s/]%s\"", domain, dnsproxyUpstream(up))
 		}
 	}
-	for _, up := range cfg.DNS.Upstreams {
-		if !up.Enabled {
-			continue
-		}
+	for _, up := range rootDNSUpstreams(cfg) {
 		w("  - %q", dnsproxyUpstream(up))
 	}
 

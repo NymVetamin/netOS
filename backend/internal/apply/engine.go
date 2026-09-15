@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +90,15 @@ var Order = []string{
 	"dns",
 	"ddns",
 	"wifi",
+}
+
+// startupConnectivityOrder is the dependency-safe subset that can restore a
+// previously active management path without downloading optional components.
+// Boot-time network managers may already have loaded files from an interrupted
+// provisional revision; running the ordinary component-first Apply in that
+// state can fail on DNS/downloads before it ever gets a chance to restore WAN.
+var startupConnectivityOrder = []string{
+	"netconf", "interfaces", "ipv6", "networks", "wan", "multiwan", "routing", "firewall",
 }
 
 // connectivitySubsystems — подсистемы, изменение которых способно оборвать
@@ -226,6 +236,34 @@ func (e *Engine) Current() *config.Config {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.current
+}
+
+// RecoverStartupConnectivity reapplies only the local networking primitives
+// of a known-good revision. It is intended for daemon startup, before the full
+// transaction installs or checks optional packages and external binaries.
+func (e *Engine) RecoverStartupConnectivity(ctx context.Context, cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("конфигурация восстановления отсутствует")
+	}
+	if e.dryRun {
+		return nil
+	}
+	e.opMu.Lock()
+	defer e.opMu.Unlock()
+	var failures []string
+	for _, name := range startupConnectivityOrder {
+		s, ok := e.subsystems[name]
+		if !ok {
+			continue
+		}
+		if err := s.Apply(ctx, cfg); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("раннее восстановление: %s", strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 // Plan собирает планы всех подсистем в порядке применения.

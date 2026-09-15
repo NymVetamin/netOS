@@ -81,3 +81,16 @@ func TestMultiWANFailoverNATsEveryEnabledWAN(t *testing.T) {
 		t.Fatal("failover enabled a disabled WAN or balancing")
 	}
 }
+
+func TestSoleWANIsMasqueradedWithoutMultiWAN(t *testing.T) {
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "uplink", Name: "eth2", Enabled: true}}
+	cfg.WANs = []config.WAN{{ID: "wan", Name: "Only WAN", Interface: "uplink", Enabled: true, Proto: "static"}}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rules.IPv4, "-A POSTROUTING -o eth2") {
+		t.Fatalf("sole WAN leaks private client source addresses:\n%s", rules.IPv4)
+	}
+}

@@ -39,6 +39,7 @@ __pycache__/
 
 # Локальные настройки агентов и артефакты экспериментальных QA-прогонов
 /.claude/
+/.codex-tmp/
 /scripts/router-lab/
 /docs/testing/
 /CLAUDE_TEST_*

@@ -41,6 +41,8 @@ func TestFailoverKeepsManagementRepliesOnTheirLocalWAN(t *testing.T) {
 		switch command {
 		case "ip -o -4 addr show dev wan0":
 			return "2: wan0 inet 192.0.2.2/24 scope global wan0\n2: wan0 inet 192.0.2.3/24 scope global secondary wan0", nil
+		case "ip -4 route show table main scope link":
+			return "192.0.2.0/24 dev wan0 proto kernel scope link src 192.0.2.2\n10.9.0.0/24 dev wg-srv1 proto kernel scope link src 10.9.0.1\n", nil
 		case "ip -4 rule show":
 			return "30001: from all oif wan0 lookup 3001\n30001: from 192.0.2.9 lookup 3001\n", nil
 		}
@@ -55,6 +57,14 @@ func TestFailoverKeepsManagementRepliesOnTheirLocalWAN(t *testing.T) {
 	for _, address := range []string{"192.0.2.2", "192.0.2.3"} {
 		if !strings.Contains(commands, "ip -4 rule add from "+address+"/32 priority 30001 lookup 3001") {
 			t.Fatalf("reply can escape via backup WAN: %s", commands)
+		}
+	}
+	for _, route := range []string{
+		"ip -4 route replace 192.0.2.0/24 dev wan0 proto kernel scope link src 192.0.2.2 table 3001",
+		"ip -4 route replace 10.9.0.0/24 dev wg-srv1 proto kernel scope link src 10.9.0.1 table 3001",
+	} {
+		if !strings.Contains(commands, route) {
+			t.Fatalf("policy table cannot return connected traffic: %s", commands)
 		}
 	}
 	if strings.Count(commands, "ip -4 rule del priority 30001") != 2 {

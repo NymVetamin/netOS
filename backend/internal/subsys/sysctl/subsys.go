@@ -235,11 +235,14 @@ func (s *IPv6) values(cfg *config.Config) map[string]string {
 		return map[string]string{
 			"net.ipv6.conf.all.disable_ipv6":     "0",
 			"net.ipv6.conf.default.disable_ipv6": "0",
-			"net.ipv6.conf.all.accept_ra":        "1",
-			"net.ipv6.conf.default.accept_ra":    "1",
-			"net.ipv6.conf.all.autoconf":         "1",
-			"net.ipv6.conf.default.autoconf":     "1",
-			"net.ipv6.conf.all.forwarding":       "0",
+			// A router with forwarding=1 ignores RA at accept_ra=1. Value 2
+			// explicitly keeps upstream autoconfiguration while forwarding client
+			// packets, which is the contract of passthrough mode.
+			"net.ipv6.conf.all.accept_ra":     "2",
+			"net.ipv6.conf.default.accept_ra": "2",
+			"net.ipv6.conf.all.autoconf":      "1",
+			"net.ipv6.conf.default.autoconf":  "1",
+			"net.ipv6.conf.all.forwarding":    "1",
 		}
 	}
 	return map[string]string{
@@ -303,7 +306,7 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 		// включить его режим — и роутер получил бы маршруты из чужих RA.
 		values := map[string]string{"disable_ipv6": "1", "accept_ra": "0", "autoconf": "0"}
 		if cfg.IPv6.Mode != "off" {
-			values = map[string]string{"disable_ipv6": "0", "accept_ra": "1", "autoconf": "1"}
+			values = map[string]string{"disable_ipv6": "0", "accept_ra": "2", "autoconf": "1"}
 		}
 		for key, value := range values {
 			// Ошибку игнорируем: интерфейс мог исчезнуть между чтением и записью.
@@ -331,7 +334,7 @@ func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	values := map[string]string{"disable_ipv6": "1", "accept_ra": "0", "autoconf": "0"}
 	if cfg.IPv6.Mode != "off" {
-		values = map[string]string{"disable_ipv6": "0", "accept_ra": "1", "autoconf": "1"}
+		values = map[string]string{"disable_ipv6": "0", "accept_ra": "2", "autoconf": "1"}
 	}
 	for _, name := range names {
 		if name == "lo" {

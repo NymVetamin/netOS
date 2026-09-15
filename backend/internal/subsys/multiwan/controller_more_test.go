@@ -16,6 +16,7 @@ import (
 
 type responseRunner struct {
 	commands []string
+	inputs   []string
 	respond  func(string) (string, error)
 }
 
@@ -118,7 +119,8 @@ func (r *responseRunner) Run(_ context.Context, name string, args ...string) (st
 	return "", nil
 }
 
-func (r *responseRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+func (r *responseRunner) RunInput(ctx context.Context, input string, name string, args ...string) (string, error) {
+	r.inputs = append(r.inputs, input)
 	return r.Run(ctx, name, args...)
 }
 
@@ -161,6 +163,70 @@ func TestMetadataPlanAndInterfaceNames(t *testing.T) {
 		if got := interfaceName(cfg, config.WAN{ID: "wan-a", Proto: proto}); got != "ppp-wan-a" {
 			t.Fatalf("%s interface=%q", proto, got)
 		}
+	}
+}
+
+func TestTwoWANsKeepSourcePolicyWithoutMultiWAN(t *testing.T) {
+	r := &responseRunner{respond: func(command string) (string, error) {
+		switch {
+		case strings.Contains(command, "route show default dev wan0"):
+			return "default via 192.0.2.1 dev wan0 metric 100\n", nil
+		case strings.Contains(command, "route show default dev wan1"):
+			return "default via 198.51.100.1 dev wan1 metric 200\n", nil
+		case strings.Contains(command, "addr show dev wan0"):
+			return "2: wan0 inet 192.0.2.2/24 scope global wan0\n", nil
+		case strings.Contains(command, "addr show dev wan1"):
+			return "3: wan1 inet 198.51.100.2/24 scope global wan1\n", nil
+		case command == "ip -4 route show table main scope link":
+			return "192.0.2.0/24 dev wan0 scope link\n198.51.100.0/24 dev wan1 scope link\n", nil
+		}
+		return "", nil
+	}}
+	c := New(r, t.TempDir(), testLogger{})
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "a", Name: "wan0"}, {ID: "b", Name: "wan1"}}
+	cfg.WANs = []config.WAN{
+		{ID: "a", Index: 1, Name: "A", Interface: "a", Enabled: true, Proto: "static"},
+		{ID: "b", Index: 2, Name: "B", Interface: "b", Enabled: true, Proto: "static"},
+	}
+	if err := c.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(r.commands, "\n")
+	for _, want := range []string{
+		"ip -4 rule add from 192.0.2.2/32 priority 30001 lookup 3001",
+		"ip -4 rule add from 198.51.100.2/32 priority 30002 lookup 3002",
+	} {
+		if !strings.Contains(commands, want) {
+			t.Fatalf("missing symmetric reply rule %q:\n%s", want, commands)
+		}
+	}
+}
+
+func TestBalanceClassifierExcludesDownWANAndBlocksAllDown(t *testing.T) {
+	r := &responseRunner{}
+	c := New(r, t.TempDir(), testLogger{})
+	cfg := config.Default()
+	cfg.MultiWAN.Enabled, cfg.MultiWAN.Mode = true, "balance"
+	cfg.Interfaces = []config.Interface{{ID: "a", Name: "wan0"}, {ID: "b", Name: "wan1"}}
+	cfg.WANs = []config.WAN{
+		{ID: "a", Index: 1, Interface: "a", Enabled: true, Weight: 1},
+		{ID: "b", Index: 2, Interface: "b", Enabled: true, Weight: 3},
+	}
+	c.states = map[string]*linkState{"a": {Down: true}}
+	if err := c.reconcileBalanceClassifier(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	input := r.inputs[len(r.inputs)-1]
+	if strings.Contains(input, "0x3001") || !strings.Contains(input, "--set-mark 0x3002") || strings.Contains(input, "-j DROP") {
+		t.Fatalf("down WAN remained in new-flow pool:\n%s", input)
+	}
+	c.states["b"] = &linkState{Down: true}
+	if err := c.reconcileBalanceClassifier(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if input = r.inputs[len(r.inputs)-1]; !strings.Contains(input, "-A NETOS-MULTIWAN -j DROP") || strings.Contains(input, "--set-mark") {
+		t.Fatalf("all-down classifier can leak into main table:\n%s", input)
 	}
 }
 

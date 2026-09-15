@@ -25,12 +25,13 @@ test("reject missing credentials and invalid endpoint before replacing outbound"
     "ss://" + encode("aes-128-gcm:secret@:443"),
     "ss://" + encode("aes-128-gcm:secret@host:bad"),
     "https://user@host:443", "vless://user@host:65536",
+    "vless://not-uuid@host:443?security=none",
   ]) assert.throws(() => parseXrayLink(link), undefined, link);
 });
 
 test("preserve supported protocols, credential encoding and transports", () => {
   const cases = [
-    ["vless://user@host:443?type=grpc&security=tls&serviceName=qa", "vless"],
+    ["vless://01234567-89ab-cdef-0123-456789abcdef@host:443?type=grpc&security=tls&serviceName=qa", "vless"],
     ["trojan://secret%3Avalue@host:443?security=tls", "trojan"],
     [vmess({ add: "host", port: "443", id: "user", net: "ws", path: "/qa" }), "vmess"],
     ["ss://" + encode("aes-128-gcm:secret:part@host:443") + "#name", "shadowsocks"],

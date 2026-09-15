@@ -31,8 +31,15 @@ type integrationLogger struct{ t *testing.T }
 
 func (l integrationLogger) Infof(f string, a ...any) { l.t.Logf(f, a...) }
 func (l integrationLogger) Warnf(f string, a ...any) { l.t.Logf(f, a...) }
-func (r namespaceRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
-	return r.Run(ctx, name, args...)
+func (r namespaceRunner) RunInput(ctx context.Context, input string, name string, args ...string) (string, error) {
+	all := append([]string{"netns", "exec", multiWANTestNS, name}, args...)
+	cmd := exec.CommandContext(ctx, "ip", all...)
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%w: %s", err, out)
+	}
+	return string(out), nil
 }
 
 func TestIntegrationFailoverRemovesAndRestoresRealRoute(t *testing.T) {
@@ -111,24 +118,24 @@ func TestIntegrationBalanceBuildsRealTablesAndRules(t *testing.T) {
 			t.Fatalf("нет %s:\n%s", want, rules)
 		}
 	}
-	// A failed uplink must keep established marked flows usable through the
-	// healthy fallback table. If every uplink is down, the blackhole remains
-	// and traffic must not leak through the main table.
+	// A health-only failure keeps the selected table's original route for
+	// established connmarks. The runtime classifier excludes it only for new
+	// flows, avoiding a public-address change in an existing NAT session.
 	c.states["a"] = &linkState{Down: true}
 	if err := c.reconcileBalance(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	out := mustNS(t, "ip", "route", "show", "table", "3001")
-	if !strings.Contains(out, "default dev wan1") {
-		t.Fatalf("failed uplink did not switch to the fallback:\n%s", out)
+	if !strings.Contains(out, "default dev wan0") || strings.Contains(out, "default dev wan1") {
+		t.Fatalf("established flow was moved away from its live selected WAN:\n%s", out)
 	}
 	c.states["b"] = &linkState{Down: true}
 	if err := c.reconcileBalance(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	out = mustNS(t, "ip", "route", "show", "table", "3001")
-	if strings.Contains(out, "default dev") || !strings.Contains(out, "blackhole default") {
-		t.Fatalf("all-down table can leak traffic:\n%s", out)
+	if !strings.Contains(out, "default dev wan0") || !strings.Contains(out, "blackhole default") {
+		t.Fatalf("selected table lost its own route or safety fallback:\n%s", out)
 	}
 	// A failed health target does not make the public management address
 	// unreachable: locally sourced replies keep the incoming WAN's table.

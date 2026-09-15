@@ -525,11 +525,13 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":INPUT ACCEPT [0:0]")
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
-	if cfg.MultiWAN.Enabled {
-		for _, wan := range cfg.WANs {
-			if wan.Enabled {
-				b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE", wanInterface(cfg, wan), "NAT аплинка «"+wan.Name+"»")
-			}
+	// A configured WAN is an Internet egress regardless of whether Multi-WAN
+	// is enabled. Restricting automatic masquerade to Multi-WAN leaked private
+	// client addresses (and made PPP/L2TP fail completely) in every sole-WAN
+	// matrix other than the image's incidental eth0 path.
+	for _, wan := range cfg.WANs {
+		if wan.Enabled {
+			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE", wanInterface(cfg, wan), "NAT аплинка «"+wan.Name+"»")
 		}
 	}
 	for _, ch := range cfg.Channels {

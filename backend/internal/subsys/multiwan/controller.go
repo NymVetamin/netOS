@@ -189,7 +189,7 @@ func (c *Controller) Health(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	var expected []int
-	if cfg.MultiWAN.Enabled {
+	if cfg.MultiWAN.Enabled || len(enabledWANs(cfg)) > 1 {
 		for _, wan := range cfg.WANs {
 			if wan.Enabled {
 				expected = append(expected, wan.Index)
@@ -223,7 +223,7 @@ func (c *Controller) Health(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("в таблице balance %s нет защитного blackhole default", wan.Name)
 		}
 		ruleOK := hasBalanceRule(rules, fmt.Sprint(Priority(wan)), fmt.Sprintf("0x%x", Mark(wan)), table)
-		if cfg.MultiWAN.Mode == "failover" {
+		if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode == "failover" {
 			ruleOK = hasProbeRule(rules, fmt.Sprint(Priority(wan)), interfaceName(cfg, wan), table)
 		}
 		if !ruleOK {
@@ -353,6 +353,8 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 		if c.balanceDirty {
 			if err := c.reconcileBalance(ctx, cfg); err != nil {
 				c.Logger.Warnf("Multi-WAN: balance state не пересобран: %v", err)
+			} else if err := c.reconcileBalanceClassifier(ctx, cfg); err != nil {
+				c.Logger.Warnf("Multi-WAN: классификатор balance не пересобран: %v", err)
 			} else {
 				c.balanceDirty = false
 			}
@@ -690,7 +692,7 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 		iface string
 	}
 	var desired []desiredTable
-	if cfg.MultiWAN.Enabled {
+	if cfg.MultiWAN.Enabled || len(enabledWANs(cfg)) > 1 {
 		var live []string
 		for _, wan := range cfg.WANs {
 			if !wan.Enabled {
@@ -701,19 +703,10 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 			if err != nil {
 				return fmt.Errorf("маршрут аплинка %s: %w", wan.Name, err)
 			}
-			if cfg.MultiWAN.Mode == "failover" && line == "" {
+			if cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "failover" && line == "" {
 				line = c.suppressed[wan.ID]
 			}
 			live = append(live, line)
-		}
-		fallback := ""
-		for i, wan := range enabledWANs(cfg) {
-			if st := c.states[wan.ID]; st == nil || !st.Down {
-				if i < len(live) && live[i] != "" {
-					fallback = live[i]
-					break
-				}
-			}
 		}
 		i := 0
 		for _, wan := range cfg.WANs {
@@ -722,11 +715,12 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 			}
 			route := live[i]
 			i++
-			if st := c.states[wan.ID]; cfg.MultiWAN.Mode == "balance" && st != nil && st.Down {
-				route = fallback
-			}
+			// Keep the selected uplink's own route while only its health target is
+			// down. Existing connmarks must stay pinned to that still-live path;
+			// the runtime classifier separately removes it from the pool for new
+			// flows. A physically withdrawn route naturally leaves only blackhole.
 			iface := ""
-			if cfg.MultiWAN.Mode == "failover" {
+			if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode == "failover" {
 				iface = interfaceName(cfg, wan)
 			}
 			desired = append(desired, desiredTable{wan: wan, route: route, iface: iface})
@@ -797,6 +791,67 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 	return nil
 }
 
+// reconcileBalanceClassifier atomically replaces only the contents of the
+// netOS-owned balance chain. Existing connections restore their connmark before
+// entering this chain; therefore removing a down WAN here affects new flows
+// without moving established NAT sessions to a different public address.
+func (c *Controller) reconcileBalanceClassifier(ctx context.Context, cfg *config.Config) error {
+	if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode != "balance" {
+		return nil
+	}
+	var active []config.WAN
+	total := 0
+	for _, wan := range cfg.WANs {
+		if !wan.Enabled {
+			continue
+		}
+		if state := c.states[wan.ID]; state != nil && state.Down {
+			continue
+		}
+		active = append(active, wan)
+		total += wan.Weight
+	}
+	var b strings.Builder
+	fmt.Fprintln(&b, "*mangle")
+	fmt.Fprintln(&b, "-F NETOS-MULTIWAN")
+	for _, wan := range enabledWANs(cfg) {
+		if iface := interfaceName(cfg, wan); iface != "" {
+			fmt.Fprintf(&b, "-A NETOS-MULTIWAN -i %s -j RETURN\n", iface)
+		}
+	}
+	fmt.Fprintln(&b, "-A NETOS-MULTIWAN -m addrtype --dst-type LOCAL -j RETURN")
+	for _, network := range cfg.Networks {
+		if !network.Enabled {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(network.RouterAddress)
+		if err == nil {
+			fmt.Fprintf(&b, "-A NETOS-MULTIWAN -d %s -j RETURN\n", prefix.Masked())
+		}
+	}
+	remaining := total
+	for i, wan := range active {
+		mark := fmt.Sprintf("0x%x", Mark(wan))
+		if i == len(active)-1 {
+			fmt.Fprintf(&b, "-A NETOS-MULTIWAN -j MARK --set-mark %s\n", mark)
+		} else {
+			probability := float64(wan.Weight) / float64(remaining)
+			fmt.Fprintf(&b, "-A NETOS-MULTIWAN -m statistic --mode random --probability %.6f -j MARK --set-mark %s\n", probability, mark)
+		}
+		fmt.Fprintf(&b, "-A NETOS-MULTIWAN -m mark --mark %s -j CONNMARK --save-mark\n", mark)
+		fmt.Fprintf(&b, "-A NETOS-MULTIWAN -m mark --mark %s -j RETURN\n", mark)
+		remaining -= wan.Weight
+	}
+	if len(active) == 0 {
+		fmt.Fprintln(&b, "-A NETOS-MULTIWAN -j DROP")
+	}
+	fmt.Fprintln(&b, "COMMIT")
+	if _, err := c.Runner.RunInput(ctx, b.String(), "iptables-restore", "--noflush"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func enabledWANs(cfg *config.Config) []config.WAN {
 	var out []config.WAN
 	for _, wan := range cfg.WANs {
@@ -812,6 +867,27 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	priority := fmt.Sprint(Priority(wan))
 	mark := fmt.Sprintf("0x%x", Mark(wan))
 	_, _ = c.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table)
+	// A policy table is selected before the main table. It therefore needs the
+	// main table's connected routes both to reach its own DHCP gateway and to
+	// return traffic from a WAN address to a directly connected LAN/VPN client.
+	// Previously it contained only a default route: DHCP/L2TP gateways could be
+	// rejected as invalid, and the source rule added for management replies sent
+	// LAN-originated connections back out through the WAN gateway.
+	connected, err := c.Runner.Run(ctx, "ip", "-4", "route", "show", "table", "main", "scope", "link")
+	if err != nil {
+		return fmt.Errorf("связные маршруты таблицы аплинка %s: %w", wan.Name, err)
+	}
+	for _, line := range strings.Split(connected, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] == "default" || containsField(fields, "table") {
+			continue
+		}
+		args := append([]string{"-4", "route", "replace"}, fields...)
+		args = append(args, "table", table)
+		if _, err := c.Runner.Run(ctx, "ip", args...); err != nil {
+			return fmt.Errorf("связный маршрут таблицы аплинка %s: %w", wan.Name, err)
+		}
+	}
 	if route != "" {
 		fields := strings.Fields(route)
 		if len(probeInterface) > 0 && probeInterface[0] != "" {

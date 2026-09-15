@@ -303,7 +303,7 @@ func (c *Controller) update(ctx context.Context, cfg config.DDNS, address string
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf("запрос к провайдеру: %w", err)
+		return fmt.Errorf("запрос к провайдеру: %s", redactedProviderError(err, cfg))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -341,6 +341,23 @@ func (c *Controller) update(ctx context.Context, cfg config.DDNS, address string
 		}
 	}
 	return nil
+}
+
+func redactedProviderError(err error, cfg config.DDNS) string {
+	// net/http wraps transport failures in url.Error whose Error method prints
+	// the complete request URL. DuckDNS carries its token in that query string,
+	// so forwarding the wrapper to status/UI and journal exposes the credential.
+	var requestError *url.Error
+	if errors.As(err, &requestError) && requestError.Err != nil {
+		err = requestError.Err
+	}
+	message := err.Error()
+	for _, secret := range []string{cfg.Token, cfg.Password} {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[скрыто]")
+		}
+	}
+	return message
 }
 
 func readLimited(reader io.Reader, limit int64) ([]byte, error) {

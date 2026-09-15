@@ -43,7 +43,13 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		w("# порт агрегата %s", master.Name)
 		w("iface %s inet manual", iface.Name)
 	} else {
-		w("auto %s", iface.Name)
+		// Keep disabled interfaces in the generated inventory so conflicts are
+		// visible, but never pull them into the boot transaction. A transient
+		// Wi-Fi device may legitimately be absent after reboot; `auto` would make
+		// networking.service fail and take unrelated management/LAN links down.
+		if iface.Enabled {
+			w("auto %s", iface.Name)
+		}
 		if hasAddress {
 			// netOS may already have applied the address before networking
 			// starts (including at boot). inet static uses ip address add,
@@ -87,5 +93,7 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 	if iface.MAC != "" {
 		w("    hwaddress ether %s", iface.MAC)
 	}
-	w("    up ip link set dev %s up", iface.Name)
+	if iface.Enabled {
+		w("    up ip link set dev %s up", iface.Name)
+	}
 }

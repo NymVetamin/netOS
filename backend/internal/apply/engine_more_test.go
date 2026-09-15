@@ -331,6 +331,32 @@ func TestDryRunSkipsApplyAndHealth(t *testing.T) {
 	}
 }
 
+func TestStartupRecoveryRestoresNetworkBeforeOptionalComponents(t *testing.T) {
+	var calls []string
+	e := NewEngine(nil, false)
+	for _, subsystemName := range Order {
+		name := subsystemName
+		if err := e.Register(flexibleSubsystem{name: name, apply: func(context.Context, *config.Config) error {
+			calls = append(calls, name)
+			return nil
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.RecoverStartupConnectivity(context.Background(), validConfig("active")); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join(startupConnectivityOrder, ",")
+	if got := strings.Join(calls, ","); got != want {
+		t.Fatalf("startup recovery order=%s want=%s", got, want)
+	}
+	for _, forbidden := range []string{"components", "dns", "channels"} {
+		if strings.Contains(","+want+",", ","+forbidden+",") {
+			t.Fatalf("startup recovery invokes optional subsystem %s", forbidden)
+		}
+	}
+}
+
 func TestNeedsConfirmationVariants(t *testing.T) {
 	if NeedsConfirmation(nil) || NeedsConfirmation([]Action{{Subsystem: "dns"}}) {
 		t.Fatal("safe or empty plan requires confirmation")

@@ -185,6 +185,34 @@ func TestApplyPreflightsPersistsAndAppliesBothFamilies(t *testing.T) {
 	}
 }
 
+func TestApplyDropsEstablishedConnectionsForBlockedClients(t *testing.T) {
+	cfg, _ := configuredFirewall(t)
+	cfg.Clients = []config.Client{{MAC: "AA:BB:CC:DD:EE:FF", Blocked: true}}
+	rules, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := cleanFirewallRunner(rules)
+	runner.outputs["iptables-save"] = ""
+	runner.outputs["ip6tables-save"] = ""
+	runner.outputs["ip"] = "192.0.2.10 dev lan0 lladdr aa:bb:cc:dd:ee:ff REACHABLE\n192.0.2.20 dev lan0 lladdr 00:11:22:33:44:55 STALE\n"
+	if err := New(runner, t.TempDir()).Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, call := range runner.calls {
+		if call.name == "conntrack" && strings.Join(call.args, " ") == "-D -s 192.0.2.10" {
+			found = true
+		}
+		if call.name == "conntrack" && strings.Contains(strings.Join(call.args, " "), "192.0.2.20") {
+			t.Fatalf("unblocked client connection was deleted: %+v", call)
+		}
+	}
+	if !found {
+		t.Fatalf("blocked client conntrack entry was not deleted: %+v", runner.calls)
+	}
+}
+
 func TestApplyPreflightFailureDoesNotTouchPersistedState(t *testing.T) {
 	cfg, rules := configuredFirewall(t)
 	runner := cleanFirewallRunner(rules)

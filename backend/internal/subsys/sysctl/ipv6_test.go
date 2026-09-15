@@ -12,8 +12,9 @@ func TestPassthroughRestoresIPv6Autoconfiguration(t *testing.T) {
 	values := NewIPv6(nil).values(cfg)
 	want := map[string]string{
 		"net.ipv6.conf.all.disable_ipv6": "0",
-		"net.ipv6.conf.all.accept_ra":    "1",
+		"net.ipv6.conf.all.accept_ra":    "2",
 		"net.ipv6.conf.all.autoconf":     "1",
+		"net.ipv6.conf.all.forwarding":   "1",
 	}
 	for key, value := range want {
 		if values[key] != value {

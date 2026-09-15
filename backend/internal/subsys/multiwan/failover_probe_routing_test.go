@@ -93,7 +93,16 @@ func TestFailoverCanProbeRemoteTargetAfterDefaultWithdrawal(t *testing.T) {
 	if err := c.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(r.rules["30002"], "oif wan0") || !strings.Contains(r.rules["30003"], "oif wan1") {
+		t.Fatalf("source reply policy disappeared with two live WANs: %v", r.rules)
+	}
+	// Once only one uplink remains there is no asymmetric return path to
+	// protect, so all owned policy tables and rules must be removed.
+	cfg.WANs = cfg.WANs[:1]
+	if err := c.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
 	if len(r.rules) != 0 || r.routes["3002"] != "" || r.routes["3003"] != "" {
-		t.Fatal("probe routes survived disable")
+		t.Fatal("source-policy routes survived removal of the second WAN")
 	}
 }

@@ -317,10 +317,7 @@ func (u *Unbound) renderForwardZones(b *strings.Builder, cfg *config.Config) {
 	// forward-zone просто не пишем.
 	var roots []config.Upstream
 	tls := false
-	for _, up := range cfg.DNS.Upstreams {
-		if !up.Enabled {
-			continue
-		}
+	for _, up := range rootDNSUpstreams(cfg) {
 		roots = append(roots, up)
 		if up.Type == "dot" {
 			tls = true

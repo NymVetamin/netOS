@@ -686,7 +686,11 @@ function ApplyBar({
     );
   }
 
-  if (!dirty) return null;
+  // A failed Apply may roll the server back and clear the draft before the
+  // request returns its error. Keep the bar visible for that error even though
+  // the authoritative configuration is no longer dirty; otherwise the admin
+  // sees the buttons disappear and then reappear with no explanation.
+  if (!dirty && !error) return null;
 
   return (
     <div className="applybar" ref={barRef}>

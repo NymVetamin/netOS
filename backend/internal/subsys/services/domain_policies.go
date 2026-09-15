@@ -86,3 +86,23 @@ func renderDomainPolicyIPSets(cfg *config.Config) []string {
 func backendLocalDNSNeeded(cfg *config.Config) bool {
 	return localDNSNeeded(cfg) && !dnsFrontendNeeded(cfg)
 }
+
+// rootDNSUpstreams excludes resolvers dedicated to an enabled Split-DNS rule.
+// Including one in both places leaks unrelated root queries into its selected
+// channel and lets a failing split-only resolver turn a healthy root answer
+// into SERVFAIL.
+func rootDNSUpstreams(cfg *config.Config) []config.Upstream {
+	dedicated := map[string]bool{}
+	for _, rule := range cfg.DNS.SplitRules {
+		if rule.Enabled && rule.Upstream != "" && len(rule.Domains) > 0 {
+			dedicated[rule.Upstream] = true
+		}
+	}
+	var roots []config.Upstream
+	for _, up := range cfg.DNS.Upstreams {
+		if up.Enabled && !dedicated[up.ID] {
+			roots = append(roots, up)
+		}
+	}
+	return roots
+}
