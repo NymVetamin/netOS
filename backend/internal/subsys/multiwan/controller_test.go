@@ -72,6 +72,31 @@ func TestFailoverKeepsManagementRepliesOnTheirLocalWAN(t *testing.T) {
 	}
 }
 
+func TestBalanceTableDropsNonReplayableLinkdownFlag(t *testing.T) {
+	r := &responseRunner{respond: func(command string) (string, error) {
+		switch command {
+		case "ip -4 route show table main scope link":
+			return "192.0.2.0/24 dev brqa proto kernel scope link src 192.0.2.1 linkdown\n", nil
+		case "ip -4 rule show":
+			return "", nil
+		}
+		return "", nil
+	}}
+	c := New(r, t.TempDir(), testLogger{})
+	wan := config.WAN{ID: "primary", Index: 1}
+	if err := c.ensureBalanceTable(context.Background(), wan, "default via 198.18.0.1 dev wan0"); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(r.commands, "\n")
+	want := "ip -4 route replace 192.0.2.0/24 dev brqa proto kernel scope link src 192.0.2.1 table 3001"
+	if !strings.Contains(commands, want) {
+		t.Fatalf("connected route was not normalized: %s", commands)
+	}
+	if strings.Contains(commands, "linkdown") {
+		t.Fatalf("non-replayable linkdown flag survived: %s", commands)
+	}
+}
+
 func (testLogger) Infof(string, ...any) {}
 func (testLogger) Warnf(string, ...any) {}
 
