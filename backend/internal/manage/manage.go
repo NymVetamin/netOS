@@ -70,6 +70,7 @@ type Manager struct {
 	Version            string
 	EUID               func() int
 	Now                func() time.Time
+	Getenv             func(string) string
 	Run                func(context.Context, command) error
 	Output             func(context.Context, string, ...string) (string, error)
 	Sleep              func(time.Duration)
@@ -112,7 +113,7 @@ func (m *Manager) sys(path string) string {
 func New(version string) *Manager {
 	m := &Manager{
 		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
-		Version: version, EUID: effectiveUID, Now: time.Now, Sleep: time.Sleep,
+		Version: version, EUID: effectiveUID, Now: time.Now, Getenv: os.Getenv, Sleep: time.Sleep,
 		StateDir: "/var/lib/netos", ConfigDir: "/etc/netos", LogDir: "/var/log/netos",
 		BackupDir: "/var/backups/netos", Binary: "/usr/local/bin/netosd",
 		CLI: "/usr/local/bin/netos", Unit: "/etc/systemd/system/netosd.service",

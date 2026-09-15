@@ -18,6 +18,15 @@ type managementUplink struct {
 
 func (m *Manager) captureManagementUplink(ctx context.Context, operation string) (managementUplink, error) {
 	var keep managementUplink
+	preferredAddress := ""
+	if m.Getenv != nil {
+		parts := strings.Fields(m.Getenv("SSH_CONNECTION"))
+		if len(parts) == 4 {
+			if address, err := netip.ParseAddr(parts[2]); err == nil && address.Is4() {
+				preferredAddress = address.String()
+			}
+		}
+	}
 	out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
 	if err != nil {
 		return keep, fmt.Errorf("чтение аплинка перед %s: %w", operation, err)
@@ -74,15 +83,20 @@ func (m *Manager) captureManagementUplink(ctx context.Context, operation string)
 				if err != nil || !prefix.Addr().Is4() {
 					continue
 				}
-				keep.device, keep.address = device, prefix.String()
-				keep.route = []string{"-4", "route", "replace", "default", "via", gw.String(), "dev", device, "proto", "boot"}
+				candidate := managementUplink{device: device, address: prefix.String()}
+				candidate.route = []string{"-4", "route", "replace", "default", "via", gw.String(), "dev", device, "proto", "boot"}
 				if metric != "" {
-					keep.route = append(keep.route, "metric", metric)
+					candidate.route = append(candidate.route, "metric", metric)
 				}
 				if onlink {
-					keep.route = append(keep.route, "onlink")
+					candidate.route = append(candidate.route, "onlink")
 				}
-				return keep, nil
+				if prefix.Addr().String() == preferredAddress {
+					return candidate, nil
+				}
+				if keep.device == "" {
+					keep = candidate
+				}
 			}
 		}
 	}

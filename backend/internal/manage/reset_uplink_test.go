@@ -72,6 +72,40 @@ func TestResetUplinkInspectionFailureDoesNotStopDaemon(t *testing.T) {
 	}
 }
 
+func TestResetPrefersTheUplinkOfTheCurrentSSHSession(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	for _, device := range []string{"eth0", "eth1"} {
+		if err := os.MkdirAll(m.sys("/sys/class/net/"+device+"/device"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.Getenv = func(name string) string {
+		if name == "SSH_CONNECTION" {
+			return "203.0.113.9 54321 45.38.170.5 22"
+		}
+		return ""
+	}
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		switch name + " " + strings.Join(args, " ") {
+		case "ip -4 route show default":
+			return "default via 198.18.0.1 dev eth1 metric 10\ndefault via 45.38.170.1 dev eth0 metric 100\n", nil
+		case "ip -o -4 addr show dev eth1":
+			return "3: eth1 inet 198.18.0.2/24 scope global eth1\n", nil
+		case "ip -o -4 addr show dev eth0":
+			return "2: eth0 inet 45.38.170.5/24 scope global eth0\n", nil
+		}
+		return "", nil
+	}
+	uplink, err := m.captureManagementUplink(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uplink.device != "eth0" || uplink.address != "45.38.170.5/24" || !strings.Contains(strings.Join(uplink.route, " "), "via 45.38.170.1 dev eth0") {
+		t.Fatalf("captured wrong management uplink: %+v", uplink)
+	}
+}
+
 func TestRestoreRetainsPhysicalManagementUplinkUntilDaemonIsReady(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
