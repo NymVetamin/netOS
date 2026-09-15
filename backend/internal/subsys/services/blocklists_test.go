@@ -3,6 +3,8 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +89,30 @@ func TestFetchBlocklistHTTPStatusLimitAndRedirectPolicy(t *testing.T) {
 	}
 }
 
+func TestFetchBlocklistTrustsConfiguredPrivateCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ads.private.example\n"))
+	}))
+	defer server.Close()
+
+	certificate, err := x509.ParseCertificate(server.Certificate().Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caFile := filepath.Join(t.TempDir(), "private-ca.pem")
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
+	if err := os.WriteFile(caFile, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := fetchBlocklistWithCA(context.Background(), server.URL, caFile)
+	if err != nil {
+		t.Fatalf("private CA fetch failed: %v", err)
+	}
+	if string(data) != "ads.private.example\n" {
+		t.Fatalf("data=%q", data)
+	}
+}
+
 func TestBlocklistProviderRendersExactDomains(t *testing.T) {
 	domains := []string{"ads.example", "track.example"}
 	for name, output := range map[string]string{
@@ -122,7 +148,7 @@ func TestDNSBlocklistLifecycleAllProviders(t *testing.T) {
 			m := NewManager(r)
 			m.Resolv.Root = t.TempDir()
 			content := []byte("0.0.0.0 ads.example\n||track.example^\n")
-			m.Blocklist.Fetch = func(context.Context, string) ([]byte, error) { return content, nil }
+			m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) { return content, nil }
 			cfg := blocklistTestConfig(provider)
 			s := NewDNS(m)
 			if err := s.Apply(context.Background(), cfg); err != nil {
@@ -167,13 +193,13 @@ func TestDNSBlocklistUsesCacheOnFetchFailure(t *testing.T) {
 	useProviderPaths(t)
 	m := NewBlocklistManager()
 	cfg := blocklistTestConfig("dnsmasq")
-	m.Fetch = func(context.Context, string) ([]byte, error) { return []byte("cached.example\n"), nil }
+	m.Fetch = func(context.Context, string, string) ([]byte, error) { return []byte("cached.example\n"), nil }
 	if _, tx, err := m.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	} else if tx == nil {
 		t.Fatal("missing transaction")
 	}
-	m.Fetch = func(context.Context, string) ([]byte, error) { return nil, fmt.Errorf("network down") }
+	m.Fetch = func(context.Context, string, string) ([]byte, error) { return nil, fmt.Errorf("network down") }
 	if _, _, err := m.Apply(context.Background(), cfg); err != nil {
 		t.Fatalf("working cache was not used: %v", err)
 	}
@@ -190,7 +216,7 @@ func TestDNSBlocklistFailureRestoresProviderAndCacheBytes(t *testing.T) {
 	m.Resolv.Root = t.TempDir()
 	cfg := blocklistTestConfig("dnsmasq")
 	content := []byte("old.example\n")
-	m.Blocklist.Fetch = func(context.Context, string) ([]byte, error) { return content, nil }
+	m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) { return content, nil }
 	s := NewDNS(m)
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -216,7 +242,7 @@ func TestDNSBlocklistFreshFetchFailureDoesNotTouchWorkingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewBlocklistManager()
-	m.Fetch = func(context.Context, string) ([]byte, error) { return nil, fmt.Errorf("network down") }
+	m.Fetch = func(context.Context, string, string) ([]byte, error) { return nil, fmt.Errorf("network down") }
 	cfg := blocklistTestConfig("dnsmasq")
 	if _, _, err := m.Apply(context.Background(), cfg); err == nil {
 		t.Fatal("fresh fetch failure accepted")
@@ -236,7 +262,7 @@ func TestDNSBlocklistDisableCleansFilesAndHealthDetectsDrift(t *testing.T) {
 	r := newProviderRunner()
 	m := NewManager(r)
 	m.Resolv.Root = t.TempDir()
-	m.Blocklist.Fetch = func(context.Context, string) ([]byte, error) { return []byte("ads.example\n"), nil }
+	m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) { return []byte("ads.example\n"), nil }
 	cfg := blocklistTestConfig("dnsmasq")
 	s := NewDNS(m)
 	if err := s.Apply(context.Background(), cfg); err != nil {

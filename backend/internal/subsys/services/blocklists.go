@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,14 +33,14 @@ var (
 	dnsmasqBlocklistPath    = "/var/lib/netos/generated/dnsmasq-blocklist.conf"
 	unboundBlocklistPath    = "/var/lib/netos/generated/unbound-blocklist.conf"
 	dnsproxyBlocklistPath   = "/var/lib/netos/generated/dnsproxy-blocklist.hosts"
-	defaultBlocklistFetcher = fetchBlocklist
+	defaultBlocklistFetcher = fetchBlocklistWithCA
 	newBlocklistHTTPClient  = func(checkRedirect func(*http.Request, []*http.Request) error) *http.Client {
 		return &http.Client{Timeout: 30 * time.Second, CheckRedirect: checkRedirect}
 	}
 )
 
 type BlocklistManager struct {
-	Fetch func(context.Context, string) ([]byte, error)
+	Fetch func(context.Context, string, string) ([]byte, error)
 }
 
 func NewBlocklistManager() *BlocklistManager {
@@ -58,6 +60,10 @@ func hasEnabledBlocklists(cfg *config.Config) bool {
 }
 
 func fetchBlocklist(ctx context.Context, rawURL string) ([]byte, error) {
+	return fetchBlocklistWithCA(ctx, rawURL, "")
+}
+
+func fetchBlocklistWithCA(ctx context.Context, rawURL, caFile string) ([]byte, error) {
 	if err := validateBlocklistURL(rawURL); err != nil {
 		return nil, err
 	}
@@ -67,6 +73,22 @@ func fetchBlocklist(ctx context.Context, rawURL string) ([]byte, error) {
 		}
 		return validateBlocklistURL(req.URL.String())
 	})
+	if caFile != "" {
+		pemData, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("центр сертификации %s: %w", caFile, err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(pemData) {
+			return nil, fmt.Errorf("центр сертификации %s: PEM не содержит сертификатов", caFile)
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+		client.Transport = transport
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -199,7 +221,7 @@ func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) 
 			continue
 		}
 		cachePath := blocklistCachePath(item.URL)
-		data, fetchErr := m.Fetch(ctx, item.URL)
+		data, fetchErr := m.Fetch(ctx, item.URL, item.CAFile)
 		domains, parseErr := parseBlocklist(data)
 		if fetchErr != nil || parseErr != nil {
 			cached, cacheErr := os.ReadFile(cachePath)

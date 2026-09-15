@@ -10,6 +10,7 @@ func TestDNSBlocklistValidationMatrix(t *testing.T) {
 		path string
 	}{
 		{"valid enabled", Blocklist{ID: "ads", Name: "Ads", URL: "https://lists.example/hosts.txt", Enabled: true}, true, ""},
+		{"valid private CA", Blocklist{ID: "ads", Name: "Ads", URL: "https://lists.example/hosts.txt", CAFile: "/etc/netos/private-ca.pem", Enabled: true}, true, ""},
 		{"disabled placeholder", Blocklist{ID: "ads"}, false, ""},
 		{"missing name", Blocklist{ID: "ads", URL: "https://lists.example/hosts", Enabled: true}, true, "dns.blocklists[0].name"},
 		{"missing URL", Blocklist{ID: "ads", Name: "Ads", Enabled: true}, true, "dns.blocklists[0].url"},
@@ -17,6 +18,8 @@ func TestDNSBlocklistValidationMatrix(t *testing.T) {
 		{"credentials", Blocklist{ID: "ads", Name: "Ads", URL: "https://user:pass@lists.example/hosts", Enabled: true}, true, "dns.blocklists[0].url"},
 		{"fragment", Blocklist{ID: "ads", Name: "Ads", URL: "https://lists.example/hosts#part", Enabled: true}, true, "dns.blocklists[0].url"},
 		{"control", Blocklist{ID: "ads", Name: "Ads\nnext", URL: "https://lists.example/hosts", Enabled: true}, true, "dns.blocklists[0].name"},
+		{"relative CA", Blocklist{ID: "ads", Name: "Ads", URL: "https://lists.example/hosts", CAFile: "private-ca.pem", Enabled: true}, true, "dns.blocklists[0].ca_file"},
+		{"unsafe CA", Blocklist{ID: "ads", Name: "Ads", URL: "https://lists.example/hosts", CAFile: "/etc/netos/../shadow", Enabled: true}, true, "dns.blocklists[0].ca_file"},
 		{"DNS disabled", Blocklist{ID: "ads", Name: "Ads", URL: "https://lists.example/hosts", Enabled: true}, false, "dns.blocklists[0].enabled"},
 	}
 	for _, tc := range tests {

@@ -10,6 +10,7 @@ import (
 	"net/mail"
 	"net/netip"
 	"net/url"
+	pathpkg "path"
 	"strconv"
 	"strings"
 	"time"
@@ -1969,6 +1970,9 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		}
 		if blocklist.Enabled && !c.DNS.Enabled {
 			r.errf(path+".enabled", "нельзя включить список блокировки при выключенном DNS")
+		}
+		if blocklist.CAFile != "" && (unsafeConfigText(blocklist.CAFile) || !strings.HasPrefix(blocklist.CAFile, "/") || pathpkg.Clean(blocklist.CAFile) != blocklist.CAFile) {
+			r.errf(path+".ca_file", "укажите абсолютный нормализованный путь к PEM-файлу центра сертификации")
 		}
 		if blocklist.URL == "" {
 			if blocklist.Enabled {
