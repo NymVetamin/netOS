@@ -50,7 +50,7 @@ func TestFailoverKeepsManagementRepliesOnTheirLocalWAN(t *testing.T) {
 	}}
 	c := New(r, t.TempDir(), testLogger{})
 	wan := config.WAN{ID: "primary", Index: 1}
-	if err := c.ensureBalanceTable(context.Background(), wan, "default via 192.0.2.1 dev wan0", "wan0"); err != nil {
+	if err := c.ensureBalanceTable(context.Background(), wan, "default via 192.0.2.1 dev wan0", "wan0", true); err != nil {
 		t.Fatal(err)
 	}
 	commands := strings.Join(r.commands, "\n")
@@ -84,7 +84,7 @@ func TestBalanceTableDropsNonReplayableLinkdownFlag(t *testing.T) {
 	}}
 	c := New(r, t.TempDir(), testLogger{})
 	wan := config.WAN{ID: "primary", Index: 1}
-	if err := c.ensureBalanceTable(context.Background(), wan, "default via 198.18.0.1 dev wan0"); err != nil {
+	if err := c.ensureBalanceTable(context.Background(), wan, "default via 198.18.0.1 dev wan0", "wan0", false); err != nil {
 		t.Fatal(err)
 	}
 	commands := strings.Join(r.commands, "\n")
@@ -94,6 +94,32 @@ func TestBalanceTableDropsNonReplayableLinkdownFlag(t *testing.T) {
 	}
 	if strings.Contains(commands, "linkdown") {
 		t.Fatalf("non-replayable linkdown flag survived: %s", commands)
+	}
+}
+
+func TestBalanceKeepsSourceRulesForInboundManagementReplies(t *testing.T) {
+	r := &responseRunner{respond: func(command string) (string, error) {
+		switch command {
+		case "ip -o -4 addr show dev wan0":
+			return "2: wan0 inet 192.0.2.2/24 scope global wan0\n", nil
+		case "ip -4 rule show":
+			return "", nil
+		}
+		return "", nil
+	}}
+	c := New(r, t.TempDir(), testLogger{})
+	wan := config.WAN{ID: "management", Index: 1}
+	if err := c.ensureBalanceTable(context.Background(), wan, "default via 192.0.2.1 dev wan0", "wan0", false); err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(r.commands, "\n")
+	for _, want := range []string{
+		"ip -4 rule add fwmark 0x3001 priority 30001 lookup 3001",
+		"ip -4 rule add from 192.0.2.2/32 priority 30001 lookup 3001",
+	} {
+		if !strings.Contains(commands, want) {
+			t.Fatalf("balance mode can strand an inbound management reply; missing %q:\n%s", want, commands)
+		}
 	}
 }
 

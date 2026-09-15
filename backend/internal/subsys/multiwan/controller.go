@@ -690,6 +690,7 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 		wan   config.WAN
 		route string
 		iface string
+		probe bool
 	}
 	var desired []desiredTable
 	if cfg.MultiWAN.Enabled || len(enabledWANs(cfg)) > 1 {
@@ -719,11 +720,9 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 			// down. Existing connmarks must stay pinned to that still-live path;
 			// the runtime classifier separately removes it from the pool for new
 			// flows. A physically withdrawn route naturally leaves only blackhole.
-			iface := ""
-			if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode == "failover" {
-				iface = interfaceName(cfg, wan)
-			}
-			desired = append(desired, desiredTable{wan: wan, route: route, iface: iface})
+			iface := interfaceName(cfg, wan)
+			probe := !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode == "failover"
+			desired = append(desired, desiredTable{wan: wan, route: route, iface: iface, probe: probe})
 		}
 	}
 	indices := map[int]bool{}
@@ -754,7 +753,7 @@ func (c *Controller) reconcileBalance(ctx context.Context, cfg *config.Config) e
 		kernelByIndex[snapshot.index] = snapshot
 	}
 	for _, item := range desired {
-		if err := c.ensureBalanceTable(ctx, item.wan, item.route, item.iface); err != nil {
+		if err := c.ensureBalanceTable(ctx, item.wan, item.route, item.iface, item.probe); err != nil {
 			return rollback(err)
 		}
 	}
@@ -862,7 +861,7 @@ func enabledWANs(cfg *config.Config) []config.WAN {
 	return out
 }
 
-func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, route string, probeInterface ...string) error {
+func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, route, iface string, probeRule bool) error {
 	table := fmt.Sprint(Table(wan))
 	priority := fmt.Sprint(Priority(wan))
 	mark := fmt.Sprintf("0x%x", Mark(wan))
@@ -890,7 +889,7 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	}
 	if route != "" {
 		fields := strings.Fields(route)
-		if len(probeInterface) > 0 && probeInterface[0] != "" {
+		if probeRule && iface != "" {
 			fields = probeRouteFields(route)
 		}
 		args := append([]string{"-4", "route", "replace"}, fields...)
@@ -909,10 +908,12 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	selector := []string{"fwmark", mark}
 	ruleOK := hasBalanceRule(rules, priority, mark, table)
 	var sources []string
-	if len(probeInterface) > 0 && probeInterface[0] != "" {
-		selector = []string{"oif", probeInterface[0]}
-		ruleOK = hasProbeRule(rules, priority, probeInterface[0], table)
-		addresses, err := c.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", probeInterface[0])
+	if probeRule && iface != "" {
+		selector = []string{"oif", iface}
+		ruleOK = hasProbeRule(rules, priority, iface, table)
+	}
+	if iface != "" {
+		addresses, err := c.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", iface)
 		if err != nil {
 			return err
 		}
