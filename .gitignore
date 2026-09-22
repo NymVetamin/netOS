@@ -45,8 +45,12 @@ __pycache__/
 /CLAUDE_TEST_*
 /CODEX_TEST_*
 .playwright-cli/
+.playwright-mcp/
 playwright-report/
 test-results/
+# Обрывки, которые браузерные сессии роняют в корень: вывод eval и фрагменты сценариев
+/*.js
+
 
 # Ничего, что содержит секреты, в репозиторий попадать не должно
 *.key
@@ -62,3 +66,4 @@ netos.db-*
 *.api
 /openrc.sh
 /features.md
+.mcp*
