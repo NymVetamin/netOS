@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, formatUptime } from "../api";
+import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
 import { interfaceName, wanInterfaceName } from "./Dashboard";
 
@@ -211,7 +211,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
 
         {wans.map((w, i) => node(
           `wan:${w.id}`, 290, wanY[i], 170, 56, w.name,
-          !w.up ? "нет связи" : w.primary ? (w.rate ? `↓ ${mbit(w.rate.down)} Мбит/с` : w.iface) : `${w.iface} · резерв`,
+          !w.up ? "нет связи" : w.primary ? (w.rate ? `↓ ${formatBitrate(w.rate.down)}` : w.iface) : `${w.iface} · резерв`,
           !w.up ? "danger" : w.primary ? "ok" : "idle",
         ))}
         {channels.map((c, i) => node(`channel:${c.id}`, chX[i], 52, 140, 52, c.type, c.up ? "на связи" : "нет связи", c.up ? "ok" : "danger"))}
@@ -250,11 +250,6 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
 function edgeState(up: boolean, primary: boolean) {
   if (!up) return "dead";
   return primary ? "live" : "idle";
-}
-
-function mbit(bps: number) {
-  const value = bps / 1_000_000;
-  return value >= 10 ? Math.round(value) : value.toFixed(1);
 }
 
 function clip(text: string, max: number) {
