@@ -470,7 +470,11 @@ code, pre {
   gap: 0.5rem;
 }
 
+/* position: relative — чтобы абсолютно позиционированные скрытые поля
+   (переключатели, .sr-only) оставались внутри прокручиваемой области, а не
+   растягивали страницу и не добавляли ей вторую полосу прокрутки. */
 .main {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -659,7 +663,9 @@ tr:last-child td {
   margin-bottom: 0;
 }
 
-.field-label {
+/* Часть форм подписывает поле голым <label> внутри .field — выглядят так же. */
+.field-label,
+.field > label:not([class]) {
   display: block;
   font: 500 10.5px var(--mono);
   text-transform: uppercase;
@@ -848,6 +854,7 @@ textarea {
 /* переключатель: тумблер с зелёным огоньком, как на железе */
 
 .switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.6rem;
@@ -1929,4 +1936,42 @@ tr.drop-below td {
 table.rules {
   table-layout: fixed;
   min-width: 720px;
+}
+
+/* --- легенда графика скорости --- */
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.chart-legend .down::before,
+.chart-legend .up::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--ok);
+}
+
+.chart-legend .up::before {
+  background: var(--accent-fill);
+}
+
+/* Выбранный пункт — одной строкой. Стилизуемый список иначе переносил текст
+   в узкой ячейке таблицы на три строки. */
+select {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+td > select {
+  min-width: 170px;
 }
