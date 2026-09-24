@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, ApiError, ConfigResponse, PlanAction, Problem, Session } from "./api";
+import { api, ApiError, ConfigResponse, formatUptime, PlanAction, Problem, Session } from "./api";
 import { Notice, Spinner } from "./ui";
 import { Dashboard } from "./pages/Dashboard";
 import { Clients } from "./pages/Clients";
@@ -167,17 +167,11 @@ function Login({ onSuccess, sessionEnded = false }: { onSuccess: (s: Session) =>
     <div className="login-screen">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
-          <span className="mark">nO</span>
-          <div>
-            <h1 style={{ fontSize: 17 }}>netOS</h1>
-            <div className="faint" style={{ fontSize: 12 }}>
-              панель управления роутером
-            </div>
-          </div>
+          <h1 className="logo">netOS</h1>
+          <span className="faint" style={{ fontSize: 12 }}>панель управления роутером</span>
         </div>
 
-        <div style={{ height: "1.2rem" }} />
-
+        <div className="login-body">
         {sessionEnded && <Notice title="Сессия завершена. Войдите снова" tone="warn">Несохранённые правки не применены.</Notice>}
 
         <div className="field">
@@ -211,6 +205,7 @@ function Login({ onSuccess, sessionEnded = false }: { onSuccess: (s: Session) =>
         <button className="btn primary" style={{ width: "100%" }} disabled={busy || !password}>
           {busy ? "Проверяю…" : "Войти"}
         </button>
+        </div>
       </form>
     </div>
   );
@@ -225,6 +220,52 @@ function Login({ onSuccess, sessionEnded = false }: { onSuccess: (s: Session) =>
 // подменял бы объект конфигурации прямо под курсором — поле теряло фокус и
 // текст не набирался.
 const SAVE_DELAY_MS = 500;
+const STATUS_POLL_MS = 10_000;
+
+// Порог, выше которого порт считается занятым трафиком за один опрос.
+// Ниже — служебная болтовня вроде ARP и LLDP, мигать из-за неё незачем.
+const PORT_BUSY_BYTES = 64 * 1024;
+
+// PortStrip рисует физические порты роутера как гнёзда на лицевой панели:
+// зелёный огонёк — есть линк, жёлтый мигает, пока через порт идёт трафик.
+function PortStrip({ config, status }: { config: any; status: any }) {
+  const previous = useRef<Map<string, number>>(new Map());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const live = new Map<string, any>((status?.interfaces || []).map((i: any) => [i.name, i]));
+
+  useEffect(() => {
+    if (!status) return;
+    const next = new Set<string>();
+    for (const i of status.interfaces || []) {
+      const total = (i.rx_bytes || 0) + (i.tx_bytes || 0);
+      const before = previous.current.get(i.name);
+      if (before !== undefined && total - before > PORT_BUSY_BYTES) next.add(i.name);
+      previous.current.set(i.name, total);
+    }
+    setBusy(next);
+  }, [status]);
+
+  const ports = (config?.interfaces || []).filter((i: any) => i.type === "physical");
+  if (ports.length === 0) return null;
+  return (
+    <div className="ports" aria-label="Порты роутера">
+      {ports.map((port: any) => {
+        const state = live.get(port.name);
+        const up = !!state?.up;
+        return (
+          <div
+            key={port.id}
+            className={`port ${up ? "up" : ""} ${up && busy.has(port.name) ? "busy" : ""}`}
+            title={`${port.name}: ${up ? "линк есть" : "нет линка"}`}
+          >
+            <div className="sock"><i className="l1" /><i className="l2" /></div>
+            <span>{port.name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function Shell({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const readPage = useCallback((): PageID => {
@@ -251,6 +292,41 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [theme, setTheme] = useState<string>(
     () => localStorage.getItem("netos-theme") || "auto",
   );
+
+  // Состояние для лицевой панели: огоньки портов и время работы. Сводка
+  // опрашивает то же самое чаще и сама; здесь хватает редкого опроса.
+  const [status, setStatus] = useState<any>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => api.status().then((next) => { if (!cancelled) setStatus(next); }).catch(() => {});
+    load();
+    const timer = window.setInterval(load, STATUS_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  // Меню не прокручивается: всё, что в нём есть, должно быть видно сразу.
+  // Если по высоте не помещается, уплотняем его ступенями.
+  const sidebarRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const fit = () => {
+      for (let level = 0; level <= 3; level++) {
+        sidebar.dataset.fit = String(level);
+        if (sidebar.scrollHeight <= sidebar.clientHeight) break;
+      }
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [session.role]);
+
+  // Прокручивается только область содержимого, поэтому при смене раздела
+  // возвращаем наверх её, а не окно.
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    mainRef.current?.scrollTo(0, 0);
+  }, [page]);
 
   const saveTimer = useRef<number | undefined>(undefined);
   const pendingCfg = useRef<any>(null);
@@ -388,18 +464,30 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
   const errors = problems.filter((p) => p.severity === "error");
 
+  const themeName = theme === "dark" ? "тёмная" : theme === "light" ? "светлая" : "системная";
+
   return (
-    <div className="shell">
-      <aside className={`sidebar ${mobileNavOpen ? "mobile-open" : ""}`}>
-        <div className="sidebar-head">
-          <span className="mark">nO</span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 600 }}>netOS</div>
-            <div className="host">{cfg?.system?.hostname || "…"}</div>
-          </div>
+    <div className="app">
+      <header className="panel">
+        <div className="brand">
+          <span className="logo">netOS</span>
+          <span className="host">{cfg?.system?.hostname || "…"}</span>
+        </div>
+        <PortStrip config={cfg} status={status} />
+        <div className="meta">
+          {status && <span>РАБОТАЕТ <b>{formatUptime(status.uptime_seconds)}</b></span>}
           <button
             type="button"
-            className="btn ghost mobile-nav-toggle"
+            className="icon-btn"
+            title={`Тема: ${themeName}`}
+            aria-label={`Тема оформления: ${themeName}. Сменить`}
+            onClick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")}
+          >
+            <ThemeIcon theme={theme} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn mobile-nav-toggle"
             aria-label={mobileNavOpen ? "Закрыть меню" : "Открыть меню"}
             aria-expanded={mobileNavOpen}
             onClick={() => setMobileNavOpen((open) => !open)}
@@ -407,7 +495,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             <MenuIcon close={mobileNavOpen} />
           </button>
         </div>
+      </header>
 
+      <div className="shell">
+      <aside ref={sidebarRef} className={`sidebar ${mobileNavOpen ? "mobile-open" : ""}`}>
         <nav className="nav">
           {NAV.map((group) => ({
             ...group,
@@ -442,31 +533,19 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           <span className="faint" style={{ fontSize: 12 }}>
             {session.username}
           </span>
-          <div className="row" style={{ gap: "0.25rem" }}>
-            <button
-              className="btn ghost sm"
-              aria-label={`Тема оформления: ${theme === "dark" ? "тёмная" : theme === "light" ? "светлая" : "системная"}`}
-              title="Сменить тему оформления"
-              onClick={() =>
-                setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")
-              }
-            >
-              <ThemeIcon theme={theme} />
-            </button>
-            <button
-              className="btn ghost sm"
-              onClick={async () => {
-                await api.logout();
-                onLogout();
-              }}
-            >
-              Выйти
-            </button>
-          </div>
+          <button
+            className="btn ghost sm"
+            onClick={async () => {
+              await api.logout();
+              onLogout();
+            }}
+          >
+            Выйти
+          </button>
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" ref={mainRef}>
         <div className="page">
           {session.role !== "admin" && (
             <Notice tone="info" title="Режим просмотра">
@@ -525,6 +604,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           )}
         </div>
       </main>
+      </div>
 
       {session.role === "admin" && (
         <ApplyBar
