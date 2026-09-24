@@ -253,6 +253,12 @@ func TestApplyIfupdownAndCleanRepeat(t *testing.T) {
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	commands := strings.Join(r.commands, "\n")
+	start := strings.Index(commands, "systemctl start networking.service")
+	stop := strings.Index(commands, "systemctl stop systemd-networkd.service")
+	if start < 0 || stop < 0 || start >= stop || strings.Contains(commands, "networkctl reload") {
+		t.Fatalf("ifupdown takeover interrupted before new owner started:\n%s", commands)
+	}
 	r.commands = nil
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)

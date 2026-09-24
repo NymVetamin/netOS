@@ -910,6 +910,9 @@ func (c *Config) validateNetworks(r *ValidationResult) {
 func (c *Config) validatePool(r *ValidationResult, path string, n Network, prefix netip.Prefix) {
 	p := n.DHCPPool
 	if !p.Enabled {
+		if c.DHCP.Enabled && n.Enabled {
+			r.warnf(path+".dhcp_pool.enabled", "сегмент включён, но его пул DHCP выключен — клиенты не получат адрес автоматически")
+		}
 		return
 	}
 	if !c.DHCP.Enabled {

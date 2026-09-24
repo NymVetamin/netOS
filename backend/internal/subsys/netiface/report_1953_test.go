@@ -19,7 +19,7 @@ func TestReport1953BondCreationAndModeDrift(t *testing.T) {
 	if err := s.ensure(context.Background(), cfg, iface); err != nil {
 		t.Fatal(err)
 	}
-	if !r.has("type bond mode balance-rr") {
+	if !r.has("type bond mode balance-rr miimon 100") {
 		t.Fatalf("mode depends on kernel defaults: %v", r.commands)
 	}
 	mode := filepath.Join(sysClassNet, "bond1", "bonding", "mode")

@@ -119,6 +119,23 @@ export function Dashboard({ config }: { config: any }) {
         )}
       </Card>
 
+      <Card title="Аплинки и VPN-каналы" subtitle="Текущее состояние применённых подключений">
+        <div className="stack">
+          {(status?.wans || []).map((wan: any) =>
+            <div key={wan.id} className="row between wrap">
+              <strong>{wan.name}</strong>
+              <span className="mono faint">{wan.interface}</span>
+              <Badge tone={wan.up ? "ok" : "warn"}>{wan.up ? "поднят" : "нет связи"}</Badge>
+            </div>)}
+          {(status?.channels || []).map((channel: any) =>
+            <div key={channel.id} className="row between wrap">
+              <strong>{channel.name}</strong>
+              <span className="mono faint">{channel.interface}</span>
+              <Badge tone={channel.up ? "ok" : "warn"}>{channel.up ? "поднят" : "нет связи"}</Badge>
+            </div>)}
+        </div>
+      </Card>
+
       <Card title="Скорость интернета" subtitle="Фактический трафик всех включённых интернет-каналов за 24 часа">
         {statisticsError ? <Empty>Не удалось обновить статистику. Повторная попытка выполняется автоматически.</Empty> :
           !statisticsLoaded ? <Empty>Загрузка статистики…</Empty> :

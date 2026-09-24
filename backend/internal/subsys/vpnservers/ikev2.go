@@ -83,6 +83,28 @@ func ikev2Pool(server config.VPNServer) (string, error) {
 // RenderIKEv2 returns one swanctl configuration for all listeners. strongSwan
 // owns the standard UDP ports globally, while each connection is tied to its
 // own XFRM interface ID and address pool.
+func ikev2RoutesWithDNS(routes, dns []string) []string {
+	out := append([]string(nil), routes...)
+	for _, value := range dns {
+		address, err := netip.ParseAddr(value)
+		if err != nil {
+			continue
+		}
+		included := false
+		for _, route := range routes {
+			prefix, err := netip.ParsePrefix(route)
+			if err == nil && prefix.Contains(address) {
+				included = true
+				break
+			}
+		}
+		if !included {
+			out = append(out, netip.PrefixFrom(address, address.BitLen()).String())
+		}
+	}
+	return out
+}
+
 func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error) {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит EAP-секреты; права 0600.")
@@ -96,6 +118,8 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 		ts := ike.SplitRoutes
 		if len(ts) == 0 {
 			ts = []string{"0.0.0.0/0"}
+		} else {
+			ts = ikev2RoutesWithDNS(ts, ike.DNS)
 		}
 		fmt.Fprintf(&b, "  netos-srv%d {\n", server.Index)
 		fmt.Fprintln(&b, "    version = 2")
@@ -141,7 +165,7 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 			fmt.Fprintf(&b, "    dns = %s\n", strings.Join(ike.DNS, ", "))
 		}
 		if len(ike.SplitRoutes) > 0 {
-			fmt.Fprintf(&b, "    split_include = %s\n", strings.Join(ike.SplitRoutes, ", "))
+			fmt.Fprintf(&b, "    split_include = %s\n", strings.Join(ikev2RoutesWithDNS(ike.SplitRoutes, ike.DNS), ", "))
 		}
 		fmt.Fprintln(&b, "  }")
 	}

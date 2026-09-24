@@ -144,6 +144,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	backend := cfg.System.NetworkBackend
+	s.warnAboutIfupdown(ctx, cfg)
 	// Check the selected implementation before changing shared ownership files.
 	// A missing backend must not leave NetworkManager/networkd half-reconfigured.
 	switch backend {
@@ -261,7 +262,7 @@ ManageForeignRoutingPolicyRules=no
 }
 
 // applyNetOS отбирает интерфейсы netOS у остальных механизмов настройки сети.
-func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
+func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) (retErr error) {
 	// Отбирать нечего, если механизма нет или он не работает.
 	if !s.unitPresent(ctx, "systemd-networkd.service") {
 		if err := s.syncWaitOnline(ctx, false); err != nil {
@@ -270,13 +271,40 @@ func (s *Subsystem) applyNetOS(ctx context.Context, cfg *config.Config) error {
 		return s.activateBackend(ctx, "netos")
 	}
 
-	if err := s.syncNetworkdFiles(ctx, passiveFiles(cfg)); err != nil {
+	files := passiveFiles(cfg)
+	changed, err := s.networkdFilesNeedSync(files)
+	if err != nil {
+		return err
+	}
+	var handover *addressHandover
+	if changed && s.unitActive(ctx, "systemd-networkd.service") {
+		handover, err = s.protectLANAddresses(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cleanupErr := ensureHandoverCleanup(handover); cleanupErr != nil {
+				if retErr == nil {
+					retErr = cleanupErr
+				} else {
+					retErr = fmt.Errorf("%w; %v", retErr, cleanupErr)
+				}
+			}
+		}()
+	}
+	if err := s.syncNetworkdFiles(ctx, files); err != nil {
 		return err
 	}
 	if err := s.syncWaitOnline(ctx, true); err != nil {
 		return err
 	}
-	return s.activateBackend(ctx, "netos")
+	if err := s.activateBackend(ctx, "netos"); err != nil {
+		return err
+	}
+	if handover != nil {
+		return handover.waitPassive(ctx)
+	}
+	return nil
 }
 
 // syncWaitOnline снимает с ожидания сети требование, которое netOS сделал
@@ -430,10 +458,13 @@ func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error
 	}
 	// Leave the current networkd configuration intact until ifupdown's real
 	// input has been checked; otherwise a rejected switch can release links.
-	if err := s.syncNetworkdFiles(ctx, nil); err != nil {
+	// Start the new owner while networkd's addresses are still present. Stopping
+	// networkd leaves kernel addresses intact, whereas reloading after removing
+	// its files can delete them before networking.service takes over.
+	if err := s.activateBackend(ctx, "ifupdown"); err != nil {
 		return err
 	}
-	return s.activateBackend(ctx, "ifupdown")
+	return s.syncNetworkdFiles(ctx, nil)
 }
 
 // ifupdown has no priority-based override. A valid generated file is useless

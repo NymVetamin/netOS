@@ -283,6 +283,7 @@ func main() {
 	traffic := runtime.NewTrafficHistory("/var/lib/netos/traffic-history.json", collector)
 	go traffic.Run(ctx)
 	panel := api.New(st, engine, collector, logger)
+	panel.Version = version
 	panel.Traffic = traffic
 	panel.Maintenance = api.NewMaintenance(runner)
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
@@ -290,6 +291,7 @@ func main() {
 	panel.Components = components.New(runner, logger)
 	panel.DDNS = ddnsController
 	if daemonMode {
+		panel.EnableLocalControl = true
 		panel.Ready = func() error {
 			return system.WriteFileAtomic(readyPath, []byte(strconv.FormatInt(revID, 10)+"\n"), 0o644)
 		}

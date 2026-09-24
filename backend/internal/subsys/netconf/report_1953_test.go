@@ -86,7 +86,7 @@ func TestReport1953IfupdownInstallsOnce(t *testing.T) {
 func TestReport1953BondRenderMatchesDirectMode(t *testing.T) {
 	cfg := routerConfig()
 	cfg.Interfaces[3].Type = "bond"
-	if out := renderIfupdown(cfg); !strings.Contains(out, "bond-mode balance-rr") {
+	if out := renderIfupdown(cfg); !strings.Contains(out, "bond-mode balance-rr") || !strings.Contains(out, "bond-miimon 100") {
 		t.Fatalf("wrong ifupdown bond mode: %s", out)
 	}
 	cfg.System.NetworkBackend = "networkd"
@@ -94,7 +94,7 @@ func TestReport1953BondRenderMatchesDirectMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "Mode=balance-rr") {
+	if !strings.Contains(string(out), "Mode=balance-rr") || !strings.Contains(string(out), "MIIMonitorSec=100ms") {
 		t.Fatalf("wrong networkd bond mode: %s", out)
 	}
 }

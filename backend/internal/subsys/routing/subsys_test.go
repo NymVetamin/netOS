@@ -90,7 +90,7 @@ func TestApplyStopsAtEveryFailedStage(t *testing.T) {
 	}{
 		{name: "protos", badProtos: true},
 		{name: "tables", badTables: true},
-		{name: "routes", responses: map[string]runnerResponse{"ip -4 route show table all proto static": {err: errors.New("routes")}}},
+		{name: "routes", responses: map[string]runnerResponse{"ip -4 route show table all proto 202": {err: errors.New("routes")}}},
 		{name: "rules", responses: map[string]runnerResponse{"ip -4 rule show": {err: errors.New("rules")}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,8 +124,8 @@ func assertFile(t *testing.T, path, contains string, mode os.FileMode) {
 
 func TestApplyRoutesDualStackAndStaleCleanup(t *testing.T) {
 	runner := &recordingRunner{responses: map[string]runnerResponse{
-		"ip -4 route show table all proto static": {out: "10.99.0.0/16 via 192.0.2.1 dev eth0 proto static\n"},
-		"ip -6 route show table all proto static": {out: "unreachable 2001:db8:dead::/48 metric 9 proto static\n"},
+		"ip -4 route show table all proto 202": {out: "10.99.0.0/16 via 192.0.2.1 dev eth0 proto netos-static\n"},
+		"ip -6 route show table all proto 202": {out: "unreachable 2001:db8:dead::/48 metric 9 proto netos-static\n"},
 	}}
 	cfg := config.Default()
 	cfg.Routing.Static = []config.StaticRoute{
@@ -138,10 +138,10 @@ func TestApplyRoutesDualStackAndStaleCleanup(t *testing.T) {
 	}
 	got := commandStrings(runner.commands)
 	for _, want := range []string{
-		"ip -4 route del 10.99.0.0/16 via 192.0.2.1 dev eth0 proto static",
-		"ip -6 route del unreachable 2001:db8:dead::/48 metric 9 proto static",
-		"ip -4 route replace 10.20.0.0/16 via 192.0.2.1 metric 5 table main proto static",
-		"ip -6 route replace blackhole 2001:db8:20::/48 table 200 proto static",
+		"ip -4 route del 10.99.0.0/16 via 192.0.2.1 dev eth0 proto netos-static",
+		"ip -6 route del unreachable 2001:db8:dead::/48 metric 9 proto netos-static",
+		"ip -4 route replace 10.20.0.0/16 via 192.0.2.1 metric 5 table main proto 202",
+		"ip -6 route replace blackhole 2001:db8:20::/48 table 200 proto 202",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
@@ -149,8 +149,21 @@ func TestApplyRoutesDualStackAndStaleCleanup(t *testing.T) {
 	}
 }
 
+func TestApplyRoutesDoesNotScanForeignStaticRoutes(t *testing.T) {
+	runner := &recordingRunner{}
+	if err := New(runner).applyRoutes(context.Background(), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range runner.commands {
+		args := strings.Join(command.args, " ")
+		if strings.Contains(args, "proto static") || strings.Contains(args, "proto 201") {
+			t.Fatalf("foreign route was queried: %v", command)
+		}
+	}
+}
+
 func TestApplyRoutesKeepsConfiguredRouteAndInfersDefaultFamily(t *testing.T) {
-	runner := &recordingRunner{responses: map[string]runnerResponse{"ip -6 route show table all proto static": {out: "default via 2001:db8::1 dev eth0 proto static\n"}}}
+	runner := &recordingRunner{responses: map[string]runnerResponse{"ip -6 route show table all proto 202": {out: "default via 2001:db8::1 dev eth0 proto netos-static\n"}}}
 	cfg := routeConfig(config.StaticRoute{Enabled: true, Destination: "default", Gateway: "2001:db8::1", Interface: "eth0"})
 	if err := New(runner).applyRoutes(context.Background(), cfg); err != nil {
 		t.Fatal(err)
@@ -167,10 +180,10 @@ func TestApplyRoutesReturnsEveryCommandFailure(t *testing.T) {
 		responses map[string]runnerResponse
 		cfg       *config.Config
 	}{
-		{"show4", map[string]runnerResponse{"ip -4 route show table all proto static": {err: errors.New("show4")}}, config.Default()},
-		{"show6", map[string]runnerResponse{"ip -6 route show table all proto static": {err: errors.New("show6")}}, config.Default()},
-		{"delete", map[string]runnerResponse{"ip -4 route show table all proto static": {out: "10.0.0.0/8 proto static\n"}, "ip -4 route del 10.0.0.0/8 proto static": {err: errors.New("delete")}}, config.Default()},
-		{"replace", map[string]runnerResponse{"ip -4 route replace blackhole 10.0.0.0/8 proto static": {err: errors.New("replace")}}, routeConfig(config.StaticRoute{Enabled: true, Destination: "10.0.0.0/8", Type: "blackhole"})},
+		{"show4", map[string]runnerResponse{"ip -4 route show table all proto 202": {err: errors.New("show4")}}, config.Default()},
+		{"show6", map[string]runnerResponse{"ip -6 route show table all proto 202": {err: errors.New("show6")}}, config.Default()},
+		{"delete", map[string]runnerResponse{"ip -4 route show table all proto 202": {out: "10.0.0.0/8 proto netos-static\n"}, "ip -4 route del 10.0.0.0/8 proto netos-static": {err: errors.New("delete")}}, config.Default()},
+		{"replace", map[string]runnerResponse{"ip -4 route replace blackhole 10.0.0.0/8 proto 202": {err: errors.New("replace")}}, routeConfig(config.StaticRoute{Enabled: true, Destination: "10.0.0.0/8", Type: "blackhole"})},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

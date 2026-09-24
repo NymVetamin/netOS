@@ -311,6 +311,9 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		if c.hook.flow == "in" && c.zone.Name == "wan" {
 			b.vpnServerAccept(cfg, c.chain)
 		}
+		if c.hook.flow == "forward" {
+			b.intersegmentDefault(cfg, c.chain)
+		}
 
 		// Политика зоны завершает вход и форвард. Для исхода политика общая и
 		// задана в самой цепочке OUTPUT, поэтому здесь просто возвращаемся.
@@ -434,16 +437,33 @@ func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
 
 func (b *builder) isolation(cfg *config.Config, chain string) {
 	for _, a := range cfg.Networks {
-		if !a.Enabled || !a.Isolated {
+		if !a.Enabled {
 			continue
 		}
 		for _, other := range cfg.Networks {
-			if !other.Enabled || other.ID == a.ID {
+			if !other.Enabled || other.ID == a.ID || (!a.Isolated && !other.Isolated) {
 				continue
 			}
 			b.line("-A %s -s %s -d %s -m comment --comment %q -j REJECT --reject-with icmp-port-unreachable",
 				chain, subnetOf(a.RouterAddress), subnetOf(other.RouterAddress),
 				"изоляция: "+a.Name)
+		}
+	}
+}
+
+// Intersegment traffic needs an explicit firewall rule even when the source
+// zone's ordinary forward policy accepts Internet traffic.
+func (b *builder) intersegmentDefault(cfg *config.Config, chain string) {
+	for _, source := range cfg.Networks {
+		if !source.Enabled {
+			continue
+		}
+		for _, destination := range cfg.Networks {
+			if !destination.Enabled || source.ID == destination.ID {
+				continue
+			}
+			b.line("-A %s -s %s -d %s -m comment --comment %q -j REJECT --reject-with icmp-port-unreachable",
+				chain, subnetOf(source.RouterAddress), subnetOf(destination.RouterAddress), "intersegment default")
 		}
 	}
 }
@@ -525,6 +545,12 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":INPUT ACCEPT [0:0]")
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
+	// Explicit source NAT must see the packet before the catch-all egress rules.
+	for _, n := range cfg.Firewall.NAT {
+		if n.Enabled && n.Direction != "destination" {
+			b.natSource(n)
+		}
+	}
 	// A configured WAN is an Internet egress regardless of whether Multi-WAN
 	// is enabled. Restricting automatic masquerade to Multi-WAN leaked private
 	// client addresses (and made PPP/L2TP fail completely) in every sole-WAN
@@ -563,9 +589,7 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		}
 		if n.Direction == "destination" {
 			b.natDestination(n)
-			continue
 		}
-		b.natSource(n)
 	}
 
 	b.line("COMMIT")
@@ -633,6 +657,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.channelLocalReplies(cfg)
 	b.dnsChannelPolicies(cfg)
 	b.multiWANPolicies(cfg)
+	b.reducedPathMSS(cfg)
 
 	for _, z := range cfg.Firewall.Zones {
 		if !z.MSSClamp {
@@ -645,6 +670,34 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+// Cloud and tunnel paths can have a lower effective MTU than the interface
+// reports. Clamp both halves of the handshake, since a returning SYN-ACK
+// advertises the server's receive MSS to the LAN client.
+func (b *builder) reducedPathMSS(cfg *config.Config) {
+	const safeMSS = 1200
+	clampZone := map[string]bool{}
+	for _, zone := range cfg.Firewall.Zones {
+		clampZone[zone.Name] = zone.MSSClamp
+	}
+	var links []string
+	for _, wan := range cfg.WANs {
+		if wan.Enabled && (wan.Proto == "pppoe" || wan.Proto == "l2tp") && clampZone["wan"] {
+			links = append(links, wanInterface(cfg, wan))
+		}
+	}
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && clampZone["vpn"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
+			links = append(links, channelInterface(ch))
+		}
+	}
+	for _, iface := range links {
+		for _, direction := range []string{"-o", "-i"} {
+			b.line("-A FORWARD %s %s -p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss %d:65535 -j TCPMSS --set-mss %d",
+				direction, iface, safeMSS+1, safeMSS)
+		}
+	}
 }
 
 func (b *builder) channelLocalReplies(cfg *config.Config) {

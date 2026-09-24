@@ -85,6 +85,7 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 			w("    bond-slaves %s", strings.Join(slaves, " "))
 		}
 		w("    bond-mode %s", config.BondMode)
+		w("    bond-miimon %d", config.BondMIIMonitorMS)
 	}
 
 	if iface.MTU > 0 {

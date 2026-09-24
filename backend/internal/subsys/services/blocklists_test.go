@@ -207,6 +207,14 @@ func TestDNSBlocklistUsesCacheOnFetchFailure(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "cached.example") {
 		t.Fatalf("provider file=%q err=%v", data, err)
 	}
+	statuses, err := ReadBlocklistStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := statuses[cfg.DNS.Blocklists[0].URL]
+	if status.Source != "cache" || !strings.Contains(status.Error, "network down") {
+		t.Fatalf("source status=%+v", status)
+	}
 }
 
 func TestDNSBlocklistFailureRestoresProviderAndCacheBytes(t *testing.T) {

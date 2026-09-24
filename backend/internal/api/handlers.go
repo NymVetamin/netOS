@@ -594,16 +594,13 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pending, deadline := s.Engine.Pending()
-	visibleCfg := cfg
+	visibleCfg, err := redactAdminConfig(cfg)
 	if roleOf(r) != "admin" {
-		redacted, err := redactConfig(cfg)
-		if err != nil {
-			// Молча отдать null нельзя: панель показала бы пустую
-			// конфигурацию вместо скрытых секретов и ввела бы в заблуждение.
-			writeError(w, http.StatusInternalServerError, "не удалось скрыть секреты: %v", err)
-			return
-		}
-		visibleCfg = redacted
+		visibleCfg, err = redactConfig(cfg)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось скрыть секреты: %v", err)
+		return
 	}
 	resp := configResponse{
 		Config:       visibleCfg,
@@ -971,6 +968,10 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Normalize()
+	if s.Engine != nil {
+		previous, _, _ := s.draftSnapshot()
+		mergeRedactedSecrets(&cfg, previous)
+	}
 
 	result := cfg.Validate()
 	if result.HasErrors() {
@@ -1014,8 +1015,13 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	version := s.draftVersion
 	s.draftMu.Unlock()
 
+	visible, err := redactAdminConfig(&cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось скрыть секреты: %v", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, configResponse{
-		Config:       &cfg,
+		Config:       visible,
 		Dirty:        dirty,
 		Problems:     result.Problems,
 		DraftVersion: version,
@@ -1070,6 +1076,10 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Normalize()
+	if s.Engine != nil {
+		previous, _, _ := s.draftSnapshot()
+		mergeRedactedSecrets(&cfg, previous)
+	}
 	writeJSON(w, http.StatusOK, cfg.Validate())
 }
 
@@ -1141,6 +1151,10 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}()
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
+		return
+	}
+	if err := probeGeneratedSpace(); err != nil {
+		writeError(w, http.StatusInsufficientStorage, "недостаточно места для безопасного применения конфигурации: %v", err)
 		return
 	}
 
@@ -1277,6 +1291,11 @@ func (s *Server) handleRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "%v", err)
 		return
 	}
+	rev.Config, err = redactAdminConfig(rev.Config)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось скрыть секреты: %v", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, rev)
 }
 
@@ -1309,8 +1328,13 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	version := s.draftVersion
 	s.draftMu.Unlock()
 
+	visible, err := redactAdminConfig(rev.Config)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось скрыть секреты: %v", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, configResponse{
-		Config:       rev.Config,
+		Config:       visible,
 		Dirty:        true,
 		Problems:     rev.Config.Validate().Problems,
 		DraftVersion: version,
@@ -1380,6 +1404,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	pending, deadline := s.Engine.Pending()
 	resp := map[string]any{
 		"hostname":        "",
+		"version":         s.Version,
 		"uptime_seconds":  uptimeSeconds(),
 		"interfaces":      stats,
 		"clients_total":   len(clients),
@@ -1389,6 +1414,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname
+		resp["wans"], resp["channels"] = s.liveLinks(r.Context(), cfg, stats)
 		// Здесь и ниже — применённая конфигурация, а не черновик: карточка
 		// «Службы» описывает то, что работает сейчас. Пока она строилась из
 		// редактируемого дерева, выключенный, но не применённый DHCP выглядел

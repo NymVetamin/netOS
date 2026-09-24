@@ -216,6 +216,17 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 			return err
 		}
 		return m.run(ctx, m.Binary, "-plan")
+	case "apply", "confirm":
+		if len(args) != 1 {
+			return fmt.Errorf("команда %s не принимает параметры", args[0])
+		}
+		if err := m.requireRoot(); err != nil {
+			return err
+		}
+		if args[0] == "apply" {
+			return m.applyDraft(ctx)
+		}
+		return m.confirmDraft(ctx)
 	case "render":
 		if len(args) == 2 && args[1] == "--list" {
 			fmt.Fprintln(m.Out, strings.Join(renderableArtifacts, "\n"))
@@ -428,6 +439,8 @@ func (m *Manager) help() {
   netos start|stop|restart     управление службой
   netos plan                   что netOS изменит в живой системе, если применить
                                конфигурацию прямо сейчас
+  netos apply                  применить черновик панели через работающий netosd
+  netos confirm                подтвердить изменения, ожидающие подтверждения
   netos render <артефакт>      вывести сгенерированный конфиг:
                                `+strings.Join(renderableArtifacts, ", ")+`
   netos render --list          вывести машинно-читаемый список артефактов
@@ -447,7 +460,7 @@ _netos() {
     cmd="${COMP_WORDS[1]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=($(compgen -W "status logs start stop restart plan render backup password-reset restore update reinstall reset uninstall completion version help" -- "$cur"))
+        COMPREPLY=($(compgen -W "status logs start stop restart plan apply confirm render backup password-reset restore update reinstall reset uninstall completion version help" -- "$cur"))
         return
     fi
 
@@ -1246,10 +1259,10 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	// Дефолтные маршруты запоминаются до очистки: следующая строка сносит в том
 	// числе маршрут аплинка, и без запаса вернуть его будет неоткуда.
 	savedRoutes := m.captureDefaultRoutes(ctx)
-	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "static")
-	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "static")
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
+	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "202")
+	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "202")
 	m.removePolicyRules(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return err

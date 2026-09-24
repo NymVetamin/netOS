@@ -8,6 +8,9 @@ import (
 // Preserve the mode used by existing netOS bonds; LACP requires peer setup.
 const BondMode = "balance-rr"
 
+// Poll the carrier so a failed bond member stops receiving packets promptly.
+const BondMIIMonitorMS = 100
+
 // Ссылки между интерфейсами хранятся по идентификатору, а не по имени.
 //
 // Имя интерфейса администратор меняет в панели в любой момент, и ссылка по

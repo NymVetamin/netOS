@@ -223,6 +223,7 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		w("local=/%s/", cfg.DNS.LocalDomain)
 		w("domain=%s", cfg.DNS.LocalDomain)
 		w("expand-hosts")
+		renderRouterHostname(b, cfg)
 	}
 	if cfg.DNS.RebindProtection {
 		w("stop-dns-rebind")
@@ -338,11 +339,24 @@ func (d *Dnsmasq) renderLocalDNS(b *strings.Builder, cfg *config.Config) {
 		w("local=/%s/", cfg.DNS.LocalDomain)
 		w("domain=%s", cfg.DNS.LocalDomain)
 		w("expand-hosts")
+		renderRouterHostname(b, cfg)
 	}
 	if cfg.IPv6.FilterAAAA {
 		w("filter-AAAA")
 	}
 	w("")
+}
+
+func renderRouterHostname(b *strings.Builder, cfg *config.Config) {
+	if cfg.System.Hostname == "" || cfg.DNS.LocalDomain == "" {
+		return
+	}
+	for _, network := range cfg.Networks {
+		if !network.Enabled || network.RouterAddress == "" {
+			continue
+		}
+		fmt.Fprintf(b, "host-record=%s.%s,%s\n", cfg.System.Hostname, cfg.DNS.LocalDomain, addressOf(network.RouterAddress))
+	}
 }
 
 // listening — интерфейсы, уже перечисленные DNS-частью конфига. Повторять их
@@ -406,16 +420,33 @@ func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID m
 	}
 
 	// Статические привязки.
+	clientNames := map[string]string{}
+	for _, client := range cfg.Clients {
+		if !client.Blocked && validClientDNSLabel(client.Name) {
+			clientNames[strings.ToLower(client.MAC)] = client.Name
+		}
+	}
+	reserved := map[string]bool{}
 	for _, res := range cfg.DHCP.Reservations {
 		if !res.Enabled {
 			continue
 		}
+		reserved[strings.ToLower(res.MAC)] = true
 		parts := []string{res.MAC}
-		if res.Hostname != "" {
-			parts = append(parts, res.Hostname)
+		hostname := res.Hostname
+		if name := clientNames[strings.ToLower(res.MAC)]; name != "" {
+			hostname = name
+		}
+		if hostname != "" {
+			parts = append(parts, hostname)
 		}
 		parts = append(parts, res.IP)
 		w("dhcp-host=%s", strings.Join(parts, ","))
+	}
+	for _, client := range cfg.Clients {
+		if name := clientNames[strings.ToLower(client.MAC)]; name != "" && !reserved[strings.ToLower(client.MAC)] {
+			w("dhcp-host=%s,%s", client.MAC, name)
+		}
 	}
 
 	// Заблокированным устройствам просто не выдаём адрес — вместе с правилом
@@ -432,6 +463,19 @@ func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID m
 		w("%s", strings.TrimSpace(cfg.DHCP.AdvancedOptions))
 	}
 	w("")
+}
+
+func validClientDNSLabel(name string) bool {
+	if name == "" || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // Apply записывает конфиг и перезапускает демона, только если содержимое

@@ -13,6 +13,19 @@ func validationFixture() *Config {
 	return cfg
 }
 
+func TestEnabledSegmentWithoutDHCPPoolWarns(t *testing.T) {
+	cfg := validationFixture()
+	cfg.DHCP.Enabled = true
+	cfg.Networks[0].DHCPPool.Enabled = false
+	result := cfg.Validate()
+	for _, problem := range result.Problems {
+		if problem.Path == "networks[0].dhcp_pool.enabled" && problem.Severity == "warning" {
+			return
+		}
+	}
+	t.Fatalf("missing disabled pool warning: %+v", result.Problems)
+}
+
 func TestValidationRejectsUnsafeDHCPFieldsAndInvalidPool(t *testing.T) {
 	tests := []struct {
 		name string

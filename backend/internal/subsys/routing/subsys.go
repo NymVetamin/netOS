@@ -27,8 +27,8 @@ var rtTablesPath = "/etc/iproute2/rt_tables.d/netos.conf"
 // маршрут поставил netOS, а не ядро и не клиент DHCP, — и его же используем,
 // чтобы отличать свои маршруты от чужих при уборке.
 //
-// Пользовательские статические маршруты помечаются штатным proto static,
-// маршруты аплинков — netos: так подсистемы не удаляют работу друг друга.
+// Все маршруты netOS используют отдельный протокол, чтобы при очистке не
+// затрагивать пользовательские маршруты с proto static.
 var rtProtosPath = "/etc/iproute2/rt_protos.d/netos.conf"
 
 // Приоритеты правил netOS занимают отдельный диапазон, чтобы не спорить с
@@ -107,13 +107,14 @@ func (s *Subsystem) writeProtos() error {
 	var b strings.Builder
 	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
 	fmt.Fprintf(&b, "%d\t%s\n", config.RouteProto, config.RouteProtoName)
+	fmt.Fprintf(&b, "%d\t%s\n", config.StaticRouteProto, config.StaticRouteProtoName)
 	return system.WriteFileAtomic(rtProtosPath, []byte(b.String()), 0o644)
 }
 
 // applyRoutes приводит статические маршруты к описанному виду.
 //
-// netOS владеет полным набором статических маршрутов. Маршруты ядра, DHCP и
-// других динамических протоколов не затрагиваются.
+// netOS владеет только маршрутами со своим протоколом. Чужие статические
+// маршруты, в том числе в дополнительных таблицах, не затрагиваются.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	wanted := map[string]map[string]bool{"-4": {}, "-6": {}}
 	for _, r := range enabledRoutes(cfg) {
@@ -123,7 +124,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	for _, family := range []string{"-4", "-6"} {
 		// table all находит хвосты даже в таблицах, уже удалённых из конфигурации.
 		out, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all",
-			"proto", "static")
+			"proto", fmt.Sprint(config.StaticRouteProto))
 		if err != nil {
 			return fmt.Errorf("чтение статических маршрутов netOS (%s): %w", family, err)
 		}
@@ -160,7 +161,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 		if r.Table != "" {
 			args = append(args, "table", r.Table)
 		}
-		args = append(args, "proto", "static")
+		args = append(args, "proto", fmt.Sprint(config.StaticRouteProto))
 
 		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 			return fmt.Errorf("маршрут %s: %w", r.Destination, err)

@@ -70,6 +70,7 @@ func renderNetdev(iface config.Interface) string {
 		w("")
 		w("[Bond]")
 		w("Mode=%s", config.BondMode)
+		w("MIIMonitorSec=%dms", config.BondMIIMonitorMS)
 	case "vlan":
 		w("")
 		w("[VLAN]")

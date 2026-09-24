@@ -37,9 +37,38 @@ func TestSegmentIsolationFollowsSelectedFirewallZone(t *testing.T) {
 			}
 			cfg.Networks[0].Isolated = false
 			set, err = Build(cfg)
-			if err != nil || strings.Contains(set.IPv4, prefix) {
-				t.Fatalf("disabling isolation retained the restriction: %v", err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(set.IPv4, "\n") {
+				if strings.HasPrefix(line, prefix) && strings.Contains(line, "изоляция") {
+					t.Fatalf("disabling isolation retained its dedicated restriction: %s", line)
+				}
 			}
 		})
+	}
+}
+
+func TestIsolationRejectsBothDirections(t *testing.T) {
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{
+		{ID: "a", Name: "eth1", Type: "physical", Enabled: true},
+		{ID: "b", Name: "eth2", Type: "physical", Enabled: true},
+	}
+	cfg.Networks = []config.Network{
+		{ID: "a", Interface: "a", Zone: "lan", Enabled: true, RouterAddress: "192.0.2.1/24"},
+		{ID: "b", Interface: "b", Zone: "lan", Enabled: true, Isolated: true, RouterAddress: "192.0.3.1/24"},
+	}
+	set, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direction := range []string{
+		"-s 192.0.2.0/24 -d 192.0.3.0/24",
+		"-s 192.0.3.0/24 -d 192.0.2.0/24",
+	} {
+		if !strings.Contains(set.IPv4, "-A LAN-FWD "+direction) {
+			t.Fatalf("missing rejection for %s", direction)
+		}
 	}
 }

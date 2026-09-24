@@ -27,6 +27,22 @@ export function DiagnosticsPage() {
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [listAttempt, setListAttempt] = useState(0);
+  const [probeHost, setProbeHost] = useState("1.1.1.1");
+  const [probeRunning, setProbeRunning] = useState(false);
+  const [probeResult, setProbeResult] = useState("");
+
+  async function runProbe(kind: "ping" | "traceroute") {
+    setProbeRunning(true);
+    setProbeResult("");
+    try {
+      const result = await api.diagnosticProbe(kind, probeHost);
+      setProbeResult(result.output || result.error || "Нет ответа");
+    } catch (cause) {
+      setProbeResult(cause instanceof Error ? cause.message : "Проверка не удалась");
+    } finally {
+      setProbeRunning(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +158,15 @@ export function DiagnosticsPage() {
         <h1>Диагностика</h1>
         <p>Что получилось из настроек на самом деле</p>
       </div>
+
+      <Card title="Проверка соединения">
+        <div className="row wrap" style={{ gap: "0.4rem" }}>
+          <input aria-label="Адрес для проверки" value={probeHost} onChange={(event) => setProbeHost(event.target.value)} placeholder="IP-адрес или имя узла" />
+          <button className="btn sm" disabled={probeRunning} onClick={() => runProbe("ping")}>Ping</button>
+          <button className="btn sm" disabled={probeRunning} onClick={() => runProbe("traceroute")}>Traceroute</button>
+        </div>
+        {probeResult && <pre className="output">{probeResult}</pre>}
+      </Card>
 
       {listLoading && <Empty>Загрузка списка диагностики…</Empty>}
       {listError && (

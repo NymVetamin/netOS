@@ -335,7 +335,7 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	if err := s.M.ensurePackages(ctx, cfg); err != nil {
 		return err
 	}
-	if cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" && blocklistNeededForDnsmasq(cfg) {
+	if blocklistNeededForDnsmasq(cfg) {
 		// Список должен лежать на диске до проверки конфигурации: dnsmasq
 		// читает conf-file уже на --test и без файла завершается ошибкой.
 		_, tx, err := s.M.prepareBlocklists(ctx, cfg)

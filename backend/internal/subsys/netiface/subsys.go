@@ -38,7 +38,8 @@ type Interfaces struct {
 	OwnedPath string
 
 	// owned — список из OwnedPath, прочитанный в начале Apply.
-	owned map[string]bool
+	owned       map[string]bool
+	mtuBaseline map[string]int
 }
 
 // DefaultOwnedPath — где хранится список интерфейсов, созданных netOS.
@@ -52,6 +53,12 @@ func (s *Interfaces) Name() string { return "interfaces" }
 
 func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
+	owned := s.loadOwned()
+	for _, iface := range new.Interfaces {
+		if iface.Type != "physical" && linkExists(iface.Name) && !owned[iface.Name] {
+			return nil, fmt.Errorf("имя %s уже занято интерфейсом, который не создавал netOS", iface.Name)
+		}
+	}
 
 	oldByID := map[string]config.Interface{}
 	if old != nil {
@@ -93,6 +100,12 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
+	if err := s.loadMTUBaseline(); err != nil {
+		return err
+	}
+	if err := s.captureMTUBaselines(ctx, cfg); err != nil {
+		return err
+	}
 	// Preserve bridge identity across recreation/rename. A new random MAC leaves
 	// clients sending to the old gateway until their ARP cache expires.
 	stable, err := s.bridgeMACs(cfg)
@@ -140,6 +153,89 @@ func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	return s.rememberOwned(cfg)
+}
+
+// Remember the MTU before netOS changes it. A zero MTU in the config means
+// that the interface should return to this value, including across restarts.
+func (s *Interfaces) loadMTUBaseline() error {
+	s.mtuBaseline = map[string]int{}
+	if s.OwnedPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.OwnedPath + ".mtu-baseline.json")
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &s.mtuBaseline); err != nil {
+		return fmt.Errorf("read interface MTU baselines: %w", err)
+	}
+	if s.mtuBaseline == nil {
+		s.mtuBaseline = map[string]int{}
+	}
+	return nil
+}
+
+func (s *Interfaces) saveMTUBaseline() error {
+	if s.OwnedPath == "" {
+		return nil
+	}
+	data, err := json.Marshal(s.mtuBaseline)
+	if err != nil {
+		return err
+	}
+	_, err = system.WriteFileAtomicIfChanged(s.OwnedPath+".mtu-baseline.json", data, 0o600)
+	return err
+}
+
+func (s *Interfaces) captureMTUBaselines(ctx context.Context, cfg *config.Config) error {
+	for _, iface := range cfg.Interfaces {
+		if iface.MTU <= 0 || s.mtuBaseline[iface.Name] > 0 || !linkExists(iface.Name) {
+			continue
+		}
+		out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface.Name)
+		if err != nil {
+			return fmt.Errorf("read MTU of %s: %w", iface.Name, err)
+		}
+		_, mtu, _ := parseLinkState(out)
+		if mtu > 0 && mtu != iface.MTU {
+			s.mtuBaseline[iface.Name] = mtu
+			if err := s.saveMTUBaseline(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Interfaces) applyInterfaceMTU(ctx context.Context, iface config.Interface) error {
+	if iface.MTU > 0 {
+		if s.mtuBaseline[iface.Name] == 0 {
+			out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface.Name)
+			if err != nil {
+				return fmt.Errorf("read MTU of %s: %w", iface.Name, err)
+			}
+			_, mtu, _ := parseLinkState(out)
+			if mtu > 0 && mtu != iface.MTU {
+				s.mtuBaseline[iface.Name] = mtu
+				if err := s.saveMTUBaseline(); err != nil {
+					return err
+				}
+			}
+		}
+		_, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "mtu", fmt.Sprint(iface.MTU))
+		return err
+	}
+	if baseline := s.mtuBaseline[iface.Name]; baseline > 0 {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "mtu", fmt.Sprint(baseline)); err != nil {
+			return err
+		}
+		delete(s.mtuBaseline, iface.Name)
+		return s.saveMTUBaseline()
+	}
+	return nil
 }
 
 func (s *Interfaces) bridgeMACs(cfg *config.Config) (map[string]string, error) {
@@ -194,6 +290,9 @@ func (s *Interfaces) bridgeMACs(cfg *config.Config) (map[string]string, error) {
 // ensure создаёт виртуальный интерфейс, если его ещё нет.
 func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface config.Interface) error {
 	if linkExists(iface.Name) {
+		if !s.owned[iface.Name] {
+			return fmt.Errorf("имя %s уже занято интерфейсом, который не создавал netOS", iface.Name)
+		}
 		mismatch := describeMismatch(cfg, iface)
 		if mismatch == "" {
 			return nil
@@ -227,7 +326,7 @@ func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface confi
 			return fmt.Errorf("создание VLAN %s: %w", iface.Name, err)
 		}
 	case "bond":
-		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", iface.Name, "type", "bond", "mode", config.BondMode); err != nil {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", iface.Name, "type", "bond", "mode", config.BondMode, "miimon", fmt.Sprint(config.BondMIIMonitorMS)); err != nil {
 			return fmt.Errorf("создание bond %s: %w", iface.Name, err)
 		}
 	}
@@ -242,9 +341,15 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 		return nil
 	}
 
-	if iface.MTU > 0 {
-		if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "mtu", fmt.Sprint(iface.MTU)); err != nil {
-			return fmt.Errorf("установка MTU для %s: %w", iface.Name, err)
+	if err := s.applyInterfaceMTU(ctx, iface); err != nil {
+		return err
+	}
+	if iface.Type == "bond" {
+		path := filepath.Join(sysClassNet, iface.Name, "bonding", "miimon")
+		if current, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(current)) != fmt.Sprint(config.BondMIIMonitorMS) {
+			if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, "type", "bond", "miimon", fmt.Sprint(config.BondMIIMonitorMS)); err != nil {
+				return fmt.Errorf("настройка мониторинга агрегации %s: %w", iface.Name, err)
+			}
 		}
 	}
 	if iface.Type == "bridge" {
@@ -1507,13 +1612,31 @@ func (s *WAN) applyStaticAddress(ctx context.Context, w config.WAN, iface string
 	// netOS считал бы адрес своим статическим — до истечения аренды, после
 	// которой аплинк тихо остался бы без адреса. replace делает адрес
 	// постоянным и не разрывает установленные соединения.
-	if current, err := addressesOf(ctx, s.Runner, iface); err == nil && current[w.Address] {
+	if out, err := s.Runner.Run(ctx, "ip", "-4", "-o", "addr", "show", "dev", iface); err == nil && permanentAddress(out, w.Address) {
 		return nil
 	}
 	if _, err := s.Runner.Run(ctx, "ip", "addr", "replace", w.Address, "dev", iface); err != nil {
 		return fmt.Errorf("назначение адреса аплинка %s: %w", w.Address, err)
 	}
 	return nil
+}
+
+func permanentAddress(output, address string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field != "inet" || i+1 >= len(fields) || fields[i+1] != address {
+				continue
+			}
+			for j, token := range fields {
+				if token == "dynamic" || token == "valid_lft" && j+1 < len(fields) && fields[j+1] != "forever" {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func (s *WAN) applyStaticRoute(ctx context.Context, w config.WAN, iface string) error {

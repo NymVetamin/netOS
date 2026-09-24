@@ -582,8 +582,7 @@ func (s *Subsystem) ensureRoutes(ctx context.Context, ch config.Channel, name st
 	table := fmt.Sprint(TableNumber(ch))
 	out, _ := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", table)
 	if !hasDefaultRoute(out, name) {
-		if _, err := s.Runner.Run(ctx, "ip", "-4", "route", "replace", "default", "dev", name,
-			"metric", "100", "table", table, "proto", fmt.Sprint(config.RouteProto)); err != nil {
+		if err := s.replaceChannelDefaultWhenReady(ctx, name, table); err != nil {
 			return fmt.Errorf("маршрут канала: %w", err)
 		}
 	}
@@ -594,6 +593,25 @@ func (s *Subsystem) ensureRoutes(ctx context.Context, ch config.Channel, name st
 		}
 	}
 	return nil
+}
+
+func (s *Subsystem) replaceChannelDefaultWhenReady(ctx context.Context, name, table string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := s.Runner.Run(ctx, "ip", "-4", "route", "replace", "default", "dev", name,
+			"metric", "100", "table", table, "proto", fmt.Sprint(config.RouteProto))
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "Device for nexthop is not up") || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func hasDefaultRoute(out, name string) bool {

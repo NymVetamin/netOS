@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,6 +39,28 @@ var (
 		return &http.Client{Timeout: 30 * time.Second, CheckRedirect: checkRedirect}
 	}
 )
+
+type BlocklistSourceStatus struct {
+	Source string `json:"source"`
+	Error  string `json:"error,omitempty"`
+}
+
+func blocklistStatusPath() string { return filepath.Join(blocklistCacheDir, "status.json") }
+
+func ReadBlocklistStatuses() (map[string]BlocklistSourceStatus, error) {
+	data, err := os.ReadFile(blocklistStatusPath())
+	if os.IsNotExist(err) {
+		return map[string]BlocklistSourceStatus{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var statuses map[string]BlocklistSourceStatus
+	if err := json.Unmarshal(data, &statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
 
 type BlocklistManager struct {
 	Fetch func(context.Context, string, string) ([]byte, error)
@@ -216,6 +239,7 @@ func blocklistCachePath(rawURL string) string {
 
 func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) ([]string, error) {
 	all := map[string]struct{}{}
+	statuses := map[string]BlocklistSourceStatus{}
 	for _, item := range cfg.DNS.Blocklists {
 		if !item.Enabled {
 			continue
@@ -224,22 +248,24 @@ func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) 
 		data, fetchErr := m.Fetch(ctx, item.URL, item.CAFile)
 		domains, parseErr := parseBlocklist(data)
 		if fetchErr != nil || parseErr != nil {
+			cause := fetchErr
+			if cause == nil {
+				cause = parseErr
+			}
 			cached, cacheErr := os.ReadFile(cachePath)
 			if cacheErr != nil {
-				cause := fetchErr
-				if cause == nil {
-					cause = parseErr
-				}
 				return nil, fmt.Errorf("список %q (%s): %w; рабочего кэша нет", item.Name, item.URL, cause)
 			}
 			domains, cacheErr = parseBlocklist(cached)
 			if cacheErr != nil {
 				return nil, fmt.Errorf("список %q: загрузка не удалась и кэш повреждён: %w", item.Name, cacheErr)
 			}
+			statuses[item.URL] = BlocklistSourceStatus{Source: "cache", Error: cause.Error()}
 		} else {
 			if err := system.WriteFileAtomic(cachePath, canonicalDomainFile(domains), 0o600); err != nil {
 				return nil, fmt.Errorf("кэш списка %q: %w", item.Name, err)
 			}
+			statuses[item.URL] = BlocklistSourceStatus{Source: "fetched"}
 		}
 		for _, domain := range domains {
 			all[domain] = struct{}{}
@@ -253,6 +279,13 @@ func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) 
 		out = append(out, domain)
 	}
 	sort.Strings(out)
+	encoded, err := json.Marshal(statuses)
+	if err != nil {
+		return nil, err
+	}
+	if err := system.WriteFileAtomic(blocklistStatusPath(), encoded, 0o600); err != nil {
+		return nil, fmt.Errorf("статус DNS blocklist: %w", err)
+	}
 	return out, nil
 }
 
@@ -296,7 +329,7 @@ type blocklistTransaction struct {
 
 func snapshotBlocklistFiles(cfg *config.Config) (*blocklistTransaction, error) {
 	tx := &blocklistTransaction{}
-	paths := []string{dnsmasqBlocklistPath, unboundBlocklistPath, dnsproxyBlocklistPath}
+	paths := []string{dnsmasqBlocklistPath, unboundBlocklistPath, dnsproxyBlocklistPath, blocklistStatusPath()}
 	seen := map[string]bool{}
 	if cfg != nil {
 		for _, item := range cfg.DNS.Blocklists {
@@ -387,6 +420,9 @@ func (m *BlocklistManager) Apply(ctx context.Context, cfg *config.Config) (bool,
 			_ = tx.Rollback()
 			return false, nil, err
 		}
+	} else if err := os.Remove(blocklistStatusPath()); err != nil && !os.IsNotExist(err) {
+		_ = tx.Rollback()
+		return false, nil, err
 	}
 	target, content := blocklistProviderFile(cfg, domains)
 	changed := false

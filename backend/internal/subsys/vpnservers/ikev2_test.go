@@ -92,3 +92,21 @@ func TestIKEv2Validation(t *testing.T) {
 		t.Fatal("unsafe IKEv2 identity accepted")
 	}
 }
+
+func TestIKEv2SplitRoutesIncludePushedDNS(t *testing.T) {
+	cfg, server := ikev2TestConfig()
+	server.Config["split_routes"] = []string{"192.0.3.0/24"}
+	server.Config["dns"] = []string{"10.40.0.1"}
+	out, err := RenderIKEv2([]config.VPNServer{server}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"local_ts = 192.0.3.0/24, 10.40.0.1/32",
+		"split_include = 192.0.3.0/24, 10.40.0.1/32",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("missing %q in IKEv2 config", want)
+		}
+	}
+}

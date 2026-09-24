@@ -287,15 +287,17 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
   const [restoreName, setRestoreName] = useState("");
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [version, setVersion] = useState("latest");
+  const [installedVersion, setInstalledVersion] = useState("");
   const [updateConfirm, setUpdateConfirm] = useState("");
   const [waitingForRestore, setWaitingForRestore] = useState(false);
   const restoreObservedRunning = useRef(false);
   const restoreScheduledAt = useRef(0);
 
   async function load() {
-    const [list, live] = await Promise.all([api.backups(), api.maintenanceStatus()]);
+    const [list, live, router] = await Promise.all([api.backups(), api.maintenanceStatus(), api.status()]);
     setBackups(list.backups || []);
     setStatus(live);
+    setInstalledVersion(router.version || "");
     const running = live.state === "active" || live.state === "activating";
     // Сообщение «операция запланирована» относится к ожиданию. Как только
     // операция завершилась неудачей, оно вводит в заблуждение: рядом с
@@ -395,6 +397,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
 
       <div style={{ marginTop: "1.2rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
         <strong>Обновление netOS</strong>
+        {installedVersion && <div className="faint">Установлена версия: <span className="mono">{installedVersion}</span></div>}
         <div className="faint" style={{ fontSize: 12.5, margin: ".25rem 0 .7rem" }}>Перед обновлением установщик сохраняет данные; укажите latest или тег релиза, например v0.06.</div>
         <div className="row wrap">
           <input aria-label="Версия netOS для обновления" style={{ maxWidth: 160 }} value={version} onChange={(e) => setVersion(e.target.value.trim())} />

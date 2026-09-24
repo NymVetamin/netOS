@@ -42,6 +42,7 @@ type ComponentProbe interface {
 
 // Server — веб-панель.
 type Server struct {
+	Version     string
 	Store       *store.Store
 	Engine      *apply.Engine
 	Collector   *runtime.Collector
@@ -71,14 +72,15 @@ type Server struct {
 	loginFails map[string]*failCounter
 	loginSlots chan struct{}
 
-	httpServer        *http.Server
-	challengeServer   *http.Server
-	Listen            func(network, address string) (net.Listener, error)
-	ACMEFactory       acmeManagerFactory
-	ACMEWaitDNS       func(context.Context, string) error
-	ACMEHTTPAddress   string
-	ACMECheckInterval time.Duration
-	Ready             func() error
+	httpServer         *http.Server
+	challengeServer    *http.Server
+	Listen             func(network, address string) (net.Listener, error)
+	ACMEFactory        acmeManagerFactory
+	ACMEWaitDNS        func(context.Context, string) error
+	ACMEHTTPAddress    string
+	ACMECheckInterval  time.Duration
+	Ready              func() error
+	EnableLocalControl bool
 }
 
 type failCounter struct {
@@ -189,6 +191,8 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/leases", s.handleLeases)
 	auth("GET /api/arp", s.handleARP)
 	auth("GET /api/routes", s.handleRoutes)
+	auth("GET /api/dns/blocklists/status", s.handleBlocklistStatus)
+	auth("POST /api/diagnostics/probe", s.handleDiagnosticProbe)
 	auth("GET /api/audit", s.handleAudit)
 	auth("GET /api/render", s.handleRenderList)
 	auth("GET /api/render/{kind}", s.handleRender)
@@ -355,6 +359,19 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		}
 		return fmt.Errorf("не удалось занять порт %d: %w", cfg.System.Panel.Port, err)
 	}
+	stopControl := func() {}
+	var controlDone <-chan error
+	if s.EnableLocalControl {
+		stopControl, controlDone, err = s.startLocalControl()
+		if err != nil {
+			_ = ln.Close()
+			if s.challengeServer != nil {
+				_ = s.challengeServer.Close()
+			}
+			return fmt.Errorf("локальное управление: %w", err)
+		}
+	}
+	defer stopControl()
 
 	// The shutdown context must remain usable after the parent has been
 	// cancelled; deriving it from ctx would cancel Shutdown immediately.
@@ -403,12 +420,12 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		}
 	}
 	s.Logger.Infof("панель доступна на порту %d", cfg.System.Panel.Port)
-	if challengeErr == nil {
-		return <-serveDone
-	}
 	select {
 	case err := <-serveDone:
 		return err
+	case err := <-controlDone:
+		_ = s.httpServer.Close()
+		return fmt.Errorf("локальное управление остановлено: %w", err)
 	case err := <-challengeErr:
 		if err == nil && ctx.Err() != nil {
 			return <-serveDone

@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 import { newID } from "../id";
-import { Problem } from "../api";
+import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -157,6 +158,18 @@ function DNSSection({
   patch: Patch;
   providers: string[];
 }) {
+  const [blocklistStatus, setBlocklistStatus] = useState<Record<string, { source: string; error?: string }>>({});
+  const [statusError, setStatusError] = useState("");
+  async function refreshBlocklistStatus() {
+    try {
+      const result = await api.blocklistStatus();
+      setBlocklistStatus(result.sources || {});
+      setStatusError("");
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : "Не удалось получить статус");
+    }
+  }
+  useEffect(() => { void refreshBlocklistStatus(); }, []);
   const provider = config.dns?.provider || "";
   const caps = DNS_CAPS[provider];
   const encrypted = (config.dns?.upstreams || []).filter(
@@ -522,7 +535,7 @@ function DNSSection({
 		{(config.dns?.blocklists || []).length === 0 ? <Empty>Списки блокировки не заданы</Empty> : (
 		  <TableWrap>
 			<table>
-			  <thead><tr><th>Название</th><th>HTTPS URL списка</th><th>CA-файл (необязательно)</th><th>Вкл.</th><th /></tr></thead>
+			  <thead><tr><th>Название</th><th>HTTPS URL списка</th><th>CA-файл (необязательно)</th><th>Вкл.</th><th>Источник</th><th /></tr></thead>
 			  <tbody>
 				{config.dns.blocklists.map((list: any, idx: number) => (
 				  <tr key={list.id}>
@@ -530,6 +543,7 @@ function DNSSection({
 					<td><input type="url" aria-label={`URL DNS blocklist ${idx + 1}`} className="mono" style={{ width: 360 }} placeholder="https://example.org/hosts.txt" value={list.url || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].url = e.target.value))} /></td>
 					<td><input aria-label={`CA-файл DNS blocklist ${idx + 1}`} className="mono" style={{ width: 280 }} placeholder="/etc/netos/blocklist-ca.pem" value={list.ca_file || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].ca_file = e.target.value))} /></td>
 					<td><Switch checked={!!list.enabled} disabled={!config.dns?.enabled} label="" ariaLabel={`DNS blocklist ${list.name || idx + 1} включён`} onChange={(enabled) => patch((d) => (d.dns.blocklists[idx].enabled = enabled))} /></td>
+					<td title={blocklistStatus[list.url]?.error || ""}>{!list.enabled ? "Выключен" : blocklistStatus[list.url]?.source === "cache" ? "Кэш: источник недоступен" : blocklistStatus[list.url]?.source === "fetched" ? "Загружен" : "Нет данных"}</td>
 					<td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.blocklists = d.dns.blocklists.filter((item: any) => item.id !== list.id); })}>Убрать</button></td>
 				  </tr>
 				))}
@@ -538,6 +552,8 @@ function DNSSection({
 		  </TableWrap>
 		)}
 		<div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+		  <button className="btn" onClick={() => void refreshBlocklistStatus()}>Обновить статусы</button>
+		  {statusError && <span role="alert">{statusError}</span>}
 		  <button className="btn" onClick={() => patch((d) => {
 			d.dns.blocklists = d.dns.blocklists || [];
 			d.dns.blocklists.push({ id: newID("blocklist"), name: "", url: "", ca_file: "", enabled: false });

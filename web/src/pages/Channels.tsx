@@ -1,4 +1,5 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { api } from "../api";
 import { newID } from "../id";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
@@ -18,6 +19,16 @@ const POLICY_DAYS = [
 ];
 
 export function ChannelsPage({ config, patch }: Props) {
+  const [liveChannels, setLiveChannels] = useState<any[]>([]);
+  useEffect(() => {
+    let active = true;
+    const load = () => api.status().then((status) => {
+      if (active) setLiveChannels(status.channels || []);
+    }).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
   const channels = config.channels || [];
   const policies = config.policies || [];
   const wireguardInstalled = (config.components || []).some(
@@ -157,6 +168,16 @@ export function ChannelsPage({ config, patch }: Props) {
             </Notice>
           ),
         )}
+      </Card>
+
+      <Card title="Состояние каналов" subtitle="Проверка работающих интерфейсов и связи WireGuard">
+        {liveChannels.length === 0 ? <Empty>Активных VPN-каналов нет</Empty> :
+          <div className="stack">{liveChannels.map((channel: any) =>
+            <div key={channel.id} className="row between wrap">
+              <strong>{channel.name}</strong>
+              <span className="mono faint">{channel.interface}</span>
+              <Badge tone={channel.up ? "ok" : "warn"}>{channel.up ? "поднят" : "нет связи"}</Badge>
+            </div>)}</div>}
       </Card>
 
       <SegmentDefaults config={config} patch={patch} />
