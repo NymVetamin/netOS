@@ -1761,3 +1761,172 @@ tr.disabled-row td {
     position: static;
   }
 }
+
+/* --- защита сети: матрица доступа --- */
+
+table.access {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 3px;
+  padding: 6px;
+}
+
+table.access th,
+table.access td {
+  padding: 0;
+  border: 0;
+}
+
+table.access thead th {
+  padding: 2px 6px 4px;
+  font: 500 12px var(--font);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  text-align: center;
+}
+
+table.access tbody th {
+  padding: 0 10px 0 4px;
+  font: 500 12px var(--font);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  width: 1%;
+}
+
+table.access .corner {
+  position: relative;
+  width: 110px;
+  height: 30px;
+  background: linear-gradient(to top right, transparent calc(50% - 0.6px), var(--border-strong) 50%, transparent calc(50% + 0.6px));
+}
+
+.corner span {
+  position: absolute;
+  font: 500 9px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.corner .c-to { top: 2px; right: 6px; }
+.corner .c-from { bottom: 2px; left: 6px; }
+
+.access-entity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.access-entity .mono {
+  font-size: 10.5px;
+}
+
+.access-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+.access-tile b {
+  font: 600 10.5px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.access-tile.y { background: var(--ok-soft); color: var(--ok); }
+.access-tile.n { background: var(--danger-soft); color: var(--danger); }
+.access-tile.p { background: var(--warn-soft); color: var(--warn); }
+.access-tile.same { cursor: default; background: repeating-linear-gradient(45deg, var(--surface-2) 0 5px, transparent 5px 10px); font: 11px var(--mono); }
+.access-tile:not(.same):hover { border-color: color-mix(in srgb, currentColor 40%, transparent); }
+.access-tile.open { border-color: currentColor; }
+
+.access-tip {
+  position: fixed;
+  z-index: 60;
+  width: max-content;
+  max-width: 340px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 5px;
+  font-size: 12.5px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.access-tip ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+}
+
+.access-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-weight: 600;
+}
+
+.access-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.access-path .access-arrow { flex: none; }
+.access-path.y .access-arrow, .access-verdict.y { color: var(--ok); }
+.access-path.n .access-arrow, .access-verdict.n { color: var(--danger); }
+.access-path.p .access-arrow, .access-verdict.p { color: var(--warn); }
+
+.access-verdict {
+  font: 600 10.5px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* --- перетаскивание правил --- */
+
+.grip {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-faint);
+  cursor: grab;
+}
+
+.grip:hover {
+  color: var(--text);
+}
+
+tr.dragging td {
+  opacity: 0.4;
+}
+
+tr.drop-above td {
+  box-shadow: inset 0 2px 0 var(--accent-fill);
+}
+
+tr.drop-below td {
+  box-shadow: inset 0 -2px 0 var(--accent-fill);
+}
+
+/* Цепочки — отдельные таблицы; фиксированная раскладка держит колонки
+   действия и кнопок на одной вертикали во всех цепочках. */
+table.rules {
+  table-layout: fixed;
+  min-width: 720px;
+}

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
 import { Problem } from "../api";
@@ -39,15 +40,32 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
-  function move(index: number, delta: number) {
+  function moveTo(index: number, to: number) {
     patch((d) => {
       const list = d.firewall.rules;
-      const to = index + delta;
-      if (to < 0 || to >= list.length) return;
+      if (to < 0 || to >= list.length || to === index) return;
       const [item] = list.splice(index, 1);
       list.splice(to, 0, item);
     });
   }
+  const move = (index: number, delta: number) => moveTo(index, index + delta);
+
+  // Перетаскивание строки: правило встаёт на место той, на которую его
+  // бросили. Порядок внутри цепочки и есть порядок проверки.
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  const drag: Drag = {
+    dragging,
+    over,
+    start: (index) => setDragging(index),
+    enter: (index) => setOver(index),
+    drop: (index) => {
+      if (dragging !== null) moveTo(dragging, index);
+      setDragging(null);
+      setOver(null);
+    },
+    end: () => { setDragging(null); setOver(null); },
+  };
 
   const groups = buildGroups(config, rules);
 
@@ -65,6 +83,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
           Роутер пропускает весь трафик без фильтрации.
         </Notice>
       )}
+
+      <AccessCard config={config} />
 
       <Card title="Зоны и политики">
         <div className="row wrap" style={{ marginBottom: "1rem", gap: "1.5rem" }}>
@@ -173,6 +193,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
                         config={config}
                         patch={patch}
                         onMove={move}
+                        drag={drag}
                         expanded={editing === r.id}
                         onToggleExpand={() => setEditing(editing === r.id ? null : r.id)}
                       />
@@ -508,6 +529,7 @@ function RuleRow({
   config,
   patch,
   onMove,
+  drag,
   expanded,
   onToggleExpand,
 }: {
@@ -516,14 +538,36 @@ function RuleRow({
   config: any;
   patch: Patch;
   onMove: (index: number, delta: number) => void;
+  drag: Drag;
   expanded: boolean;
   onToggleExpand: () => void;
 }) {
   const action = ACTIONS.find((a) => a.id === rule.action);
+  const target = drag.over === index && drag.dragging !== null && drag.dragging !== index;
+  const rowClass = [
+    rule.enabled ? "" : "disabled-row",
+    drag.dragging === index ? "dragging" : "",
+    target ? (drag.dragging! > index ? "drop-above" : "drop-below") : "",
+  ].filter(Boolean).join(" ");
 
   return (
     <>
-      <tr className={rule.enabled ? "" : "disabled-row"}>
+      <tr
+        className={rowClass}
+        onDragOver={(e) => { if (drag.dragging !== null) { e.preventDefault(); drag.enter(index); } }}
+        onDrop={(e) => { e.preventDefault(); drag.drop(index); }}
+      >
+        <td style={{ width: 24, paddingRight: 0 }}>
+          <span
+            className="grip"
+            draggable
+            title="Перетащите, чтобы поменять порядок"
+            onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(index)); drag.start(index); }}
+            onDragEnd={drag.end}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" /><circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" /><circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" /></svg>
+          </span>
+        </td>
         <td style={{ width: 46 }}>
           <Switch
             checked={rule.enabled}
@@ -544,7 +588,7 @@ function RuleRow({
         <td style={{ width: 170 }}>
           <Badge tone={action?.tone || "neutral"}>{action?.title || rule.action}</Badge>
         </td>
-        <td style={{ width: 150, textAlign: "right", whiteSpace: "nowrap" }}>
+        <td style={{ width: 210, textAlign: "right", whiteSpace: "nowrap" }}>
           <button className="btn ghost sm" title="выше" onClick={() => onMove(index, -1)}>
             ↑
           </button>
@@ -572,7 +616,7 @@ function RuleRow({
 
       {expanded && (
         <tr>
-          <td colSpan={4} style={{ background: "var(--surface-2)" }}>
+          <td colSpan={5} style={{ background: "var(--surface-2)" }}>
             {rule.comment && (
               <div className="dim" style={{ marginBottom: "0.8rem" }}>
                 {rule.comment}
@@ -597,6 +641,164 @@ function RuleRow({
         </tr>
       )}
     </>
+  );
+}
+
+type Drag = {
+  dragging: number | null;
+  over: number | null;
+  start: (index: number) => void;
+  enter: (index: number) => void;
+  drop: (index: number) => void;
+  end: () => void;
+};
+
+// ---------------------------------------------------------------------------
+// Итог доступа
+// ---------------------------------------------------------------------------
+
+const VERDICT_TEXT = { y: "можно", n: "нельзя", p: "частично" } as const;
+
+// AccessArrow рисует направление: сплошная стрелка — можно, пунктир —
+// частично, стрелка в стену — нельзя.
+function AccessArrow({ verdict, width = 20 }: { verdict: "y" | "n" | "p"; width?: number }) {
+  const m = 7;
+  const e = width - 2;
+  return (
+    <svg className="access-arrow" width={width} height={14} viewBox={`0 0 ${width} 14`} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {verdict === "n" ? (
+        <>
+          <line x1={1} y1={m} x2={width / 2 - 3} y2={m} />
+          <line x1={width / 2} y1={1} x2={width / 2} y2={13} strokeWidth={3} />
+        </>
+      ) : (
+        <>
+          <line x1={1} y1={m} x2={e - 2} y2={m} strokeDasharray={verdict === "p" ? "5 4" : undefined} />
+          <path d={`M${e - 7} 2 L${e} ${m} L${e - 7} 12`} />
+        </>
+      )}
+    </svg>
+  );
+}
+
+// AccessCard — матрица «кто куда может ходить». Только показывает: итог
+// считается из зон и правил, менять его — правилами ниже. Подробности —
+// по нажатию на плашку.
+function AccessCard({ config }: { config: any }) {
+  const zoneIfaces = { wan: interfacesOfZone(config, "wan"), vpn: interfacesOfZone(config, "vpn") };
+  const matrix = accessMatrix(config, zoneIfaces);
+  const [open, setOpen] = useState<{ i: number; j: number } | null>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+
+  // Подсказка стоит у плашки. Координаты из getBoundingClientRect уже
+  // умножены на масштаб интерфейса, а style.left в него пересчитывается,
+  // поэтому делим на коэффициент.
+  useLayoutEffect(() => {
+    const tip = tipRef.current;
+    const anchor = anchorRef.current;
+    if (!tip || !anchor) return;
+    const r = anchor.getBoundingClientRect();
+    const k = r.width / anchor.offsetWidth || 1;
+    const w = tip.offsetWidth * k;
+    const h = tip.offsetHeight * k;
+    tip.style.left = `${Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8)) / k}px`;
+    tip.style.top = `${(window.innerHeight - r.bottom < h + 10 && r.top > h + 10 ? r.top - h - 6 : r.bottom + 6) / k}px`;
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e.type === "keydown" && (e as KeyboardEvent).key !== "Escape") return;
+      if (e.type === "mousedown" && (tipRef.current?.contains(e.target as Node) || anchorRef.current?.contains(e.target as Node))) return;
+      setOpen(null);
+      if (e.type === "keydown") anchorRef.current?.focus();
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  if (matrix.sources.length === 0) return null;
+  const cell = open ? matrix.cells[open.i][open.j] : null;
+
+  return (
+    <Card title="Кто куда может ходить" subtitle="итог зон и правил для новых соединений · нажмите на плашку, чтобы узнать, что её решает" tight>
+      <TableWrap>
+        <table className="access">
+          <thead>
+            <tr>
+              <th className="corner" scope="col"><span className="c-to">куда</span><span className="c-from">откуда</span></th>
+              {matrix.destinations.map((d) => <th key={d.id} scope="col"><EntityName entity={d} /></th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.sources.map((src, i) => (
+              <tr key={src.id}>
+                <th scope="row"><EntityName entity={src} /></th>
+                {matrix.destinations.map((dst, j) => {
+                  const c = matrix.cells[i][j];
+                  if (!c) return <td key={dst.id}><div className="access-tile same">—</div></td>;
+                  const active = open?.i === i && open?.j === j;
+                  return (
+                    <td key={dst.id}>
+                      <button
+                        type="button"
+                        className={`access-tile ${c.verdict} ${active ? "open" : ""}`}
+                        aria-expanded={active}
+                        aria-label={`${src.title} → ${dst.title}: ${VERDICT_TEXT[c.verdict]}. Подробнее`}
+                        onClick={(e) => {
+                          anchorRef.current = e.currentTarget;
+                          setOpen(active ? null : { i, j });
+                        }}
+                      >
+                        <AccessArrow verdict={c.verdict} />
+                        <b>{VERDICT_TEXT[c.verdict]}</b>
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
+      {open && cell && <AccessTip tipRef={tipRef} from={matrix.sources[open.i]} to={matrix.destinations[open.j]} access={cell} />}
+    </Card>
+  );
+}
+
+function EntityName({ entity }: { entity: Entity }) {
+  return (
+    <span className="access-entity">
+      {entity.title}
+      {entity.kind === "segment" && <span className="faint mono">{entity.ifaces[0]}</span>}
+    </span>
+  );
+}
+
+function AccessTip({ tipRef, from, to, access }: { tipRef: Ref<HTMLDivElement>; from: Entity; to: Entity; access: Access }) {
+  return (
+    <div className="access-tip" role="dialog" aria-label={`${from.title} → ${to.title}`} ref={tipRef}>
+      <div className="access-tip-head">
+        <span className={`access-path ${access.verdict}`}>{from.title} <AccessArrow verdict={access.verdict} width={28} /> {to.title}</span>
+        <b className={`access-verdict ${access.verdict}`}>{VERDICT_TEXT[access.verdict]}</b>
+      </div>
+      <div className="dim">Решает: {access.reason}</div>
+      {access.exceptions.length > 0 && (
+        <div>
+          <div className="faint">{access.verdict === "p" ? "Кроме:" : "Исключения:"}</div>
+          <ul>{access.exceptions.map((text) => <li key={text}>{text}</li>)}</ul>
+        </div>
+      )}
+    </div>
   );
 }
 
