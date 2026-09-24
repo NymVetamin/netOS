@@ -15,9 +15,11 @@ import { ChannelsPage } from "./pages/Channels";
 import { VPNServersPage } from "./pages/VPNServers";
 import { WiFiPage } from "./pages/WiFi";
 import { TrafficPage } from "./pages/Traffic";
+import { MapPage } from "./pages/Map";
 
 type PageID =
   | "dashboard"
+  | "map"
   | "clients"
   | "network"
   | "routing"
@@ -32,13 +34,14 @@ type PageID =
   | "history"
   | "diagnostics";
 
-type IconName = "dashboard" | "clients" | "network" | "routing" | "channels" | "vpn" | "wifi" | "traffic" | "firewall" | "services" | "components" | "system" | "history" | "diagnostics";
+type IconName = "dashboard" | "map" | "clients" | "network" | "routing" | "channels" | "vpn" | "wifi" | "traffic" | "firewall" | "services" | "components" | "system" | "history" | "diagnostics";
 
 const NAV: { group: string; items: { id: PageID; label: string; icon: IconName }[] }[] = [
   {
     group: "Обзор",
     items: [
       { id: "dashboard", label: "Сводка", icon: "dashboard" },
+      { id: "map", label: "Карта сети", icon: "map" },
       { id: "clients", label: "Устройства", icon: "clients" },
     ],
   },
@@ -73,6 +76,7 @@ const NAV: { group: string; items: { id: PageID; label: string; icon: IconName }
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
   dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
+  map: <><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M7.5 12h2M14.5 11l2.8-4M14.5 13l2.8 4"/></>,
   clients: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
   network: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M10 6.5h4a3.5 3.5 0 0 1 3.5 3.5v4M14 17.5h-4A3.5 3.5 0 0 1 6.5 14v-4"/></>,
   routing: <><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M8.5 16.5 15.5 8.5M9 6h3a6 6 0 0 1 6 6v3"/></>,
@@ -583,6 +587,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           ) : (
             <>
               {page === "dashboard" && <Dashboard config={cfg} />}
+              {page === "map" && <MapPage config={cfg} />}
               {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} />}
               {page === "network" && (
                 <NetworkPage config={cfg} patch={patch} problems={problems} />

@@ -2,6 +2,7 @@
 // занимались данными, а не оформлением.
 
 import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useId } from "react";
+import { formatBitrate } from "./api";
 
 function labelNestedControls(node: ReactNode, label: string, hintID?: string): ReactNode {
   return Children.map(node, (child) => {
@@ -174,4 +175,20 @@ export function Spinner() {
 // маршрутов и правил иначе растягивают всю страницу.
 export function TableWrap({ children }: { children: ReactNode }) {
   return <div className="table-wrap">{children}</div>;
+}
+
+// Скорость всегда с направлением и единицами: «↓ 312.4 Мбит/с  ↑ 94.1 Мбит/с».
+// Голые числа со стрелками читались неоднозначно — непонятно, мегабиты это
+// или мегабайты.
+export function Speed({ down, up }: { down: number; up: number }) {
+  const part = (arrow: string, bps: number) => {
+    const [value, unit] = splitUnit(formatBitrate(bps));
+    return <span>{arrow} {value} <span className="unit">{unit}</span></span>;
+  };
+  return <span className="speed">{part("↓", down)}{part("↑", up)}</span>;
+}
+
+function splitUnit(text: string): [string, string] {
+  const i = text.lastIndexOf(" ");
+  return [text.slice(0, i), text.slice(i + 1)];
 }

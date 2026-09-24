@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, formatBytes, formatUptime } from "../api";
+import { api, formatBitrate, formatBytes, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
 
 // Сводка: то, на что администратор смотрит первым делом, когда что-то не
@@ -239,7 +239,7 @@ export function interfaceName(config: any, id: string): string {
   return iface?.name || id;
 }
 
-function wanInterfaceName(config: any, wan: any): string {
+export function wanInterfaceName(config: any, wan: any): string {
   if (wan.proto === "pppoe" || wan.proto === "l2tp") return `ppp-${wan.id}`;
   return interfaceName(config, wan.interface);
 }
@@ -279,11 +279,4 @@ function TrafficChart({ points, interfaces }: { points: any[]; interfaces: strin
       </svg>
     </div>
   );
-}
-
-function formatBitrate(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Гбит/с`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Мбит/с`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)} Кбит/с`;
-  return `${Math.round(value)} бит/с`;
 }

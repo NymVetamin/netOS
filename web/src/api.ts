@@ -348,6 +348,13 @@ export function formatBytes(n: number): string {
   return `${value >= 100 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 }
 
+export function formatBitrate(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Гбит/с`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Мбит/с`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)} Кбит/с`;
+  return `${Math.round(value)} бит/с`;
+}
+
 export function formatUptime(seconds: number): string {
   if (!seconds) return "—";
   const d = Math.floor(seconds / 86400);
