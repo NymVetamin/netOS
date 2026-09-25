@@ -28,7 +28,7 @@ func renderOpenConnect(ch config.Channel, oc config.OpenConnectChannelConfig, sc
 	line("# Сгенерировано netOS. Пароль хранится отдельно; права файла 0600.")
 	line("server=%s", oc.Server)
 	line("user=%s", oc.Username)
-	line("protocol=%s", valueOr(oc.Protocol, "anyconnect"))
+	line("protocol=anyconnect")
 	line("interface=%s", InterfaceName(ch))
 	line("script=%s", script)
 	line("non-inter")

@@ -146,6 +146,8 @@ func InterfaceName(server config.VPNServer) string {
 		return fmt.Sprintf("vpns%d", server.Index)
 	case "ikev2":
 		return fmt.Sprintf("xfrm-srv%d", server.Index)
+	case "l2tp":
+		return l2tpPPPName(server)
 	default:
 		return fmt.Sprintf("wg-srv%d", server.Index)
 	}
@@ -172,13 +174,16 @@ func resourceName(server config.VPNServer) string {
 	if server.Type == "ocserv" {
 		return fmt.Sprintf("ocserv-srv%d", server.Index)
 	}
+	if server.Type == "l2tp" {
+		return fmt.Sprintf("l2tp-srv%d", server.Index)
+	}
 	return InterfaceName(server)
 }
 
 func enabledServers(cfg *config.Config) []config.VPNServer {
 	var out []config.VPNServer
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray" || server.Type == "ocserv" || server.Type == "ikev2") {
+		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray" || server.Type == "ocserv" || server.Type == "ikev2" || server.Type == "l2tp") {
 			out = append(out, server)
 		}
 	}
@@ -197,6 +202,8 @@ func ownedServersFor(servers []config.VPNServer) []ownedServer {
 			item.Unit = ocservUnitName(server)
 		case "ikev2":
 			item.Unit = ikev2Unit
+		case "l2tp":
+			item.Unit = l2tpUnitName(server)
 		}
 		items = append(items, item)
 	}
@@ -295,6 +302,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		case "ikev2":
 			item.Unit = ikev2Unit
 			createdNow, err = s.ensureIKEv2Interface(ctx, server, retained[item.Name])
+		case "l2tp":
+			item.Unit = l2tpUnitName(server)
+			createdNow, err = s.applyL2TP(ctx, server, retained[item.Name])
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -478,6 +488,34 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	ikeChecked := false
 	for _, server := range wanted {
+		if server.Type == "l2tp" {
+			if err := s.unitActiveEnabled(ctx, l2tpUnitName(server)); err != nil {
+				return fmt.Errorf("L2TP-сервер %s не работает: %w", server.Name, err)
+			}
+			l2tp, err := server.L2TPConfig()
+			if err != nil {
+				return err
+			}
+			conf, ppp, unit := s.l2tpPaths(server)
+			for _, file := range []struct {
+				path string
+				data []byte
+				mode os.FileMode
+			}{
+				{conf, []byte(renderL2TPConf(server, l2tp, ppp)), 0o600},
+				{ppp, []byte(renderL2TPPPP(server, l2tp)), 0o600},
+				{unit, []byte(renderL2TPUnit(server, conf)), 0o644},
+			} {
+				if err := healthyFile(file.path, file.data, file.mode); err != nil {
+					return err
+				}
+			}
+			chap, err := os.ReadFile(l2tpChapSecrets)
+			if err != nil || !strings.Contains(string(chap), l2tpChapBlock(server)) {
+				return fmt.Errorf("учётная запись L2TP-сервера %s отсутствует", server.Name)
+			}
+			continue
+		}
 		if server.Type == "xray" {
 			if err := s.unitActiveEnabled(ctx, xrayUnitName(server)); err != nil {
 				return fmt.Errorf("сервер %s не работает", server.Name)
@@ -661,6 +699,15 @@ func (s *Subsystem) unitActiveEnabled(ctx context.Context, unit string) error {
 }
 
 func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
+	if item.Type == "l2tp" {
+		server := config.VPNServer{Index: item.Index, Type: "l2tp"}
+		s.cleanupL2TP(ctx, server)
+		if err := s.verifyUnitStopped(ctx, l2tpUnitName(server)); err != nil {
+			return err
+		}
+		conf, ppp, unit := s.l2tpPaths(server)
+		return pathsAbsent(conf, ppp, unit)
+	}
 	if item.Type == "xray" {
 		server := config.VPNServer{Index: item.Index, Type: "xray"}
 		s.cleanupXray(ctx, server)

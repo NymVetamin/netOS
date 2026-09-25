@@ -51,8 +51,13 @@ type Server struct {
 	Logger      Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
-	Components ComponentProbe
-	DDNS       *ddns.Controller
+	Components       ComponentProbe
+	DDNS             *ddns.Controller
+	WANHealth        interface{ ProbeDown(string) bool }
+	ChannelHealth    interface{ ProbeDown(string) bool }
+	NetworkConflicts interface {
+		IfupdownConflicts(context.Context, *config.Config) []string
+	}
 
 	// draft — конфигурация, которую администратор редактирует, но ещё не
 	// применил.

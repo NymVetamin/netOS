@@ -1,10 +1,12 @@
 package config
 
 import (
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/mail"
@@ -439,12 +441,9 @@ func (c *Config) validateSystem(r *ValidationResult) {
 	if c.DNS.Enabled && c.System.Panel.Port == c.DNS.Port {
 		r.errf("system.panel.port", "порт панели совпадает с портом DNS")
 	}
-	if c.System.Panel.CommitTimeout < 1 || c.System.Panel.CommitTimeout > 86400 {
+	if c.System.Panel.CommitTimeout < 15 || c.System.Panel.CommitTimeout > 86400 {
 		r.errf("system.panel.commit_timeout",
-			"время подтверждения должно быть в диапазоне 1-86400 секунд")
-	} else if c.System.Panel.CommitTimeout < 15 {
-		r.warnf("system.panel.commit_timeout",
-			"меньше 15 секунд может не хватить, чтобы подтвердить изменения")
+			"время подтверждения должно быть в диапазоне 15-86400 секунд")
 	}
 	switch c.System.NetworkBackend {
 	case "netos", "ifupdown", "networkd":
@@ -563,6 +562,12 @@ func (c *Config) validateComponents(r *ValidationResult) {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала Xray нужен компонент «Xray»")
 		}
+		if channel.Enabled && channel.Type == "l2tp" && !c.HasComponent("l2tp") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i), "для канала L2TP нужен компонент «L2TP»")
+		}
+		if channel.Enabled && channel.Type == "ikev2" && !c.HasComponent("strongswan") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i), "для канала IKEv2 нужен компонент «strongSwan»")
+		}
 	}
 	for i, server := range c.VPNServers {
 		if server.Enabled && server.Type == "wireguard" && !c.HasComponent("wireguard") {
@@ -580,6 +585,9 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		if server.Enabled && server.Type == "ikev2" && !c.HasComponent("strongswan") {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
 				"для сервера IKEv2 нужен компонент «strongSwan»")
+		}
+		if server.Enabled && server.Type == "l2tp" && !c.HasComponent("l2tp") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i), "для сервера L2TP нужен компонент «L2TP»")
 		}
 	}
 }
@@ -732,8 +740,8 @@ func (c *Config) validateTopology(r *ValidationResult) {
 			// применится тот, кто окажется последним, — и не тот, кого выбрали.
 			if own := owner[m]; own != "" && own != iface.Name {
 				r.errf(path+".members",
-					"порт %q уже входит в %q: включить его можно только куда-то одно",
-					member.Name, own)
+					"порт %q уже входит в %q: его нельзя также включить в %q",
+					member.Name, own, iface.Name)
 			}
 			if !member.Enabled {
 				r.warnf(path+".members", "порт %q выключен и трафик через %q не пойдёт",
@@ -1115,9 +1123,6 @@ func (c *Config) validateWANs(r *ValidationResult) {
 			r.errf(path+".proto", "неизвестный тип подключения %q", w.Proto)
 		}
 		validateProbe(r, path+".probe", w.Probe)
-		if w.Probe.Enabled && (w.Probe.TCPRequest != "" || w.Probe.TCPResponse != "") {
-			r.errf(path+".probe", "проверка TCP с запросом и ответом доступна только для VPN-каналов")
-		}
 	}
 	if enabled == 0 && len(c.Networks) > 0 {
 		r.warnf("wans", "нет ни одного включённого аплинка — выхода в интернет не будет")
@@ -2187,7 +2192,7 @@ func (c *Config) validateChannels(r *ValidationResult) {
 				r.warnf(path+".type", "неизвестный тип канала %q: настройки сохранены, включение недоступно", ch.Type)
 			}
 		}
-		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" {
+		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2" {
 			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
 		}
 		if ch.Index < 0 || ch.Index > 9999 || (ch.Type != "direct" && ch.Index == 0) {
@@ -2198,6 +2203,12 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		}
 		if ch.Type == "openconnect" {
 			c.validateOpenConnectChannel(r, path, ch)
+		}
+		if ch.Type == "l2tp" {
+			c.validateL2TPChannel(r, path, ch)
+		}
+		if ch.Type == "ikev2" {
+			c.validateIKEv2Channel(r, path, ch)
 		}
 		if ch.Type == "xray" {
 			c.validateXrayChannel(r, path, ch)
@@ -2277,6 +2288,10 @@ func (c *Config) validateXrayChannel(r *ValidationResult, path string, ch Channe
 	}
 	if _, ok := xr.Outbound["settings"]; !ok {
 		r.errf(path+".config.outbound.settings", "укажите настройки исходящего подключения Xray")
+	} else if protocol != "freedom" {
+		if settings, ok := xr.Outbound["settings"].(map[string]any); ok && len(settings) == 0 {
+			r.errf(path+".config.outbound.settings", "настройки исходящего подключения Xray не должны быть пустыми")
+		}
 	}
 	if protocol == "hysteria" {
 		var settings struct {
@@ -2374,12 +2389,68 @@ func (c *Config) validateOpenConnectChannel(r *ValidationResult, path string, ch
 		r.errf(path+".config.servercert", "при отключённом системном доверии нужен отпечаток сертификата")
 	}
 	switch oc.Protocol {
-	case "", "anyconnect", "nc", "pulse", "gp", "f5", "fortinet", "array":
+	case "", "anyconnect":
 	default:
-		r.errf(path+".config.protocol", "неизвестный протокол OpenConnect %q", oc.Protocol)
+		r.errf(path+".config.protocol", "netOS поддерживает только OpenConnect AnyConnect")
 	}
 	if oc.MTU != 0 && (oc.MTU < 576 || oc.MTU > 9000) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+	}
+}
+
+func (c *Config) validateL2TPChannel(r *ValidationResult, path string, ch Channel) {
+	if ch.Mode != "tun" {
+		r.errf(path+".mode", "L2TP работает только в режиме TUN")
+	}
+	l2tp, err := ch.L2TPConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !validDNSHost(l2tp.Server) {
+		r.errf(path+".config.server", "укажите IPv4-адрес или DNS-имя L2TP-сервера")
+	}
+	if l2tp.Username == "" || unsafeConfigText(l2tp.Username) {
+		r.errf(path+".config.username", "укажите безопасный логин")
+	}
+	if l2tp.Password == "" || unsafeConfigText(l2tp.Password) {
+		r.errf(path+".config.password", "укажите безопасный пароль")
+	}
+	if l2tp.MTU != 0 && (l2tp.MTU < 576 || l2tp.MTU > 1460) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-1460")
+	}
+}
+
+func (c *Config) validateIKEv2Channel(r *ValidationResult, path string, ch Channel) {
+	if ch.Mode != "tun" {
+		r.errf(path+".mode", "IKEv2 работает только в режиме TUN")
+	}
+	ike, err := ch.IKEv2Config()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !validDNSHost(ike.Server) {
+		r.errf(path+".config.server", "укажите IP-адрес или DNS-имя IKEv2-сервера без порта")
+	}
+	if !validDNSHost(ike.ServerIdentity) {
+		r.errf(path+".config.server_identity", "укажите идентификатор сервера из TLS-сертификата")
+	}
+	if ike.Username == "" || unsafeConfigText(ike.Username) || strings.ContainsAny(ike.Username, " \t{}=#") {
+		r.errf(path+".config.username", "укажите безопасный EAP-логин без пробелов")
+	}
+	if ike.Password == "" || unsafeConfigText(ike.Password) {
+		r.errf(path+".config.password", "укажите пароль EAP")
+	}
+	if len(ike.CACert) > 16384 {
+		r.errf(path+".config.ca_cert", "сертификат CA слишком велик")
+	} else if block, rest := pem.Decode([]byte(ike.CACert)); block == nil || block.Type != "CERTIFICATE" || len(strings.TrimSpace(string(rest))) != 0 {
+		r.errf(path+".config.ca_cert", "укажите один доверенный сертификат CA в PEM")
+	} else if cert, err := x509.ParseCertificate(block.Bytes); err != nil || !cert.IsCA {
+		r.errf(path+".config.ca_cert", "требуется корректный сертификат CA")
+	}
+	if ike.MTU != 0 && (ike.MTU < 576 || ike.MTU > 1400) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-1400")
 	}
 }
 
@@ -2519,6 +2590,11 @@ func validateSchedule(r *ValidationResult, path string, schedule *Schedule) {
 func (c *Config) validateVPNServers(r *ValidationResult) {
 	channels := c.usableChannelIDs()
 	ports := map[string]string{fmt.Sprintf("tcp/%d", c.System.Panel.Port): "веб-панель"}
+	for _, wan := range c.WANs {
+		if wan.Enabled && wan.Proto == "l2tp" {
+			ports["udp/1701"] = fmt.Sprintf("L2TP-аплинк %q", wan.Name)
+		}
+	}
 	if c.DNS.Enabled {
 		ports[fmt.Sprintf("tcp/%d", c.DNS.Port)] = "DNS"
 		ports[fmt.Sprintf("udp/%d", c.DNS.Port)] = "DNS"
@@ -2546,11 +2622,11 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			r.errf(path+".index", "индекс VPN-сервера должен быть уникальным числом 1-9999")
 		}
 		indexes[s.Index] = true
-		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" && s.Type != "ocserv" && s.Type != "ikev2" {
+		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" && s.Type != "ocserv" && s.Type != "ikev2" && s.Type != "l2tp" {
 			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
 		}
 		switch s.Type {
-		case "wireguard", "ikev2", "ocserv", "xray":
+		case "wireguard", "ikev2", "ocserv", "xray", "l2tp":
 		default:
 			r.errf(path+".type", "неизвестный тип VPN-сервера %q", s.Type)
 		}
@@ -2582,13 +2658,23 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			case "wireguard":
 				claimPort(path+".port", "udp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 			case "xray":
-				claimPort(path+".port", "tcp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
+				protocol := "reality"
+				if xr, err := s.XrayConfig(); err == nil && xr.Protocol != "" {
+					protocol = xr.Protocol
+				}
+				transport := "tcp"
+				if protocol == "wireguard" || protocol == "hysteria" {
+					transport = "udp"
+				}
+				claimPort(path+".port", transport, s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 			case "ocserv":
 				claimPort(path+".port", "tcp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 				claimPort(path+".port", "udp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 			case "ikev2":
 				claimPort(path+".port", "udp", 500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
 				claimPort(path+".port", "udp", 4500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
+			case "l2tp":
+				claimPort(path+".port", "udp", 1701, fmt.Sprintf("L2TP-сервер %q", s.Name))
 			}
 		}
 		if s.DefaultChannel != "" && !channels[s.DefaultChannel] {
@@ -2608,6 +2694,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 		if s.Type == "ikev2" {
 			c.validateIKEv2Server(r, path, s)
+		}
+		if s.Type == "l2tp" {
+			c.validateL2TPServer(r, path, s)
 		}
 
 		seenAddr := map[string]bool{}
@@ -2636,6 +2725,44 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 				r.errf(ppath+".channel", "неизвестный канал %q", peer.Channel)
 			}
 		}
+	}
+}
+
+func (c *Config) validateL2TPServer(r *ValidationResult, path string, s VPNServer) {
+	l2tp, err := s.L2TPConfig()
+	if err != nil {
+		r.errf(path+".config", "%v", err)
+		return
+	}
+	if !s.Enabled {
+		return
+	}
+	if s.Port != 1701 {
+		r.errf(path+".port", "L2TP использует UDP-порт 1701")
+	}
+	addr, err := netip.ParseAddr(l2tp.Listen)
+	if err != nil || !addr.Is4() || !(addr.IsPrivate() || addr.IsLoopback() || netip.MustParsePrefix("198.18.0.0/15").Contains(addr)) {
+		r.errf(path+".config.listen", "L2TP без IPsec должен слушать конкретный частный IPv4-адрес")
+	}
+	if l2tp.MTU != 0 && (l2tp.MTU < 576 || l2tp.MTU > 1460) {
+		r.errf(path+".config.mtu", "MTU вне диапазона 576-1460")
+	}
+	count := 0
+	for i, peer := range s.Peers {
+		if !peer.Enabled {
+			continue
+		}
+		count++
+		ppath := fmt.Sprintf("%s.peers[%d].credentials", path, i)
+		if peer.Credentials["username"] == "" || unsafeConfigText(peer.Credentials["username"]) {
+			r.errf(ppath+".username", "укажите безопасный логин")
+		}
+		if len(peer.Credentials["password"]) < 8 || unsafeConfigText(peer.Credentials["password"]) {
+			r.errf(ppath+".password", "пароль должен содержать не меньше 8 символов")
+		}
+	}
+	if count != 1 {
+		r.errf(path+".peers", "L2TP-сервер поддерживает ровно одного включённого клиента")
 	}
 }
 
@@ -2825,66 +2952,117 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 	if !s.Enabled {
 		return
 	}
-	key, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(xr.PrivateKey, "="))
-	if err != nil || len(key) != 32 {
-		r.errf(path+".config.private_key", "закрытый ключ Reality должен содержать 32 байта в base64url")
+	protocol := xr.Protocol
+	if protocol == "" {
+		protocol = "reality"
 	}
-	if host, port, err := net.SplitHostPort(xr.Destination); err != nil || !validDNSHost(host) || !inPortRange(port) {
-		r.errf(path+".config.destination", "цель маскировки должна быть в формате www.example.com:443")
+	switch protocol {
+	case "reality", "vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria":
+	default:
+		r.errf(path+".config.protocol", "неподдерживаемый серверный протокол Xray %q", protocol)
 	}
 	if xr.PublicEndpoint != "" {
 		if host, port, err := net.SplitHostPort(xr.PublicEndpoint); err != nil || !validDNSHost(host) || !inPortRange(port) {
 			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:443")
 		}
 	}
-	if len(xr.ServerNames) == 0 {
-		r.errf(path+".config.server_names", "укажите хотя бы одно имя сервера Reality")
-	}
-	serverNames := map[string]bool{}
-	for i, name := range xr.ServerNames {
-		if !validDNSName(name) {
-			r.errf(fmt.Sprintf("%s.config.server_names[%d]", path, i), "некорректное DNS-имя Reality")
-		} else if serverNames[strings.ToLower(name)] {
-			r.errf(fmt.Sprintf("%s.config.server_names[%d]", path, i), "имя Reality указано повторно")
+	if protocol == "reality" {
+		key, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(xr.PrivateKey, "="))
+		if err != nil || len(key) != 32 {
+			r.errf(path+".config.private_key", "закрытый ключ Reality должен содержать 32 байта в base64url")
 		}
-		serverNames[strings.ToLower(name)] = true
-	}
-	if len(xr.ShortIDs) == 0 {
-		r.errf(path+".config.short_ids", "укажите хотя бы один short ID Reality")
-	}
-	shortIDs := map[string]bool{}
-	for i, id := range xr.ShortIDs {
-		if len(id) == 0 || len(id) > 16 || len(id)%2 != 0 {
-			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен содержать чётное число hex-символов, не больше 16")
-			continue
+		if host, port, err := net.SplitHostPort(xr.Destination); err != nil || !validDNSHost(host) || !inPortRange(port) {
+			r.errf(path+".config.destination", "цель маскировки должна быть в формате www.example.com:443")
 		}
-		if _, err := hex.DecodeString(id); err != nil {
-			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен быть шестнадцатеричным")
+		if len(xr.ServerNames) == 0 {
+			r.errf(path+".config.server_names", "укажите хотя бы одно имя сервера Reality")
 		}
-		if shortIDs[strings.ToLower(id)] {
-			r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID указан повторно")
+		serverNames := map[string]bool{}
+		for i, name := range xr.ServerNames {
+			if !validDNSName(name) {
+				r.errf(fmt.Sprintf("%s.config.server_names[%d]", path, i), "некорректное DNS-имя Reality")
+			} else if serverNames[strings.ToLower(name)] {
+				r.errf(fmt.Sprintf("%s.config.server_names[%d]", path, i), "имя Reality указано повторно")
+			}
+			serverNames[strings.ToLower(name)] = true
 		}
-		shortIDs[strings.ToLower(id)] = true
+		if len(xr.ShortIDs) == 0 {
+			r.errf(path+".config.short_ids", "укажите хотя бы один short ID Reality")
+		}
+		shortIDs := map[string]bool{}
+		for i, id := range xr.ShortIDs {
+			if len(id) == 0 || len(id) > 16 || len(id)%2 != 0 {
+				r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен содержать чётное число hex-символов, не больше 16")
+				continue
+			}
+			if _, err := hex.DecodeString(id); err != nil {
+				r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID должен быть шестнадцатеричным")
+			}
+			if shortIDs[strings.ToLower(id)] {
+				r.errf(fmt.Sprintf("%s.config.short_ids[%d]", path, i), "short ID указан повторно")
+			}
+			shortIDs[strings.ToLower(id)] = true
+		}
+		if xr.Flow != "" && xr.Flow != "xtls-rprx-vision" {
+			r.errf(path+".config.flow", "поддерживается только поток xtls-rprx-vision")
+		}
 	}
-	if xr.Flow != "" && xr.Flow != "xtls-rprx-vision" {
-		r.errf(path+".config.flow", "поддерживается только поток xtls-rprx-vision")
+	if protocol == "shadowsocks" {
+		if xr.Method != "aes-128-gcm" && xr.Method != "aes-256-gcm" && xr.Method != "chacha20-poly1305" {
+			r.errf(path+".config.method", "выберите aes-128-gcm, aes-256-gcm или chacha20-poly1305")
+		}
+	}
+	if protocol == "wireguard" {
+		validateWGKey(r, path+".config.wg_private_key", xr.WGPrivateKey, false)
+		if xr.MTU != 0 && (xr.MTU < 576 || xr.MTU > 9000) {
+			r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
+		}
+	}
+	if protocol == "socks" || protocol == "http" {
+		addr, err := netip.ParseAddr(xr.Listen)
+		if err != nil || !addr.Is4() || !(addr.IsPrivate() || addr.IsLoopback() || netip.MustParsePrefix("198.18.0.0/15").Contains(addr)) {
+			r.errf(path+".config.listen", "SOCKS/HTTP-прокси должен слушать конкретный локальный IPv4-адрес")
+		}
 	}
 	if s.Port < 1 || s.Port > 65535 {
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
 	}
 	seenUUID := map[string]bool{}
+	enabledPeers := 0
 	for i, peer := range s.Peers {
 		if peer.ID == "" {
 			r.errf(fmt.Sprintf("%s.peers[%d].id", path, i), "пустой идентификатор клиента")
 		}
-		uuid := strings.ToLower(peer.Credentials["uuid"])
-		if !validUUID(uuid) {
-			r.errf(fmt.Sprintf("%s.peers[%d].credentials.uuid", path, i), "некорректный UUID клиента")
+		if !peer.Enabled {
+			continue
 		}
-		if uuid != "" && seenUUID[uuid] {
-			r.errf(fmt.Sprintf("%s.peers[%d].credentials.uuid", path, i), "UUID уже назначен другому клиенту")
+		enabledPeers++
+		ppath := fmt.Sprintf("%s.peers[%d].credentials", path, i)
+		switch protocol {
+		case "reality", "vless", "vmess":
+			uuid := strings.ToLower(peer.Credentials["uuid"])
+			if !validUUID(uuid) {
+				r.errf(ppath+".uuid", "некорректный UUID клиента")
+			}
+			if uuid != "" && seenUUID[uuid] {
+				r.errf(ppath+".uuid", "UUID уже назначен другому клиенту")
+			}
+			seenUUID[uuid] = true
+		case "trojan", "shadowsocks", "hysteria":
+			if len(peer.Credentials["password"]) < 16 {
+				r.errf(ppath+".password", "пароль должен содержать не меньше 16 символов")
+			}
+		case "wireguard":
+			validateWGKey(r, ppath+".public_key", peer.Credentials["public_key"], false)
+			validateWGKey(r, ppath+".preshared_key", peer.Credentials["preshared_key"], true)
+		case "socks", "http":
+			if peer.Credentials["username"] == "" || len(peer.Credentials["password"]) < 8 {
+				r.errf(ppath, "нужны логин и пароль не короче 8 символов")
+			}
 		}
-		seenUUID[uuid] = true
+	}
+	if (protocol == "shadowsocks" || protocol == "socks" || protocol == "http") && enabledPeers != 1 {
+		r.errf(path+".peers", "для этого протокола нужен ровно один включённый клиент")
 	}
 }
 
@@ -3114,7 +3292,7 @@ func (c *Config) networkIDs() map[string]bool {
 func (c *Config) usableChannelIDs() map[string]bool {
 	m := map[string]bool{}
 	for _, ch := range c.Channels {
-		if ch.Enabled && (ch.Type == "direct" || ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
+		if ch.Enabled && (ch.Type == "direct" || ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			m[ch.ID] = true
 		}
 	}

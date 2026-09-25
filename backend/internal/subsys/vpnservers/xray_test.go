@@ -66,3 +66,48 @@ func TestRenderXrayRealityServerAndPeerChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderXrayAdditionalInboundProtocols(t *testing.T) {
+	for _, tc := range []struct {
+		protocol, want string
+		credentials    map[string]string
+	}{
+		{"vless", `"security": "tls"`, map[string]string{"uuid": "123e4567-e89b-12d3-a456-426614174000"}},
+		{"vmess", `"protocol": "vmess"`, map[string]string{"uuid": "123e4567-e89b-12d3-a456-426614174000"}},
+		{"trojan", `"protocol": "trojan"`, map[string]string{"password": "long-password-123"}},
+		{"shadowsocks", `"protocol": "shadowsocks"`, map[string]string{"password": "long-password-123"}},
+		{"socks", `"protocol": "socks"`, map[string]string{"username": "alice", "password": "long-password"}},
+		{"http", `"protocol": "http"`, map[string]string{"username": "alice", "password": "long-password"}},
+		{"wireguard", `"protocol": "wireguard"`, map[string]string{"public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},
+		{"hysteria", `"protocol": "hysteria"`, map[string]string{"password": "long-password-123"}},
+	} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			cfg, server := xrayServerConfig()
+			server.Config = map[string]any{"protocol": tc.protocol, "listen": "10.0.0.1", "method": "aes-256-gcm", "wg_private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+			server.Peers = server.Peers[:1]
+			server.Peers[0].Credentials = tc.credentials
+			data, err := RenderXray(server, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), tc.want) || strings.Contains(string(data), `"security": "reality"`) {
+				t.Fatalf("wrong %s inbound: %s", tc.protocol, data)
+			}
+			if tc.protocol == "socks" || tc.protocol == "http" {
+				if !strings.Contains(string(data), `"listen": "10.0.0.1"`) || !strings.Contains(string(data), `"inboundTag"`) {
+					t.Fatalf("proxy bind or routing missing: %s", data)
+				}
+				cfg.Policies = []config.Policy{{ID: "proxy-policy", Name: "Proxy policy", Enabled: true, Priority: 10, Channel: "vpn", VPNServer: server.ID, VPNPeer: "phone"}}
+				data, err = RenderXray(server, cfg)
+				if err != nil || !strings.Contains(string(data), `"outboundTag": "channel-vpn"`) {
+					t.Fatalf("proxy policy missing: %s %v", data, err)
+				}
+			}
+			if tc.protocol == "vless" || tc.protocol == "trojan" || tc.protocol == "hysteria" {
+				if !strings.Contains(string(data), `"certificateFile"`) || !strings.Contains(string(data), `"keyFile"`) {
+					t.Fatalf("TLS certificate missing: %s", data)
+				}
+			}
+		})
+	}
+}

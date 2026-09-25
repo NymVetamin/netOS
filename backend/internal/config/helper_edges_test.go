@@ -75,9 +75,11 @@ func TestAddressInNetworkAllOutcomes(t *testing.T) {
 func TestXrayChannelEveryProtocolAndFailure(t *testing.T) {
 	protocols := []string{"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "freedom"}
 	for _, protocol := range protocols {
-		settings := map[string]any{}
+		settings := map[string]any{"address": "vpn.example.test"}
 		if protocol == "hysteria" {
 			settings = map[string]any{"version": 2, "address": "vpn.example.test", "port": 443}
+		} else if protocol == "freedom" {
+			settings = map[string]any{}
 		}
 		cfg := Default()
 		cfg.Components = []Component{{ID: "xray", Installed: true}}
@@ -126,5 +128,17 @@ func TestXrayChannelEveryProtocolAndFailure(t *testing.T) {
 				t.Fatalf("invalid Xray accepted; expected %s: %s", test.path, strings.TrimSpace(test.name))
 			}
 		})
+	}
+}
+
+func TestXrayRejectsEmptyConnectionSettings(t *testing.T) {
+	cfg := Default()
+	cfg.Components = []Component{{ID: "xray", Installed: true}}
+	cfg.Channels = append(cfg.Channels, Channel{
+		ID: "xray", Index: 1, Name: "Xray", Enabled: true, Type: "xray", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"outbound": map[string]any{"protocol": "vless", "settings": map[string]any{}}},
+	})
+	if result := cfg.Validate(); !hasErrorAt(result, "channels[1].config.outbound.settings") {
+		t.Fatalf("empty connection settings accepted: %+v", result.Problems)
 	}
 }

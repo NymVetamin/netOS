@@ -116,7 +116,7 @@ var Catalog = []ComponentInfo{
 	},
 	{
 		ID: "openconnect", Title: "OpenConnect", Group: "VPN",
-		Description: "Клиент для шлюзов Cisco AnyConnect, Pulse и Fortinet.",
+		Description: "Клиент для шлюзов AnyConnect/ocserv.",
 		Packages:    []string{"openconnect"},
 		RunUnits:    []string{"netos-openconnect-ch*.service"},
 		Provides:    []string{"vpn-client"},
@@ -125,9 +125,9 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "strongswan", Title: "strongSwan", Group: "VPN",
 		Description: "IPsec: каналы IKEv2 и приём подключений от встроенных клиентов iOS, macOS и Windows.",
-		Packages:    []string{"strongswan", "strongswan-swanctl", "charon-systemd", "libstrongswan-standard-plugins", "libcharon-extauth-plugins"},
+		Packages:    []string{"strongswan", "strongswan-swanctl", "charon-systemd", "libstrongswan-standard-plugins", "libcharon-extauth-plugins", "libcharon-extra-plugins"},
 		Units:       []string{"strongswan.service"},
-		RunUnits:    []string{"netos-strongswan.service"},
+		RunUnits:    []string{"netos-strongswan.service", "netos-ikev2-ch*.service"},
 		Provides:    []string{"vpn-client", "vpn-server"},
 		SizeHint:    "около 15 МБ",
 	},

@@ -67,7 +67,7 @@ export type RouteEntry = {
   interface: string;
   source: string;
   metric: number;
-  // origin: netos | netos-static | kernel | dhcp | static | boot | ra
+  // origin: netos | static | kernel | dhcp | boot | ra (netos-static: legacy)
   origin: string;
   table: string;
   raw: string;
@@ -209,6 +209,9 @@ export const api = {
     request<{ private_key: string; public_key: string }>(
       "POST", "/api/wireguard/keypair", privateKey ? { private_key: privateKey } : undefined,
     ),
+
+  wireGuardServerPublicKey: (serverID: string) =>
+    request<{ private_key: string; public_key: string }>("POST", "/api/wireguard/keypair", { server_id: serverID }),
 
   xrayKeypair: (privateKey?: string) =>
     request<{ private_key: string; public_key: string }>(

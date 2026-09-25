@@ -142,6 +142,8 @@ func serverInterface(s config.VPNServer) string {
 		return fmt.Sprintf("vpns%d+", s.Index)
 	case "ikev2":
 		return fmt.Sprintf("xfrm-srv%d", s.Index)
+	case "l2tp":
+		return fmt.Sprintf("ppp-srv%d", s.Index)
 	}
 	return ""
 }
@@ -347,7 +349,11 @@ func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 		case "wireguard":
 			b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
 		case "xray":
-			b.line("-A %s -p tcp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
+			transport := "tcp"
+			if xr, err := server.XrayConfig(); err == nil && (xr.Protocol == "wireguard" || xr.Protocol == "hysteria") {
+				transport = "udp"
+			}
+			b.line("-A %s -p %s --dport %d -m comment --comment %q -j ACCEPT", chain, transport, server.Port, comment)
 		case "ocserv":
 			b.line("-A %s -p tcp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
 			b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
@@ -355,6 +361,8 @@ func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 			b.line("-A %s -p udp --dport 500 -m comment --comment %q -j ACCEPT", chain, comment)
 			b.line("-A %s -p udp --dport 4500 -m comment --comment %q -j ACCEPT", chain, comment)
 			b.line("-A %s -p esp -m comment --comment %q -j ACCEPT", chain, comment)
+		case "l2tp":
+			b.line("-A %s -p udp --dport 1701 -m comment --comment %q -j ACCEPT", chain, comment)
 		}
 	}
 }
@@ -561,7 +569,7 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
+		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE",
 				channels.InterfaceName(ch), "NAT канала «"+ch.Name+"»")
 		}
@@ -688,7 +696,7 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && clampZone["vpn"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
+		if ch.Enabled && clampZone["vpn"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			links = append(links, channelInterface(ch))
 		}
 	}
@@ -702,7 +710,7 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 
 func (b *builder) channelLocalReplies(cfg *config.Config) {
 	for _, ch := range cfg.Channels {
-		if !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect") {
+		if !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "ikev2") {
 			continue
 		}
 		// INPUT only sees connections to the router itself. Remember the
@@ -731,7 +739,7 @@ func (b *builder) dnsChannelPolicies(cfg *config.Config) {
 	b.line("-A OUTPUT -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark")
 	for _, binding := range bindings {
 		ch, ok := channelByID[binding.ChannelID]
-		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray") {
+		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
 			continue
 		}
 		mark := fmt.Sprintf("0x%x", channels.Mark(ch))
@@ -867,7 +875,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	servers := append([]config.VPNServer(nil), cfg.VPNServers...)
 	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 	for _, server := range servers {
-		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv" && server.Type != "ikev2") {
+		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv" && server.Type != "ikev2" && server.Type != "l2tp") {
 			continue
 		}
 		peers := append([]config.VPNPeer(nil), server.Peers...)
@@ -923,7 +931,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			continue
 		}
 		ch, ok := channelByID[rule.channel]
-		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray") {
+		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
 			continue // валидатор не разрешает применить такую конфигурацию
 		}
 		mark := fmt.Sprintf("0x%x", channels.Mark(ch))

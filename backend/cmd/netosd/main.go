@@ -290,6 +290,9 @@ func main() {
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)
 	panel.DDNS = ddnsController
+	panel.WANHealth = multiWAN
+	panel.ChannelHealth = channelMonitor
+	panel.NetworkConflicts = netconf.New(runner, logger)
 	if daemonMode {
 		panel.EnableLocalControl = true
 		panel.Ready = func() error {
@@ -467,6 +470,7 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 
 func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller) error {
 	svc := services.NewManager(runner)
+	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
 	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")
 

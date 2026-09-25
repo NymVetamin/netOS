@@ -46,20 +46,22 @@ export function SystemPage({
   const [panelBusy, setPanelBusy] = useState(false);
   const [panelError, setPanelError] = useState("");
   const [panelTarget, setPanelTarget] = useState("");
+  const [panelCommitTimeout, setPanelCommitTimeout] = useState(currentPanel.commit_timeout);
 
   useEffect(() => {
     setPanelEndpoint({
       port: currentPanel.port,
       tls: { ...(currentPanel.tls || { mode: "selfsigned" }) },
     });
-  }, [currentPanel.port, currentPanel.tls?.mode, currentPanel.tls?.cert_file, currentPanel.tls?.key_file, currentPanel.tls?.domain, currentPanel.tls?.email, currentPanel.tls?.accept_tos]);
+    setPanelCommitTimeout(currentPanel.commit_timeout);
+  }, [currentPanel.port, currentPanel.commit_timeout, currentPanel.tls?.mode, currentPanel.tls?.cert_file, currentPanel.tls?.key_file, currentPanel.tls?.domain, currentPanel.tls?.email, currentPanel.tls?.accept_tos]);
 
   async function restartPanel() {
     setPanelBusy(true);
     setPanelError("");
     setPanelTarget("");
     try {
-      const panel = { ...panelEndpoint, commit_timeout: currentPanel.commit_timeout };
+      const panel = { ...panelEndpoint, commit_timeout: panelCommitTimeout };
       const result = await api.reconfigurePanel(panel, panelConfirm);
       const host = window.location.hostname.includes(":") ? `[${window.location.hostname}]` : window.location.hostname;
       setPanelTarget(`https://${host}:${result.port}/`);
@@ -224,10 +226,11 @@ export function SystemPage({
           >
             <input
               type="number"
-              value={config.system?.panel?.commit_timeout}
-              onChange={(e) =>
-                patch((d) => (d.system.panel.commit_timeout = Number(e.target.value)))
-              }
+              min={15}
+              max={86400}
+              disabled={session.role !== "admin"}
+              value={panelCommitTimeout}
+              onChange={(e) => setPanelCommitTimeout(Number(e.target.value))}
             />
           </Field>
           <Field label="TLS-сертификат">

@@ -50,6 +50,7 @@ func wireGuardPublicKey(privateKey string) (string, error) {
 func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		PrivateKey string `json:"private_key"`
+		ServerID   string `json:"server_id"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&input); err != nil {
@@ -59,7 +60,33 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 	}
 	privateKey, publicKey, err := "", "", error(nil)
 	responsePrivate := ""
-	if input.PrivateKey == "" {
+	if input.ServerID != "" {
+		if roleOf(r) != "admin" || input.PrivateKey != "" {
+			writeError(w, http.StatusForbidden, "доступно только администратору")
+			return
+		}
+		cfg := s.currentDraft()
+		if cfg != nil {
+			for _, server := range cfg.VPNServers {
+				if server.ID == input.ServerID {
+					switch server.Type {
+					case "wireguard":
+						privateKey, _ = server.Config["private_key"].(string)
+					case "xray":
+						if xr, err := server.XrayConfig(); err == nil && xr.Protocol == "wireguard" {
+							privateKey = xr.WGPrivateKey
+						}
+					}
+					break
+				}
+			}
+		}
+		if privateKey == "" {
+			writeError(w, http.StatusNotFound, "ключ WireGuard-сервера не найден")
+			return
+		}
+		publicKey, err = wireGuardPublicKey(privateKey)
+	} else if input.PrivateKey == "" {
 		privateKey, publicKey, err = generateWireGuardKeypair()
 		responsePrivate = privateKey
 	} else {
@@ -67,7 +94,7 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 		publicKey, err = wireGuardPublicKey(privateKey)
 	}
 	if err != nil {
-		if input.PrivateKey != "" {
+		if input.PrivateKey != "" || input.ServerID != "" {
 			writeError(w, http.StatusBadRequest, "некорректный закрытый ключ WireGuard")
 		} else {
 			writeError(w, http.StatusInternalServerError, "не удалось сгенерировать ключи WireGuard")
@@ -134,7 +161,16 @@ func (s *Server) handleVPNServerCertificate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	for _, server := range cfg.VPNServers {
-		if server.ID != r.PathValue("id") || (server.Type != "ocserv" && server.Type != "ikev2") || !server.Enabled {
+		if server.ID != r.PathValue("id") || !server.Enabled {
+			continue
+		}
+		xrayTLS := false
+		if server.Type == "xray" {
+			if xr, err := server.XrayConfig(); err == nil {
+				xrayTLS = xr.Protocol == "vless" || xr.Protocol == "trojan" || xr.Protocol == "hysteria"
+			}
+		}
+		if server.Type != "ocserv" && server.Type != "ikev2" && !xrayTLS {
 			continue
 		}
 		path := filepath.Join(vpnGeneratedDir, fmt.Sprintf("ocserv-srv%d-tls", server.Index), "panel.crt")
@@ -142,6 +178,9 @@ func (s *Server) handleVPNServerCertificate(w http.ResponseWriter, r *http.Reque
 		if server.Type == "ikev2" {
 			path = filepath.Join(vpnGeneratedDir, "strongswan", "x509", "server.crt")
 			filename = fmt.Sprintf("netos-ikev2-%d-ca.crt", server.Index)
+		} else if xrayTLS {
+			path = filepath.Join(vpnGeneratedDir, fmt.Sprintf("xray-srv%d-tls", server.Index), "panel.crt")
+			filename = fmt.Sprintf("netos-xray-%d.crt", server.Index)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1415,6 +1454,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname
 		resp["wans"], resp["channels"] = s.liveLinks(r.Context(), cfg, stats)
+		if s.NetworkConflicts != nil {
+			resp["network_conflicts"] = s.NetworkConflicts.IfupdownConflicts(r.Context(), cfg)
+		}
 		// Здесь и ниже — применённая конфигурация, а не черновик: карточка
 		// «Службы» описывает то, что работает сейчас. Пока она строилась из
 		// редактируемого дерева, выключенный, но не применённый DHCP выглядел

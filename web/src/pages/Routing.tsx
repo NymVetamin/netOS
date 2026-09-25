@@ -575,7 +575,7 @@ function originBadge(origin: string) {
     case "netos-static":
       return <Badge tone="accent">задан в netOS</Badge>;
     case "static":
-      return <Badge tone="accent">задан вручную</Badge>;
+      return <Badge tone="accent">статический маршрут</Badge>;
     case "dhcp":
       return <Badge tone="ok">получен от провайдера</Badge>;
     case "kernel":

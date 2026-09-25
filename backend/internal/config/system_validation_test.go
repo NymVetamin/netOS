@@ -23,12 +23,12 @@ func TestNormalizeBackfillsCommitTimeoutForLegacySchema(t *testing.T) {
 	}
 }
 
-func TestSystemValidationAllowsShortPositiveCommitTimeoutWithWarning(t *testing.T) {
+func TestSystemValidationRejectsShortCommitTimeout(t *testing.T) {
 	cfg := Default()
-	cfg.System.Panel.CommitTimeout = 1
+	cfg.System.Panel.CommitTimeout = 14
 	result := cfg.Validate()
-	if hasErrorAt(result, "system.panel.commit_timeout") {
-		t.Fatalf("short positive timeout rejected: %#v", result.Problems)
+	if !hasErrorAt(result, "system.panel.commit_timeout") {
+		t.Fatalf("short timeout accepted: %#v", result.Problems)
 	}
 }
 

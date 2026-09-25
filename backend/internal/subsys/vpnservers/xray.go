@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/system"
+	"github.com/netos-router/netos/internal/tlsutil"
 )
 
 func xrayUnitName(server config.VPNServer) string {
@@ -24,9 +26,18 @@ func (s *Subsystem) xrayPaths(server config.VPNServer) (string, string) {
 }
 
 func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
+	certDir := filepath.Join("/var/lib/netos/generated", fmt.Sprintf("xray-srv%d-tls", server.Index))
+	return renderXrayWithTLS(server, cfg, filepath.Join(certDir, "panel.crt"), filepath.Join(certDir, "panel.key"))
+}
+
+func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, keyPath string) ([]byte, error) {
 	xr, err := server.XrayConfig()
 	if err != nil {
 		return nil, err
+	}
+	protocol := xr.Protocol
+	if protocol == "" {
+		protocol = "reality"
 	}
 	clients := make([]any, 0, len(server.Peers))
 	// Xray applies an implicit private/reserved-address block to freedom
@@ -64,9 +75,25 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 			continue
 		}
 		email := server.ID + "/" + peer.ID
-		client := map[string]any{"id": peer.Credentials["uuid"], "email": email}
-		if xr.Flow != "" {
-			client["flow"] = xr.Flow
+		client := map[string]any{"email": email}
+		switch protocol {
+		case "reality", "vless", "vmess":
+			client["id"] = peer.Credentials["uuid"]
+			if protocol == "reality" && xr.Flow != "" {
+				client["flow"] = xr.Flow
+			}
+		case "trojan", "shadowsocks":
+			client["password"] = peer.Credentials["password"]
+		case "hysteria":
+			client["auth"] = peer.Credentials["password"]
+		case "wireguard":
+			client["publicKey"] = peer.Credentials["public_key"]
+			client["allowedIPs"] = []string{peer.Address + "/32"}
+			if psk := peer.Credentials["preshared_key"]; psk != "" {
+				client["preSharedKey"] = psk
+			}
+		case "socks", "http":
+			client = map[string]any{"user": peer.Credentials["username"], "pass": peer.Credentials["password"]}
 		}
 		clients = append(clients, client)
 		emails[peer.ID] = email
@@ -74,7 +101,11 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 		if channelID == "" {
 			channelID = server.DefaultChannel
 		}
-		defaultRules = append(defaultRules, map[string]any{"type": "field", "user": []string{email}, "outboundTag": outboundTag(channelID)})
+		if protocol == "socks" || protocol == "http" {
+			defaultRules = append(defaultRules, map[string]any{"type": "field", "inboundTag": []string{"xray-in"}, "outboundTag": outboundTag(channelID)})
+		} else {
+			defaultRules = append(defaultRules, map[string]any{"type": "field", "user": []string{email}, "outboundTag": outboundTag(channelID)})
+		}
 	}
 	policies := append([]config.Policy(nil), cfg.Policies...)
 	sort.SliceStable(policies, func(i, j int) bool {
@@ -102,7 +133,14 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 		if len(users) == 0 {
 			continue
 		}
-		rule := map[string]any{"type": "field", "user": users, "outboundTag": outboundTag(policy.Channel)}
+		rule := map[string]any{"type": "field", "outboundTag": outboundTag(policy.Channel)}
+		if protocol == "socks" || protocol == "http" {
+			// These inbounds authenticate users but do not attach an Xray email
+			// to requests. Validation permits only one enabled peer.
+			rule["inboundTag"] = []string{"xray-in"}
+		} else {
+			rule["user"] = users
+		}
 		if policy.Protocol != "" && policy.Protocol != "any" {
 			rule["network"] = policy.Protocol
 		}
@@ -122,19 +160,77 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 		rules = append(rules, rule)
 	}
 	rules = append(rules, defaultRules...)
-	doc := map[string]any{
-		"log": map[string]any{"loglevel": "warning"},
-		"inbounds": []any{map[string]any{
-			"tag": "reality-in", "listen": "0.0.0.0", "port": server.Port, "protocol": "vless",
-			"settings": map[string]any{"clients": clients, "decryption": "none"},
-			"streamSettings": map[string]any{
-				"network": "tcp", "security": "reality",
-				"realitySettings": map[string]any{
-					"show": xr.Show, "dest": xr.Destination, "xver": 0,
-					"serverNames": xr.ServerNames, "privateKey": xr.PrivateKey, "shortIds": xr.ShortIDs,
-				},
+	inboundTag := "xray-in"
+	if protocol == "reality" {
+		inboundTag = "reality-in"
+	}
+	inbound := map[string]any{"tag": inboundTag, "listen": "0.0.0.0", "port": server.Port}
+	switch protocol {
+	case "reality":
+		inbound["protocol"] = "vless"
+		inbound["settings"] = map[string]any{"clients": clients, "decryption": "none"}
+		inbound["streamSettings"] = map[string]any{
+			"network": "tcp", "security": "reality",
+			"realitySettings": map[string]any{
+				"show": xr.Show, "dest": xr.Destination, "xver": 0,
+				"serverNames": xr.ServerNames, "privateKey": xr.PrivateKey, "shortIds": xr.ShortIDs,
 			},
-		}},
+		}
+	case "vmess":
+		inbound["protocol"] = "vmess"
+		inbound["settings"] = map[string]any{"clients": clients}
+		inbound["streamSettings"] = map[string]any{"network": "tcp"}
+	case "vless", "trojan":
+		inbound["protocol"] = protocol
+		settings := map[string]any{"clients": clients}
+		if protocol == "vless" {
+			settings["decryption"] = "none"
+		}
+		inbound["settings"] = settings
+		inbound["streamSettings"] = map[string]any{
+			"network": "tcp", "security": "tls", "tlsSettings": map[string]any{
+				"certificates": []any{map[string]any{"certificateFile": certPath, "keyFile": keyPath}},
+			},
+		}
+	case "shadowsocks":
+		inbound["protocol"] = "shadowsocks"
+		settings := map[string]any{"method": xr.Method, "network": "tcp"}
+		if len(clients) > 0 {
+			settings["password"] = clients[0].(map[string]any)["password"]
+			settings["email"] = clients[0].(map[string]any)["email"]
+		}
+		inbound["settings"] = settings
+	case "socks":
+		inbound["protocol"] = "socks"
+		inbound["listen"] = xr.Listen
+		inbound["settings"] = map[string]any{"auth": "password", "users": clients, "udp": false}
+	case "http":
+		inbound["protocol"] = "http"
+		inbound["listen"] = xr.Listen
+		inbound["settings"] = map[string]any{"users": clients, "allowTransparent": false}
+	case "wireguard":
+		inbound["protocol"] = "wireguard"
+		settings := map[string]any{"secretKey": xr.WGPrivateKey, "peers": clients}
+		if xr.MTU != 0 {
+			settings["mtu"] = xr.MTU
+		}
+		inbound["settings"] = settings
+	case "hysteria":
+		inbound["protocol"] = "hysteria"
+		inbound["settings"] = map[string]any{"version": 2, "users": clients}
+		inbound["streamSettings"] = map[string]any{
+			"method": "hysteria", "security": "tls",
+			"hysteriaSettings": map[string]any{"version": 2},
+			"tlsSettings": map[string]any{
+				"certificates": []any{map[string]any{"certificateFile": certPath, "keyFile": keyPath}},
+			},
+		}
+	default:
+		return nil, fmt.Errorf("неподдерживаемый серверный протокол Xray %q", protocol)
+	}
+	doc := map[string]any{
+		"log":       map[string]any{"loglevel": "warning"},
+		"inbounds":  []any{inbound},
 		"outbounds": outbounds,
 		"routing":   map[string]any{"domainStrategy": "IPIfNonMatch", "rules": rules},
 	}
@@ -144,7 +240,7 @@ func RenderXray(server config.VPNServer, cfg *config.Config) ([]byte, error) {
 
 func renderXrayUnit(server config.VPNServer, conf string) string {
 	return `[Unit]
-Description=netOS: Xray Reality server ` + server.Name + `
+Description=netOS: Xray server ` + server.Name + `
 After=network-online.target
 Wants=network-online.target
 
@@ -168,12 +264,13 @@ WantedBy=multi-user.target
 
 func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server config.VPNServer, wasOwned bool) (created bool, retErr error) {
 	confPath, unitPath := s.xrayPaths(server)
+	certDir := filepath.Join(s.StateDir, fmt.Sprintf("xray-srv%d-tls", server.Index))
 	_, statErr := os.Stat(unitPath)
 	existed := statErr == nil
 	if existed && !wasOwned {
 		return false, fmt.Errorf("служба %s уже существует и не принадлежит netOS", xrayUnitName(server))
 	}
-	snapshots, err := capturePaths(confPath, unitPath)
+	snapshots, err := capturePaths(confPath, unitPath, certDir)
 	if err != nil {
 		return false, err
 	}
@@ -193,7 +290,23 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 		_, _ = s.Runner.Run(context.Background(), "systemctl", "daemon-reload")
 		_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", xrayUnitName(server))
 	}()
-	conf, err := RenderXray(server, cfg)
+	xr, err := server.XrayConfig()
+	if err != nil {
+		return false, err
+	}
+	if xr.Protocol == "vless" || xr.Protocol == "trojan" || xr.Protocol == "hysteria" {
+		mutated = true
+		names := []string{}
+		if xr.PublicEndpoint != "" {
+			if host, _, splitErr := net.SplitHostPort(xr.PublicEndpoint); splitErr == nil {
+				names = append(names, host)
+			}
+		}
+		if _, _, _, err := tlsutil.EnsureSelfSignedForNames(certDir, cfg.System.Hostname, names...); err != nil {
+			return false, fmt.Errorf("сертификат Xray: %w", err)
+		}
+	}
+	conf, err := renderXrayWithTLS(server, cfg, filepath.Join(certDir, "panel.crt"), filepath.Join(certDir, "panel.key"))
 	if err != nil {
 		return false, err
 	}
@@ -244,5 +357,6 @@ func (s *Subsystem) cleanupXray(ctx context.Context, server config.VPNServer) {
 	for _, path := range []string{conf, candidate, unit} {
 		_ = os.Remove(path)
 	}
+	_ = os.RemoveAll(filepath.Join(s.StateDir, fmt.Sprintf("xray-srv%d-tls", server.Index)))
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
 }

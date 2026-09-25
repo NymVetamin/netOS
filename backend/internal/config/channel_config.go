@@ -32,6 +32,22 @@ type OpenConnectChannelConfig struct {
 	NoSystemTrust bool   `json:"no_system_trust,omitempty"`
 }
 
+type L2TPChannelConfig struct {
+	Server   string `json:"server"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	MTU      int    `json:"mtu,omitempty"`
+}
+
+type IKEv2ChannelConfig struct {
+	Server         string `json:"server"`
+	ServerIdentity string `json:"server_identity"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	CACert         string `json:"ca_cert"`
+	MTU            int    `json:"mtu,omitempty"`
+}
+
 type XrayChannelConfig struct {
 	MTU      int            `json:"mtu,omitempty"`
 	Outbound map[string]any `json:"outbound"`
@@ -61,6 +77,34 @@ func (c Channel) OpenConnectConfig() (OpenConnectChannelConfig, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return out, fmt.Errorf("параметры OpenConnect: %w", err)
+	}
+	return out, nil
+}
+
+func (c Channel) L2TPConfig() (L2TPChannelConfig, error) {
+	var out L2TPChannelConfig
+	data, err := json.Marshal(c.Config)
+	if err != nil {
+		return out, fmt.Errorf("кодирование параметров L2TP: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return out, fmt.Errorf("параметры L2TP: %w", err)
+	}
+	return out, nil
+}
+
+func (c Channel) IKEv2Config() (IKEv2ChannelConfig, error) {
+	var out IKEv2ChannelConfig
+	data, err := json.Marshal(c.Config)
+	if err != nil {
+		return out, fmt.Errorf("кодирование параметров IKEv2: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return out, fmt.Errorf("параметры IKEv2: %w", err)
 	}
 	return out, nil
 }

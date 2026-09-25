@@ -117,16 +117,16 @@ func TestMetadataEnabledAndPlan(t *testing.T) {
 		config.Channel{ID: "first", Index: 2, Name: "First", Enabled: true, Type: "openconnect"},
 		config.Channel{ID: "ignored", Index: 3, Enabled: true, Type: "l2tp"},
 	)
-	if got := enabledChannels(next); len(got) != 2 || got[0].Index != 2 || got[1].Index != 5 {
+	if got := enabledChannels(next); len(got) != 3 || got[0].Index != 2 || got[1].Index != 3 || got[2].Index != 5 {
 		t.Fatalf("enabledChannels = %#v", got)
 	}
 	actions, err := s.Plan(nil, next)
-	if err != nil || len(actions) != 2 || actions[0].Kind != "create" {
+	if err != nil || len(actions) != 3 || actions[0].Kind != "create" {
 		t.Fatalf("initial Plan = %#v, %v", actions, err)
 	}
 	old.Channels = append(old.Channels, config.Channel{ID: "first", Index: 2, Name: "Old", Enabled: true, Type: "openconnect"}, config.Channel{ID: "gone", Index: 8, Name: "Gone", Enabled: true, Type: "wireguard"})
 	actions, err = s.Plan(old, next)
-	if err != nil || len(actions) != 3 {
+	if err != nil || len(actions) != 4 {
 		t.Fatalf("update Plan = %#v, %v", actions, err)
 	}
 	kinds := map[string]bool{}

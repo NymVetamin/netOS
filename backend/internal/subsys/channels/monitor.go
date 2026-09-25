@@ -17,6 +17,13 @@ type channelState struct {
 	Next      time.Time
 }
 
+// ProbeDown reports the last completed health decision for a channel.
+func (s *Subsystem) ProbeDown(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.states[id] != nil && s.states[id].Down
+}
+
 // Run continuously verifies enabled channel probes. A channel transition is
 // applied to its own policy-routing rule/table, so unrelated traffic and the
 // router's main default route are never touched.

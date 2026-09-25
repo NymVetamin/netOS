@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +34,25 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 		if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
 			name = "ppp-" + wan.ID
 		}
-		wans = append(wans, map[string]any{"id": wan.ID, "name": wan.Name, "interface": name, "up": up[name]})
+		probeDown := s.WANHealth != nil && s.WANHealth.ProbeDown(wan.ID)
+		address := ""
+		if name != "" && s.Collector != nil && s.Collector.Runner != nil {
+			if out, err := s.Collector.Runner.Run(ctx, "ip", "-4", "-o", "addr", "show", "dev", name); err == nil {
+				for _, line := range strings.Split(out, "\n") {
+					fields := strings.Fields(line)
+					for i, field := range fields {
+						if field == "inet" && i+1 < len(fields) {
+							address = fields[i+1]
+							break
+						}
+					}
+					if address != "" {
+						break
+					}
+				}
+			}
+		}
+		wans = append(wans, map[string]any{"id": wan.ID, "name": wan.Name, "interface": name, "address": address, "link_up": up[name], "probe_down": probeDown, "up": up[name] && !probeDown})
 	}
 	for _, ch := range cfg.Channels {
 		if !ch.Enabled || ch.Type == "direct" {
@@ -44,9 +63,22 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 		if active && ch.Type == "wireguard" {
 			active = s.recentWireGuardHandshake(ctx, name)
 		}
-		tunnels = append(tunnels, map[string]any{"id": ch.ID, "name": ch.Name, "interface": name, "up": active})
+		if active && ch.Type == "ikev2" {
+			active = s.establishedIKEv2Channel(ctx, ch.Index)
+		}
+		probeDown := s.ChannelHealth != nil && s.ChannelHealth.ProbeDown(ch.ID)
+		tunnels = append(tunnels, map[string]any{"id": ch.ID, "name": ch.Name, "interface": name, "probe_down": probeDown, "up": active && !probeDown})
 	}
 	return wans, tunnels
+}
+
+func (s *Server) establishedIKEv2Channel(ctx context.Context, index int) bool {
+	if s.Collector == nil || s.Collector.Runner == nil {
+		return false
+	}
+	uri := fmt.Sprintf("unix:///run/netos-ikev2-ch%d/charon.vici", index)
+	out, err := s.Collector.Runner.Run(ctx, "/usr/sbin/swanctl", "--list-sas", "--uri", uri)
+	return err == nil && strings.Contains(out, "ESTABLISHED") && strings.Contains(out, "INSTALLED")
 }
 
 func (s *Server) recentWireGuardHandshake(ctx context.Context, name string) bool {

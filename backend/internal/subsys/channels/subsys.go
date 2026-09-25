@@ -97,6 +97,12 @@ func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChanne
 	case "xray":
 		conf, unit := s.xrayPaths(config.Channel{Index: owned.Index})
 		paths = []string{conf, unit}
+	case "l2tp":
+		conf, ppp, unit := s.l2tpPaths(config.Channel{Index: owned.Index})
+		paths = []string{conf, ppp, unit}
+	case "ikev2":
+		p := s.ikev2Paths(config.Channel{Index: owned.Index})
+		paths = []string{p.conf, p.daemon, p.ca, p.unit}
 	default:
 		paths = []string{filepath.Join(s.StateDir, owned.Name+".conf")}
 		snapshot.addresses, _ = s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", owned.Name)
@@ -111,16 +117,31 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 	ctx := context.Background()
 	for i := len(snapshots) - 1; i >= 0; i-- {
 		snapshot := snapshots[i]
+		if snapshot.owned.Type == "ikev2" {
+			p := s.ikev2Paths(config.Channel{Index: snapshot.owned.Index})
+			if err := os.MkdirAll(filepath.Dir(p.ca), 0o700); err != nil {
+				return err
+			}
+		}
 		if err := restoreChannelFiles(snapshot.files); err != nil {
 			return err
 		}
 		owned := snapshot.owned
 		ch := config.Channel{Index: owned.Index, Type: owned.Type}
 		switch owned.Type {
-		case "openconnect", "xray":
+		case "openconnect", "xray", "l2tp", "ikev2":
+			if owned.Type == "ikev2" {
+				if _, err := s.ensureIKEv2ClientInterface(ctx, ch, true); err != nil {
+					return err
+				}
+			}
 			unit := owned.Unit
 			if unit == "" && owned.Type == "openconnect" {
 				unit = openConnectUnitName(ch)
+			} else if unit == "" && owned.Type == "l2tp" {
+				unit = l2tpUnitName(ch)
+			} else if unit == "" && owned.Type == "ikev2" {
+				unit = ikev2UnitName(ch)
 			} else if unit == "" {
 				unit = xrayUnitName(ch)
 			}
@@ -215,6 +236,10 @@ func InterfaceName(ch config.Channel) string {
 		return fmt.Sprintf("wg-ch%d", ch.Index)
 	case "openconnect", "xray":
 		return fmt.Sprintf("tun-ch%d", ch.Index)
+	case "l2tp":
+		return fmt.Sprintf("ppp-ch%d", ch.Index)
+	case "ikev2":
+		return fmt.Sprintf("xfrm-ch%d", ch.Index)
 	}
 	return fmt.Sprintf("ch%d", ch.Index)
 }
@@ -225,7 +250,7 @@ func Priority(ch config.Channel) int    { return priorityBase + ch.Index }
 func enabledChannels(cfg *config.Config) []config.Channel {
 	var out []config.Channel
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray") {
+		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			out = append(out, ch)
 		}
 	}
@@ -296,6 +321,10 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			unit = openConnectUnitName(ch)
 		} else if ch.Type == "xray" {
 			unit = xrayUnitName(ch)
+		} else if ch.Type == "l2tp" {
+			unit = l2tpUnitName(ch)
+		} else if ch.Type == "ikev2" {
+			unit = ikev2UnitName(ch)
 		}
 		wantedOwned[name] = ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit}
 	}
@@ -350,6 +379,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		case "xray":
 			unit = xrayUnitName(ch)
 			createdNow, err = s.applyXray(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
+		case "l2tp":
+			unit = l2tpUnitName(ch)
+			createdNow, err = s.applyL2TP(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
+		case "ikev2":
+			unit = ikev2UnitName(ch)
+			createdNow, err = s.applyIKEv2(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -383,6 +418,10 @@ func preflightChannels(channels []config.Channel) error {
 			_, err = ch.OpenConnectConfig()
 		case "xray":
 			_, err = RenderXray(ch)
+		case "l2tp":
+			_, err = ch.L2TPConfig()
+		case "ikev2":
+			_, err = ch.IKEv2Config()
 		}
 		if err != nil {
 			return fmt.Errorf("канал %s: %w", ch.Name, err)
@@ -712,6 +751,10 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			unit = openConnectUnitName(ch)
 		} else if ch.Type == "xray" {
 			unit = xrayUnitName(ch)
+		} else if ch.Type == "l2tp" {
+			unit = l2tpUnitName(ch)
+		} else if ch.Type == "ikev2" {
+			unit = ikev2UnitName(ch)
 		}
 		expectedOwned = append(expectedOwned, ownedChannel{Name: InterfaceName(ch), Index: ch.Index, Type: ch.Type, Unit: unit})
 	}
@@ -756,13 +799,26 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			if err := healthyChannelFile(filepath.Join(s.StateDir, name+".conf"), []byte(conf), 0o600); err != nil {
 				return err
 			}
-		} else if ch.Type == "openconnect" || ch.Type == "xray" {
+		} else if ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2" {
 			unit := openConnectUnitName(ch)
 			if ch.Type == "xray" {
 				unit = xrayUnitName(ch)
+			} else if ch.Type == "l2tp" {
+				unit = l2tpUnitName(ch)
+			} else if ch.Type == "ikev2" {
+				unit = ikev2UnitName(ch)
 			}
 			if err := s.unitActiveEnabled(ctx, unit); err != nil {
 				return fmt.Errorf("служба канала %s: %w", ch.Name, err)
+			}
+			if ch.Type == "ikev2" && !s.openConnectReady(ctx, name) {
+				return fmt.Errorf("канал %s не получил виртуальный IPv4-адрес IKEv2", ch.Name)
+			}
+			if ch.Type == "ikev2" {
+				sa, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--list-sas", "--uri", ikev2ClientVICI(ch))
+				if err != nil || !strings.Contains(sa, "ESTABLISHED") || !strings.Contains(sa, "INSTALLED") {
+					return fmt.Errorf("канал %s не имеет установленной IKE_SA/CHILD_SA", ch.Name)
+				}
 			}
 			if ch.Type == "openconnect" {
 				oc, err := ch.OpenConnectConfig()
@@ -785,7 +841,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 						return err
 					}
 				}
-			} else {
+			} else if ch.Type == "xray" {
 				conf, unitPath := s.xrayPaths(ch)
 				data, err := RenderXray(ch)
 				if err != nil {
@@ -796,6 +852,45 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 				}
 				if err := healthyChannelFile(unitPath, []byte(renderXrayUnit(ch, conf)), 0o644); err != nil {
 					return err
+				}
+			} else if ch.Type == "l2tp" {
+				l2tp, err := ch.L2TPConfig()
+				if err != nil {
+					return err
+				}
+				conf, ppp, unitPath := s.l2tpPaths(ch)
+				for _, file := range []struct {
+					path string
+					data []byte
+					mode os.FileMode
+				}{
+					{conf, []byte(renderL2TPConf(ch, l2tp, ppp)), 0o600},
+					{ppp, []byte(renderL2TPPPP(ch, l2tp)), 0o600},
+					{unitPath, []byte(renderL2TPUnit(ch, conf)), 0o644},
+				} {
+					if err := healthyChannelFile(file.path, file.data, file.mode); err != nil {
+						return err
+					}
+				}
+			} else {
+				ike, err := ch.IKEv2Config()
+				if err != nil {
+					return err
+				}
+				p := s.ikev2Paths(ch)
+				for _, file := range []struct {
+					path string
+					data []byte
+					mode os.FileMode
+				}{
+					{p.conf, renderIKEv2Client(ch, ike), 0o600},
+					{p.daemon, renderIKEv2ClientDaemon(ch), 0o600},
+					{p.ca, []byte(ike.CACert), 0o644},
+					{p.unit, renderIKEv2ClientUnit(ch, p), 0o644},
+				} {
+					if err := healthyChannelFile(file.path, file.data, file.mode); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -939,6 +1034,14 @@ func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
 	if ch.Type == "xray" {
 		placeholder := config.Channel{Index: ch.Index, Type: "xray"}
 		s.cleanupXray(ctx, placeholder)
+	}
+	if ch.Type == "l2tp" {
+		placeholder := config.Channel{Index: ch.Index, Type: "l2tp"}
+		s.cleanupL2TP(ctx, placeholder)
+	}
+	if ch.Type == "ikev2" {
+		placeholder := config.Channel{Index: ch.Index, Type: "ikev2"}
+		s.cleanupIKEv2(ctx, placeholder)
 	}
 	if ch.Unit != "" {
 		active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ch.Unit)

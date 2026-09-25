@@ -61,9 +61,24 @@ export function NetworkPage({
 
 function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
   const wans: any[] = config.wans || [];
+  const [liveWANs, setLiveWANs] = useState<Record<string, any>>({});
+  const [networkConflicts, setNetworkConflicts] = useState<string[]>([]);
+  useEffect(() => {
+    let active = true;
+    const load = () => api.status().then((status) => {
+      if (active) {
+        setLiveWANs(Object.fromEntries((status.wans || []).map((wan: any) => [wan.id, wan])));
+        setNetworkConflicts(status.network_conflicts || []);
+      }
+    }).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
 
   return (
     <>
+    {networkConflicts.map((conflict) => <Notice key={conflict} tone="warn" title="Конфликт сетевой конфигурации">{conflict}: networking.service настраивает интерфейс, которым управляет netOS. Уберите чужое объявление или отключите networking.service.</Notice>)}
     <Card title="Multi-WAN" subtitle="Автоматическое переключение на резервный аплинк">
       <div className="form-grid">
         <Field label="Режим">
@@ -138,6 +153,8 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                 />
                 <div className="row">
                   <Badge tone="neutral">{ifaceName(config, w.interface)}</Badge>
+                  {w.enabled && liveWANs[w.id] && <Badge tone={liveWANs[w.id].up ? "ok" : "warn"}>{liveWANs[w.id].probe_down ? "проба не прошла" : liveWANs[w.id].up ? "на связи" : "нет связи"}</Badge>}
+                  {liveWANs[w.id]?.address && <span className="mono faint">{liveWANs[w.id].address}</span>}
                   {wans.length > 1 && (
                     <button
                       className="btn ghost sm"
@@ -192,6 +209,10 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                         d.wans[idx].probe.targets = e.target.value.split(",").map((v) => v.trim()).filter(Boolean);
                       })} />
                     </Field>
+                    {w.probe?.type === "tcp" && <>
+                      <Field label="Запрос TCP" hint="Текст, отправляемый удалённой службе"><textarea className="mono" value={w.probe?.tcp_request || ""} onChange={(e) => patch((d) => (d.wans[idx].probe.tcp_request = e.target.value))} /></Field>
+                      <Field label="Начало ответа TCP" hint="Точное начало ожидаемого ответа"><textarea className="mono" value={w.probe?.tcp_response || ""} onChange={(e) => patch((d) => (d.wans[idx].probe.tcp_response = e.target.value))} /></Field>
+                    </>}
                     <Field label="Интервал, сек"><input type="number" min={1} max={3600} value={w.probe?.interval || 10} onChange={(e) => patch((d) => (d.wans[idx].probe.interval = Number(e.target.value)))} /></Field>
                     <Field label="Таймаут, сек"><input type="number" min={1} max={60} value={w.probe?.timeout || 3} onChange={(e) => patch((d) => (d.wans[idx].probe.timeout = Number(e.target.value)))} /></Field>
                     <Field label="Ошибок до переключения"><input type="number" min={1} max={100} value={w.probe?.fail_threshold || 3} onChange={(e) => patch((d) => (d.wans[idx].probe.fail_threshold = Number(e.target.value)))} /></Field>

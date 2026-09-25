@@ -322,7 +322,9 @@ Split-DNS: для каждого канала можно задать свой u
 | `direct` | штатный маршрут через WAN | — |
 | `wireguard` | ядро, `wg-quick` не используется — конфиг через netlink/wg | `wg-chN` |
 | `xray` | `xray-core`: VLESS/VMess/Trojan/Shadowsocks, Reality, XTLS, WS, gRPC, mKCP | `tun-chN` |
-| `openconnect` | клиент `openconnect` (AnyConnect/Pulse/Fortinet) | `tun-chN` |
+| `openconnect` | клиент `openconnect` (AnyConnect) | `tun-chN` |
+| `ikev2` | strongSwan, отдельный процесс и XFRM-интерфейс для каждого канала | `xfrm-chN` |
+| `l2tp` | xl2tpd/pppd для исходящего канала | `ppp-chN` |
 
 Для Xray конфиг генерируется из формы в UI; поддерживается импорт ссылок
 `vless://`, `vmess://`, `trojan://`, `ss://` и ручной outbound JSON.

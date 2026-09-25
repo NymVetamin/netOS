@@ -124,14 +124,14 @@ export function Dashboard({ config }: { config: any }) {
           {(status?.wans || []).map((wan: any) =>
             <div key={wan.id} className="row between wrap">
               <strong>{wan.name}</strong>
-              <span className="mono faint">{wan.interface}</span>
-              <Badge tone={wan.up ? "ok" : "warn"}>{wan.up ? "поднят" : "нет связи"}</Badge>
+              <span className="mono faint">{wan.interface} {wan.address || ""}</span>
+              <Badge tone={wan.up ? "ok" : "warn"}>{wan.probe_down ? "проба не прошла" : wan.up ? "поднят" : "нет связи"}</Badge>
             </div>)}
           {(status?.channels || []).map((channel: any) =>
             <div key={channel.id} className="row between wrap">
               <strong>{channel.name}</strong>
               <span className="mono faint">{channel.interface}</span>
-              <Badge tone={channel.up ? "ok" : "warn"}>{channel.up ? "поднят" : "нет связи"}</Badge>
+              <Badge tone={channel.up ? "ok" : "warn"}>{channel.probe_down ? "проба не прошла" : channel.up ? "поднят" : "нет связи"}</Badge>
             </div>)}
         </div>
       </Card>

@@ -282,6 +282,10 @@ var artifacts = []Artifact{
 		Active: ikev2Active, Render: renderIKEv2,
 	},
 	{
+		ID: "ikev2", Title: "Серверы IKEv2",
+		Active: ikev2Active, Render: renderIKEv2,
+	},
+	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",
 		Active: dnsmasq.Needed,
 		Render: func(cfg *config.Config) (string, error) { return dnsmasq.Render(cfg), nil },

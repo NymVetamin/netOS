@@ -18,6 +18,7 @@ import (
 // совпадать (dnsmasq умеет обе), поэтому владение процессами держим в одном
 // месте, а подсистемы dhcp и dns лишь дёргают его.
 type Manager struct {
+	Logger    interface{ Infof(string, ...any) }
 	Dnsmasq   *Dnsmasq
 	ISC       *ISCDHCP
 	Kea       *KeaDHCP
@@ -568,7 +569,16 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	// Резолвер роутера переключается последним — после того, как выбранный
 	// демон уже поднят и проверен. Обратный порядок оставил бы машину без имён
 	// на всё время применения, а с ней и apt, и проверки живости каналов.
-	return s.M.Resolv.Apply(ctx, cfg)
+	if s.M.Logger != nil {
+		s.M.Logger.Infof("DNS-провайдер %s готов; захват resolv.conf", cfg.DNS.Provider)
+	}
+	if err := s.M.Resolv.Apply(ctx, cfg); err != nil {
+		return err
+	}
+	if s.M.Logger != nil {
+		s.M.Logger.Infof("resolv.conf применён после готовности DNS-провайдера %s", cfg.DNS.Provider)
+	}
+	return nil
 }
 
 func (s *DNS) Health(ctx context.Context, cfg *config.Config) error {

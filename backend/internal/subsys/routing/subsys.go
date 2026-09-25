@@ -23,12 +23,8 @@ import (
 // ip route show table netos-vpn читается без сверки с документацией.
 var rtTablesPath = "/etc/iproute2/rt_tables.d/netos.conf"
 
-// Собственный протокол маршрутов. Благодаря ему в выводе ip route видно, что
-// маршрут поставил netOS, а не ядро и не клиент DHCP, — и его же используем,
-// чтобы отличать свои маршруты от чужих при уборке.
-//
-// Все маршруты netOS используют отдельный протокол, чтобы при очистке не
-// затрагивать пользовательские маршруты с proto static.
+// Собственный протокол маршрутов аплинков. Пользовательская статика
+// использует стандартный proto static и не требует отдельной регистрации.
 var rtProtosPath = "/etc/iproute2/rt_protos.d/netos.conf"
 
 // Приоритеты правил netOS занимают отдельный диапазон, чтобы не спорить с
@@ -107,14 +103,14 @@ func (s *Subsystem) writeProtos() error {
 	var b strings.Builder
 	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
 	fmt.Fprintf(&b, "%d\t%s\n", config.RouteProto, config.RouteProtoName)
-	fmt.Fprintf(&b, "%d\t%s\n", config.StaticRouteProto, config.StaticRouteProtoName)
 	return system.WriteFileAtomic(rtProtosPath, []byte(b.String()), 0o644)
 }
 
 // applyRoutes приводит статические маршруты к описанному виду.
 //
-// netOS владеет только маршрутами со своим протоколом. Чужие статические
-// маршруты, в том числе в дополнительных таблицах, не затрагиваются.
+// netOS владеет полным набором статических маршрутов во всех таблицах.
+// При очистке учитываются proto static и прежний netos-static (202).
+// Маршруты аплинков с proto 201, а также DHCP и маршруты ядра не затрагиваются.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	wanted := map[string]map[string]bool{"-4": {}, "-6": {}}
 	for _, r := range enabledRoutes(cfg) {
@@ -123,19 +119,20 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 
 	for _, family := range []string{"-4", "-6"} {
 		// table all находит хвосты даже в таблицах, уже удалённых из конфигурации.
-		out, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all",
-			"proto", fmt.Sprint(config.StaticRouteProto))
-		if err != nil {
-			return fmt.Errorf("чтение статических маршрутов netOS (%s): %w", family, err)
-		}
-		for _, line := range strings.Split(out, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || wanted[family][routeLineKey(line)] {
-				continue
+		for _, protocol := range []string{"static", fmt.Sprint(config.StaticRouteProto)} {
+			out, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all", "proto", protocol)
+			if err != nil {
+				return fmt.Errorf("чтение статических маршрутов (%s, proto %s): %w", family, protocol, err)
 			}
-			args := append([]string{family, "route", "del"}, strings.Fields(line)...)
-			if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
-				return fmt.Errorf("удаление старого маршрута %q: %w", line, err)
+			for _, line := range strings.Split(out, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || wanted[family][routeLineKey(line)] {
+					continue
+				}
+				args := append([]string{family, "route", "del"}, strings.Fields(line)...)
+				if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
+					return fmt.Errorf("удаление старого маршрута %q: %w", line, err)
+				}
 			}
 		}
 	}
@@ -161,7 +158,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 		if r.Table != "" {
 			args = append(args, "table", r.Table)
 		}
-		args = append(args, "proto", fmt.Sprint(config.StaticRouteProto))
+		args = append(args, "proto", "static")
 
 		if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 			return fmt.Errorf("маршрут %s: %w", r.Destination, err)
@@ -185,6 +182,16 @@ func routeFamily(r config.StaticRoute) string {
 func routeKey(table, destination, routeType, gateway, iface string, metric int) string {
 	if table == "main" {
 		table = ""
+	}
+	// ip route show renders host prefixes without /32 or /128.
+	if prefix, err := netip.ParsePrefix(destination); err == nil {
+		destination = prefix.Masked().String()
+	} else if addr, err := netip.ParseAddr(destination); err == nil {
+		bits := 32
+		if addr.Is6() {
+			bits = 128
+		}
+		destination = netip.PrefixFrom(addr, bits).String()
 	}
 	if routeType == "" {
 		routeType = "unicast"

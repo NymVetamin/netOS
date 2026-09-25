@@ -19,8 +19,8 @@ func TestExecuteDispatchesEveryReadOnlyAndServiceCommand(t *testing.T) {
 		want string
 	}{
 		{[]string{"status"}, "systemctl status --no-pager netosd"},
-		{[]string{"logs"}, "journalctl -u netosd --no-pager -n 100"},
-		{[]string{"logs", "--follow"}, "journalctl -u netosd --no-pager -n 100 -f"},
+		{[]string{"logs", "--system"}, "journalctl -u netosd --no-pager -n 100"},
+		{[]string{"logs", "--system", "--follow"}, "journalctl -u netosd --no-pager -n 100 -f"},
 		{[]string{"start"}, "systemctl start netosd"},
 		{[]string{"stop"}, "systemctl stop netosd"},
 		{[]string{"restart"}, "systemctl restart netosd"},

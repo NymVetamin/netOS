@@ -53,6 +53,13 @@ type Controller struct {
 	balanceDirty bool
 }
 
+// ProbeDown reports the last completed health decision for an uplink.
+func (c *Controller) ProbeDown(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.states[id] != nil && c.states[id].Down
+}
+
 const (
 	tableBase    = 3000
 	markBase     = 0x3000
@@ -507,7 +514,11 @@ func (c *Controller) probe(ctx context.Context, wan config.WAN, iface string) bo
 			if splitErr != nil {
 				continue
 			}
-			err = probeTCP(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second)
+			if wan.Probe.TCPResponse != "" {
+				err = probeTCPExchange(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second, wan.Probe.TCPRequest, wan.Probe.TCPResponse)
+			} else {
+				err = probeTCP(ctx, iface, net.JoinHostPort(host, port), time.Duration(timeout)*time.Second)
+			}
 		default:
 			family := "-4"
 			if ip := net.ParseIP(target); ip != nil && ip.To4() == nil {

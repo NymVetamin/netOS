@@ -152,7 +152,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			}
 			if err := s.install(ctx, info); err != nil {
 				s.Logger.Warnf("компонент %s: %v", info.Title, err)
-				failures = append(failures, info.Title)
+				failures = append(failures, info.Title+": "+err.Error())
 			}
 			continue
 		}
@@ -161,7 +161,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		if err := s.removeProtected(ctx, info, protected); err != nil {
 			s.Logger.Warnf("удаление компонента %s: %v", info.Title, err)
-			failures = append(failures, "удалить "+info.Title)
+			failures = append(failures, "удалить "+info.Title+": "+err.Error())
 		}
 	}
 

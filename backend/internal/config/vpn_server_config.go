@@ -16,9 +16,14 @@ type WireGuardServerConfig struct {
 	ClientAllowedIPs []string `json:"client_allowed_ips,omitempty"`
 }
 
-// XrayServerConfig describes a VLESS+Reality listener. Client UUIDs live on
-// peers, so they can be enabled and assigned to output channels separately.
+// XrayServerConfig describes an authenticated Xray listener. An empty protocol
+// keeps the original VLESS+Reality configuration used by existing installs.
 type XrayServerConfig struct {
+	Protocol       string   `json:"protocol,omitempty"`
+	Listen         string   `json:"listen,omitempty"`
+	Method         string   `json:"method,omitempty"`
+	WGPrivateKey   string   `json:"wg_private_key,omitempty"`
+	MTU            int      `json:"mtu,omitempty"`
 	PrivateKey     string   `json:"private_key"`
 	PublicEndpoint string   `json:"public_endpoint,omitempty"`
 	Destination    string   `json:"destination"`
@@ -47,6 +52,11 @@ type IKEv2ServerConfig struct {
 	DNS            []string `json:"dns,omitempty"`
 	SplitRoutes    []string `json:"split_routes,omitempty"`
 	MTU            int      `json:"mtu,omitempty"`
+}
+
+type L2TPServerConfig struct {
+	Listen string `json:"listen"`
+	MTU    int    `json:"mtu,omitempty"`
 }
 
 func (s VPNServer) WireGuardConfig() (WireGuardServerConfig, error) {
@@ -101,6 +111,20 @@ func (s VPNServer) IKEv2Config() (IKEv2ServerConfig, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return out, fmt.Errorf("параметры сервера IKEv2: %w", err)
+	}
+	return out, nil
+}
+
+func (s VPNServer) L2TPConfig() (L2TPServerConfig, error) {
+	var out L2TPServerConfig
+	data, err := json.Marshal(s.Config)
+	if err != nil {
+		return out, fmt.Errorf("кодирование параметров сервера L2TP: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return out, fmt.Errorf("параметры сервера L2TP: %w", err)
 	}
 	return out, nil
 }

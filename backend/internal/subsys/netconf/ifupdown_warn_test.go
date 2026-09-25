@@ -71,6 +71,9 @@ func TestNoIfupdownWarningWhenNetworkingIsOff(t *testing.T) {
 	if len(logger.warnings) != 0 {
 		t.Fatalf("предупреждение о безобидном файле: %v", logger.warnings)
 	}
+	if conflicts := s.IfupdownConflicts(context.Background(), routerConfig()); len(conflicts) != 0 {
+		t.Fatalf("панель получила безобидный конфликт: %v", conflicts)
+	}
 }
 
 // Работающая или включённая служба — другое дело: при загрузке она поднимет
@@ -84,6 +87,9 @@ func TestIfupdownWarningWhenNetworkingIsEnabled(t *testing.T) {
 
 	if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "eth0") {
 		t.Fatalf("конфликт не назван: %v", logger.warnings)
+	}
+	if conflicts := s.IfupdownConflicts(context.Background(), routerConfig()); len(conflicts) != 1 || !strings.Contains(conflicts[0], "eth0") {
+		t.Fatalf("панель не получила конфликт: %v", conflicts)
 	}
 }
 

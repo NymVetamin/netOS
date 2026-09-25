@@ -113,7 +113,7 @@ func TestNATSourceDestinationDNSAndChannelFields(t *testing.T) {
 	text := b.String()
 	for _, part := range []string{
 		"-s 192.0.2.0/24 ! -d 192.0.2.1/32 -p udp --dport 53", "--to-destination 192.0.2.1:5353",
-		"-o wg-ch1", "-o tun-ch2", "-o tun-ch3", "-j MASQUERADE", "-j SNAT --to-source 198.51.100.8",
+		"-o wg-ch1", "-o tun-ch2", "-o tun-ch3", "-o ppp-ch4", "-j MASQUERADE", "-j SNAT --to-source 198.51.100.8",
 		"-i eth0 -s 203.0.113.0/24 -p tcp --dport 8000:8010", "--to-destination 192.0.2.9:9000-9010",
 		"-p udp --dport 8000:8010", "-p tcp --dport 443", "--to-destination 192.0.2.10",
 	} {
@@ -121,7 +121,7 @@ func TestNATSourceDestinationDNSAndChannelFields(t *testing.T) {
 			t.Errorf("NAT missing %q:\n%s", part, text)
 		}
 	}
-	if strings.Contains(text, "ppp-ch4") || strings.Contains(text, "skip-disabled") || strings.Contains(text, "dnat-empty") {
+	if strings.Contains(text, "skip-disabled") || strings.Contains(text, "dnat-empty") {
 		t.Fatalf("skipped NAT emitted:\n%s", text)
 	}
 }
@@ -245,7 +245,7 @@ func TestChannelPoliciesExplicitClientPeerServerAndNetworkMatrix(t *testing.T) {
 			t.Errorf("channel policy missing %q:\n%s", part, text)
 		}
 	}
-	for _, absent := range []string{"xray internal", "198.51.100.3", "198.51.100.4", "198.51.100.5", "aa:bb:cc:dd:ee:02", "10.11.0.3", "172.16.3.0/24"} {
+	for _, absent := range []string{"xray internal", "198.51.100.3", "198.51.100.5", "aa:bb:cc:dd:ee:02", "10.11.0.3", "172.16.3.0/24"} {
 		if strings.Contains(text, absent) {
 			t.Errorf("skipped policy %q emitted:\n%s", absent, text)
 		}

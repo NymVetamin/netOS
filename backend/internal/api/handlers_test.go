@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -42,6 +43,26 @@ func TestWireGuardKeypairRejectsInvalidPrivateKeyAsUserError(t *testing.T) {
 	s.handleWireGuardKeypair(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestWireGuardServerPublicKeyDoesNotRotateOrRevealPrivateKey(t *testing.T) {
+	privateKey, publicKey, err := generateWireGuardKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.VPNServers = []config.VPNServer{{ID: "server", Type: "wireguard", Config: map[string]any{"private_key": privateKey}}}
+	s := &Server{draft: cfg}
+	r := httptest.NewRequest(http.MethodPost, "/api/wireguard/keypair", bytes.NewBufferString(`{"server_id":"server"}`))
+	r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
+	w := httptest.NewRecorder()
+	s.handleWireGuardKeypair(w, r)
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(publicKey)) || bytes.Contains(w.Body.Bytes(), []byte(privateKey)) {
+		t.Fatalf("response status=%d body=%s", w.Code, w.Body.String())
+	}
+	if cfg.VPNServers[0].Config["private_key"] != privateKey {
+		t.Fatal("server key changed")
 	}
 }
 

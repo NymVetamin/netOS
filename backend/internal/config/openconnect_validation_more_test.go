@@ -17,12 +17,19 @@ func validOpenConnectConfig() *Config {
 	return cfg
 }
 
-func TestOpenConnectEveryFieldAndProtocolValid(t *testing.T) {
-	for _, protocol := range []string{"", "anyconnect", "nc", "pulse", "gp", "f5", "fortinet", "array"} {
+func TestOpenConnectOnlyAnyConnectValid(t *testing.T) {
+	for _, protocol := range []string{"", "anyconnect"} {
 		cfg := validOpenConnectConfig()
 		cfg.Channels[1].Config["protocol"] = protocol
 		if result := cfg.Validate(); result.HasErrors() {
 			t.Fatalf("valid OpenConnect protocol %q rejected: %+v", protocol, result.Problems)
+		}
+	}
+	for _, protocol := range []string{"nc", "pulse", "gp", "f5", "fortinet", "array"} {
+		cfg := validOpenConnectConfig()
+		cfg.Channels[1].Config["protocol"] = protocol
+		if !hasErrorAt(cfg.Validate(), "channels[1].config.protocol") {
+			t.Fatalf("removed protocol %q accepted", protocol)
 		}
 	}
 	for _, mtu := range []int{0, 576, 9000} {

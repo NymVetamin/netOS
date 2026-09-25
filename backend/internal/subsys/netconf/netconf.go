@@ -669,9 +669,31 @@ func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 	if s.Logger == nil {
 		return
 	}
-	if !s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service") {
+	conflicts := s.IfupdownConflicts(ctx, cfg)
+	if len(conflicts) == 0 {
 		s.warnedIfupdown = ""
 		return
+	}
+
+	// Один и тот же набор конфликтов — одно предупреждение, а не по строке на
+	// каждое применение конфигурации.
+	fingerprint := strings.Join(conflicts, ";")
+	if fingerprint == s.warnedIfupdown {
+		return
+	}
+	s.warnedIfupdown = fingerprint
+	for _, conflict := range conflicts {
+		path, name, _ := strings.Cut(conflict, " → ")
+		s.Logger.Warnf(
+			"%s настраивает интерфейс %s, которым управляет netOS: перекрыть эту запись нельзя — уберите её или отключите networking.service",
+			path, name)
+	}
+}
+
+// IfupdownConflicts returns active foreign declarations for the panel.
+func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) []string {
+	if cfg == nil || (!s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service")) {
+		return nil
 	}
 
 	paths, _ := filepath.Glob(filepath.Join(ifupdownDir, "*"))
@@ -694,19 +716,7 @@ func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 		}
 	}
 
-	// Один и тот же набор конфликтов — одно предупреждение, а не по строке на
-	// каждое применение конфигурации.
-	fingerprint := strings.Join(conflicts, ";")
-	if fingerprint == s.warnedIfupdown {
-		return
-	}
-	s.warnedIfupdown = fingerprint
-	for _, conflict := range conflicts {
-		path, name, _ := strings.Cut(conflict, " → ")
-		s.Logger.Warnf(
-			"%s настраивает интерфейс %s, которым управляет netOS: перекрыть эту запись нельзя — уберите её или отключите networking.service",
-			path, name)
-	}
+	return conflicts
 }
 
 // mentionsInterface ищет объявление интерфейса, а не любое совпадение имени:

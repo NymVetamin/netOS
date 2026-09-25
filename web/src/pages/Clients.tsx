@@ -134,11 +134,8 @@ export function Clients({
                             aria-label={`Имя устройства ${c.mac}`}
                             style={{ width: 150 }}
                             placeholder={c.hostname || "без имени"}
-                            defaultValue={cfgClient?.name || ""}
-                            onBlur={(e) => {
-                              const v = e.target.value.trim();
-                              if (v !== (cfgClient?.name || "")) updateClient(c.mac, { name: v });
-                            }}
+                            value={cfgClient?.name || ""}
+                            onChange={(e) => updateClient(c.mac, { name: e.target.value })}
                           />
                         </div>
                       </td>

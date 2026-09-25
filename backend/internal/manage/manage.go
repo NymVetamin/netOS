@@ -187,19 +187,21 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		fmt.Fprintf(m.Out, "netOS %s\n\n", displayVersion(m.Version))
 		return m.run(ctx, "systemctl", "status", "--no-pager", "netosd")
 	case "logs":
-		if err := onlyFlags(args[1:], "--follow", "-f"); err != nil {
+		if err := onlyFlags(args[1:], "--follow", "-f", "--system"); err != nil {
 			return err
 		}
-		// Журнал netosd доступен только root: без этой проверки обычный
-		// пользователь получил бы пустой вывод и решил, что записей нет.
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
-		logArgs := []string{"-u", "netosd", "--no-pager", "-n", "100"}
-		if contains(args[1:], "--follow") || contains(args[1:], "-f") {
-			logArgs = append(logArgs, "-f")
+		follow := contains(args[1:], "--follow") || contains(args[1:], "-f")
+		if contains(args[1:], "--system") {
+			logArgs := []string{"-u", "netosd", "--no-pager", "-n", "100"}
+			if follow {
+				logArgs = append(logArgs, "-f")
+			}
+			return m.run(ctx, "journalctl", logArgs...)
 		}
-		return m.run(ctx, "journalctl", logArgs...)
+		return m.auditLogs(ctx, follow)
 	case "start", "stop", "restart":
 		if len(args) != 1 {
 			return fmt.Errorf("команда %s не принимает параметры", args[0])
@@ -421,7 +423,8 @@ func (m *Manager) help() {
 
 Использование:
   netos status                 состояние службы
-  netos logs [-f|--follow]     последние записи журнала
+  netos logs [-f|--follow]     журнал действий как в панели
+  netos logs --system [-f]    технический журнал службы
   netos update [версия] [-f|--force]
                                обновить до latest или указанной версии;
                                без --force ничего не делает, если версия та же
@@ -469,7 +472,7 @@ _netos() {
             COMPREPLY=($(compgen -W "{{ARTIFACTS}}" -- "$cur"))
             ;;
         logs)
-            COMPREPLY=($(compgen -W "-f --follow" -- "$cur"))
+            COMPREPLY=($(compgen -W "-f --follow --system" -- "$cur"))
             ;;
         update|reinstall)
             COMPREPLY=($(compgen -W "latest -f --force" -- "$cur"))
@@ -1377,7 +1380,6 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 			return fmt.Errorf("удаление %s: %w", path, err)
 		}
 	}
-	m.bestEffort(ctx, "systemctl", "daemon-reload")
 	// Демоны, которых netOS погасил ради единоличного управления, возвращаются
 	// вместе с системой: удаление обязано оставлять машину такой, какой она
 	// была до установки.
