@@ -57,6 +57,7 @@ func (s *Server) startLocalControl() (func(), <-chan error, error) {
 	}))
 	mux.HandleFunc("POST /apply", root(s.handleApply))
 	mux.HandleFunc("POST /confirm", root(s.handleConfirm))
+	mux.HandleFunc("GET /status", root(s.handleStatus))
 	server := &http.Server{
 		Handler: mux, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 15 * time.Minute,

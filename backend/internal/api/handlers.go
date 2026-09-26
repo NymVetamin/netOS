@@ -693,10 +693,7 @@ func redactConfig(cfg *config.Config) (*config.Config, error) {
 
 func redactSecretValues(values map[string]any) {
 	for key, value := range values {
-		normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(key))
-		if strings.Contains(normalized, "password") || strings.Contains(normalized, "secret") ||
-			strings.Contains(normalized, "private_key") || strings.Contains(normalized, "preshared_key") ||
-			strings.Contains(normalized, "token") {
+		if secretField(key) {
 			values[key] = ""
 			continue
 		}

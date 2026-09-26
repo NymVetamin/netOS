@@ -473,6 +473,9 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
 	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")
+	interfaces := netiface.NewInterfaces(runner)
+	networkConfig := netconf.New(runner, logger)
+	networkConfig.PrepareOwnership = interfaces.PrepareOwnership
 
 	subsystems := []apply.Subsystem{
 		componentSubsystem,
@@ -480,12 +483,12 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		sysctl.NewCore(runner),
 		sysctl.NewIPv6(runner),
 		firewall.NewBridgeIPv6(runner),
-		netiface.NewInterfaces(runner),
+		interfaces,
 		netiface.NewNetworks(runner),
 		netiface.NewWAN(runner),
 		multiWAN,
 		qos.New(runner, stateDir),
-		netconf.New(runner, logger),
+		networkConfig,
 		routing.New(runner),
 		channelMonitor,
 		vpnservers.New(runner, stateDir),

@@ -49,6 +49,9 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 
 func secretField(key string) bool {
 	normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(key))
+	if normalized == "uuid" || normalized == "shortid" || normalized == "short_id" {
+		return true
+	}
 	return strings.Contains(normalized, "password") || strings.Contains(normalized, "secret") ||
 		strings.Contains(normalized, "private_key") || strings.Contains(normalized, "preshared_key") ||
 		strings.Contains(normalized, "token")

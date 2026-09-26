@@ -120,6 +120,9 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	if err := os.MkdirAll(generated, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(generated, "owned-network-addresses.json"), []byte(`[{"interface":"eth3","address":"192.0.2.1/24"},{"interface":"eth3","address":"2001:db8::1/64"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(generated, "owned-qos.json"), []byte(`[{"interface":"eth9","ifb":"ifb-netos-3"}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -177,11 +180,15 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	}
 
 	deleted := map[string]bool{}
+	addressDeletes := map[string]bool{}
 	var restored4, restored6, route, rule, tunedDisabled, tunedStopped bool
 	var hostname, timezone, timesyncdEnabled, timesyncdStarted, timesyncdRestarted bool
 	var resolvedDisabled, resolvedStopped bool
 	qosCleanup := map[string]map[string]bool{}
 	for _, c := range commands {
+		if c.name == "ip" && len(c.args) > 3 && c.args[1] == "addr" && c.args[2] == "del" {
+			addressDeletes[strings.Join(c.args, " ")] = true
+		}
 		if c.name == "ip" && contains(c.args, "delete") && len(c.args) > 0 {
 			deleted[c.args[len(c.args)-1]] = true
 		}
@@ -212,6 +219,9 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	}
 	if !deleted["br-netos"] || !deleted["wg-ch7"] {
 		t.Fatalf("owned links were not deleted: %#v", deleted)
+	}
+	if len(addressDeletes) != 2 || !addressDeletes["-4 addr del 192.0.2.1/24 dev eth3"] || !addressDeletes["-6 addr del 2001:db8::1/64 dev eth3"] {
+		t.Fatalf("owned address cleanup mismatch: %v", addressDeletes)
 	}
 	for _, foreign := range []string{"br-foreign", "bond-user", "d-container"} {
 		if deleted[foreign] {

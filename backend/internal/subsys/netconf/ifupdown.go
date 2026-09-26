@@ -2,6 +2,7 @@ package netconf
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -55,7 +56,11 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 			// starts (including at boot). inet static uses ip address add,
 			// which fails on that existing address and fails the whole unit.
 			w("iface %s inet manual", iface.Name)
-			w("    up ip -4 address replace %s dev %s", address, iface.Name)
+			broadcast := ""
+			if prefix, err := netip.ParsePrefix(address); err == nil && prefix.Addr().Is4() && prefix.Bits() <= 30 {
+				broadcast = " broadcast +"
+			}
+			w("    up ip -4 address replace %s dev %s%s", address, iface.Name, broadcast)
 			w("    down ip -4 address del %s dev %s 2>/dev/null || true", address, iface.Name)
 		} else {
 			if p.managedByNetOS(iface) {

@@ -27,6 +27,7 @@ type wanIdempotencyRunner struct {
 	linkUp       bool
 	mtu          int
 	addresses    map[string]bool
+	broadcasts   map[string]string
 	defaultRoute string
 	routes       map[string]string
 }
@@ -34,7 +35,7 @@ type wanIdempotencyRunner struct {
 func newWANIdempotencyRunner() *wanIdempotencyRunner {
 	return &wanIdempotencyRunner{
 		active: map[string]bool{}, enabled: map[string]bool{}, mtu: 1500,
-		addresses: map[string]bool{}, routes: map[string]string{},
+		addresses: map[string]bool{}, broadcasts: map[string]string{}, routes: map[string]string{},
 	}
 }
 
@@ -85,7 +86,11 @@ func (r *wanIdempotencyRunner) Run(_ context.Context, name string, args ...strin
 	case command == "ip -4 -o addr show dev eth-test":
 		var lines []string
 		for address := range r.addresses {
-			lines = append(lines, "2: eth-test inet "+address+" scope global eth-test")
+			brd := ""
+			if value := r.broadcasts[address]; value != "" {
+				brd = " brd " + value
+			}
+			lines = append(lines, "2: eth-test inet "+address+brd+" scope global eth-test")
 		}
 		return strings.Join(lines, "\n"), nil
 	case strings.HasPrefix(command, "ip -4 -o addr show dev ppp-"):
@@ -95,7 +100,13 @@ func (r *wanIdempotencyRunner) Run(_ context.Context, name string, args ...strin
 		}
 		return "", nil
 	case len(args) >= 5 && name == "ip" && args[0] == "addr" && (args[1] == "replace" || args[1] == "add"):
+		if !r.addresses[args[2]] && strings.Contains(command, "broadcast +") {
+			r.broadcasts[args[2]] = networkBroadcast(args[2])
+		}
 		r.addresses[args[2]] = true
+	case len(args) >= 5 && name == "ip" && args[0] == "addr" && args[1] == "del":
+		delete(r.addresses, args[2])
+		delete(r.broadcasts, args[2])
 	case command == "ip -4 route show default":
 		return r.defaultRoute, nil
 	case strings.HasPrefix(command, "ip route replace default "):
@@ -414,6 +425,8 @@ func TestWANApplyIsIdempotentForEverySupportedProtocol(t *testing.T) {
 func TestNetworksApplyIsIdempotentAtRuntimeAndOnDisk(t *testing.T) {
 	newFakeNet(t, "eth-test")
 	runner := newWANIdempotencyRunner()
+	// Legacy apply/handover created the address without broadcast metadata.
+	runner.addresses["192.0.2.1/24"] = true
 	root := t.TempDir()
 	s := NewNetworks(runner)
 	s.OwnedAddressPath = filepath.Join(root, "owned-network-addresses.json")
@@ -422,6 +435,9 @@ func TestNetworksApplyIsIdempotentAtRuntimeAndOnDisk(t *testing.T) {
 	cfg.Networks = []config.Network{{ID: "segment", Name: "LAN", Interface: "lan", Enabled: true, RouterAddress: "192.0.2.1/24"}}
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
+	}
+	if runner.broadcasts["192.0.2.1/24"] != "192.0.2.255" {
+		t.Fatal("existing broadcast metadata was not repaired")
 	}
 	before, err := os.Stat(s.OwnedAddressPath)
 	if err != nil {

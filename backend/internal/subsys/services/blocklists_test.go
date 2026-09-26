@@ -244,24 +244,42 @@ func TestDNSBlocklistFailureRestoresProviderAndCacheBytes(t *testing.T) {
 	}
 }
 
-func TestDNSBlocklistFreshFetchFailureDoesNotTouchWorkingFile(t *testing.T) {
+func TestDNSBlocklistFreshFetchFailureKeepsOtherSourcesAndReportsError(t *testing.T) {
 	useProviderPaths(t)
-	if err := os.WriteFile(dnsmasqBlocklistPath, []byte("working-bytes\n"), 0o640); err != nil {
-		t.Fatal(err)
-	}
 	m := NewBlocklistManager()
-	m.Fetch = func(context.Context, string, string) ([]byte, error) { return nil, fmt.Errorf("network down") }
 	cfg := blocklistTestConfig("dnsmasq")
-	if _, _, err := m.Apply(context.Background(), cfg); err == nil {
-		t.Fatal("fresh fetch failure accepted")
+	goodURL := cfg.DNS.Blocklists[0].URL
+	cfg.DNS.Blocklists = append(cfg.DNS.Blocklists, config.Blocklist{ID: "missing", Name: "Missing", URL: "https://lists.example/missing", Enabled: true})
+	m.Fetch = func(_ context.Context, url, _ string) ([]byte, error) {
+		if url == goodURL {
+			return []byte("working.example\n"), nil
+		}
+		return nil, fmt.Errorf("HTTP 404")
+	}
+	if _, _, err := m.Apply(context.Background(), cfg); err != nil {
+		t.Fatalf("unavailable source broke DNS apply: %v", err)
 	}
 	data, err := os.ReadFile(dnsmasqBlocklistPath)
-	info, statErr := os.Stat(dnsmasqBlocklistPath)
-	if err != nil || statErr != nil || string(data) != "working-bytes\n" || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o640) {
-		t.Fatalf("working file changed data=%q mode=%v err=%v statErr=%v", data, info.Mode(), err, statErr)
+	if err != nil || !strings.Contains(string(data), "working.example") {
+		t.Fatalf("working source lost: %q, %v", data, err)
 	}
-	if _, err := os.Stat(filepath.Join(blocklistCacheDir, "unexpected")); err == nil {
-		t.Fatal("unexpected cache artifact")
+	statuses, err := ReadBlocklistStatuses()
+	if err != nil || statuses[cfg.DNS.Blocklists[1].URL].Source != "unavailable" || !strings.Contains(statuses[cfg.DNS.Blocklists[1].URL].Error, "HTTP 404") {
+		t.Fatalf("missing error status: %+v, %v", statuses, err)
+	}
+	if err := m.Health(cfg); err != nil {
+		t.Fatalf("unavailable source failed health: %v", err)
+	}
+	m.Fetch = func(context.Context, string, string) ([]byte, error) { return []byte("recovered.example\n"), nil }
+	if _, _, err := m.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	statuses, err = ReadBlocklistStatuses()
+	if err != nil || statuses[cfg.DNS.Blocklists[1].URL].Source != "fetched" {
+		t.Fatalf("source did not recover: %v, %v", statuses, err)
+	}
+	if err := m.Health(cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 

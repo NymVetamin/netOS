@@ -110,7 +110,7 @@ func TestNetworksApplyAddsAndThenRemovesOnlyOwnedAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(commands, "\n")
-	if !strings.Contains(joined, "ip addr add 10.0.0.1/24 dev lan0") || strings.Contains(joined, "198.18.0.1/32") && strings.Contains(joined, "addr del 198.18.0.1/32") {
+	if !strings.Contains(joined, "ip addr replace 10.0.0.1/24 dev lan0 broadcast +") || strings.Contains(joined, "198.18.0.1/32") && strings.Contains(joined, "addr del 198.18.0.1/32") {
 		t.Fatalf("network address apply is not exact:\n%s", joined)
 	}
 	commands = nil

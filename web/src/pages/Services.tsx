@@ -543,7 +543,7 @@ function DNSSection({
 					<td><input type="url" aria-label={`URL DNS blocklist ${idx + 1}`} className="mono" style={{ width: 360 }} placeholder="https://example.org/hosts.txt" value={list.url || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].url = e.target.value))} /></td>
 					<td><input aria-label={`CA-файл DNS blocklist ${idx + 1}`} className="mono" style={{ width: 280 }} placeholder="/etc/netos/blocklist-ca.pem" value={list.ca_file || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].ca_file = e.target.value))} /></td>
 					<td><Switch checked={!!list.enabled} disabled={!config.dns?.enabled} label="" ariaLabel={`DNS blocklist ${list.name || idx + 1} включён`} onChange={(enabled) => patch((d) => (d.dns.blocklists[idx].enabled = enabled))} /></td>
-					<td title={blocklistStatus[list.url]?.error || ""}>{!list.enabled ? "Выключен" : blocklistStatus[list.url]?.source === "cache" ? "Кэш: источник недоступен" : blocklistStatus[list.url]?.source === "fetched" ? "Загружен" : "Нет данных"}</td>
+					<td title={blocklistStatus[list.url]?.error || ""}>{!list.enabled ? "Выключен" : blocklistStatus[list.url]?.source === "cache" ? "Кэш: источник недоступен" : blocklistStatus[list.url]?.source === "unavailable" ? "Источник недоступен: нет рабочего кэша" : blocklistStatus[list.url]?.source === "fetched" ? "Загружен" : "Нет данных"}</td>
 					<td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.blocklists = d.dns.blocklists.filter((item: any) => item.id !== list.id); })}>Убрать</button></td>
 				  </tr>
 				))}

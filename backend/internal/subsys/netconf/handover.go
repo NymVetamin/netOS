@@ -197,7 +197,11 @@ func (g *addressHandover) close(ctx context.Context) error {
 		links, err := g.s.ipv4Addresses(ctx, item.iface)
 		prefix, _ := netip.ParsePrefix(item.prefix)
 		if err == nil && !containsIPv4(links, item.address, prefix.Bits()) {
-			_, err = g.s.Runner.Run(ctx, "ip", "address", "add", item.prefix, "dev", item.iface)
+			args := []string{"address", "add", item.prefix, "dev", item.iface}
+			if prefix.Bits() <= 30 {
+				args = append(args, "broadcast", "+")
+			}
+			_, err = g.s.Runner.Run(ctx, "ip", args...)
 		}
 		if err != nil {
 			failures = append(failures, item.iface+": "+err.Error())

@@ -94,3 +94,48 @@ func TestForeignVirtualLinkFailsPlanningBeforeNetconf(t *testing.T) {
 		t.Fatal("foreign link was accepted by Plan")
 	}
 }
+
+func TestPrepareOwnershipTracksBackendCreatedLinksAndPreservesForeignLinks(t *testing.T) {
+	newFakeNet(t, "foreign")
+	s := &Interfaces{OwnedPath: ownedFile(t)}
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "bridge", Name: "new-bridge", Type: "bridge", Members: []string{"port"}, Enabled: true}}
+	if err := s.PrepareOwnership(cfg); err != nil {
+		t.Fatal(err)
+	}
+	newFakeNet(t, "new-bridge", "foreign")
+	if _, err := s.Plan(nil, cfg); err != nil {
+		t.Fatalf("backend-created link rejected: %v", err)
+	}
+	cfg.Interfaces[0].Name = "foreign"
+	if err := s.PrepareOwnership(cfg); err == nil {
+		t.Fatal("foreign link adopted")
+	}
+	if s.loadOwned()["foreign"] {
+		t.Fatal("foreign link persisted as owned")
+	}
+}
+
+func TestNetworkBroadcastReconcilesMissingAndIncorrectBroadcast(t *testing.T) {
+	for _, tc := range []struct{ address, broadcast string }{
+		{"192.0.2.1/24", "192.0.2.255"}, {"192.0.2.129/25", "192.0.2.255"},
+		{"192.0.2.1/31", ""}, {"192.0.2.1/32", ""},
+	} {
+		if got := networkBroadcast(tc.address); got != tc.broadcast {
+			t.Fatalf("%s: %s != %s", tc.address, got, tc.broadcast)
+		}
+		line := "2: eth0 inet " + tc.address
+		if tc.broadcast != "" {
+			if networkAddressMatches(line+" scope global", tc.address) {
+				t.Fatal("missing broadcast accepted")
+			}
+			if networkAddressMatches(line+" brd 255.255.255.255 scope global", tc.address) {
+				t.Fatal("wrong broadcast accepted")
+			}
+			line += " brd " + tc.broadcast
+		}
+		if !networkAddressMatches(line+" scope global", tc.address) {
+			t.Fatal("correct address would be reapplied")
+		}
+	}
+}

@@ -713,14 +713,14 @@ func TestUninstallHandsInterfacesBackToNetworkManager(t *testing.T) {
 		return nil
 	}
 	// Маршрут виден только до очистки: дальше networkd его не возвращает.
-	shown := 0
 	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
 		if name == "ip" && contains(args, "default") {
-			shown++
-			if shown == 1 {
-				return "default via 45.38.170.1 dev eth0 proto netos metric 100\n", nil
+			for _, cmd := range commands {
+				if cmd.name == "ip" && contains(cmd.args, "flush") {
+					return "", nil
+				}
 			}
-			return "", nil
+			return "default via 45.38.170.1 dev eth0 proto netos metric 100\n", nil
 		}
 		return "", nil
 	}

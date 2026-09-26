@@ -51,6 +51,17 @@ func NewInterfaces(r system.Runner) *Interfaces {
 
 func (s *Interfaces) Name() string { return "interfaces" }
 
+// PrepareOwnership runs before a persistent backend can create virtual links.
+// Check collisions first, then persist the union so rollback can also remove
+// links created by networkd/ifupdown before Interfaces.Apply is reached.
+func (s *Interfaces) PrepareOwnership(cfg *config.Config) error {
+	if _, err := s.Plan(nil, cfg); err != nil {
+		return err
+	}
+	s.owned = s.loadOwned()
+	return s.prepareOwned(cfg)
+}
+
 func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
 	owned := s.loadOwned()
@@ -949,15 +960,26 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 
 	for iface, addrs := range wanted {
-		current, err := addressesOf(ctx, s.Runner, iface)
+		current, err := s.Runner.Run(ctx, "ip", "-4", "-o", "addr", "show", "dev", iface)
 		if err != nil {
 			return err
 		}
 		for addr := range addrs {
-			if current[addr] {
+			if networkAddressMatches(current, addr) {
 				continue
 			}
-			if _, err := s.Runner.Run(ctx, "ip", "addr", "add", addr, "dev", iface); err != nil {
+			// Linux addr replace updates lifetimes but retains the old broadcast.
+			// Recreate only this configured address when its metadata differs.
+			if networkAddressPresent(current, addr) {
+				if _, err := s.Runner.Run(ctx, "ip", "addr", "del", addr, "dev", iface); err != nil {
+					return err
+				}
+			}
+			args := []string{"addr", "replace", addr, "dev", iface}
+			if networkBroadcast(addr) != "" {
+				args = append(args, "broadcast", "+")
+			}
+			if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 				return fmt.Errorf("назначение адреса %s на %s: %w", addr, iface, err)
 			}
 		}
@@ -966,6 +988,54 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	return nil
+}
+
+// Match networkd's IPv4 broadcast policy on immediate apply and after reboot.
+func networkBroadcast(address string) string {
+	ip, subnet, err := net.ParseCIDR(address)
+	if err != nil || ip.To4() == nil {
+		return ""
+	}
+	ones, _ := subnet.Mask.Size()
+	if ones > 30 {
+		return ""
+	}
+	broadcast := ip.To4()
+	for i := range broadcast {
+		broadcast[i] |= ^subnet.Mask[i]
+	}
+	return broadcast.String()
+}
+
+func networkAddressMatches(output, address string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		found, broadcast := false, ""
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "inet" && fields[i+1] == address {
+				found = true
+			}
+			if fields[i] == "brd" {
+				broadcast = fields[i+1]
+			}
+		}
+		if found {
+			return broadcast == networkBroadcast(address)
+		}
+	}
+	return false
+}
+
+func networkAddressPresent(output, address string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "inet" && fields[i+1] == address {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Networks) syncAddressOwnership(ctx context.Context, wanted []ownedWANAddress) error {

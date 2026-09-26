@@ -184,8 +184,7 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		if len(args) != 1 {
 			return fmt.Errorf("команда status не принимает параметры")
 		}
-		fmt.Fprintf(m.Out, "netOS %s\n\n", displayVersion(m.Version))
-		return m.run(ctx, "systemctl", "status", "--no-pager", "netosd")
+		return m.status(ctx)
 	case "logs":
 		if err := onlyFlags(args[1:], "--follow", "-f", "--system"); err != nil {
 			return err
@@ -422,7 +421,7 @@ func (m *Manager) help() {
 	fmt.Fprintln(m.Out, `netOS — управление роутером
 
 Использование:
-  netos status                 состояние службы
+  netos status                 живая сводка роутера (при отказе — состояние службы)
   netos logs [-f|--follow]     журнал действий как в панели
   netos logs --system [-f]    технический журнал службы
   netos update [версия] [-f|--force]
@@ -1225,6 +1224,10 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	if err != nil {
 		return fmt.Errorf("системный baseline повреждён; удаление остановлено до изменений: %w", err)
 	}
+	uplink, err := m.captureManagementUplink(ctx, "удалением")
+	if err != nil {
+		return err
+	}
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
@@ -1403,6 +1406,11 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		}
 	}
 	m.removeOwnedPolicySets(ctx)
+	// Persistent backends have now released their files and links. Delete exact
+	// owned addresses while ownership records still exist, keeping management.
+	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
+		return fmt.Errorf("удаление адресов netOS: %w", err)
+	}
 	// До этого места unit, бинарник и данные остаются доступны для аварийного
 	// повторного Apply. Удаляем их только после успешного возврата системы.
 	if err := components.RemoveOwnedExternal(m.Root); err != nil {

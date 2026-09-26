@@ -254,11 +254,13 @@ func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) 
 			}
 			cached, cacheErr := os.ReadFile(cachePath)
 			if cacheErr != nil {
-				return nil, fmt.Errorf("список %q (%s): %w; рабочего кэша нет", item.Name, item.URL, cause)
+				statuses[item.URL] = BlocklistSourceStatus{Source: "unavailable", Error: fmt.Sprintf("%v; рабочего кэша нет", cause)}
+				continue
 			}
 			domains, cacheErr = parseBlocklist(cached)
 			if cacheErr != nil {
-				return nil, fmt.Errorf("список %q: загрузка не удалась и кэш повреждён: %w", item.Name, cacheErr)
+				statuses[item.URL] = BlocklistSourceStatus{Source: "unavailable", Error: fmt.Sprintf("%v; кэш повреждён: %v", cause, cacheErr)}
+				continue
 			}
 			statuses[item.URL] = BlocklistSourceStatus{Source: "cache", Error: cause.Error()}
 		} else {
@@ -445,8 +447,15 @@ func (m *BlocklistManager) Apply(ctx context.Context, cfg *config.Config) (bool,
 
 func (m *BlocklistManager) cachedDomains(cfg *config.Config) ([]string, error) {
 	all := map[string]struct{}{}
+	statuses, err := ReadBlocklistStatuses()
+	if err != nil {
+		return nil, err
+	}
 	for _, item := range cfg.DNS.Blocklists {
 		if !item.Enabled {
+			continue
+		}
+		if statuses[item.URL].Source == "unavailable" {
 			continue
 		}
 		data, err := os.ReadFile(blocklistCachePath(item.URL))

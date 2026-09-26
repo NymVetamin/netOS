@@ -18,6 +18,20 @@ type cliDraft struct {
 	DraftVersion uint64 `json:"draft_version"`
 }
 
+func (m *Manager) status(ctx context.Context) error {
+	var state json.RawMessage
+	statusCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := m.controlRequest(statusCtx, http.MethodGet, "/status", nil, &state); err != nil {
+		fmt.Fprintf(m.Err, "Живая сводка недоступна: %v\n", err)
+		fmt.Fprintf(m.Out, "netOS %s\n\n", displayVersion(m.Version))
+		return m.run(ctx, "systemctl", "status", "--no-pager", "netosd")
+	}
+	encoder := json.NewEncoder(m.Out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(state)
+}
+
 type cliApplyResult struct {
 	Revision     int64 `json:"revision"`
 	NeedsConfirm bool  `json:"needs_confirm"`

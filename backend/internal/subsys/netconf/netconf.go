@@ -90,8 +90,9 @@ type Logger interface {
 }
 
 type Subsystem struct {
-	Runner system.Runner
-	Logger Logger
+	Runner           system.Runner
+	Logger           Logger
+	PrepareOwnership func(*config.Config) error
 
 	// warnedIfupdown — то, о чём уже предупреждали в прошлый раз.
 	//
@@ -144,6 +145,11 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	backend := cfg.System.NetworkBackend
+	if (backend == "networkd" || backend == "ifupdown") && s.PrepareOwnership != nil {
+		if err := s.PrepareOwnership(cfg); err != nil {
+			return err
+		}
+	}
 	s.warnAboutIfupdown(ctx, cfg)
 	// Check the selected implementation before changing shared ownership files.
 	// A missing backend must not leave NetworkManager/networkd half-reconfigured.
