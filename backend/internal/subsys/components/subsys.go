@@ -30,6 +30,7 @@ type Subsystem struct {
 	ExternalMigrationPath string
 	// Keep ipset available until firewall and policy cleanup release its sets.
 	DeferIPSetRemoval bool
+	DeferSambaRemoval bool
 }
 
 type Logger interface {
@@ -162,6 +163,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			continue
 		}
 		if info.ID == "ipset" && s.DeferIPSetRemoval {
+			continue
+		}
+		if info.ID == "samba" && s.DeferSambaRemoval {
 			continue
 		}
 		if err := s.removeProtected(ctx, info, protected); err != nil {

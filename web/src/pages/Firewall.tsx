@@ -110,6 +110,10 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       </div>
 
       <ProblemsFor problems={problems} prefixes={["firewall", "clients"]} />
+      {config.samba?.enabled && <Notice tone="info" title="Доступ к дискам Samba">
+        {!fw.enabled && <p>Файрволл выключен: описанные ниже сетевые правила не действуют. Ограничения самого Samba по адресам и пользователям сохраняются.</p>}
+        TCP 445 разрешён для сетей {(config.networks || []).filter((n: any) => (config.samba.networks || []).includes(n.id)).map((n: any) => n.name).join(", ") || "—"} и VPN-серверов {(config.vpn_servers || []).filter((v: any) => (config.samba.vpns || []).includes(v.id)).map((v: any) => v.name).join(", ") || "—"}. Для остальных источников SMB закрыт, включая ранее установленные соединения. {config.samba.discovery && "Обнаружение Windows использует UDP 3702, TCP 5357 и IGMP только в выбранных LAN."} Эти правила применяются до общих правил доступа; настройки находятся в разделе «Диски и файлы».
+      </Notice>}
 
       {!fw.enabled && (
         <Notice tone="danger" title="Файрволл выключен">

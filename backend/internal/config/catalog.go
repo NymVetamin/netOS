@@ -43,6 +43,13 @@ type ComponentInfo struct {
 
 // Catalog — полный список того, что netOS умеет устанавливать.
 var Catalog = []ComponentInfo{
+	{
+		ID: "samba", Title: "Samba — диски и сетевые папки", Group: "Файлы и накопители",
+		Description: "USB-диски, доступ к файлам по SMB 2/3 из LAN и VPN, обнаружение Windows через WS-Discovery.",
+		Packages:    []string{"samba", "samba-common-bin", "wsdd", "ntfs-3g", "exfatprogs"},
+		Units:       []string{"smbd.service", "nmbd.service", "samba-ad-dc.service", "wsdd.service"},
+		RunUnits:    []string{"netos-samba.service"}, Provides: []string{"storage", "smb"}, SizeHint: "около 100 МБ",
+	},
 	// --- выдача адресов ---
 	{
 		ID: "dnsmasq", Title: "dnsmasq", Group: "DHCP службы",

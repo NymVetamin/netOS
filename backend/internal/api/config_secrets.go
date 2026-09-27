@@ -44,6 +44,9 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 	}
 	out.DDNS.Token = ""
 	out.DDNS.Password = ""
+	for i := range out.Samba.Users {
+		out.Samba.Users[i].Password = ""
+	}
 	return &out, nil
 }
 
@@ -77,6 +80,16 @@ func secretConfigField(path, key string) bool {
 func mergeRedactedSecrets(next, previous *config.Config) {
 	if next == nil || previous == nil {
 		return
+	}
+	for i := range next.Samba.Users {
+		if next.Samba.Users[i].Password == "" {
+			for _, u := range previous.Samba.Users {
+				if u.ID == next.Samba.Users[i].ID {
+					next.Samba.Users[i].Password = u.Password
+					break
+				}
+			}
+		}
 	}
 	oldWANs := map[string]config.WAN{}
 	for _, value := range previous.WANs {

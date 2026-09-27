@@ -275,6 +275,7 @@ export const api = {
   rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
 
   catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
+	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),
   status: () => request<any>("GET", "/api/status"),
   ddnsStatus: (signal?: AbortSignal) => request<any>("GET", "/api/ddns/status", undefined, undefined, signal),
   statistics: (hours = 24, interfaces: string[] = []) =>

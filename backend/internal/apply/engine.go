@@ -90,6 +90,7 @@ var Order = []string{
 	"dns",
 	"ddns",
 	"wifi",
+	"samba",
 	"components-cleanup",
 }
 

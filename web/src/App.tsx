@@ -14,6 +14,7 @@ import { DiagnosticsPage } from "./pages/Diagnostics";
 import { ChannelsPage } from "./pages/Channels";
 import { VPNServersPage } from "./pages/VPNServers";
 import { WiFiPage } from "./pages/WiFi";
+import { StoragePage } from "./pages/Storage";
 import { TrafficPage } from "./pages/Traffic";
 import { MapPage } from "./pages/Map";
 
@@ -26,6 +27,7 @@ type PageID =
   | "channels"
   | "vpn-servers"
   | "wifi"
+  | "storage"
   | "traffic"
   | "services"
   | "firewall"
@@ -62,6 +64,7 @@ const NAV: { group: string; items: { id: PageID; label: string; icon: IconName }
     group: "Роутер",
     items: [
       { id: "components", label: "Компоненты", icon: "components" },
+      { id: "storage", label: "Диски и файлы", icon: "services" },
       { id: "system", label: "Система", icon: "system" },
     ],
   },
@@ -596,6 +599,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "channels" && <ChannelsPage key={configGeneration} config={cfg} patch={patch} />}
               {page === "vpn-servers" && <VPNServersPage config={cfg} patch={patch} />}
               {page === "wifi" && <WiFiPage config={cfg} patch={patch} />}
+              {page === "storage" && <StoragePage config={cfg} patch={patch} admin={session.role === "admin"} />}
               {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}
               {page === "services" && <ServicesPage config={cfg} patch={patch} problems={problems} />}
               {page === "firewall" && <FirewallPage config={cfg} patch={patch} problems={problems} />}

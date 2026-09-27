@@ -34,6 +34,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/qos"
 	"github.com/netos-router/netos/internal/subsys/routing"
+	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
@@ -473,6 +474,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
 	componentSubsystem.DeferIPSetRemoval = true
+	componentSubsystem.DeferSambaRemoval = true
 	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")
 	interfaces := netiface.NewInterfaces(runner)
 	networkConfig := netconf.New(runner, logger)
@@ -497,6 +499,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		vpnservers.New(runner, stateDir),
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
+		samba.New(runner, stateDir),
 		firewallSubsystem,
 		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),

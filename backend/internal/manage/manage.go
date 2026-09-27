@@ -27,6 +27,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/policy"
+	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
 )
 
@@ -1175,6 +1176,10 @@ func humanSize(n int64) string {
 // компонента. Одна маска надёжнее списка: новые подсистемы автоматически
 // попадают и в reset, и в uninstall, а сам netosd под неё не подходит.
 func (m *Manager) removeComponentUnits(ctx context.Context) error {
+	mountUnits, err := samba.OwnedMountUnits(filepath.Join(m.StateDir, "generated"))
+	if err != nil {
+		return fmt.Errorf("реестр накопителей: %w", err)
+	}
 	units, _ := filepath.Glob(m.sys("/etc/systemd/system/netos-*.service"))
 	for _, unit := range units {
 		name := filepath.Base(unit)
@@ -1183,6 +1188,21 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 		}
 		if err := os.Remove(unit); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("удаление unit %s: %w", unit, err)
+		}
+	}
+	// Stop automounts before mounts; never remove data or force a busy mount.
+	for _, name := range mountUnits {
+		unit := m.sys("/etc/systemd/system/" + name)
+		if _, err := os.Lstat(unit); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if err := m.run(ctx, "systemctl", "disable", "--no-reload", "--now", name); err != nil {
+			return fmt.Errorf("отключение накопителя: %w", err)
+		}
+		if err := os.Remove(unit); err != nil && !os.IsNotExist(err) {
+			return err
 		}
 	}
 	return nil

@@ -21,6 +21,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/netconf"
+	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
@@ -239,6 +240,7 @@ func renderIKEv2(cfg *config.Config) (string, error) {
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
+	{ID: "samba", Title: "Сетевые папки Samba", Active: func(c *config.Config) bool { return c.Samba.Enabled }, Render: func(c *config.Config) (string, error) { return samba.Render(c, "/var/lib/netos/generated") }},
 	{
 		ID: "iptables", Title: "Правила iptables", Active: always,
 		Render: func(cfg *config.Config) (string, error) {

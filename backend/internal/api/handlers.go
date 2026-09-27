@@ -688,6 +688,9 @@ func redactConfig(cfg *config.Config) (*config.Config, error) {
 	}
 	out.DDNS.Token = ""
 	out.DDNS.Password = ""
+	for i := range out.Samba.Users {
+		out.Samba.Users[i].Password = ""
+	}
 	return &out, nil
 }
 

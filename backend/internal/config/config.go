@@ -53,6 +53,7 @@ type Config struct {
 	WiFi       []WiFiRadio `json:"wifi"`
 	QoS        QoS         `json:"qos"`
 	DDNS       DDNS        `json:"ddns"`
+	Samba      Samba       `json:"samba"`
 }
 
 // ---------------------------------------------------------------------------

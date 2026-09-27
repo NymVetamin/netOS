@@ -51,6 +51,7 @@ __pycache__/
 .playwright-mcp/
 playwright-report/
 test-results/
+/output/
 # Обрывки, которые браузерные сессии роняют в корень: вывод eval и фрагменты сценариев
 /*.js
 

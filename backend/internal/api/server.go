@@ -22,6 +22,7 @@ import (
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/ddns"
+	"github.com/netos-router/netos/internal/system"
 	"github.com/netos-router/netos/internal/tlsutil"
 )
 
@@ -42,13 +43,14 @@ type ComponentProbe interface {
 
 // Server — веб-панель.
 type Server struct {
-	Version     string
-	Store       *store.Store
-	Engine      *apply.Engine
-	Collector   *runtime.Collector
-	Traffic     *runtime.TrafficHistory
-	Maintenance *Maintenance
-	Logger      Logger
+	StorageRunner system.Runner
+	Version       string
+	Store         *store.Store
+	Engine        *apply.Engine
+	Collector     *runtime.Collector
+	Traffic       *runtime.TrafficHistory
+	Maintenance   *Maintenance
+	Logger        Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
 	Components       ComponentProbe
@@ -180,6 +182,7 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/revisions/{id}/restore", s.handleRestoreRevision)
 
 	auth("GET /api/catalog", s.handleCatalog)
+	auth("GET /api/storage/devices", s.handleStorageDevices)
 	auth("GET /api/status", s.handleStatus)
 	auth("GET /api/ddns/status", s.handleDDNSStatus)
 	auth("GET /api/statistics", s.handleStatistics)

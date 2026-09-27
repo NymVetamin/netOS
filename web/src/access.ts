@@ -75,6 +75,12 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
   const flow = dst.kind === "router" ? "in" : "forward";
   const rules: any[] = (fw.rules || []).filter((r: any) => r.enabled && appliesToNew(r));
   const partial: { accept: boolean; text: string }[] = [];
+  if (flow === "in" && config.samba?.enabled) {
+    const local = src.kind === "segment" && (config.samba.networks || []).includes(src.id.replace("segment:", ""));
+    const vpn = src.zone === "vpn" && (config.samba.vpns || []).length > 0;
+    partial.push({ accept: !!(local || vpn), text: local || vpn ? "Samba: TCP 445, выбранные сети и VPN-серверы, требуется пароль" : "Samba: доступ из этой сети запрещён" });
+    if (vpn) partial.push({ accept: false, text: "Samba: остальные VPN-серверы не имеют доступа" });
+  }
   const finish = (accept: boolean, reason: string): Access => {
     const exceptions = partial.filter((p) => p.accept !== accept).map((p) => p.text);
     return { verdict: exceptions.length ? "p" : accept ? "y" : "n", reason, exceptions };

@@ -43,6 +43,7 @@ func defaultConfig() *Config {
 			FilterAAAA: true,
 		},
 		Components: []Component{},
+		Samba:      Samba{Workgroup: "WORKGROUP", Discovery: true},
 		Interfaces: []Interface{},
 		Networks:   []Network{},
 		WANs:       []WAN{},

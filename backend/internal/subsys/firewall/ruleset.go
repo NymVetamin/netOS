@@ -233,6 +233,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// соединению или обойти запрет статическим IP. Поэтому эти правила стоят
 	// раньше системного ESTABLISHED и дополняют отказ DHCP-сервера в аренде.
 	b.blockedClients(cfg)
+	b.sambaAccess(cfg)
 
 	// 1. Правила без привязки к зоне — прямо во встроенных цепочках.
 	b.line("# --- правила без привязки к зоне ---")

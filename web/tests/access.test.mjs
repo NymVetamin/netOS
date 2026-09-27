@@ -120,3 +120,15 @@ test("a disabled firewall lets everything through", () => {
   cfg.firewall.enabled = false;
   assert.equal(cell(cfg, "Интернет", "Офис").verdict, "y");
 });
+
+test("Samba adds LAN and VPN exceptions without opening all router traffic", () => {
+  const cfg = config();
+  cfg.firewall.zones.find(z => z.name === "lan").policy = "drop";
+  cfg.samba = { enabled: true, networks: [cfg.networks[0].id], vpns: ["wg"] };
+  const allowed = cell(cfg, "Офис", "Роутер");
+  assert.ok(allowed.exceptions.some(e => e.includes("Samba") && e.includes("445")));
+  const blocked = cell(cfg, "Камеры", "Роутер");
+  assert.ok(!blocked.exceptions.some(e => e.includes("Samba") && e.includes("445")));
+  cfg.samba.enabled = false;
+  assert.ok(!cell(cfg, "Офис", "Роутер").exceptions.some(e => e.includes("Samba")));
+});
