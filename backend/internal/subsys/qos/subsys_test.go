@@ -60,7 +60,7 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 			if !f.links[dev] {
 				return "", fmt.Errorf("Cannot find device %q", dev)
 			}
-			return "qdisc cake 8002: root bandwidth 47.5Mbit diffserv4 nat wash ingress", nil
+			return "qdisc cake 8002: root bandwidth 47.5Mbit diffserv4 nat wash", nil
 		case dev == "lan0":
 			return "qdisc htb 1: root default 1\nqdisc ingress ffff: parent ffff:fff1", nil
 		default:
@@ -105,7 +105,7 @@ func TestApplyCreatesBothCakeDirectionsAndIsIdempotent(t *testing.T) {
 	for _, want := range []string{
 		"tc qdisc replace dev eth9 root cake bandwidth 9500kbit diffserv4 nat",
 		"tc filter replace dev eth9 parent ffff: protocol all",
-		"tc qdisc replace dev ifb-netos-3 root cake bandwidth 47500kbit diffserv4 nat wash ingress",
+		"tc qdisc replace dev ifb-netos-3 root cake bandwidth 47500kbit diffserv4 nat wash egress",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("нет команды %q:\n%s", want, joined)

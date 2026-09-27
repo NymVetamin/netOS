@@ -77,6 +77,15 @@ func TestMultiWANFailoverNATsEveryEnabledWAN(t *testing.T) {
 			t.Fatalf("backup clients cannot receive replies through %s: %s", iface, rules.IPv4)
 		}
 	}
+	for _, want := range []string{
+		"-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark",
+		"-A POSTROUTING -o wan0 -m conntrack --ctdir ORIGINAL -m mark --mark 0 -m connmark --mark 0 -j CONNMARK --set-mark 0x3001",
+		"-A POSTROUTING -o wan1 -m conntrack --ctdir ORIGINAL -m mark --mark 0 -m connmark --mark 0 -j CONNMARK --set-mark 0x3002",
+	} {
+		if !strings.Contains(rules.IPv4, want) {
+			t.Errorf("failover connection loses selected WAN: %s", want)
+		}
+	}
 	if strings.Contains(rules.IPv4, "POSTROUTING -o wan2") || strings.Contains(rules.IPv4, "--probability") {
 		t.Fatal("failover enabled a disabled WAN or balancing")
 	}

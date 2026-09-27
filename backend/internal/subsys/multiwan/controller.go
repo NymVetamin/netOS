@@ -4,6 +4,7 @@ package multiwan
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -231,7 +232,7 @@ func (c *Controller) Health(ctx context.Context, cfg *config.Config) error {
 		}
 		ruleOK := hasBalanceRule(rules, fmt.Sprint(Priority(wan)), fmt.Sprintf("0x%x", Mark(wan)), table)
 		if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode == "failover" {
-			ruleOK = hasProbeRule(rules, fmt.Sprint(Priority(wan)), interfaceName(cfg, wan), table)
+			ruleOK = ruleOK && hasProbeRule(rules, fmt.Sprint(Priority(wan)), interfaceName(cfg, wan), table)
 		}
 		if !ruleOK {
 			return fmt.Errorf("правило balance %s отсутствует или указывает не в ту таблицу", wan.Name)
@@ -809,6 +810,51 @@ func (c *Controller) reconcileBalanceClassifier(ctx context.Context, cfg *config
 	if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode != "balance" {
 		return nil
 	}
+	rules := c.balanceClassifier(cfg)
+	if _, err := c.Runner.RunInput(ctx, rules, "iptables-restore", "--noflush"); err != nil {
+		return err
+	}
+	if c.StatePath == "" {
+		return nil
+	}
+	data, err := json.Marshal(classifierSnapshot{Config: classifierConfigHash(cfg), Rules: rules})
+	if err != nil {
+		return err
+	}
+	return system.WriteFileAtomic(filepath.Join(filepath.Dir(c.StatePath), "multiwan-classifier.json"), data, 0o600)
+}
+
+type classifierSnapshot struct {
+	Config string
+	Rules  string
+}
+
+func classifierConfigHash(cfg *config.Config) string {
+	data, _ := json.Marshal(cfg)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+// ClassifierRules exposes the same health-adjusted rules the controller owns.
+// Firewall drift checks must compare with these, not the all-WAN bootstrap.
+func (c *Controller) ClassifierRules(cfg *config.Config) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode != "balance" {
+		return ""
+	}
+	// CLI plan runs in another process; use the controller's last successful
+	// desired state, never the live rules being checked for drift.
+	if c.states == nil && c.StatePath != "" {
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(c.StatePath), "multiwan-classifier.json"))
+		var snapshot classifierSnapshot
+		if err == nil && json.Unmarshal(data, &snapshot) == nil && snapshot.Config == classifierConfigHash(cfg) {
+			return snapshot.Rules
+		}
+	}
+	return c.balanceClassifier(cfg)
+}
+
+func (c *Controller) balanceClassifier(cfg *config.Config) string {
 	var active []config.WAN
 	total := 0
 	for _, wan := range cfg.WANs {
@@ -856,10 +902,7 @@ func (c *Controller) reconcileBalanceClassifier(ctx context.Context, cfg *config
 		fmt.Fprintln(&b, "-A NETOS-MULTIWAN -j DROP")
 	}
 	fmt.Fprintln(&b, "COMMIT")
-	if _, err := c.Runner.RunInput(ctx, b.String(), "iptables-restore", "--noflush"); err != nil {
-		return err
-	}
-	return nil
+	return b.String()
 }
 
 func enabledWANs(cfg *config.Config) []config.WAN {
@@ -918,10 +961,12 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	}
 	selector := []string{"fwmark", mark}
 	ruleOK := hasBalanceRule(rules, priority, mark, table)
+	selectorCount := 1
 	var sources []string
 	if probeRule && iface != "" {
 		selector = []string{"oif", iface}
-		ruleOK = hasProbeRule(rules, priority, iface, table)
+		ruleOK = ruleOK && hasProbeRule(rules, priority, iface, table)
+		selectorCount++
 	}
 	if iface != "" {
 		addresses, err := c.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", iface)
@@ -941,7 +986,8 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 			ruleOK = ruleOK && hasSourceRule(rules, priority, source, table)
 		}
 	}
-	// The group contains one probe/mark rule and one rule per local WAN IP.
+	// Keep marked established failover flows in their original WAN table,
+	// alongside interface-bound probes and one rule per local WAN IP.
 	// Rebuild it when an address disappears, including a transition to balance.
 	count := 0
 	for _, line := range strings.Split(rules, "\n") {
@@ -949,7 +995,7 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 			count++
 		}
 	}
-	ruleOK = ruleOK && count == 1+len(sources)
+	ruleOK = ruleOK && count == selectorCount+len(sources)
 	if !ruleOK {
 		if err := c.deleteRuleGroup(ctx, rules, priority); err != nil {
 			return err
@@ -958,6 +1004,11 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 		args = append(args, "priority", priority, "lookup", table)
 		if _, err := c.Runner.Run(ctx, "ip", args...); err != nil {
 			return err
+		}
+		if probeRule && iface != "" {
+			if _, err := c.Runner.Run(ctx, "ip", "-4", "rule", "add", "fwmark", mark, "priority", priority, "lookup", table); err != nil {
+				return err
+			}
 		}
 		for _, source := range sources {
 			// Replies to an address on a failed-health WAN must still use that

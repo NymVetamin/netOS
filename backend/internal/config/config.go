@@ -323,7 +323,8 @@ type RouteRule struct {
 // выключить, но нельзя удалить — чтобы администратор понимал, что именно
 // защищает его доступ к роутеру, и мог это осознанно снять.
 type Firewall struct {
-	Enabled bool `json:"enabled"`
+	Enabled bool            `json:"enabled"`
+	IPSets  []FirewallIPSet `json:"ipsets,omitempty"`
 	// Zones задают политику по умолчанию для трафика, не совпавшего ни с одним
 	// правилом зоны. Политика зоны действует на вход и на форвард.
 	Zones []Zone `json:"zones"`
@@ -338,6 +339,13 @@ type Firewall struct {
 	// портов внутрь. Это две стороны одного механизма, и держать их в разных
 	// разделах панели было ошибкой.
 	NAT []NATRule `json:"nat"`
+}
+
+// FirewallIPSet is a user-maintained IPv4 address/prefix selector.
+type FirewallIPSet struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Entries []string `json:"entries"`
 }
 
 // Zone — группа интерфейсов с общей политикой.
@@ -382,6 +390,8 @@ type FirewallRule struct {
 	Protocol  string    `json:"protocol,omitempty"`
 	SrcIP     string    `json:"src_ip,omitempty"`
 	DstIP     string    `json:"dst_ip,omitempty"`
+	SrcIPSet  string    `json:"src_ipset,omitempty"`
+	DstIPSet  string    `json:"dst_ipset,omitempty"`
 	SrcMAC    string    `json:"src_mac,omitempty"`
 	SrcPort   string    `json:"src_port,omitempty"`
 	DstPort   string    `json:"dst_port,omitempty"`

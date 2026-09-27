@@ -507,6 +507,12 @@ func selectors(r config.FirewallRule) string {
 	if r.DstIP != "" {
 		fmt.Fprintf(&s, " -d %s", r.DstIP)
 	}
+	if r.SrcIPSet != "" {
+		fmt.Fprintf(&s, " -m set --match-set %s src", policy.FirewallSetName(r.SrcIPSet))
+	}
+	if r.DstIPSet != "" {
+		fmt.Fprintf(&s, " -m set --match-set %s dst", policy.FirewallSetName(r.DstIPSet))
+	}
 	if r.SrcMAC != "" {
 		fmt.Fprintf(&s, " -m mac --mac-source %s", r.SrcMAC)
 	}
@@ -750,6 +756,23 @@ func (b *builder) dnsChannelPolicies(cfg *config.Config) {
 }
 
 func (b *builder) multiWANPolicies(cfg *config.Config) {
+	if cfg.MultiWAN.Enabled && cfg.MultiWAN.Mode == "failover" {
+		// Remember the actual egress of a new direct connection. Restoring the
+		// primary main-table route must not move an established backup flow.
+		b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark")
+		b.line("-A OUTPUT -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark")
+		for _, wan := range cfg.WANs {
+			if !wan.Enabled {
+				continue
+			}
+			iface := wanInterface(cfg, wan)
+			if iface == "" {
+				continue
+			}
+			b.line("-A POSTROUTING -o %s -m conntrack --ctdir ORIGINAL -m mark --mark 0 -m connmark --mark 0 -j CONNMARK --set-mark 0x%x", iface, multiwan.Mark(wan))
+		}
+		return
+	}
 	if !cfg.MultiWAN.Enabled || cfg.MultiWAN.Mode != "balance" {
 		return
 	}

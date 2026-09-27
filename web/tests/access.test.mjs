@@ -51,6 +51,16 @@ function config(extraRules = [], patch = {}) {
 
 const zoneIfaces = { wan: ["ppp-wan1"] };
 
+test("address sets restrict rules and empty sets match nothing", () => {
+  const cfg = config([{ name: "Set access", enabled: true, zone: "global", flow: "forward", action: "accept", dst_ipset: "targets" }]);
+  cfg.firewall.ipsets = [{ id: "targets", entries: [] }];
+  assert.equal(cell(cfg, "Интернет", "Офис").verdict, "n");
+  cfg.firewall.ipsets[0].entries = ["192.168.10.42"];
+  assert.equal(cell(cfg, "Интернет", "Офис").verdict, "p");
+  cfg.firewall.ipsets[0].entries = ["192.168.10.0/24"];
+  assert.equal(cell(cfg, "Интернет", "Офис").verdict, "y");
+});
+
 function cell(cfg, from, to) {
   const m = accessMatrix(cfg, zoneIfaces);
   const i = m.sources.findIndex((e) => e.title === from);

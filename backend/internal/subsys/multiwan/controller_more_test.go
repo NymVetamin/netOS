@@ -81,7 +81,12 @@ func (r *balanceStateRunner) Run(_ context.Context, name string, args ...string)
 		}
 		return strings.Join(lines, "\n") + "\n", nil
 	case strings.HasPrefix(joined, "-4 rule del priority "):
-		delete(r.rules, args[len(args)-1])
+		priority := args[len(args)-1]
+		if _, rest, found := strings.Cut(r.rules[priority], "\n"); found {
+			r.rules[priority] = rest
+		} else {
+			delete(r.rules, priority)
+		}
 	case strings.HasPrefix(joined, "-4 rule add "):
 		priority, mark, table, oif := "", "", "", ""
 		for i := 0; i+1 < len(args); i++ {
@@ -97,10 +102,14 @@ func (r *balanceStateRunner) Run(_ context.Context, name string, args ...string)
 			}
 		}
 		if priority != "" {
-			r.rules[priority] = priority + ": from all fwmark " + mark + " lookup " + table
+			line := priority + ": from all fwmark " + mark + " lookup " + table
 			if oif != "" {
-				r.rules[priority] = priority + ": from all oif " + oif + " lookup " + table
+				line = priority + ": from all oif " + oif + " lookup " + table
 			}
+			if r.rules[priority] != "" {
+				r.rules[priority] += "\n"
+			}
+			r.rules[priority] += line
 		}
 	}
 	return "", nil
@@ -519,7 +528,7 @@ func TestHealthValidatesSuppressedRouteState(t *testing.T) {
 			return live, nil
 		}
 		if command == "ip -4 rule show" {
-			return "30001: from all oif wan0 lookup 3001\n", nil
+			return "30001: from all oif wan0 lookup 3001\n30001: from all fwmark 0x3001 lookup 3001\n", nil
 		}
 		if command == "ip -4 route show table 3001" {
 			return "default via 192.0.2.1 dev wan0\nblackhole default metric 32767\n", nil

@@ -21,10 +21,12 @@ import (
 const DomainSetTimeout = 300
 
 type ownedSet struct {
-	Policy     string `json:"policy"`
-	Name       string `json:"name"`
-	Family     string `json:"family"`
-	Definition string `json:"definition"`
+	Policy     string   `json:"policy"`
+	Name       string   `json:"name"`
+	Family     string   `json:"family"`
+	Definition string   `json:"definition"`
+	Static     bool     `json:"static,omitempty"`
+	Entries    []string `json:"entries,omitempty"`
 }
 
 type Subsystem struct {
@@ -54,6 +56,11 @@ func (s *CleanupSubsystem) Name() string { return "policy-cleanup" }
 func IPv4SetName(policyID string) string { return setName(policyID, "inet") }
 func IPv6SetName(policyID string) string { return setName(policyID, "inet6") }
 
+func FirewallSetName(id string) string {
+	hash := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("netos-f4-%x", hash[:8])
+}
+
 func setName(policyID, family string) string {
 	hash := sha256.Sum256([]byte(policyID))
 	suffix := "4"
@@ -74,6 +81,11 @@ func desiredSets(cfg *config.Config) []ownedSet {
 		}
 	}
 	var out []ownedSet
+	for _, item := range cfg.Firewall.IPSets {
+		entries := canonicalEntries(item.Entries)
+		digest := sha256.Sum256([]byte(strings.Join(entries, "\n")))
+		out = append(out, ownedSet{Policy: item.ID, Name: FirewallSetName(item.ID), Family: "inet", Static: true, Entries: entries, Definition: fmt.Sprintf("%x", digest[:8])})
+	}
 	for _, item := range cfg.Policies {
 		if !item.Enabled || len(item.Domains) == 0 || xrayServers[item.VPNServer] {
 			continue
@@ -121,10 +133,10 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		} else if len(before) > 0 && len(after) == 0 {
 			kind = "delete"
 		}
-		return []apply.Action{{Kind: kind, Target: "доменные политики", Detail: fmt.Sprintf("%d IPv4 ipset", len(after))}}, nil
+		return []apply.Action{{Kind: kind, Target: "наборы адресов и доменные политики", Detail: fmt.Sprintf("%d IPv4 ipset", len(after))}}, nil
 	}
 	if err := s.Health(ctx, next); err != nil {
-		return []apply.Action{{Kind: "repair", Target: "доменные политики", Detail: err.Error()}}, nil
+		return []apply.Action{{Kind: "repair", Target: "наборы адресов и доменные политики", Detail: err.Error()}}, nil
 	}
 	return nil, nil
 }
@@ -132,7 +144,11 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 func (s *Subsystem) ownedPath() string { return filepath.Join(s.StateDir, "owned-policy-ipsets.json") }
 
 func validOwned(item ownedSet) bool {
-	if (item.Family != "inet" && item.Family != "inet6") || item.Name != setName(item.Policy, item.Family) {
+	expectedName := setName(item.Policy, item.Family)
+	if item.Static {
+		expectedName = FirewallSetName(item.Policy)
+	}
+	if (item.Family != "inet" && item.Family != "inet6") || item.Name != expectedName || (item.Static && item.Family != "inet") {
 		return false
 	}
 	// Empty is the pre-fingerprint ownership format. It is safe because the set
@@ -241,6 +257,9 @@ func parseSetNames(output string) map[string]bool {
 }
 
 func setHealthy(detail string, item ownedSet) bool {
+	if item.Static {
+		return strings.Contains(detail, "Type: hash:net") && strings.Contains(detail, "family inet ") && reflect.DeepEqual(setMembers(detail), canonicalEntries(item.Entries))
+	}
 	if !strings.Contains(detail, "Type: hash:ip") {
 		return false
 	}
@@ -351,6 +370,27 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 
 	for _, item := range desired {
+		if item.Static {
+			if live[item.Name] {
+				detail, err := s.Runner.Run(ctx, "ipset", "list", item.Name)
+				if err != nil {
+					return rollback(err)
+				}
+				if setHealthy(detail, item) {
+					continue
+				}
+				flushed[item.Name] = true
+			} else {
+				if _, err := s.Runner.Run(ctx, "ipset", "create", item.Name, "hash:net", "family", "inet", "maxelem", "65536"); err != nil {
+					return rollback(err)
+				}
+			}
+			mutated[item.Name] = true
+			if err := s.replaceStaticMembers(ctx, item); err != nil {
+				return rollback(err)
+			}
+			continue
+		}
 		if live[item.Name] {
 			detail, err := s.Runner.Run(ctx, "ipset", "list", item.Name)
 			if err != nil {

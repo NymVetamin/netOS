@@ -472,10 +472,13 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	svc := services.NewManager(runner)
 	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
+	componentSubsystem.DeferIPSetRemoval = true
 	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")
 	interfaces := netiface.NewInterfaces(runner)
 	networkConfig := netconf.New(runner, logger)
 	networkConfig.PrepareOwnership = interfaces.PrepareOwnership
+	firewallSubsystem := firewall.New(runner, stateDir)
+	firewallSubsystem.MultiWANClassifier = multiWAN.ClassifierRules
 
 	subsystems := []apply.Subsystem{
 		componentSubsystem,
@@ -494,11 +497,12 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		vpnservers.New(runner, stateDir),
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
-		firewall.New(runner, stateDir),
+		firewallSubsystem,
 		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),
 		ddnsController,
+		&components.Cleanup{Components: componentSubsystem},
 	}
 	for _, s := range subsystems {
 		if err := engine.Register(s); err != nil {

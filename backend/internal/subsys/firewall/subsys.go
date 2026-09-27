@@ -23,7 +23,8 @@ type Subsystem struct {
 	// Legacy заставляет использовать iptables-legacy вместо стандартного
 	// iptables-nft. На системах, где часть правил ставит кто-то ещё через
 	// nft, смешивать бэкенды нельзя, и выбор остаётся за администратором.
-	Legacy bool
+	Legacy             bool
+	MultiWANClassifier func(*config.Config) string
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
@@ -86,6 +87,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 		actions = append(actions, apply.Action{Kind: "update", Target: "ip6tables", Detail: detail})
 	}
 	if len(actions) == 0 {
+		s.runtimeRules(new, newRS)
 		ipv4OK, ipv6OK, err := s.liveMatches(ctx, newRS)
 		if err != nil {
 			return nil, err
@@ -203,6 +205,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	s.runtimeRules(cfg, expected)
 	ipv4OK, ipv6OK, err := s.liveMatches(ctx, expected)
 	if err != nil {
 		return err
@@ -214,6 +217,35 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("живые правила ip6tables не соответствуют конфигурации")
 	}
 	return nil
+}
+
+func (s *Subsystem) runtimeRules(cfg *config.Config, rs *Ruleset) {
+	if s.MultiWANClassifier == nil || !strings.Contains(rs.IPv4, ":NETOS-MULTIWAN ") {
+		return
+	}
+	dynamic := s.MultiWANClassifier(cfg)
+	if dynamic == "" {
+		return
+	}
+	var replacement []string
+	for _, line := range strings.Split(dynamic, "\n") {
+		if strings.HasPrefix(line, "-A NETOS-MULTIWAN ") {
+			replacement = append(replacement, line)
+		}
+	}
+	var out []string
+	inserted := false
+	for _, line := range strings.Split(rs.IPv4, "\n") {
+		if strings.HasPrefix(line, "-A NETOS-MULTIWAN ") {
+			if !inserted {
+				out = append(out, replacement...)
+				inserted = true
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	rs.IPv4 = strings.Join(out, "\n")
 }
 
 // RestoreOnBoot возвращает содержимое ruleset'а, сохранённого при последнем

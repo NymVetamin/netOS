@@ -692,18 +692,22 @@ func redactConfig(cfg *config.Config) (*config.Config, error) {
 }
 
 func redactSecretValues(values map[string]any) {
+	redactSecretValuesAt(values, "")
+}
+
+func redactSecretValuesAt(values map[string]any, path string) {
 	for key, value := range values {
-		if secretField(key) {
+		if secretConfigField(path, key) {
 			values[key] = ""
 			continue
 		}
 		switch nested := value.(type) {
 		case map[string]any:
-			redactSecretValues(nested)
+			redactSecretValuesAt(nested, configChildPath(path, key))
 		case []any:
 			for _, item := range nested {
 				if object, ok := item.(map[string]any); ok {
-					redactSecretValues(object)
+					redactSecretValuesAt(object, configChildPath(path, key))
 				}
 			}
 		}

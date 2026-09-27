@@ -84,7 +84,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
   const walk = (list: any[]): Access | null => {
     for (const r of list) {
       if (r.action === "continue") continue;
-      const match = matchRule(r, src, dst, flow, segments);
+      const match = matchRule(r, src, dst, flow, segments, fw.ipsets || []);
       if (match === "none") continue;
       const accept = r.action === "accept";
       if (match === "part") partial.push({ accept, text: `«${r.name}»${conditions(r)}` });
@@ -133,7 +133,7 @@ function appliesToNew(r: any): boolean {
   return states.length === 0 || states.includes("new");
 }
 
-function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Entity[]): "full" | "part" | "none" {
+function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Entity[], sets: any[]): "full" | "part" | "none" {
   let part = false;
 
   if (flow === "forward" && r.dst_zone && r.dst_zone !== dst.zone) return "none";
@@ -148,6 +148,15 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
   const to = flow === "in" ? (r.dst_ip ? "part" : "full") : side(r.dst_ip, dst, segments);
   if (to === "none") return "none";
   if (from === "part" || to === "part") part = true;
+
+  for (const [id, entity] of [[r.src_ipset, src], [r.dst_ipset, dst]] as [string, Entity][]) {
+    if (!id) continue;
+    const entries: string[] = sets.find((s) => s.id === id)?.entries || [];
+    if (!entries.length) return "none";
+    const match = entity.kind === "router" ? "part" : side(entries.join(","), entity, segments);
+    if (match === "none") return "none";
+    if (match === "part") part = true;
+  }
 
   if ((r.protocol && r.protocol !== "any") || r.src_port || r.dst_port || r.src_mac || r.schedule) part = true;
   return part ? "part" : "full";
@@ -175,6 +184,7 @@ function conditions(r: any): string {
   else if (r.dst_port) parts.push(`порт ${r.dst_port}`);
   if (r.src_ip) parts.push(`из ${r.src_ip}`);
   if (r.dst_ip) parts.push(`в ${r.dst_ip}`);
+  if (r.src_ipset || r.dst_ipset) parts.push("по набору адресов");
   if (r.src_mac) parts.push(`MAC ${r.src_mac}`);
   if (r.schedule) parts.push("по расписанию");
   return parts.length ? `: ${parts.join(", ")}` : "";

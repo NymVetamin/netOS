@@ -28,6 +28,8 @@ type Subsystem struct {
 	Systemd               *system.Systemd
 	Logger                Logger
 	ExternalMigrationPath string
+	// Keep ipset available until firewall and policy cleanup release its sets.
+	DeferIPSetRemoval bool
 }
 
 type Logger interface {
@@ -157,6 +159,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			continue
 		}
 		if !s.componentRemovable(ctx, info, protected) {
+			continue
+		}
+		if info.ID == "ipset" && s.DeferIPSetRemoval {
 			continue
 		}
 		if err := s.removeProtected(ctx, info, protected); err != nil {

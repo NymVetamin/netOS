@@ -126,7 +126,8 @@ func TestHealthChecksWANRateProfileIngressRedirectAndOwnership(t *testing.T) {
 		{"profile", "tc qdisc show dev eth9", "qdisc cake 1: root bandwidth 9500Kbit besteffort nat\nqdisc ingress ffff:"},
 		{"ingress", "tc qdisc show dev eth9", "qdisc cake 1: root bandwidth 9500Kbit diffserv4 nat"},
 		{"redirect", "tc filter show dev eth9 parent ffff:", "filter pref 1 u32 mirred redirect dev wrong0"},
-		{"download", "tc qdisc show dev ifb-netos-3", "qdisc cake 2: root bandwidth 47000Kbit diffserv4 nat wash ingress"},
+		{"download", "tc qdisc show dev ifb-netos-3", "qdisc cake 2: root bandwidth 47000Kbit diffserv4 nat wash egress"},
+		{"download charges drops", "tc qdisc show dev ifb-netos-3", "qdisc cake 2: root bandwidth 47500Kbit diffserv4 nat wash ingress"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -327,7 +328,7 @@ func TestEveryApplyLinkCommandFailureIsReturned(t *testing.T) {
 		{"tc qdisc replace dev eth9 root cake bandwidth 9500kbit diffserv4 nat", true},
 		{"tc qdisc replace dev eth9 handle ffff: ingress", true},
 		{"tc filter replace dev eth9 parent ffff: protocol all u32 match u32 0 0 action mirred egress redirect dev ifb-netos-3", true},
-		{"tc qdisc replace dev ifb-netos-3 root cake bandwidth 47500kbit diffserv4 nat wash ingress", true},
+		{"tc qdisc replace dev ifb-netos-3 root cake bandwidth 47500kbit diffserv4 nat wash egress", true},
 	}
 	for _, tt := range commands {
 		t.Run(tt.command, func(t *testing.T) {

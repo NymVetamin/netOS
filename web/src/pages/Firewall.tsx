@@ -7,6 +7,39 @@ import { ProblemsFor } from "./Network";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
+function AddressSets({ config, patch }: { config: any; patch: Patch }) {
+  const sets: any[] = config.firewall?.ipsets || [];
+  const [editing, setEditing] = useState<{ id: string; name: string; text: string } | null>(null);
+  const installed = (config.components || []).some((c: any) => c.id === "ipset" && c.installed);
+  return <Card title="Наборы адресов">
+    <p>Объединяйте IPv4-адреса и подсети, чтобы использовать их в правилах доступа.</p>
+    {!installed && <Notice tone="warn" title="Нужен компонент «Наборы адресов»">Включите его на странице компонентов перед применением настройки.</Notice>}
+    {sets.map((item: any) => {
+      const used = (config.firewall?.rules || []).some((r: any) => r.src_ipset === item.id || r.dst_ipset === item.id);
+      return <div className="row wrap" key={item.id} style={{ gap: "1rem", marginBottom: "0.5rem" }}>
+        <strong>{item.name}</strong><span>{(item.entries || []).length} адресов и подсетей</span>
+        <button className="btn" onClick={() => setEditing({ id: item.id, name: item.name, text: (item.entries || []).join("\n") })}>Изменить набор</button>
+        <button className="btn danger" disabled={used} title={used ? "Сначала уберите набор из правил" : "Удалить набор"} onClick={() => patch((d) => { d.firewall.ipsets = d.firewall.ipsets.filter((s: any) => s.id !== item.id); })}>Удалить</button>
+      </div>;
+    })}
+    {!editing && <button className="btn" onClick={() => setEditing({ id: newID("set"), name: "", text: "" })}>Добавить набор адресов</button>}
+    {editing && <div>
+      <Field label="Название набора"><input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></Field>
+      <Field label="IPv4-адреса и подсети" hint="По одному на строку, например 192.0.2.10 или 198.51.100.0/24. Пустой набор не совпадает ни с одним адресом.">
+        <textarea rows={6} className="mono" value={editing.text} onChange={(e) => setEditing({ ...editing, text: e.target.value })} />
+      </Field>
+      <div className="row" style={{ gap: "0.5rem" }}>
+        <button className="btn primary" disabled={!editing.name.trim()} onClick={() => {
+          const item = { id: editing.id, name: editing.name.trim(), entries: editing.text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean) };
+          patch((d) => { d.firewall.ipsets ||= []; const index = d.firewall.ipsets.findIndex((s: any) => s.id === item.id); if (index < 0) d.firewall.ipsets.push(item); else d.firewall.ipsets[index] = item; });
+          setEditing(null);
+        }}>Сохранить набор в черновик</button>
+        <button className="btn" onClick={() => setEditing(null)}>Отмена</button>
+      </div>
+    </div>}
+  </Card>;
+}
+
 // Направления названы так же, как цепочки ядра: администратор, глядящий в
 // iptables-save, должен видеть те же слова, что и в панели. Направления «во все
 // сразу» нет намеренно — одно правило попадает ровно в одну цепочку.
@@ -85,6 +118,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       )}
 
       <AccessCard config={config} />
+
+      <AddressSets config={config} patch={patch} />
 
       <Card title="Зоны и политики">
         <div className="row wrap" style={{ marginBottom: "1rem", gap: "1.5rem" }}>
@@ -376,6 +411,15 @@ function RuleForm({
           />
         </Field>
 
+        {(["src_ipset", "dst_ipset"] as const).map((field) => (
+          <Field key={field} label={field === "src_ipset" ? "Набор адресов источника" : "Набор адресов назначения"} hint="Дополнительное условие: адрес входит в выбранный набор">
+            <select value={r[field] || ""} onChange={(e) => set(field, e.target.value)}>
+              <option value="">Любой адрес</option>
+              {(config.firewall?.ipsets || []).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+        ))}
+
         <Field label="Порт назначения" hint="80, или 80,443, или 1000-2000">
           <input
             type="text"
@@ -581,7 +625,7 @@ function RuleRow({
           <div className="row" style={{ gap: "0.35rem", marginTop: 2 }}>
             {rule.system && <Badge tone="neutral">создано netOS</Badge>}
             <span className="mono faint" style={{ fontSize: 12 }}>
-              {describeConditions(rule) || "любой трафик"}
+              {describeConditions(rule, config.firewall?.ipsets || []) || "любой трафик"}
             </span>
           </div>
         </td>
@@ -1223,13 +1267,16 @@ function interfacesOfZone(config: any, zone: string): string[] {
   return names.filter(Boolean);
 }
 
-function describeConditions(r: any): string {
+function describeConditions(r: any, sets: any[]): string {
   const parts: string[] = [];
+  const setName = (id: string) => sets.find((s) => s.id === id)?.name || id;
   if (r.interface) parts.push(`на ${r.interface}`);
   if (r.protocol) parts.push(r.protocol.toUpperCase());
   if (r.src_ip) parts.push(`от ${r.src_ip}`);
+  if (r.src_ipset) parts.push(`из набора «${setName(r.src_ipset)}»`);
   if (r.src_mac) parts.push(`от ${r.src_mac}`);
   if (r.dst_ip) parts.push(`к ${r.dst_ip}`);
+  if (r.dst_ipset) parts.push(`в набор «${setName(r.dst_ipset)}»`);
   if (r.src_port) parts.push(`из порта ${r.src_port}`);
   if (r.dst_port) parts.push(`порт ${r.dst_port}`);
   if (r.conn_state) parts.push(r.conn_state);

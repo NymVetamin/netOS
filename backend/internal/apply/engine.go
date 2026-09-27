@@ -90,6 +90,7 @@ var Order = []string{
 	"dns",
 	"ddns",
 	"wifi",
+	"components-cleanup",
 }
 
 // startupConnectivityOrder is the dependency-safe subset that can restore a

@@ -291,7 +291,10 @@ func (s *Subsystem) applyLink(ctx context.Context, item ownedLink, setting confi
 	if _, err := s.Runner.Run(ctx, "tc", "filter", "replace", "dev", item.Interface, "parent", "ffff:", "protocol", "all", "u32", "match", "u32", "0", "0", "action", "mirred", "egress", "redirect", "dev", item.IFB); err != nil {
 		return fmt.Errorf("перенаправление входящего трафика: %w", err)
 	}
-	if _, err := s.Runner.Run(ctx, "tc", "qdisc", "replace", "dev", item.IFB, "root", "cake", "bandwidth", fmt.Sprintf("%dkbit", setting.DownloadKbit), profile, "nat", "wash", "ingress"); err != nil {
+	// Shape bytes delivered to the LAN. CAKE ingress also charges dropped
+	// packets, which underutilizes low-rate links with probing senders (BBR).
+	// Explicit egress clears ingress on an existing qdisc during an upgrade.
+	if _, err := s.Runner.Run(ctx, "tc", "qdisc", "replace", "dev", item.IFB, "root", "cake", "bandwidth", fmt.Sprintf("%dkbit", setting.DownloadKbit), profile, "nat", "wash", "egress"); err != nil {
 		return fmt.Errorf("очередь загрузки: %w", err)
 	}
 	return nil
@@ -331,7 +334,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("перенаправление входящего трафика с %s на %s не работает", item.Interface, item.IFB)
 		}
 		out, err = s.Runner.Run(ctx, "tc", "qdisc", "show", "dev", item.IFB)
-		if err != nil || !lineHasTokens(out, "qdisc", "cake", "root", fmt.Sprintf("%dkbit", setting.DownloadKbit), profile, "nat", "wash", "ingress") {
+		if err != nil || !lineHasTokens(out, "qdisc", "cake", "root", fmt.Sprintf("%dkbit", setting.DownloadKbit), profile, "nat", "wash") || lineHasTokens(out, "qdisc", "cake", "root", "ingress") {
 			return fmt.Errorf("очередь загрузки CAKE на %s не соответствует конфигурации", item.IFB)
 		}
 	}

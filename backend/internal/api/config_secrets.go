@@ -57,6 +57,21 @@ func secretField(key string) bool {
 		strings.Contains(normalized, "token")
 }
 
+// Xray uses generic names for credentials inside outbound settings. Keep
+// those aliases scoped: an id elsewhere identifies an editable object.
+func secretConfigField(path, key string) bool {
+	if secretField(key) {
+		return true
+	}
+	if !strings.HasPrefix(path, "outbound.") {
+		return false
+	}
+	if key == "id" {
+		return path == "outbound.settings" || strings.HasSuffix(path, ".users")
+	}
+	return key == "pass" || key == "auth"
+}
+
 // Empty secret fields in an edited, redacted tree mean "keep the current
 // value". New nonempty credentials always replace the old ones.
 func mergeRedactedSecrets(next, previous *config.Config) {
@@ -124,12 +139,16 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 }
 
 func mergeSecretMap(next, previous map[string]any) {
+	mergeSecretMapAt(next, previous, "")
+}
+
+func mergeSecretMapAt(next, previous map[string]any, path string) {
 	for key, value := range next {
 		old, ok := previous[key]
 		if !ok {
 			continue
 		}
-		if secretField(key) {
+		if secretConfigField(path, key) {
 			if value == "" {
 				next[key] = old
 			}
@@ -138,14 +157,19 @@ func mergeSecretMap(next, previous map[string]any) {
 		switch typed := value.(type) {
 		case map[string]any:
 			if oldMap, ok := old.(map[string]any); ok {
-				mergeSecretMap(typed, oldMap)
+				mergeSecretMapAt(typed, oldMap, configChildPath(path, key))
 			}
 		case []any:
 			if oldList, ok := old.([]any); ok {
 				for i, child := range typed {
 					if childMap, ok := child.(map[string]any); ok {
-						if oldMap := correspondingSecretMap(childMap, oldList, i); oldMap != nil {
-							mergeSecretMap(childMap, oldMap)
+						identity := childMap
+						childPath := configChildPath(path, key)
+						if secretConfigField(childPath, "id") {
+							identity = map[string]any{"name": childMap["name"], "email": childMap["email"]}
+						}
+						if oldMap := correspondingSecretMap(identity, oldList, i); oldMap != nil {
+							mergeSecretMapAt(childMap, oldMap, childPath)
 						}
 					}
 				}
@@ -154,8 +178,15 @@ func mergeSecretMap(next, previous map[string]any) {
 	}
 }
 
+func configChildPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
+}
+
 func correspondingSecretMap(child map[string]any, oldList []any, index int) map[string]any {
-	for _, field := range []string{"id", "name"} {
+	for _, field := range []string{"id", "name", "email"} {
 		identity, ok := child[field].(string)
 		if !ok || identity == "" {
 			continue

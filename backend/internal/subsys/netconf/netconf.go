@@ -785,6 +785,11 @@ func renderPassive(iface config.Interface, suppressIPv6 bool) string {
 	w("KeepMaster=yes")
 	if suppressIPv6 {
 		w("LinkLocalAddressing=no")
+	} else {
+		// KeepMaster changes networkd's default to no link-local addressing.
+		// Forwarded IPv6 needs a local link-local source for cold-neighbor ND;
+		// global addresses alone only hid this after a router-originated ping.
+		w("LinkLocalAddressing=ipv6")
 	}
 	w("IPv6AcceptRA=no")
 	w("")

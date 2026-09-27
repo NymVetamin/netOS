@@ -1370,6 +1370,30 @@ func validFwMark(value string) bool {
 }
 
 func (c *Config) validateFirewall(r *ValidationResult) {
+	sets := map[string]bool{}
+	for i, set := range c.Firewall.IPSets {
+		path := fmt.Sprintf("firewall.ipsets[%d]", i)
+		if strings.TrimSpace(set.ID) == "" || len(set.ID) > 128 || sets[set.ID] {
+			r.errf(path+".id", "нужен уникальный идентификатор набора длиной до 128 символов")
+		}
+		sets[set.ID] = true
+		if strings.TrimSpace(set.Name) == "" || len(set.Name) > 128 {
+			r.errf(path+".name", "укажите название набора длиной до 128 символов")
+		}
+		if len(set.Entries) > 65536 {
+			r.errf(path+".entries", "в наборе допускается до 65536 адресов")
+		}
+		for j, entry := range set.Entries {
+			address, err := netip.ParseAddr(entry)
+			prefix, prefixErr := netip.ParsePrefix(entry)
+			if (err != nil || !address.Is4()) && (prefixErr != nil || !prefix.Addr().Is4() || prefix.Bits() == 0) {
+				r.errf(fmt.Sprintf("%s.entries[%d]", path, j), "нужен IPv4-адрес или подсеть с префиксом 1–32")
+			}
+		}
+	}
+	if len(sets) > 0 && !c.HasComponent("ipset") {
+		r.errf("firewall.ipsets", "для наборов адресов нужен компонент «Наборы адресов»")
+	}
 	zones := c.zoneNames()
 	policies := map[string]bool{"accept": true, "drop": true, "reject": true}
 
@@ -1445,6 +1469,11 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		}
 		validateCIDR(r, path+".src_ip", rule.SrcIP)
 		validateCIDR(r, path+".dst_ip", rule.DstIP)
+		for field, id := range map[string]string{"src_ipset": rule.SrcIPSet, "dst_ipset": rule.DstIPSet} {
+			if id != "" && !sets[id] {
+				r.errf(path+"."+field, "неизвестный набор адресов %q", id)
+			}
+		}
 		validatePortSpec(r, path+".src_port", rule.SrcPort)
 		validatePortSpec(r, path+".dst_port", rule.DstPort)
 		if rule.SrcMAC != "" {
@@ -1565,6 +1594,20 @@ func (c *Config) reachableForManagement() bool {
 // помогут администратору, оставшемуся без доступа, а ложное «всё в порядке»
 // от защиты хуже её отсутствия.
 func (c *Config) ruleGrantsManagement(r FirewallRule) bool {
+	for _, id := range []string{r.SrcIPSet, r.DstIPSet} {
+		if id == "" {
+			continue
+		}
+		nonempty := false
+		for _, set := range c.Firewall.IPSets {
+			if set.ID == id && len(set.Entries) > 0 {
+				nonempty = true
+			}
+		}
+		if !nonempty {
+			return false
+		}
+	}
 	if !r.Enabled || r.Action != "accept" {
 		return false
 	}

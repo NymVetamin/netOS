@@ -29,10 +29,17 @@ func newProductionACMEManager(cacheDir, domain, email string) (acmeCertificateMa
 		return nil, err
 	}
 	domain = strings.TrimSuffix(strings.ToLower(domain), ".")
+	whitelist := autocert.HostWhitelist(domain)
 	return &autocert.Manager{
-		Prompt:      autocert.AcceptTOS,
-		Cache:       autocert.DirCache(cacheDir),
-		HostPolicy:  autocert.HostWhitelist(domain),
+		Prompt: autocert.AcceptTOS,
+		Cache:  autocert.DirCache(cacheDir),
+		HostPolicy: func(ctx context.Context, host string) error {
+			// HTTP-01 authorities may include :80 in Host. TLS SNI does not.
+			if name, _, err := net.SplitHostPort(host); err == nil {
+				host = name
+			}
+			return whitelist(ctx, host)
+		},
 		Email:       email,
 		RenewBefore: 30 * 24 * time.Hour,
 	}, nil

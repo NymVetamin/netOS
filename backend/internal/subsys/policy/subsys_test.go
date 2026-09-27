@@ -13,6 +13,7 @@ import (
 )
 
 type fakeSet struct {
+	kind    string
 	family  string
 	timeout int
 	entries []string
@@ -52,22 +53,37 @@ func (r *policyRunner) Run(_ context.Context, name string, args ...string) (stri
 		if !ok {
 			return "", fmt.Errorf("does not exist")
 		}
-		return fmt.Sprintf("Name: %s\nType: hash:ip\nHeader: family %s hashsize 1024 maxelem 65536 timeout %d\n", args[1], set.family, set.timeout), nil
+		kind := set.kind
+		if kind == "" {
+			kind = "hash:ip"
+		}
+		return fmt.Sprintf("Name: %s\nType: %s\nHeader: family %s hashsize 1024 maxelem 65536 timeout %d\nMembers:\n%s\n", args[1], kind, set.family, set.timeout, strings.Join(set.entries, "\n")), nil
 	case "save":
 		set, ok := r.sets[args[1]]
 		if !ok {
 			return "", fmt.Errorf("does not exist")
 		}
 		var out strings.Builder
-		fmt.Fprintf(&out, "create %s hash:ip family %s timeout %d\n", args[1], set.family, set.timeout)
+		kind := set.kind
+		if kind == "" {
+			kind = "hash:ip"
+		}
+		fmt.Fprintf(&out, "create %s %s family %s timeout %d\n", args[1], kind, set.family, set.timeout)
 		for _, entry := range set.entries {
 			fmt.Fprintf(&out, "add %s %s\n", args[1], entry)
 		}
 		return out.String(), nil
 	case "create":
+		if _, exists := r.sets[args[1]]; exists {
+			return "", fmt.Errorf("set already exists")
+		}
 		timeout := 0
-		_, _ = fmt.Sscan(args[6], &timeout)
-		r.sets[args[1]] = fakeSet{family: args[4], timeout: timeout}
+		if args[5] == "timeout" {
+			_, _ = fmt.Sscan(args[6], &timeout)
+		}
+		r.sets[args[1]] = fakeSet{kind: args[2], family: args[4], timeout: timeout}
+	case "swap":
+		r.sets[args[1]], r.sets[args[2]] = r.sets[args[2]], r.sets[args[1]]
 	case "destroy":
 		if _, ok := r.sets[args[1]]; !ok {
 			return "", fmt.Errorf("does not exist")
@@ -99,7 +115,7 @@ func (r *policyRunner) RunInput(ctx context.Context, input, name string, args ..
 			case "create":
 				timeout := 0
 				_, _ = fmt.Sscan(fields[6], &timeout)
-				r.sets[fields[1]] = fakeSet{family: fields[4], timeout: timeout}
+				r.sets[fields[1]] = fakeSet{kind: fields[2], family: fields[4], timeout: timeout}
 			case "add":
 				set := r.sets[fields[1]]
 				set.entries = append(set.entries, fields[2])

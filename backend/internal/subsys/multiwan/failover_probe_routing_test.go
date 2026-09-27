@@ -86,8 +86,8 @@ func TestFailoverCanProbeRemoteTargetAfterDefaultWithdrawal(t *testing.T) {
 	if err := c.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(r.rules["30002"], "fwmark") || !strings.Contains(r.rules["30002"], "oif wan0") {
-		t.Fatalf("failover retained balance mark selector: %v", r.rules)
+	if !strings.Contains(r.rules["30002"], "fwmark 0x3002") || !strings.Contains(r.rules["30002"], "oif wan0") {
+		t.Fatalf("failover lost a pinned-flow or probe selector: %v", r.rules)
 	}
 	cfg.MultiWAN.Enabled = false
 	if err := c.Apply(ctx, cfg); err != nil {
