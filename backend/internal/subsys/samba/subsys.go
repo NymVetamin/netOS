@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,11 +30,15 @@ type Subsystem struct {
 func New(r system.Runner, dir string) *Subsystem { return &Subsystem{r, dir, "/etc/systemd/system"} }
 func (s *Subsystem) Name() string                { return "samba" }
 func (s *Subsystem) stamp(c *config.Config) []byte {
+	host := ""
+	if c.Samba.Enabled && c.Samba.Discovery && len(c.Samba.Networks) > 0 {
+		host = c.System.Hostname
+	}
 	data, _ := json.Marshal(struct {
 		Samba  config.Samba
 		Access []Access
 		Host   string
-	}{c.Samba, Accesses(c), c.System.Hostname})
+	}{c.Samba, Accesses(c), host})
 	h := sha256.Sum256(data)
 	return []byte(hex.EncodeToString(h[:]))
 }
@@ -280,8 +285,26 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		if _, err = s.Runner.Run(ctx, "testparm", "--suppress-prompt", filepath.Join(s.StateDir, "samba.conf")); err != nil {
 			return fmt.Errorf("Samba config: %w", err)
 		}
+		// An enabled unit can start before netOS assigns the LAN addresses at
+		// boot. An active smbd listening only on loopback must be repaired.
+		// Discovery also caches interface addresses at startup. Repair both
+		// services when the LAN was not ready for their initial start.
+		changed = changed || s.lanListeners(ctx, c) != nil
 		if err = s.startUnit(ctx, "netos-samba.service", sambaUnit(s.StateDir), changed); err != nil {
 			return err
+		}
+		for attempt := 0; ; attempt++ {
+			if err = s.lanListeners(ctx, c); err == nil {
+				break
+			}
+			if attempt == 49 {
+				return err
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
 		if c.Samba.Discovery && len(c.Samba.Networks) > 0 {
 			if err = s.startUnit(ctx, "netos-wsdd.service", discoveryUnit(c), changed); err != nil {
@@ -324,7 +347,9 @@ func (s *Subsystem) startUnit(ctx context.Context, name, text string, changed bo
 }
 func (s *Subsystem) removeVolume(ctx context.Context, v config.StorageVolume) error {
 	sd := system.NewSystemd(s.Runner)
-	// Never force/lazy-unmount: busy files must surface as an apply error.
+	if err := unmountVolume(ctx, s.Runner.Run, v); err != nil {
+		return err
+	}
 	for _, ext := range []string{".automount", ".mount"} {
 		name := strings.TrimSuffix(mountUnit(v), ".mount") + ext
 		if err := sd.Disable(ctx, name); err != nil {
@@ -347,6 +372,9 @@ func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {
 	if c.Samba.Enabled {
 		if !sd.IsActive(ctx, "netos-samba.service") {
 			return fmt.Errorf("Samba не работает")
+		}
+		if err := s.lanListeners(ctx, c); err != nil {
+			return err
 		}
 		conf, err := Render(c, s.StateDir)
 		if err != nil {
@@ -408,6 +436,36 @@ func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {
 	return nil
 }
 
+func (s *Subsystem) lanListeners(ctx context.Context, c *config.Config) error {
+	wanted := map[string]bool{}
+	for _, n := range c.Networks {
+		if n.Enabled && selected(c.Samba.Networks, n.ID) {
+			prefix, err := netip.ParsePrefix(n.RouterAddress)
+			if err != nil {
+				return err
+			}
+			wanted[netip.AddrPortFrom(prefix.Addr(), 445).String()] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	out, err := s.Runner.Run(ctx, "ss", "-H", "-lnt")
+	if err != nil {
+		return fmt.Errorf("проверка слушателей Samba: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 {
+			delete(wanted, fields[3])
+		}
+	}
+	for address := range wanted {
+		return fmt.Errorf("Samba не слушает выбранную LAN: %s", address)
+	}
+	return nil
+}
+
 func validLastChange(value string) bool {
 	if !strings.HasPrefix(value, "LCT-") {
 		return false
@@ -433,4 +491,40 @@ func OwnedMountUnits(stateDir string) ([]string, error) {
 		}
 	}
 	return units, nil
+}
+
+// UnmountOwnedVolumes rejects busy filesystems before lifecycle operations
+// stop any automount or remove the persisted ownership needed for recovery.
+func UnmountOwnedVolumes(ctx context.Context, stateDir string, run func(context.Context, string, ...string) (string, error)) error {
+	volumes, err := New(nil, stateDir).owned()
+	if err != nil {
+		return err
+	}
+	for _, v := range volumes {
+		if err := unmountVolume(ctx, run, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func unmountVolume(ctx context.Context, run func(context.Context, string, ...string) (string, error), v config.StorageVolume) error {
+	// Never force/lazy-unmount: busy files must surface as an apply error.
+	// Stopping an automount first detaches its mount tree, including a busy
+	// filesystem. Ask the kernel to unmount the real filesystem before that.
+	// netosd has PrivateTmp and therefore a private mount namespace. Unmount
+	// in PID 1's namespace, where the systemd mount and clients actually live.
+	mounts, err := run(ctx, "nsenter", "--target", "1", "--mount", "--", "findmnt", "-rn", "-o", "TARGET,FSTYPE")
+	if err != nil {
+		return fmt.Errorf("проверка тома %s: %w", v.UUID, err)
+	}
+	for _, line := range strings.Split(mounts, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == MountPath(v) && fields[1] != "autofs" {
+			if _, err := run(ctx, "nsenter", "--target", "1", "--mount", "--", "umount", "--", MountPath(v)); err != nil {
+				return fmt.Errorf("извлечение %s: %w", v.UUID, err)
+			}
+			break
+		}
+	}
+	return nil
 }

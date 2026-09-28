@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -31,6 +32,7 @@ func newProductionACMEManager(cacheDir, domain, email string) (acmeCertificateMa
 	domain = strings.TrimSuffix(strings.ToLower(domain), ".")
 	whitelist := autocert.HostWhitelist(domain)
 	return &autocert.Manager{
+		Client: &acme.Client{HTTPClient: &http.Client{Transport: &acmeOrderTransport{base: http.DefaultTransport}}},
 		Prompt: autocert.AcceptTOS,
 		Cache:  autocert.DirCache(cacheDir),
 		HostPolicy: func(ctx context.Context, host string) error {
@@ -86,6 +88,10 @@ func prefetchACMECertificate(manager acmeCertificateManager, domain string) (*tl
 		SupportedVersions: []uint16{tls.VersionTLS13, tls.VersionTLS12},
 		SignatureSchemes:  []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256, tls.PSSWithSHA256},
 		SupportedCurves:   []tls.CurveID{tls.X25519, tls.CurveP256},
+		// autocert uses the offered suites to select its ECDSA cache entry,
+		// even for TLS 1.3. Match the readiness probe and modern browsers so
+		// their first handshake does not trigger a second issuance.
+		CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ACME certificate issuance: %w", err)

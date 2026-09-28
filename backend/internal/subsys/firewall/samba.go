@@ -38,16 +38,16 @@ func (b *builder) sambaAccess(c *config.Config) {
 				continue
 			}
 			b.line("-A INPUT -i %s -s %s -p udp --dport 3702 -j ACCEPT", iface, subnet.String())
-			b.line("-A INPUT -i %s -s %s -p tcp --dport 5357 -j ACCEPT", iface, subnet.String())
+			b.line("-A INPUT -i %s -s %s -p tcp --dport 3702 -j ACCEPT", iface, subnet.String())
 			b.line("-A INPUT -i %s -p igmp -j ACCEPT", iface)
 			b.line("-A OUTPUT -o %s -p igmp -j ACCEPT", iface)
 			b.line("-A OUTPUT -o %s -d 239.255.255.250 -p udp --dport 3702 -j ACCEPT", iface)
 			b.line("-A OUTPUT -o %s -p udp --sport 3702 -j ACCEPT", iface)
-			b.line("-A OUTPUT -o %s -p tcp --sport 5357 -m conntrack --ctstate ESTABLISHED -j ACCEPT", iface)
+			b.line("-A OUTPUT -o %s -p tcp --sport 3702 -m conntrack --ctstate ESTABLISHED -j ACCEPT", iface)
 		}
 	}
 	// These precede ordinary LAN accepts and ESTABLISHED so revoked access
 	// cannot survive merely because its connection was already open.
-	b.line("-A INPUT -p tcp -m multiport --dports 445,5357 -j DROP")
+	b.line("-A INPUT -p tcp -m multiport --dports 445,3702 -j DROP")
 	b.line("-A INPUT -p udp --dport 3702 -j DROP")
 }

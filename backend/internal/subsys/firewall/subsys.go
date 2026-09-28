@@ -580,6 +580,10 @@ func canonicalRuleTokens(line string) string {
 		if isCore && i+1 < len(tokens) {
 			i++
 			value := tokens[i]
+			// iptables-nft saves IGMP by its IP protocol number.
+			if flag == "-p" && value == "igmp" {
+				value = "2"
+			}
 			if flag == "-s" || flag == "-d" {
 				value = canonicalAddress(value)
 			}

@@ -213,6 +213,34 @@ func TestReverseZoneRequiresByteAlignedMask(t *testing.T) {
 	}
 }
 
+func TestLocalReverseZonesCoverOnlySelectedSubnet(t *testing.T) {
+	cfg := resolverConfig()
+	cfg.DNS.LocalDomain = ""
+	cfg.Networks = []config.Network{{Enabled: true, RouterAddress: "192.168.10.129/25"}}
+	zones := localZones(cfg)
+	if len(zones) != 128 || zones[0] != "128.10.168.192.in-addr.arpa" || zones[127] != "255.10.168.192.in-addr.arpa" {
+		t.Fatalf("/25 PTR coverage is not exact: %v", zones)
+	}
+	cfg.Networks[0].RouterAddress = "10.128.0.1/9"
+	zones = localZones(cfg)
+	if len(zones) != 128 || zones[0] != "128.10.in-addr.arpa" || zones[127] != "255.10.in-addr.arpa" {
+		t.Fatalf("/9 PTR coverage is not exact: %v", zones)
+	}
+	for _, tc := range []struct {
+		cidr, first, last string
+		count             int
+	}{
+		{"192.0.2.1/0", "in-addr.arpa", "in-addr.arpa", 1},
+		{"192.0.2.11/31", "10.2.0.192.in-addr.arpa", "11.2.0.192.in-addr.arpa", 2},
+		{"192.0.2.11/32", "11.2.0.192.in-addr.arpa", "11.2.0.192.in-addr.arpa", 1},
+	} {
+		zones := reverseZonesOf(tc.cidr)
+		if len(zones) != tc.count || zones[0] != tc.first || zones[len(zones)-1] != tc.last {
+			t.Errorf("%s PTR coverage: %v", tc.cidr, zones)
+		}
+	}
+}
+
 func TestUnboundFiltersAAAAForEveryAllowedClient(t *testing.T) {
 	cfg := resolverConfig()
 	cfg.IPv6.FilterAAAA = true

@@ -84,6 +84,9 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		// With STP enabled the kernel requires a delay of at least 2 seconds.
 		w("    bridge_fd 2")
 	case "vlan":
+		// The distro vlan hook derives the tag from names such as eth0.123.
+		// netOS also permits arbitrary names, so create those explicitly.
+		w("    pre-up test -d /sys/class/net/%s || ip link add link %s name %s type vlan id %d", iface.Name, p.name(iface.Parent), iface.Name, iface.VLANID)
 		w("    vlan-raw-device %s", p.name(iface.Parent))
 	case "bond":
 		if slaves := p.namesOf(iface.Members); len(slaves) > 0 {

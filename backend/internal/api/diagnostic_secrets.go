@@ -37,6 +37,9 @@ func diagnosticConfig(cfg *config.Config) (*config.Config, error) {
 	}
 	mask(&out.DDNS.Token)
 	mask(&out.DDNS.Password)
+	for i := range out.Samba.Users {
+		mask(&out.Samba.Users[i].Password)
+	}
 	for i := range out.Channels {
 		maskDiagnosticValue(out.Channels[i].Config, false)
 	}

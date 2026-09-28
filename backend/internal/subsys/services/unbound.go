@@ -366,9 +366,7 @@ func localZones(cfg *config.Config) []string {
 		if !n.Enabled || n.RouterAddress == "" {
 			continue
 		}
-		if zone, err := reverseZoneOf(n.RouterAddress); err == nil {
-			zones = append(zones, zone)
-		}
+		zones = append(zones, reverseZonesOf(n.RouterAddress)...)
 	}
 	return zones
 }
@@ -524,9 +522,29 @@ func subnetOf(cidr string) (string, error) {
 	return prefix.Masked().String(), nil
 }
 
-// reverseZoneOf строит обратную зону сегмента. Поддерживаются маски, кратные
-// байту: только они дают зону, которую можно назвать целиком, а дробить
-// /25 на отдельные записи ради обратного резолва не нужно.
+// reverseZonesOf covers a subnet exactly with at most 128 byte-aligned
+// reverse zones. Never forward the surrounding subnet's PTRs to local DHCP.
+func reverseZonesOf(cidr string) []string {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil || !prefix.Addr().Is4() {
+		return nil
+	}
+	if prefix.Bits() == 0 {
+		return []string{"in-addr.arpa"}
+	}
+	bits := (prefix.Bits() + 7) / 8 * 8
+	octets := prefix.Masked().Addr().As4()
+	var zones []string
+	for i := 0; i < 1<<(bits-prefix.Bits()); i++ {
+		address := octets
+		address[bits/8-1] += byte(i)
+		zone, _ := reverseZoneOf(netip.PrefixFrom(netip.AddrFrom4(address), bits).String())
+		zones = append(zones, zone)
+	}
+	return zones
+}
+
+// reverseZoneOf names one byte-aligned IPv4 reverse zone.
 func reverseZoneOf(cidr string) (string, error) {
 	prefix, err := netip.ParsePrefix(cidr)
 	if err != nil {

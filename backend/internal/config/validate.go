@@ -2654,7 +2654,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 	if c.Samba.Enabled {
 		claimPort("samba.enabled", "tcp", 445, "Samba")
 		if c.Samba.Discovery && len(c.Samba.Networks) > 0 {
-			claimPort("samba.discovery", "tcp", 5357, "WS-Discovery")
+			claimPort("samba.discovery", "tcp", 3702, "WS-Discovery")
 			claimPort("samba.discovery", "udp", 3702, "WS-Discovery")
 		}
 	}

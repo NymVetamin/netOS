@@ -15,10 +15,11 @@ type fakeRunner struct {
 	active, enabled map[string]bool
 	calls           []string
 	devices, fail   string
+	listeners       string
 }
 
 func newRunner() *fakeRunner {
-	return &fakeRunner{active: map[string]bool{}, enabled: map[string]bool{}, devices: `{"blockdevices":[]}`}
+	return &fakeRunner{active: map[string]bool{}, enabled: map[string]bool{}, devices: `{"blockdevices":[]}`, listeners: "LISTEN 0 50 192.168.50.1:445 0.0.0.0:*\n"}
 }
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	cmd := name + " " + strings.Join(args, " ")
@@ -27,6 +28,8 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 		return "", fmt.Errorf("injected failure: %s", cmd)
 	}
 	switch name {
+	case "ss":
+		return r.listeners, nil
 	case "lsblk":
 		return r.devices, nil
 	case "getent":
@@ -52,6 +55,9 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 			r.enabled[unit] = false
 		case "start", "restart":
 			r.active[unit] = true
+			if unit == "netos-samba.service" {
+				r.listeners = "LISTEN 0 50 192.168.50.1:445 0.0.0.0:*\n"
+			}
 		case "stop":
 			r.active[unit] = false
 		}

@@ -17,6 +17,7 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 	cfg.Interfaces = []config.Interface{{ID: "lan", Name: "br0", Type: "bridge", Enabled: true}}
 	cfg.Networks = []config.Network{{ID: "office", Interface: "lan", RouterAddress: "192.168.50.1/24", Enabled: true}}
 	cfg.WANs = []config.WAN{{Password: "wan-secret"}}
+	cfg.Samba.Users = []config.SambaUser{{ID: "smb-user", Name: "alice", Password: "samba-diagnostic-fixture"}}
 	cfg.DDNS.Token, cfg.DDNS.Password = "ddns-token", "ddns-secret"
 	cfg.WiFi = []config.WiFiRadio{{ID: "radio", Device: "wlan0", Enabled: true, Band: "2.4", Channel: 6, Width: 20, Country: "FI", SSIDs: []config.WiFiSSID{{ID: "ssid", SSID: "Office", Network: "office", Enabled: true, Security: "wpa2", Password: "wifi-secret"}}}}
 	cfg.Channels = append(cfg.Channels,
@@ -31,6 +32,7 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 	}
 	secrets := []string{"wan-secret", "ddns-token", "ddns-secret", "wifi-secret", "wg-private", "wg-psk", "xray-uuid", "reality-private", "short-secret", "header-secret", "oc-secret", "server-private", "server-psk", "server-reality-private", "server-short-secret", "server-uuid", "ike-secret", base64.StdEncoding.EncodeToString([]byte("ike-secret"))}
 	before, _ := json.Marshal(cfg)
+	secrets = append(secrets, "samba-diagnostic-fixture")
 	s := &Server{draft: cfg}
 	for _, artifact := range render.All() {
 		t.Run(artifact.ID, func(t *testing.T) {

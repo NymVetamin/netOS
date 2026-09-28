@@ -723,6 +723,9 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 		}
 	}
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
+	if err := m.removeOwnedMultiWAN(ctx); err != nil {
+		return m.recoverReset(err)
+	}
 	m.removePolicyRules(ctx)
 	m.removeOwnedPolicySets(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
@@ -963,6 +966,9 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	}
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
+	if err := m.removeOwnedMultiWAN(ctx); err != nil {
+		return m.rollbackRestore(ctx, safety, err, uplink)
+	}
 	m.removePolicyRules(ctx)
 	m.removeOwnedPolicySets(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
@@ -1026,6 +1032,9 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error,
 		return fmt.Errorf("%v; очистка адресов перед rollback: %w", cause, err)
 	}
 	m.removeOwnedPolicySets(rollbackCtx)
+	if err := m.removeOwnedMultiWAN(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; очистка Multi-WAN перед rollback: %w", cause, err)
+	}
 	m.removePolicyRules(rollbackCtx)
 	m.bestEffort(rollbackCtx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(rollbackCtx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
@@ -1190,7 +1199,11 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 			return fmt.Errorf("удаление unit %s: %w", unit, err)
 		}
 	}
-	// Stop automounts before mounts; never remove data or force a busy mount.
+	// An automount stop can lazily detach a busy filesystem. Unmount the
+	// actual filesystems normally before stopping their automounts.
+	if err := samba.UnmountOwnedVolumes(ctx, filepath.Join(m.StateDir, "generated"), m.Output); err != nil {
+		return err
+	}
 	for _, name := range mountUnits {
 		unit := m.sys("/etc/systemd/system/" + name)
 		if _, err := os.Lstat(unit); os.IsNotExist(err) {
@@ -1289,6 +1302,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "202")
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "202")
+	if err := m.removeOwnedMultiWAN(ctx); err != nil {
+		return err
+	}
 	m.removePolicyRules(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return err

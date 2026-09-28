@@ -73,7 +73,7 @@ func TestSambaAllowsVPNOnlyAndRejectsProxy(t *testing.T) {
 }
 
 func TestSambaReservesListenerPorts(t *testing.T) {
-	for _, port := range []int{445, 5357} {
+	for _, port := range []int{445, 3702} {
 		c := sambaFixture()
 		c.Samba.Discovery = true
 		c.System.Panel.Port = port
