@@ -169,23 +169,23 @@ func TestPolicySelectorsAllSourcesAndSchedules(t *testing.T) {
 		{ID: "ike", Type: "ikev2", Index: 2, Subnet: "10.2.0.1/24", Peers: []config.VPNPeer{{ID: "p", Address: "10.2.0.2"}}},
 	}
 	schedule := &config.Schedule{Days: []string{"Fri"}, TimeStart: "01:00", TimeStop: "02:00"}
-	base := config.Policy{Network: "net", SrcIP: "203.0.113.0/24", SrcMAC: "AA:BB:CC:DD:EE:FF", Protocol: "udp", DstIP: "198.51.100.1", DstPort: "53,5353", Schedule: schedule}
-	got := policySelectors(cfg, base)
-	for _, part := range []string{"-s 192.0.2.0/24", "-s 203.0.113.0/24", "--mac-source aa:bb:cc:dd:ee:ff", "-p udp", "-d 198.51.100.1", "--dports 53,5353", "--weekdays Fri"} {
+	base := config.Policy{Network: "net", SrcIP: "192.0.2.10/32", SrcMAC: "AA:BB:CC:DD:EE:FF", Protocol: "udp", DstIP: "198.51.100.1", DstPort: "53,5353", Schedule: schedule}
+	got, _ := policySelectors(cfg, base)
+	for _, part := range []string{"-s 192.0.2.10/32", "--mac-source aa:bb:cc:dd:ee:ff", "-p udp", "-d 198.51.100.1", "--dports 53,5353", "--weekdays Fri"} {
 		if !strings.Contains(got, part) {
 			t.Errorf("base selector missing %q: %s", part, got)
 		}
 	}
-	if got := policySelectors(cfg, config.Policy{VPNServer: "wg"}); !strings.Contains(got, "-i wg-srv1") {
+	if got, _ := policySelectors(cfg, config.Policy{VPNServer: "wg"}); !strings.Contains(got, "-i wg-srv1") {
 		t.Fatalf("WG server=%q", got)
 	}
-	if got := policySelectors(cfg, config.Policy{VPNServer: "wg", VPNPeer: "p"}); !strings.Contains(got, "-i wg-srv1 -s 10.1.0.2/32") {
+	if got, _ := policySelectors(cfg, config.Policy{VPNServer: "wg", VPNPeer: "p"}); !strings.Contains(got, "-i wg-srv1 -s 10.1.0.2/32") {
 		t.Fatalf("WG peer=%q", got)
 	}
-	if got := policySelectors(cfg, config.Policy{VPNServer: "ike"}); !strings.Contains(got, "-s 10.2.0.0/24 -m policy --dir in --pol ipsec") {
+	if got, _ := policySelectors(cfg, config.Policy{VPNServer: "ike"}); !strings.Contains(got, "-m policy --dir in --pol ipsec -s 10.2.0.0/24") {
 		t.Fatalf("IKE server=%q", got)
 	}
-	if got := policySelectors(cfg, config.Policy{VPNServer: "ike", VPNPeer: "p"}); strings.Contains(got, "10.2.0.0/24") || !strings.Contains(got, "-m policy --dir in --pol ipsec -s 10.2.0.2/32") {
+	if got, _ := policySelectors(cfg, config.Policy{VPNServer: "ike", VPNPeer: "p"}); strings.Contains(got, "10.2.0.0/24") || !strings.Contains(got, "-m policy --dir in --pol ipsec -s 10.2.0.2/32") {
 		t.Fatalf("IKE peer=%q", got)
 	}
 }

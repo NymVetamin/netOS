@@ -84,7 +84,7 @@ func TestL2TPUnderlayLosesToTheTunnel(t *testing.T) {
 	if underlayMetric(w) <= w.Metric {
 		t.Fatalf("метрика подложки %d не хуже туннельной %d", underlayMetric(w), w.Metric)
 	}
-	if underlayWAN(w).Metric != underlayMetric(w) {
+	if underlayWAN(w, nil).Metric != underlayMetric(w) {
 		t.Fatal("подложка получила не ту метрику")
 	}
 	// Сам туннель метрику не меняет.

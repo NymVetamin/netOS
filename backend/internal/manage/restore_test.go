@@ -377,9 +377,23 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	resolver := m.sys("/etc/resolv.conf")
+	if err := os.MkdirAll(filepath.Dir(resolver), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resolver, []byte("# Сгенерировано netOS.\nnameserver 127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.StateDir, "resolv-conf.state"), []byte(`{"kind":"file","content":"nameserver 192.0.2.53\n"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var order []string
 	m.Run = func(_ context.Context, spec command) error {
 		if spec.name == "systemctl" && contains(spec.args, "start") {
+			content, _ := os.ReadFile(resolver)
+			if string(content) != "nameserver 192.0.2.53\n" {
+				t.Errorf("restored daemon cannot download missing components: resolver=%q", content)
+			}
 			if err := os.MkdirAll(filepath.Dir(m.sys(runtimeReadyPath)), 0o755); err != nil {
 				return err
 			}
@@ -390,6 +404,9 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 		}
 		switch {
 		case contains(spec.args, "-czf"):
+			if _, err := os.Stat(filepath.Join(m.StateDir, "resolv-conf.state")); err != nil {
+				t.Errorf("resolver ownership lost before safety backup: %v", err)
+			}
 			order = append(order, "backup")
 			for i, arg := range spec.args {
 				if arg == "-czf" && i+1 < len(spec.args) {

@@ -1049,7 +1049,7 @@ func (c *Config) validateWANs(r *ValidationResult) {
 					// Сеть провайдера под туннелем получает свой маршрут по
 					// умолчанию с худшей метрикой, и он тоже участвует в общем
 					// порядке.
-					claimMetric(path, w.Metric+10, w.Name+" (сеть провайдера)")
+					claimMetric(path, c.L2TPUnderlayMetric(w), w.Name+" (сеть провайдера)")
 				}
 			}
 		}

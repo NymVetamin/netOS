@@ -552,7 +552,7 @@ func TestL2TPFakeServiceLifecycleIsIdempotentAndCleans(t *testing.T) {
 	w := config.WAN{ID: "fake", Name: "Fake L2TP", Proto: "l2tp", Server: "203.0.113.7", Underlay: "static", Gateway: "192.0.2.1", Username: "user", Password: "secret", Metric: 30}
 	cfg := config.Default()
 	cfg.WANs = []config.WAN{w}
-	if err := s.ensureL2TP(context.Background(), w, "eth-test"); err != nil {
+	if err := s.ensureL2TP(context.Background(), w, "eth-test", nil); err != nil {
 		t.Fatal(err)
 	}
 	unit := l2tpUnitName(w.ID)
@@ -560,7 +560,7 @@ func TestL2TPFakeServiceLifecycleIsIdempotentAndCleans(t *testing.T) {
 		t.Fatal("L2TP unit was not started")
 	}
 	runner.commands = nil
-	if err := s.ensureL2TP(context.Background(), w, "eth-test"); err != nil {
+	if err := s.ensureL2TP(context.Background(), w, "eth-test", nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.Join(runner.commands, "\n"), "systemctl restart "+unit) {

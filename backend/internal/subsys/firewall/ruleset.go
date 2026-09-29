@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -648,12 +649,33 @@ func (b *builder) natDestination(n config.NATRule) {
 		dest := n.DestIP
 		if n.DestPort != "" {
 			dest = n.DestIP + ":" + n.DestPort
+			// Equal-sized ranges are a shifted port map, not a DNAT pool.
+			// The baseport preserves each incoming port's offset in the range.
+			if base := portMapBase(n.ExtPort, n.DestPort); base != "" {
+				dest += "/" + base
+			}
 		}
 		// Port forwarding addresses the router itself. Without this match an
 		// unrestricted ingress also redirects ordinary LAN-to-Internet traffic.
 		b.line("-A PREROUTING%s -p %s --dport %s -m addrtype --dst-type LOCAL -m comment --comment %q -j DNAT --to-destination %s",
 			sel.String(), proto, iptablesPortSpec(n.ExtPort), truncate(n.Name, 240), dest)
 	}
+}
+
+func portMapBase(external, destination string) string {
+	extStart, extEnd, extRange := strings.Cut(external, "-")
+	dstStart, dstEnd, dstRange := strings.Cut(destination, "-")
+	if !extRange || !dstRange {
+		return ""
+	}
+	a, e1 := strconv.Atoi(extStart)
+	b, e2 := strconv.Atoi(extEnd)
+	c, e3 := strconv.Atoi(dstStart)
+	d, e4 := strconv.Atoi(dstEnd)
+	if e1 == nil && e2 == nil && e3 == nil && e4 == nil && a > 0 && c > 0 && b <= 65535 && d <= 65535 && b > a && b-a == d-c {
+		return extStart
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -871,8 +893,12 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 				continue // Xray применяет такие политики внутри своего routing-блока.
 			}
 		}
+		match, possible := policySelectors(cfg, p)
+		if !possible {
+			continue
+		}
 		rules = append(rules, policyRule{
-			priority: p.Priority, id: p.ID, match: policySelectors(cfg, p),
+			priority: p.Priority, id: p.ID, match: match,
 			channel: p.Channel, comment: p.Name,
 		})
 	}
@@ -965,8 +991,9 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	}
 }
 
-func policySelectors(cfg *config.Config, p config.Policy) string {
+func policySelectors(cfg *config.Config, p config.Policy) (string, bool) {
 	var s strings.Builder
+	var sources []string
 	if p.VPNServer != "" {
 		for _, server := range cfg.VPNServers {
 			if server.ID != p.VPNServer {
@@ -974,7 +1001,7 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 			}
 			if server.Type == "ikev2" {
 				if p.VPNPeer == "" {
-					fmt.Fprintf(&s, " -s %s", subnetOf(server.Subnet))
+					sources = append(sources, subnetOf(server.Subnet))
 				}
 				fmt.Fprint(&s, " -m policy --dir in --pol ipsec")
 			} else {
@@ -983,7 +1010,7 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 			if p.VPNPeer != "" {
 				for _, peer := range server.Peers {
 					if peer.ID == p.VPNPeer {
-						fmt.Fprintf(&s, " -s %s/32", peer.Address)
+						sources = append(sources, peer.Address+"/32")
 						break
 					}
 				}
@@ -994,14 +1021,19 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 	if p.Network != "" {
 		for _, network := range cfg.Networks {
 			if network.ID == p.Network {
-				fmt.Fprintf(&s, " -s %s", subnetOf(network.RouterAddress))
+				sources = append(sources, subnetOf(network.RouterAddress))
 				break
 			}
 		}
 	}
 	if p.SrcIP != "" {
-		fmt.Fprintf(&s, " -s %s", p.SrcIP)
+		sources = append(sources, p.SrcIP)
 	}
+	source, possible := intersectSourceSelectors(sources)
+	if !possible {
+		return "", false
+	}
+	s.WriteString(source)
 	if p.SrcMAC != "" {
 		fmt.Fprintf(&s, " -m mac --mac-source %s", strings.ToLower(p.SrcMAC))
 	}
@@ -1020,7 +1052,40 @@ func policySelectors(cfg *config.Config, p config.Policy) string {
 	if p.Schedule != nil {
 		s.WriteString(scheduleMatch(*p.Schedule))
 	}
-	return s.String()
+	return s.String(), true
+}
+
+// All source selectors are conjunctive. iptables accepts only one -s, so
+// retain their CIDR intersection, never widen a network or VPN peer selector.
+func intersectSourceSelectors(sources []string) (string, bool) {
+	if len(sources) == 1 {
+		return " -s " + sources[0], true
+	}
+	var selected netip.Prefix
+	for _, source := range sources {
+		prefix, err := netip.ParsePrefix(source)
+		if err != nil {
+			if address, parseErr := netip.ParseAddr(source); parseErr == nil {
+				prefix, err = netip.PrefixFrom(address, address.BitLen()), nil
+			}
+		}
+		if err != nil || !prefix.Addr().Is4() {
+			return "", false
+		}
+		prefix = prefix.Masked()
+		if selected.IsValid() && !selected.Overlaps(prefix) {
+			// Empty intersection: keep the policy inert rather than matching
+			// either of its disjoint source ranges.
+			return "", false
+		}
+		if !selected.IsValid() || prefix.Bits() > selected.Bits() {
+			selected = prefix
+		}
+	}
+	if !selected.IsValid() {
+		return "", true
+	}
+	return " -s " + selected.String(), true
 }
 
 // В JSON диапазоны пишутся привычно как 8000-8010, а iptables в match

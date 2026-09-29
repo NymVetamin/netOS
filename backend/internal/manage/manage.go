@@ -953,6 +953,12 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 		_ = m.run(ctx, "systemctl", "start", "netosd")
 		return fmt.Errorf("сохранение management uplink перед восстановлением: %w", err)
 	}
+	// Restore may need to install components before its selected DNS daemon
+	// exists. Restore the captured system resolver before stopping that daemon;
+	// the normal DNS stage will take ownership again after it is ready.
+	if err := m.prepareRestoreResolver(ctx); err != nil {
+		return m.rollbackRestore(ctx, safety, err, uplink)
+	}
 
 	// Сначала снимаем живое состояние текущей конфигурации, пока её журналы
 	// ownership ещё доступны. После удаления StateDir новый демон увидит только
@@ -1014,6 +1020,9 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error,
 	defer cancel()
 	if err := m.stopDaemon(rollbackCtx); err != nil {
 		return fmt.Errorf("%v; остановка перед rollback: %w", cause, err)
+	}
+	if err := m.prepareRestoreResolver(rollbackCtx); err != nil {
+		return fmt.Errorf("%v; резолвер перед rollback: %w", cause, err)
 	}
 	// Keep the failed attempt's ownership until its live objects are gone.
 	if err := m.removeComponentUnits(rollbackCtx); err != nil {

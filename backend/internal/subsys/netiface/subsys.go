@@ -1288,7 +1288,7 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: w.Metric})
 		}
 		if w.Gateway != "" && w.Proto == "l2tp" && w.Underlay == "static" {
-			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: underlayMetric(w)})
+			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: cfg.L2TPUnderlayMetric(w)})
 		}
 	}
 	dhcpWanted := map[string]bool{}
@@ -1368,13 +1368,13 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 				if err := s.stopDHCPClient(ctx, name); err != nil {
 					return err
 				}
-				if err := s.applyStaticOwned(ctx, underlayWAN(w), name); err != nil {
+				if err := s.applyStaticOwned(ctx, underlayWAN(w, cfg), name); err != nil {
 					return err
 				}
-			} else if err := s.ensureDHCPClient(ctx, underlayWAN(w), name); err != nil {
+			} else if err := s.ensureDHCPClient(ctx, underlayWAN(w, cfg), name); err != nil {
 				return err
 			}
-			if err := s.ensureL2TP(ctx, w, name); err != nil {
+			if err := s.ensureL2TP(ctx, w, name, cfg); err != nil {
 				return err
 			}
 		default:

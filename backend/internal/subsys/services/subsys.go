@@ -289,7 +289,7 @@ func (s *DHCP) Plan(old, new *config.Config) ([]apply.Action, error) {
 func (s *DHCP) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	if !new.DHCP.Enabled {
 		if old != nil && old.DHCP.Enabled {
-			return []apply.Action{{Kind: "delete", Target: "DHCP-сервер", Disruptive: true}}, nil
+			return []apply.Action{{Kind: "delete", Target: "DHCP-сервер"}}, nil
 		}
 		if err := s.Health(ctx, new); err != nil {
 			return []apply.Action{{Kind: "repair", Target: "DHCP-сервер", Detail: err.Error()}}, nil
@@ -303,10 +303,9 @@ func (s *DHCP) PlanContext(ctx context.Context, old, new *config.Config) ([]appl
 	}
 	if old.DHCP.Provider != new.DHCP.Provider {
 		return []apply.Action{{
-			Kind:       "update",
-			Target:     "DHCP-сервер",
-			Detail:     fmt.Sprintf("%s → %s", old.DHCP.Provider, new.DHCP.Provider),
-			Disruptive: true,
+			Kind:   "update",
+			Target: "DHCP-сервер",
+			Detail: fmt.Sprintf("%s → %s", old.DHCP.Provider, new.DHCP.Provider),
 		}}, nil
 	}
 
@@ -419,7 +418,7 @@ func (s *DNS) PlanContext(ctx context.Context, old, new *config.Config) ([]apply
 func (s *DNS) planProvider(ctx context.Context, old, new *config.Config) []apply.Action {
 	if !new.DNS.Enabled {
 		if old != nil && old.DNS.Enabled {
-			return []apply.Action{{Kind: "delete", Target: "DNS-резолвер", Disruptive: true}}
+			return []apply.Action{{Kind: "delete", Target: "DNS-резолвер"}}
 		}
 		if err := s.providerHealth(ctx, new); err != nil {
 			return []apply.Action{{Kind: "repair", Target: "DNS-резолвер", Detail: err.Error()}}
@@ -431,10 +430,9 @@ func (s *DNS) planProvider(ctx context.Context, old, new *config.Config) []apply
 	}
 	if old.DNS.Provider != new.DNS.Provider {
 		return []apply.Action{{
-			Kind:       "update",
-			Target:     "DNS-резолвер",
-			Detail:     fmt.Sprintf("%s → %s", old.DNS.Provider, new.DNS.Provider),
-			Disruptive: true,
+			Kind:   "update",
+			Target: "DNS-резолвер",
+			Detail: fmt.Sprintf("%s → %s", old.DNS.Provider, new.DNS.Provider),
 		}}
 	}
 	if !slices.Equal(old.DNS.Blocklists, new.DNS.Blocklists) {

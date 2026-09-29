@@ -27,3 +27,13 @@ func TestPortForwardOnlyMatchesRouterAddresses(t *testing.T) {
 		})
 	}
 }
+
+func TestPortForwardEqualRangesPreservePortOffset(t *testing.T) {
+	var b builder
+	b.natDestination(config.NATRule{Protocol: "tcpudp", ExtPort: "18081-18082", DestIP: "192.0.2.10", DestPort: "8009-8010"})
+	for _, line := range strings.Split(strings.TrimSpace(b.String()), "\n") {
+		if !strings.Contains(line, "--to-destination 192.0.2.10:8009-8010/18081") {
+			t.Errorf("range is a pool rather than shifted map: %s", line)
+		}
+	}
+}

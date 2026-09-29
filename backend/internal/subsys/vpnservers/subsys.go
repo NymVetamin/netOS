@@ -545,6 +545,9 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			if err := healthyFile(paths.conf, conf, 0o600); err != nil {
 				return err
 			}
+			if err := healthyFile(paths.connect, renderOcservConnect(server, cfg), 0o700); err != nil {
+				return err
+			}
 			if err := healthyFile(paths.unit, []byte(renderOcservUnit(server, paths.conf)), 0o644); err != nil {
 				return err
 			}
@@ -738,7 +741,7 @@ func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
 			return fmt.Errorf("интерфейс %s остался в системе", InterfaceName(server))
 		}
 		paths := s.ocservPaths(server)
-		if err := pathsAbsent(paths.conf, paths.passwd, paths.auth, paths.unit, paths.users, paths.tls); err != nil {
+		if err := pathsAbsent(paths.conf, paths.passwd, paths.auth, paths.unit, paths.users, paths.tls, paths.connect); err != nil {
 			return err
 		}
 		return nil

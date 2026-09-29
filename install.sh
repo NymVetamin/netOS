@@ -365,6 +365,13 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     CANDIDATE="$SRC/netosd"
     (
         export TMPDIR="$SRC/tmp"
+        # Transient systemd maintenance jobs may have no HOME. Keep build
+        # and module caches in this transaction's private directory so Go
+        # and npm work without a login environment and cleanup removes them.
+        export GOPATH="$SRC/gopath"
+        export GOMODCACHE="$SRC/gopath/pkg/mod"
+        export GOCACHE="$SRC/go-cache"
+        export npm_config_cache="$SRC/npm-cache"
         cd "$SRC/netos/web"
         npm ci
         npm run build

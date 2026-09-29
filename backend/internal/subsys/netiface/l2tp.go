@@ -48,13 +48,13 @@ const maxRedials = 2000000000
 // Заведомо хуже, чем у туннеля: пока туннель не поднят, интернета через эту
 // сеть всё равно нет, а как только он появится, маршрут через него обязан
 // выиграть. Разрыв в 10 оставляет место соседним аплинкам.
-func underlayMetric(w config.WAN) int { return w.Metric + 10 }
+func underlayMetric(w config.WAN) int { return (*config.Config)(nil).L2TPUnderlayMetric(w) }
 
 // underlayWAN описывает подложку как обычный аплинк: тем же клиентом DHCP и
 // тем же кодом статики, что и у остальных, только с худшей метрикой.
-func underlayWAN(w config.WAN) config.WAN {
+func underlayWAN(w config.WAN, cfg *config.Config) config.WAN {
 	u := w
-	u.Metric = underlayMetric(w)
+	u.Metric = cfg.L2TPUnderlayMetric(w)
 	return u
 }
 
@@ -164,11 +164,11 @@ WantedBy=multi-user.target
 }
 
 // ensureL2TP поднимает туннель для одного аплинка.
-func (s *WAN) ensureL2TP(ctx context.Context, w config.WAN, iface string) error {
+func (s *WAN) ensureL2TP(ctx context.Context, w config.WAN, iface string, cfg *config.Config) error {
 	// Маршрут до концентратора обязан идти мимо туннеля. Как только pppd
 	// поставит маршрут по умолчанию через ppp, пакеты самого туннеля пошли бы
 	// в него же — соединение схлопнулось бы на первом же переподключении.
-	if err := s.routeToLNS(ctx, w, iface); err != nil {
+	if err := s.routeToLNS(ctx, w, iface, cfg); err != nil {
 		return err
 	}
 
@@ -241,7 +241,7 @@ func (s *WAN) resolveLNS(server string) ([]string, error) {
 	return destinations, nil
 }
 
-func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error {
+func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string, cfg *config.Config) error {
 	gateway := w.Gateway
 	if w.Underlay != "static" {
 		// Адрес под туннелем получен по DHCP — шлюз известен только из аренды,
@@ -265,7 +265,7 @@ func (s *WAN) routeToLNS(ctx context.Context, w config.WAN, iface string) error 
 		return err
 	}
 	if w.Underlay != "static" {
-		if err := s.ensureDHCPClient(ctx, underlayWAN(w), iface); err != nil {
+		if err := s.ensureDHCPClient(ctx, underlayWAN(w, cfg), iface); err != nil {
 			return err
 		}
 	}
