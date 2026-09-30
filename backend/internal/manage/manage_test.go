@@ -850,6 +850,24 @@ func TestUninstallStopsAndRemovesDynamicNetworkUnits(t *testing.T) {
 	}
 }
 
+func TestUninstallClearsFailedTransientMaintenanceUnit(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	var commands []string
+	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "systemctl" {
+			commands = append(commands, strings.Join(spec.args, " "))
+		}
+		return nil
+	}
+	if err := m.uninstall(context.Background(), true, true); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(commands, "reset-failed netos-maintenance.service") {
+		t.Fatalf("transient maintenance failure remains after uninstall: %v", commands)
+	}
+}
+
 func TestUninstallDoesNotClaimSuccessWithRemainingManagedArtifacts(t *testing.T) {
 	t.Run("component cannot stop", func(t *testing.T) {
 		m, out := testManager()

@@ -241,6 +241,19 @@ func TestLocalReverseZonesCoverOnlySelectedSubnet(t *testing.T) {
 	}
 }
 
+func TestDnsmasqReverseZonesDoNotClaimOutsideLAN(t *testing.T) {
+	cfg := resolverConfig()
+	cfg.DNS.Provider = "dnsmasq"
+	cfg.Networks = []config.Network{{Enabled: true, RouterAddress: "192.0.2.1/25"}}
+	out := NewDnsmasq(nil).Render(cfg)
+	if strings.Contains(out, "bogus-priv") {
+		t.Fatalf("global private PTR suppression claims addresses outside LAN:\n%s", out)
+	}
+	if !strings.Contains(out, "local=/47.2.0.192.in-addr.arpa/") || strings.Contains(out, "local=/200.2.0.192.in-addr.arpa/") {
+		t.Fatalf("/25 reverse ownership is not exact:\n%s", out)
+	}
+}
+
 func TestUnboundFiltersAAAAForEveryAllowedClient(t *testing.T) {
 	cfg := resolverConfig()
 	cfg.IPv6.FilterAAAA = true

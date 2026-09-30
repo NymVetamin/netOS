@@ -182,4 +182,7 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) {
 		}
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
+	// xl2tpd may exit with status 1 on a normal SIGTERM. Once its unit has
+	// been removed, clear only that unit's failed state from systemd.
+	_, _ = s.Runner.Run(ctx, "systemctl", "reset-failed", unit)
 }

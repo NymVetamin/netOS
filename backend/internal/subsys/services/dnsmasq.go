@@ -208,8 +208,18 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		w("interface=%s", iface)
 	}
 	w("domain-needed") // не пересылать наверх имена без домена
-	w("bogus-priv")    // не пересылать обратные запросы для приватных сетей
-	w("no-resolv")     // апстримы задаём сами, /etc/resolv.conf не читаем
+	// bogus-priv would claim the whole RFC6303 reverse range, including PTRs
+	// outside a narrower LAN such as 192.0.2.0/25. Keep only our exact LAN
+	// zones local; other PTRs must be eligible for the configured upstream.
+	for _, network := range cfg.Networks {
+		if !network.Enabled || network.RouterAddress == "" {
+			continue
+		}
+		for _, zone := range reverseZonesOf(network.RouterAddress) {
+			w("local=/%s/", zone)
+		}
+	}
+	w("no-resolv") // апстримы задаём сами, /etc/resolv.conf не читаем
 	w("no-poll")
 	w("cache-size=%d", cfg.DNS.CacheSize)
 	domainPolicies := hasKernelDomainPolicies(cfg)

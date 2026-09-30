@@ -1485,6 +1485,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		return fmt.Errorf("удаление CLI netOS: %w", err)
 	}
 	m.bestEffort(ctx, "systemctl", "daemon-reload")
+	// A failed transient maintenance job survives daemon-reload and remains a
+	// netOS unit after uninstall. Reset only our known transient job.
+	m.bestEffort(ctx, "systemctl", "reset-failed", "netos-maintenance.service")
 	if !keepData && baseline != nil {
 		if err := os.RemoveAll(m.sys(systemBaselineDir)); err != nil {
 			return fmt.Errorf("удаление использованного системного baseline: %w", err)
