@@ -94,6 +94,19 @@ func TestIntegrationManagedL2TPLifecycle(t *testing.T) {
 	if got := managedUnitPID(t, l2tpUnitName(w.ID)); got != pid {
 		t.Fatalf("idempotent L2TP Apply restarted the live tunnel: %s -> %s", pid, got)
 	}
+	for _, metric := range []int{4310, 4320} {
+		previous := cfg.WANs[0].Metric
+		cfg.WANs[0].Metric = metric
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatalf("L2TP metric %d apply: %v", metric, err)
+		}
+		if err := s.Health(ctx, cfg); err != nil {
+			t.Fatalf("L2TP metric %d health: %v", metric, err)
+		}
+		if s.defaultRouteHealthy(ctx, L2TPInterface(w.ID), "", previous) {
+			t.Fatalf("old L2TP default metric %d remains after %d", previous, metric)
+		}
+	}
 	if err := s.Apply(ctx, emptyWANConfig()); err != nil {
 		t.Fatal(err)
 	}

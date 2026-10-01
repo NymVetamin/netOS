@@ -267,6 +267,32 @@ func TestApplyDropsSuppressedRouteFromPreviousWANInterface(t *testing.T) {
 	}
 }
 
+func TestApplyDoesNotRestoreOldPPPMetricAfterWANApply(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "multiwan-suppressed.json")
+	if err := os.WriteFile(state, []byte(`{"uplink":"default dev ppp-uplink scope link metric 100"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &responseRunner{respond: func(command string) (string, error) {
+		if command == "ip -4 route show default dev ppp-uplink" {
+			return "default scope link metric 110\n", nil
+		}
+		return "", nil
+	}}
+	c := New(r, dir, &captureLogger{})
+	cfg := config.Default()
+	cfg.WANs = []config.WAN{{ID: "uplink", Index: 1, Enabled: true, Proto: "l2tp", Metric: 110}}
+	if err := c.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if commands := strings.Join(r.commands, "\n"); strings.Contains(commands, "route replace default dev ppp-uplink scope link metric 100") {
+		t.Fatalf("old failover snapshot restored after WAN metric change:\n%s", commands)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("stale suppression record remains: %v", err)
+	}
+}
+
 func TestProbeFamiliesProtocolsTargetsAndTimeouts(t *testing.T) {
 	r := &responseRunner{respond: func(command string) (string, error) {
 		if strings.Contains(command, "198.51.100.2") || strings.Contains(command, "https://ok.example") {

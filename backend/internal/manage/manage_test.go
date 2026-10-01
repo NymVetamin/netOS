@@ -830,8 +830,11 @@ func TestUninstallStopsAndRemovesDynamicNetworkUnits(t *testing.T) {
 		}
 	}
 
-	var disabled []string
+	var disabled, commands []string
 	m.Run = func(_ context.Context, spec command) error {
+		if spec.name == "systemctl" {
+			commands = append(commands, strings.Join(spec.args, " "))
+		}
 		if spec.name == "systemctl" && len(spec.args) > 1 && spec.args[0] == "disable" {
 			disabled = append(disabled, spec.args[len(spec.args)-1])
 		}
@@ -846,6 +849,9 @@ func TestUninstallStopsAndRemovesDynamicNetworkUnits(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(unitDir, unit)); !os.IsNotExist(err) {
 			t.Errorf("dynamic unit was not removed: %s (%v)", unit, err)
+		}
+		if !contains(commands, "reset-failed "+unit) {
+			t.Errorf("dynamic unit failed state was not cleared: %s", unit)
 		}
 	}
 }

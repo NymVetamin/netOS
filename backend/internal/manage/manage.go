@@ -1290,6 +1290,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	// заметно тормозит. Перечитывание нужно ровно одно — оно идёт ниже, после
 	// удаления файлов юнитов.
 	m.bestEffort(ctx, "systemctl", "disable", "--no-reload", "netosd")
+	componentUnits, _ := filepath.Glob(m.sys("/etc/systemd/system/netos-*.service"))
 	if err := m.removeComponentUnits(ctx); err != nil {
 		_ = m.run(ctx, "systemctl", "start", "netosd")
 		return err
@@ -1488,6 +1489,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	// A failed transient maintenance job survives daemon-reload and remains a
 	// netOS unit after uninstall. Reset only our known transient job.
 	m.bestEffort(ctx, "systemctl", "reset-failed", "netos-maintenance.service")
+	for _, unit := range componentUnits {
+		m.bestEffort(ctx, "systemctl", "reset-failed", filepath.Base(unit))
+	}
 	if !keepData && baseline != nil {
 		if err := os.RemoveAll(m.sys(systemBaselineDir)); err != nil {
 			return fmt.Errorf("удаление использованного системного baseline: %w", err)

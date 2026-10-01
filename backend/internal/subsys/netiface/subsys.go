@@ -1280,6 +1280,21 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	ownedPPPRoutes, err := s.readPPPDefaultRoutes()
+	if err != nil {
+		return err
+	}
+	changingPPPMetric := map[string]bool{}
+	for _, w := range cfg.WANs {
+		if w.Proto != "pppoe" && w.Proto != "l2tp" {
+			continue
+		}
+		for _, route := range ownedPPPRoutes {
+			if route.Interface == PPPoEInterface(w.ID) && route.Metric != w.Metric {
+				changingPPPMetric[w.ID] = true
+			}
+		}
+	}
 	for _, w := range cfg.WANs {
 		name := ifaceName[w.Interface]
 		if !w.Enabled || name == "" {
@@ -1413,6 +1428,12 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 		if w.Proto == "pppoe" || w.Proto == "l2tp" {
 			if err := s.waitPPPoE(ctx, w); err != nil {
 				return err
+			}
+			// On a restart the old PPP interface can keep its address briefly.
+			// Wait for the default with the new metric before retiring the old
+			// owned route; an address alone does not prove the new session is ready.
+			if changingPPPMetric[w.ID] && !cfg.MultiWAN.Enabled && !s.waitDefaultRouteWithin(ctx, PPPoEInterface(w.ID), "", w.Metric, s.PPPoETimeout) {
+				return fmt.Errorf("аплинк %s: нет нового PPP default metric %d после подключения", w.Name, w.Metric)
 			}
 		}
 	}
@@ -1949,10 +1970,15 @@ func (s *WAN) waitDefaultRoute(ctx context.Context, iface, gateway string, metri
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
-	// Ждать столько же, сколько саму сессию, незачем: маршрут ставится следом
-	// за адресом, и речь идёт о долях секунды.
 	if timeout > 10*time.Second {
 		timeout = 10 * time.Second
+	}
+	return s.waitDefaultRouteWithin(ctx, iface, gateway, metric, timeout)
+}
+
+func (s *WAN) waitDefaultRouteWithin(ctx context.Context, iface, gateway string, metric int, timeout time.Duration) bool {
+	if timeout <= 0 {
+		timeout = 45 * time.Second
 	}
 	interval := s.PPPoePoll
 	if interval <= 0 {

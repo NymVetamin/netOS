@@ -76,6 +76,9 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
       // Снятый компонент не должен оставаться выбранным поставщиком службы:
       // иначе конфигурация останется ссылаться на то, чего на машине уже нет.
       if (!on) {
+        if (id === "qos" && d.qos) {
+          d.qos.enabled = false;
+        }
         if (d.dns?.provider === id) {
           // Keep provider-specific draft syntax while the service is disabled.
           // Reinstalling can then restore the existing upstreams and options.

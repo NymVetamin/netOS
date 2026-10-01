@@ -508,6 +508,9 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		}
 		seen[comp.ID] = true
 	}
+	if c.QoS.Enabled && !c.HasComponent("qos") {
+		r.errf("qos.enabled", "для QoS нужен включённый компонент «Ограничение скорости»")
+	}
 
 	if c.DHCP.Enabled {
 		if c.DHCP.Provider == "" {

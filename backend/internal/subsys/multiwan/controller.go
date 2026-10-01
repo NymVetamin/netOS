@@ -14,6 +14,7 @@ import (
 	"reflect"
 	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,14 +112,29 @@ func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := c.load(); err != nil {
 		return err
 	}
-	configuredInterfaces := make(map[string]string, len(cfg.WANs))
+	configuredWANs := make(map[string]config.WAN, len(cfg.WANs))
 	for _, wan := range cfg.WANs {
-		configuredInterfaces[wan.ID] = interfaceName(cfg, wan)
+		configuredWANs[wan.ID] = wan
 	}
 	for id, line := range c.suppressed {
-		iface, configured := configuredInterfaces[id]
-		if configured && routeIface(line) != "" && routeIface(line) != iface {
-			continue
+		wan, configured := configuredWANs[id]
+		if configured {
+			iface := interfaceName(cfg, wan)
+			if routeIface(line) != "" && routeIface(line) != iface {
+				continue
+			}
+			// WAN.Apply has already installed the new route. A failover snapshot
+			// from the previous metric or gateway must not restore the old default.
+			if (wan.Proto == "pppoe" || wan.Proto == "l2tp") && routeMetric(line) != wan.Metric {
+				continue
+			}
+			live, err := c.defaultRoute(ctx, iface)
+			if err != nil {
+				return err
+			}
+			if live != "" && live != line {
+				continue
+			}
 		}
 		if err := c.restore(ctx, line); err != nil {
 			return fmt.Errorf("восстановление аплинка %s: %w", id, err)
@@ -498,6 +514,17 @@ func routeIface(line string) string {
 		}
 	}
 	return ""
+}
+
+func routeMetric(line string) int {
+	fields := strings.Fields(line)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "metric" {
+			metric, _ := strconv.Atoi(fields[i+1])
+			return metric
+		}
+	}
+	return 0
 }
 
 func (c *Controller) probe(ctx context.Context, wan config.WAN, iface string) bool {
