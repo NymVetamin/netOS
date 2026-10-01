@@ -341,6 +341,12 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	return s.healthClients(ctx, cfg)
 }
 
+// Active reports actual shaping, not the presence of iproute2. QoS has no
+// systemd service: CAKE and its IFB are the live runtime objects.
+func (s *Subsystem) Active(ctx context.Context, cfg *config.Config) bool {
+	return cfg != nil && cfg.QoS.Enabled && len(cfg.QoS.WANs) > 0 && s.Health(ctx, cfg) == nil
+}
+
 func (s *Subsystem) remove(ctx context.Context, item ownedLink) error {
 	for _, command := range [][]string{
 		{"tc", "qdisc", "del", "dev", item.Interface, "root"},

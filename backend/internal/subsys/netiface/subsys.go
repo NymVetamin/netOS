@@ -1276,6 +1276,10 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	wantedAddresses := make([]ownedWANAddress, 0, len(cfg.WANs))
 	staticWanted := make([]ownedWANRoute, 0, len(cfg.WANs))
+	pppWanted, err := s.preparePPPDefaultRouteOwnership(cfg)
+	if err != nil {
+		return err
+	}
 	for _, w := range cfg.WANs {
 		name := ifaceName[w.Interface]
 		if !w.Enabled || name == "" {
@@ -1411,6 +1415,9 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 				return err
 			}
 		}
+	}
+	if err := s.syncPPPDefaultRouteOwnership(ctx, pppWanted); err != nil {
+		return err
 	}
 	return nil
 }

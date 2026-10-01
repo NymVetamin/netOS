@@ -290,6 +290,8 @@ func main() {
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)
+	qosSubsystem := qos.New(runner, stateDir)
+	panel.QoS = qosSubsystem
 	panel.DDNS = ddnsController
 	panel.WANHealth = multiWAN
 	panel.ChannelHealth = channelMonitor

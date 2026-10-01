@@ -1415,7 +1415,11 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		// поля показывают живую машину: установленный компонент может быть
 		// никем не выбран и не работать.
 		resp["installed"] = s.Components.Status(r.Context())
-		resp["running"] = s.Components.Running(r.Context())
+		running := s.Components.Running(r.Context())
+		if s.QoS != nil && s.Engine != nil {
+			running["qos"] = s.QoS.Active(r.Context(), s.Engine.Current())
+		}
+		resp["running"] = running
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

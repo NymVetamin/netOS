@@ -123,6 +123,9 @@ func TestApplyCreatesBothCakeDirectionsAndIsIdempotent(t *testing.T) {
 	if err := s.Health(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	if !s.Active(context.Background(), cfg) {
+		t.Fatal("running CAKE and IFB were not reported active")
+	}
 }
 
 func TestPPPSessionInterfaceAndDisableCleanup(t *testing.T) {
@@ -139,6 +142,9 @@ func TestPPPSessionInterfaceAndDisableCleanup(t *testing.T) {
 	cfg.QoS.Enabled = false
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
+	}
+	if s.Active(context.Background(), cfg) {
+		t.Fatal("disabled QoS was reported active because iproute2 remains installed")
 	}
 	joined := strings.Join(runner.commands, "\n")
 	if !strings.Contains(joined, "tc qdisc del dev ppp-wan1 root") || !strings.Contains(joined, "ip link del dev ifb-netos-3") {

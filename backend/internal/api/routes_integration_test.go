@@ -157,6 +157,10 @@ type catalogComponentProbe struct {
 	running   map[string]bool
 }
 
+type catalogQoSProbe bool
+
+func (p catalogQoSProbe) Active(context.Context, *config.Config) bool { return bool(p) }
+
 func (p catalogComponentProbe) Status(context.Context) map[string]bool  { return p.installed }
 func (p catalogComponentProbe) Running(context.Context) map[string]bool { return p.running }
 
@@ -195,6 +199,29 @@ func TestCatalogReturnsMetadataAndIndependentLiveStates(t *testing.T) {
 	}
 	if !sawEssential || !sawExternal {
 		t.Fatalf("catalog lost metadata: essential=%v external=%v", sawEssential, sawExternal)
+	}
+}
+
+func TestCatalogReportsLiveQoSSeparatelyFromInstalledPackage(t *testing.T) {
+	s, cookie, _ := newAuthedServer(t)
+	initializeAPIEngine(t, s)
+	s.Components = catalogComponentProbe{installed: map[string]bool{"qos": true}, running: map[string]bool{}}
+	for _, active := range []bool{true, false} {
+		s.QoS = catalogQoSProbe(active)
+		w := serveAuthed(s.Routes(), http.MethodGet, "/api/catalog", nil, cookie, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("catalog status=%d body=%s", w.Code, w.Body.String())
+		}
+		var response struct {
+			Installed map[string]bool `json:"installed"`
+			Running   map[string]bool `json:"running"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if !response.Installed["qos"] || response.Running["qos"] != active {
+			t.Fatalf("active=%v, installed=%v, running=%v", active, response.Installed, response.Running)
+		}
 	}
 }
 

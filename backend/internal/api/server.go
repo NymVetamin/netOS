@@ -53,7 +53,10 @@ type Server struct {
 	Logger        Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
-	Components       ComponentProbe
+	Components ComponentProbe
+	QoS        interface {
+		Active(context.Context, *config.Config) bool
+	}
 	DDNS             *ddns.Controller
 	WANHealth        interface{ ProbeDown(string) bool }
 	ChannelHealth    interface{ ProbeDown(string) bool }
