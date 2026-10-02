@@ -150,7 +150,7 @@ func (s *Subsystem) applyClientInterface(ctx context.Context, item clientInterfa
 			return err
 		}
 		for index, client := range item.Upload {
-			if _, err := s.Runner.Run(ctx, "tc", "filter", "replace", "dev", item.Name, "parent", "ffff:", "protocol", "all", "pref", fmt.Sprint(100+index), "flower", "src_mac", client.MAC, "action", "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "burst", "64k", "conform-exceed", "drop"); err != nil {
+			if _, err := s.Runner.Run(ctx, "tc", "filter", "replace", "dev", item.Name, "parent", "ffff:", "protocol", "all", "pref", fmt.Sprint(100+index), "flower", "src_mac", client.MAC, "action", "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "burst", "64k", "mtu", "64k", "conform-exceed", "drop"); err != nil {
 				return err
 			}
 		}
@@ -228,7 +228,7 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 			expectedMACs := make([]string, 0, len(item.Upload))
 			for index, client := range item.Upload {
 				expectedMACs = append(expectedMACs, strings.ToLower(client.MAC))
-				if !blockHasTokens(filters, "filter ", "pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit)) {
+				if !blockHasTokens(filters, "filter ", "pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "mtu=64kb") {
 					return fmt.Errorf("лимит отдачи клиента %s на %s не соответствует конфигурации", client.MAC, item.Name)
 				}
 			}
@@ -326,6 +326,20 @@ func blockHasTokens(output, boundary string, tokens ...string) bool {
 		fields := trafficFields(block)
 		matched := true
 		for _, token := range tokens {
+			if pair := strings.SplitN(token, "=", 2); len(pair) == 2 {
+				found := false
+				for i := 0; i+1 < len(fields); i++ {
+					if normalizeTrafficToken(fields[i]) == normalizeTrafficToken(pair[0]) && normalizeTrafficToken(fields[i+1]) == normalizeTrafficToken(pair[1]) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					matched = false
+					break
+				}
+				continue
+			}
 			want := normalizeTrafficToken(token)
 			found := false
 			for _, field := range fields {

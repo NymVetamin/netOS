@@ -83,7 +83,7 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
 		t.Skip("NETOS_INTEGRATION=1 and root are required")
 	}
-	for _, command := range []string{"ip", "tc", "iperf3"} {
+	for _, command := range []string{"ip", "tc", "iperf3", "ping"} {
 		if _, err := exec.LookPath(command); err != nil {
 			t.Skipf("%s is not installed", command)
 		}
@@ -112,6 +112,8 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 	t.Cleanup(func() { _, _ = runner.Run(context.Background(), "ip", "link", "del", "dev", device) })
 	for _, command := range [][]string{
 		{"ip", "link", "set", "dev", peer, "netns", namespace},
+		{"ip", "link", "set", "dev", device, "mtu", "8942"},
+		{"ip", "netns", "exec", namespace, "ip", "link", "set", "dev", peer, "mtu", "8942"},
 		{"ip", "address", "add", "192.0.2.1/30", "dev", device},
 		{"ip", "link", "set", "dev", device, "up"},
 		{"ip", "netns", "exec", namespace, "ip", "address", "add", "192.0.2.2/30", "dev", peer},
@@ -136,6 +138,11 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 	}
 	if err := s.Health(ctx, cfg); err != nil {
 		t.Fatal(err)
+	}
+	// The ingress policer must accept packets that fit a jumbo LAN link.
+	// tc's default police MTU is only 2 KiB and silently drops them.
+	if out, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "2", "-M", "do", "-s", "3000", "192.0.2.1"); err != nil {
+		t.Fatalf("jumbo client packet was dropped by the upload policer: %v: %s", err, out)
 	}
 	download := runIPerf(t, ctx, namespace, false)
 	upload := runIPerf(t, ctx, namespace, true)

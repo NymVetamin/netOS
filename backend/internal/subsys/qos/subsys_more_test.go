@@ -168,6 +168,7 @@ func TestHealthChecksEveryClientRateMACAndOwnership(t *testing.T) {
 		{"download rate", "tc class show dev lan0", "class htb 1:10 parent 1:1 rate 4999kbit ceil 4999kbit"},
 		{"download mac", "tc filter show dev lan0 parent 1:", "filter protocol all pref 100 flower dst_mac 00:11:22:33:44:55 classid 1:10"},
 		{"upload rate", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 999kbit"},
+		{"upload mtu", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 2Kb"},
 		{"extra download filter", "tc filter show dev lan0 parent 1:", "filter protocol all pref 100 flower dst_mac aa:bb:cc:dd:ee:ff classid 1:10\nfilter protocol all pref 101 flower dst_mac 00:11:22:33:44:55 classid 1:11"},
 		{"extra upload filter", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit\nfilter protocol all pref 101 flower src_mac 00:11:22:33:44:55 action police rate 2Mbit"},
 	}
@@ -182,6 +183,12 @@ func TestHealthChecksEveryClientRateMACAndOwnership(t *testing.T) {
 			runner.outputs = map[string]string{tt.command: tt.output}
 			if err := s.Health(context.Background(), cfg); err == nil {
 				t.Fatal("health accepted client drift")
+			}
+			if tt.name == "upload mtu" {
+				actions, err := s.PlanContext(context.Background(), cfg, cfg)
+				if err != nil || len(actions) != 1 || actions[0].Kind != "update" {
+					t.Fatalf("old policer was not scheduled for repair: %v, %v", actions, err)
+				}
 			}
 		})
 	}
@@ -352,7 +359,7 @@ func TestEveryClientCommandFailureIsReturned(t *testing.T) {
 		"tc filter replace dev lan0 parent 1: protocol all pref 100 flower dst_mac aa:bb:cc:dd:ee:ff classid 1:10",
 		"tc qdisc del dev lan0 ingress",
 		"tc qdisc replace dev lan0 handle ffff: ingress",
-		"tc filter replace dev lan0 parent ffff: protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1000kbit burst 64k conform-exceed drop",
+		"tc filter replace dev lan0 parent ffff: protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1000kbit burst 64k mtu 64k conform-exceed drop",
 	}
 	for _, command := range commands {
 		t.Run(command, func(t *testing.T) {
