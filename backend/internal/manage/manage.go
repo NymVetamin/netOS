@@ -734,6 +734,9 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
 		return m.recoverReset(err)
 	}
+	if err := m.removeCompetingDefaultRoutes(ctx, uplink); err != nil {
+		return m.recoverReset(err)
+	}
 	m.removeVirtualInterfaces(ctx)
 	for _, path := range []string{
 		m.sys("/etc/network/interfaces.d/netos.conf"),

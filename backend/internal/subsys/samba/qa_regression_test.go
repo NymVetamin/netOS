@@ -97,3 +97,50 @@ func TestActiveSambaWithOnlyLoopbackIsRepaired(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type vpnAddressRunner struct {
+	*fakeRunner
+	address string
+}
+
+func (r *vpnAddressRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if name == "ip" && strings.Join(args, " ") == "-o -4 addr show" {
+		return r.address, nil
+	}
+	return r.fakeRunner.Run(ctx, name, args...)
+}
+
+func TestNewVPNAddressRepairsOnlySelectedSambaListener(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner()}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	c := fixture()
+	c.Samba.VPNs = []string{"oc"}
+	c.VPNServers = []config.VPNServer{{ID: "oc", Index: 30, Enabled: true, Type: "ocserv", Subnet: "10.93.0.1/24"}}
+	if err := s.Apply(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("restarted Samba before the VPN interface existed")
+	}
+	r.address = "17: vpns30 inet 10.93.0.1/32 scope global vpns30\n"
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("missing VPN listener was not repaired")
+	}
+	r.listeners += "LISTEN 0 50 10.93.0.1:445 0.0.0.0:*\n"
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("healthy VPN listener caused repeated restart")
+	}
+}

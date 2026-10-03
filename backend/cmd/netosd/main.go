@@ -148,7 +148,8 @@ func main() {
 	multiWAN := multiwan.New(runner, stateDir, logger)
 	channelMonitor := channels.New(runner, stateDir, logger)
 	ddnsController := ddns.New(logger)
-	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController); err != nil {
+	sambaController := samba.New(runner, stateDir)
+	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController, sambaController); err != nil {
 		log.Fatalf("регистрация подсистем: %v", err)
 	}
 
@@ -267,6 +268,7 @@ func main() {
 	go multiWAN.Run(ctx, engine.Current)
 	go channelMonitor.Run(ctx, engine.Current)
 	go ddnsController.Run(ctx, engine.Current)
+	go sambaController.Run(ctx, engine.Current, logger)
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
 	// Дальше пароль знает только владелец машины.
@@ -471,7 +473,7 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	return cfg, id, nil
 }
 
-func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller) error {
+func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller, sambaControllers ...*samba.Subsystem) error {
 	svc := services.NewManager(runner)
 	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
@@ -483,6 +485,10 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	networkConfig.PrepareOwnership = interfaces.PrepareOwnership
 	firewallSubsystem := firewall.New(runner, stateDir)
 	firewallSubsystem.MultiWANClassifier = multiWAN.ClassifierRules
+	sambaController := samba.New(runner, stateDir)
+	if len(sambaControllers) > 0 {
+		sambaController = sambaControllers[0]
+	}
 
 	subsystems := []apply.Subsystem{
 		componentSubsystem,
@@ -501,7 +507,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		vpnservers.New(runner, stateDir),
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
-		samba.New(runner, stateDir),
+		sambaController,
 		firewallSubsystem,
 		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),

@@ -135,3 +135,30 @@ func TestPPPRouteCleanupAfterInterfaceDisappears(t *testing.T) {
 		t.Fatalf("stale ownership remained: %#v, %v", owned, err)
 	}
 }
+
+func TestMissingPPPDefaultIsRestoredWithoutReplacingOtherWAN(t *testing.T) {
+	routes := "default via 198.18.1.1 dev eth2 metric 200\n"
+	adds := 0
+	runner := netifaceRunnerFunc(func(_ context.Context, name string, args ...string) (string, error) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "ip -4 route show default":
+			return routes, nil
+		case "ip -4 route add default dev ppp-wan1 metric 100":
+			adds++
+			routes += "default dev ppp-wan1 metric 100\n"
+			return "", nil
+		}
+		return "", errors.New("unexpected command: " + command)
+	})
+	s := NewWAN(runner)
+	route := pppDefaultRoute{Interface: "ppp-wan1", Metric: 100}
+	for range 2 {
+		if err := s.ensurePPPDefaultRoute(context.Background(), route); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if adds != 1 || !strings.Contains(routes, "dev eth2 metric 200") {
+		t.Fatalf("PPP recovery changed other WAN or was not idempotent: adds=%d routes=%q", adds, routes)
+	}
+}

@@ -24,3 +24,18 @@ func TestReducedMTUPathClampsBothTCPHandshakeDirections(t *testing.T) {
 		}
 	}
 }
+
+func TestIKEv2ServerClampsForwardedTCPInBothDirections(t *testing.T) {
+	cfg := config.Default()
+	cfg.VPNServers = []config.VPNServer{{ID: "qa-ike", Index: 4, Enabled: true, Type: "ikev2"}}
+	set, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direction := range []string{"-i", "-o"} {
+		want := "-A FORWARD " + direction + " xfrm-srv4 -p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss 1201:65535 -j TCPMSS --set-mss 1200"
+		if !strings.Contains(set.IPv4, want) {
+			t.Fatalf("IKEv2 server path does not clamp SYN %s: %s", direction, set.IPv4)
+		}
+	}
+}

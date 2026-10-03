@@ -245,6 +245,21 @@ func desiredComponentState(cfg *config.Config) map[string]bool {
 	for _, component := range cfg.Components {
 		desired[component.ID] = component.Installed
 	}
+	// Domain policies create kernel ipsets even when the optional ipset
+	// component was not selected in the UI. Keep that package for as long as
+	// one of those policies is active, including the final cleanup phase.
+	xrayServers := map[string]bool{}
+	for _, server := range cfg.VPNServers {
+		if server.Type == "xray" {
+			xrayServers[server.ID] = true
+		}
+	}
+	for _, policy := range cfg.Policies {
+		if policy.Enabled && len(policy.Domains) > 0 && !xrayServers[policy.VPNServer] {
+			desired["ipset"] = true
+			break
+		}
+	}
 	return desired
 }
 

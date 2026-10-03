@@ -219,6 +219,43 @@ func TestFailedConfigCheckDoesNotStartSMBAndCanRollBack(t *testing.T) {
 		}
 	}
 }
+func TestFailedConfigCheckDoesNotInterruptActiveSamba(t *testing.T) {
+	r := newRunner()
+	s := testSubsystem(t, r)
+	c := fixture()
+	if err := s.Apply(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.ReadFile(filepath.Join(s.StateDir, "samba.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Samba.Workgroup = "NEWGROUP"
+	r.calls = nil
+	r.fail = "testparm"
+	if err := s.Apply(context.Background(), c); err == nil {
+		t.Fatal("invalid Samba config accepted")
+	}
+	for _, call := range r.calls {
+		if strings.HasPrefix(call, "systemctl stop ") || strings.HasPrefix(call, "systemctl restart ") || strings.HasPrefix(call, "systemctl disable ") {
+			t.Fatalf("validation failure interrupted active Samba: %s", call)
+		}
+	}
+	current, err := os.ReadFile(filepath.Join(s.StateDir, "samba.conf"))
+	if err != nil || string(current) != string(old) {
+		t.Fatal("validation failure changed active Samba config")
+	}
+	r.calls = nil
+	c.Samba.Workgroup = ""
+	if err := s.Apply(context.Background(), c); err != nil {
+		t.Fatalf("rollback of unchanged config called failed validator: %v", err)
+	}
+	for _, call := range r.calls {
+		if strings.Contains(call, "testparm") || strings.HasPrefix(call, "systemctl stop ") || strings.HasPrefix(call, "systemctl restart ") {
+			t.Fatalf("rollback interrupted working Samba: %s", call)
+		}
+	}
+}
 func TestNTHashAndRenderSecurity(t *testing.T) {
 	if got := ntHash("password"); got != "8846F7EAEE8FB117AD06BDD830B7586C" {
 		t.Fatalf("NT hash: %s", got)

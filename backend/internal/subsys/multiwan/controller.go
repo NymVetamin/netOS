@@ -386,6 +386,30 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	} else {
 		c.balanceDirty = false
 	}
+	// PPP reconnects independently of an apply. The kernel removes routes
+	// through a vanished PPP device from our client tables; when it returns,
+	// rebuild those tables even if the Multi-WAN switch is off. A second WAN
+	// still uses these tables to keep forwarded flows on their selected path.
+	if !cfg.MultiWAN.Enabled && len(enabledWANs(cfg)) > 1 {
+		for _, wan := range cfg.WANs {
+			if !wan.Enabled || (wan.Proto != "pppoe" && wan.Proto != "l2tp") {
+				continue
+			}
+			line, err := c.defaultRoute(ctx, interfaceName(cfg, wan))
+			if err != nil {
+				c.Logger.Warnf("Multi-WAN: маршрут PPP %s: %v", wan.Name, err)
+				continue
+			}
+			if line == c.knownRoutes[wan.ID] {
+				continue
+			}
+			if err := c.reconcileBalance(ctx, cfg); err != nil {
+				c.Logger.Warnf("Multi-WAN: таблица PPP %s не пересобрана: %v", wan.Name, err)
+				continue
+			}
+			c.knownRoutes[wan.ID] = line
+		}
+	}
 	for id, line := range c.suppressed {
 		if wanted[id] {
 			continue
@@ -399,7 +423,16 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 		_ = c.save()
 	}
 	for id := range c.knownRoutes {
-		if !wanted[id] {
+		keepPPP := false
+		if !cfg.MultiWAN.Enabled && len(enabledWANs(cfg)) > 1 {
+			for _, wan := range cfg.WANs {
+				if wan.ID == id && wan.Enabled && (wan.Proto == "pppoe" || wan.Proto == "l2tp") {
+					keepPPP = true
+					break
+				}
+			}
+		}
+		if !wanted[id] && !keepPPP {
 			delete(c.knownRoutes, id)
 		}
 	}

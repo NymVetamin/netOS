@@ -56,3 +56,28 @@ func TestIPSetRemovalWaitsForConsumers(t *testing.T) {
 		t.Fatal("cleanup not idempotent")
 	}
 }
+
+func TestDomainPolicyKeepsImplicitIPSetPackage(t *testing.T) {
+	r := &ipsetRemovalRunner{installed: true}
+	s := New(r, testLogger{})
+	s.DeferIPSetRemoval = true
+	c := config.Default()
+	c.Components = nil
+	c.Policies = []config.Policy{{ID: "domain-policy", Enabled: true, Domains: []string{"example.com"}}}
+	if err := s.Apply(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Cleanup{Components: s}).Apply(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !r.installed || r.purges != 0 {
+		t.Fatal("domain policy lost its required ipset package")
+	}
+	c.Policies[0].Enabled = false
+	if err := (&Cleanup{Components: s}).Apply(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if r.installed || r.purges != 1 {
+		t.Fatal("ipset package remained after its last consumer was removed")
+	}
+}

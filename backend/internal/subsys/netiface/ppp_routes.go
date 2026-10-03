@@ -192,3 +192,18 @@ func hasPPPDefaultRoute(output string, route pppDefaultRoute) bool {
 	}
 	return false
 }
+
+// pppd can refuse to install its default if a route with the same metric was
+// present when IPCP completed. During a static-to-PPP transition that old
+// netOS route is retired later in Apply, so install only the missing PPP
+// default after that retirement. Never replace a foreign default route.
+func (s *WAN) ensurePPPDefaultRoute(ctx context.Context, route pppDefaultRoute) error {
+	if s.defaultRouteHealthy(ctx, route.Interface, "", route.Metric) {
+		return nil
+	}
+	_, err := s.Runner.Run(ctx, "ip", "-4", "route", "add", "default", "dev", route.Interface, "metric", strconv.Itoa(route.Metric))
+	if err != nil && !s.defaultRouteHealthy(ctx, route.Interface, "", route.Metric) {
+		return fmt.Errorf("установка PPP default dev %s metric %d: %w", route.Interface, route.Metric, err)
+	}
+	return nil
+}

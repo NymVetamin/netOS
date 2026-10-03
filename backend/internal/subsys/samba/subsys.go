@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf16"
 
@@ -25,10 +26,14 @@ import (
 type Subsystem struct {
 	Runner            system.Runner
 	StateDir, UnitDir string
+	mu                sync.Mutex
+	nextVPNRepair     time.Time
 }
 
-func New(r system.Runner, dir string) *Subsystem { return &Subsystem{r, dir, "/etc/systemd/system"} }
-func (s *Subsystem) Name() string                { return "samba" }
+func New(r system.Runner, dir string) *Subsystem {
+	return &Subsystem{Runner: r, StateDir: dir, UnitDir: "/etc/systemd/system"}
+}
+func (s *Subsystem) Name() string { return "samba" }
 func (s *Subsystem) stamp(c *config.Config) []byte {
 	host := ""
 	if c.Samba.Enabled && c.Samba.Discovery && len(c.Samba.Networks) > 0 {
@@ -101,6 +106,8 @@ func ntHash(password string) string {
 }
 
 func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	old, err := s.owned()
 	if err != nil {
 		return err
@@ -160,6 +167,36 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 						}
 					}
 				}
+			}
+		}
+	}
+	// Validate the new configuration before stopping the currently working
+	// daemon or publishing its replacement. A failed testparm must leave the
+	// active listener and configuration untouched.
+	validatedConf := ""
+	if c.Samba.Enabled {
+		validatedConf, err = Render(c, s.StateDir)
+		if err != nil {
+			return err
+		}
+		if system.FileChanged(filepath.Join(s.StateDir, "samba.conf"), []byte(validatedConf)) {
+			if err := os.MkdirAll(s.StateDir, 0700); err != nil {
+				return err
+			}
+			pending, err := os.CreateTemp(s.StateDir, ".samba-validate-*")
+			if err != nil {
+				return err
+			}
+			defer os.Remove(pending.Name())
+			if _, err = pending.WriteString(validatedConf); err != nil {
+				_ = pending.Close()
+				return err
+			}
+			if err = pending.Close(); err != nil {
+				return err
+			}
+			if _, err = s.Runner.Run(ctx, "testparm", "--suppress-prompt", pending.Name()); err != nil {
+				return fmt.Errorf("Samba config: %w", err)
 			}
 		}
 	}
@@ -273,18 +310,11 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		if _, err = s.write("samba/check-volume", []byte(mountGuard), 0700); err != nil {
 			return err
 		}
-		conf, e := Render(c, s.StateDir)
-		if e != nil {
-			return e
-		}
-		ch, e := s.write("samba.conf", []byte(conf), 0600)
+		ch, e := s.write("samba.conf", []byte(validatedConf), 0600)
 		if e != nil {
 			return e
 		}
 		changed = changed || ch
-		if _, err = s.Runner.Run(ctx, "testparm", "--suppress-prompt", filepath.Join(s.StateDir, "samba.conf")); err != nil {
-			return fmt.Errorf("Samba config: %w", err)
-		}
 		// An enabled unit can start before netOS assigns the LAN addresses at
 		// boot. An active smbd listening only on loopback must be repaired.
 		// Discovery also caches interface addresses at startup. Repair both

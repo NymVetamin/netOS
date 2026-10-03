@@ -106,6 +106,27 @@ func TestResetPrefersTheUplinkOfTheCurrentSSHSession(t *testing.T) {
 	}
 }
 
+func TestResetRemovesCompetingDefaultBeforeFactoryDetection(t *testing.T) {
+	m, _ := testManager()
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		if name == "ip" && strings.Join(args, " ") == "-4 route show default" {
+			return "default via 198.18.0.1 dev eth1 metric 10\ndefault via 31.57.27.1 dev eth0 metric 100\n", nil
+		}
+		return "", nil
+	}
+	var deleted []string
+	m.Run = func(_ context.Context, c command) error {
+		deleted = append(deleted, c.name+" "+strings.Join(c.args, " "))
+		return nil
+	}
+	if err := m.removeCompetingDefaultRoutes(context.Background(), managementUplink{device: "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != "ip -4 route del default via 198.18.0.1 dev eth1 metric 10" {
+		t.Fatalf("reset left the private default or deleted SSH uplink: %v", deleted)
+	}
+}
+
 func TestRestoreRetainsPhysicalManagementUplinkUntilDaemonIsReady(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)

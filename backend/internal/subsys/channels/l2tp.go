@@ -150,4 +150,7 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, ch config.Channel) {
 		_ = os.Remove(path)
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
+	// xl2tpd can exit with status 1 on normal stop. Once the removed unit is
+	// unloaded, clear only its failed state instead of leaving failed/not-found.
+	_, _ = s.Runner.Run(ctx, "systemctl", "reset-failed", unitName)
 }

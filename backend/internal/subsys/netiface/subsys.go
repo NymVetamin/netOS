@@ -1429,6 +1429,11 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			if err := s.waitPPPoE(ctx, w); err != nil {
 				return err
 			}
+			if !cfg.MultiWAN.Enabled {
+				if err := s.ensurePPPDefaultRoute(ctx, pppDefaultRoute{Interface: PPPoEInterface(w.ID), Metric: w.Metric}); err != nil {
+					return err
+				}
+			}
 			// On a restart the old PPP interface can keep its address briefly.
 			// Wait for the default with the new metric before retiring the old
 			// owned route; an address alone does not prove the new session is ready.

@@ -109,3 +109,37 @@ func (m *Manager) protectManagementUplink(ctx context.Context, uplink management
 	}
 	return m.run(ctx, "ip", uplink.route...)
 }
+
+// Factory bootstrap chooses the first live default route. During reset the
+// currently managed private WAN can still have a lower-metric default than
+// the SSH uplink, so leave only the latter until the new configuration has
+// been detected. The old WAN configuration is being discarded by reset.
+func (m *Manager) removeCompetingDefaultRoutes(ctx context.Context, uplink managementUplink) error {
+	if uplink.device == "" {
+		return nil
+	}
+	out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
+	if err != nil {
+		return fmt.Errorf("чтение маршрутов перед заводским запуском: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "default" {
+			continue
+		}
+		device := ""
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "dev" {
+				device = fields[i+1]
+				break
+			}
+		}
+		if device == "" || device == uplink.device {
+			continue
+		}
+		if err := m.run(ctx, "ip", append([]string{"-4", "route", "del"}, fields...)...); err != nil {
+			return fmt.Errorf("удаление старого default через %s: %w", device, err)
+		}
+	}
+	return nil
+}

@@ -444,7 +444,7 @@ func (d *Dnsmasq) renderDHCP(b *strings.Builder, cfg *config.Config, ifaceByID m
 		reserved[strings.ToLower(res.MAC)] = true
 		parts := []string{res.MAC}
 		hostname := res.Hostname
-		if name := clientNames[strings.ToLower(res.MAC)]; name != "" {
+		if name := clientNames[strings.ToLower(res.MAC)]; hostname == "" && name != "" {
 			hostname = name
 		}
 		if hostname != "" {

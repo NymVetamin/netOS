@@ -378,6 +378,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	evicted, err := s.Store.CreateSession(token, user.Username, ip, sessionTTL)
 	if err != nil {
+		if store.IsStorageFull(err) {
+			writeError(w, http.StatusInsufficientStorage, "недостаточно места на диске для сохранения сессии; освободите место и повторите вход")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "не удалось сохранить сессию")
 		return
 	}

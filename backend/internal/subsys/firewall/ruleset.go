@@ -729,6 +729,14 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 			links = append(links, channelInterface(ch))
 		}
 	}
+	// IKEv2 road-warrior traffic enters through an XFRM server interface.
+	// Its configured link MTU does not describe the full UDP-encapsulated
+	// path, so PMTU-only clamping can leave TLS responses blackholed.
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "ikev2" && clampZone["vpn"] {
+			links = append(links, serverInterface(server))
+		}
+	}
 	for _, iface := range links {
 		for _, direction := range []string{"-o", "-i"} {
 			b.line("-A FORWARD %s %s -p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss %d:65535 -j TCPMSS --set-mss %d",

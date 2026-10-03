@@ -54,6 +54,11 @@ func runTLSServer(t *testing.T, cfg *config.Config, tlsDir string) (*http.Respon
 	t.Helper()
 	logger := &lifecycleLogger{}
 	s := New(nil, nil, nil, logger)
+	ready := make(chan struct{})
+	s.Ready = func() error {
+		close(ready)
+		return nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Start(ctx, cfg, tlsDir) }()
@@ -90,6 +95,15 @@ func runTLSServer(t *testing.T, cfg *config.Config, tlsDir string) (*http.Respon
 	if resp.TLS == nil || resp.TLS.Version < tls.VersionTLS12 {
 		cancel()
 		t.Fatalf("negotiated TLS state=%+v", resp.TLS)
+	}
+	select {
+	case <-ready:
+	case err := <-done:
+		cancel()
+		t.Fatalf("Start exited before readiness: %v; logs=%s", err, logger.String())
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("Start did not report readiness")
 	}
 	cancel()
 	select {
