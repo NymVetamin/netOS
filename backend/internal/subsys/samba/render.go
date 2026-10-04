@@ -55,6 +55,12 @@ func Accesses(c *config.Config) []Access {
 }
 
 func Render(c *config.Config, dir string) (string, error) {
+	return render(c, dir, nil)
+}
+
+// present limits point-to-point L2TP bindings to addresses that exist now.
+// A nil map keeps Render suitable for showing the complete planned config.
+func render(c *config.Config, dir string, present map[string]string) (string, error) {
 	var b strings.Builder
 	workgroup := c.Samba.Workgroup
 	if workgroup == "" {
@@ -70,6 +76,9 @@ func Render(c *config.Config, dir string) (string, error) {
 	// Explicit address/mask entries also describe point-to-point transports.
 	for _, v := range c.VPNServers {
 		if v.Enabled && v.Type != "xray" && selected(c.Samba.VPNs, v.ID) {
+			if v.Type == "l2tp" && present != nil && present[v.ID] == "" {
+				continue
+			}
 			interfaces = append(interfaces, v.Subnet)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 )
@@ -189,5 +190,91 @@ func TestBarePPPAddressRepairsSelectedSambaListener(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
 		t.Fatal("bare PPP address did not repair missing listener")
+	}
+}
+
+func TestL2TPSelectionBeforeFirstPPPDefersAddressBinding(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner()}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	c := fixture()
+	c.Samba.VPNs = []string{"l2tp"}
+	c.VPNServers = []config.VPNServer{{ID: "l2tp", Index: 30, Enabled: true, Type: "l2tp", Subnet: "10.99.1.1/24"}}
+	ctx := context.Background()
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(s.StateDir, "samba.conf")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(before), "10.99.1.1/24") {
+		t.Fatal("absent PPP address bound before first client")
+	}
+	if err := s.Health(ctx, c); err != nil {
+		t.Fatalf("LAN must remain healthy before PPP: %v", err)
+	}
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("absent PPP caused a restart")
+	}
+	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "10.99.1.1/24") || !strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("new PPP address did not update Samba config and listener")
+	}
+	r.address = ""
+	s.nextVPNRepair = time.Time{}
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	after, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), "10.99.1.1/24") {
+		t.Fatal("stale PPP address remains bound after disconnect")
+	}
+}
+
+func TestVPNListenerUpdateValidatesBeforeReplacingWorkingSamba(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner()}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	c := fixture()
+	c.Samba.VPNs = []string{"l2tp"}
+	c.VPNServers = []config.VPNServer{{ID: "l2tp", Index: 30, Enabled: true, Type: "l2tp", Subnet: "10.99.1.1/24"}}
+	ctx := context.Background()
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.StateDir, "samba.conf")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	r.fail = "testparm"
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(ctx, c); err == nil {
+		t.Fatal("invalid candidate accepted")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("working Samba config or listener changed after failed validation")
 	}
 }

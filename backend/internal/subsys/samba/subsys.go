@@ -175,7 +175,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	// active listener and configuration untouched.
 	validatedConf := ""
 	if c.Samba.Enabled {
-		validatedConf, err = Render(c, s.StateDir)
+		validatedConf, err = s.renderActive(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -332,13 +332,15 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 			if err = s.lanListeners(ctx, c); err == nil {
 				break
 			}
-			if attempt == 49 {
+			// On the minimum 1 GiB router smbd can take more than five
+			// seconds after systemd reports Type=simple as started.
+			if attempt == 119 {
 				return err
 			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(100 * time.Millisecond):
+			case <-time.After(250 * time.Millisecond):
 			}
 		}
 		if c.Samba.Discovery && len(c.Samba.Networks) > 0 {
@@ -411,7 +413,7 @@ func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {
 		if err := s.lanListeners(ctx, c); err != nil {
 			return err
 		}
-		conf, err := Render(c, s.StateDir)
+		conf, err := s.renderActive(ctx, c)
 		if err != nil {
 			return err
 		}
