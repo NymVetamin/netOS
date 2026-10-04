@@ -319,3 +319,24 @@ func TestDeviceDiscoveryNestedAndDuplicateUUID(t *testing.T) {
 		t.Fatal("duplicate filesystem UUID accepted")
 	}
 }
+
+type treeOnlyDevicesRunner struct{}
+
+func (r treeOnlyDevicesRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
+	return r.Run(ctx, name, args...)
+}
+
+func (treeOnlyDevicesRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	command := name + " " + strings.Join(args, " ")
+	if !strings.Contains(command, "--tree") && !strings.Contains(command, "NAME,") {
+		return `{"blockdevices":[{"path":"/dev/sda1","uuid":"ABCD-1234","fstype":"exfat","type":"part","size":12345,"mountpoints":[null]}]}`, nil
+	}
+	return `{"blockdevices":[{"name":"sda","path":"/dev/sda","tran":"usb","children":[{"name":"sda1","path":"/dev/sda1","uuid":"ABCD-1234","fstype":"exfat","type":"part","size":12345,"mountpoints":[null]}]}]}`, nil
+}
+
+func TestDeviceDiscoveryRetainsParentUSBTransport(t *testing.T) {
+	devices, err := Devices(context.Background(), treeOnlyDevicesRunner{})
+	if err != nil || len(devices) != 1 || devices[0].Transport != "usb" {
+		t.Fatalf("partition lost USB transport: %v, %v", devices, err)
+	}
+}

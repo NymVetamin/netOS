@@ -179,6 +179,11 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		if err != nil {
 			return err
 		}
+		// testparm resolves state/cache paths while validating the candidate.
+		// They must exist on the first enable, before the daemon is touched.
+		if err := os.MkdirAll(filepath.Join(s.StateDir, "samba"), 0700); err != nil {
+			return err
+		}
 		if system.FileChanged(filepath.Join(s.StateDir, "samba.conf"), []byte(validatedConf)) {
 			if err := os.MkdirAll(s.StateDir, 0700); err != nil {
 				return err

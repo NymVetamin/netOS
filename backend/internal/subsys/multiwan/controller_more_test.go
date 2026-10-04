@@ -28,36 +28,41 @@ type balanceStateRunner struct {
 	failed   bool
 }
 
-func TestPPPReturnRestoresClientRoutingWithMultiWANDisabled(t *testing.T) {
-	r := &balanceStateRunner{
-		routes: map[string]string{},
-		main: map[string]string{
-			"eth1":     "default via 198.18.0.1 dev eth1 metric 200",
-			"ppp-wan2": "default dev ppp-wan2 scope link metric 100",
-		},
-		rules: map[string]string{},
-	}
-	c := New(r, t.TempDir(), nil)
-	cfg := config.Default()
-	cfg.MultiWAN.Enabled = false
-	cfg.Interfaces = []config.Interface{{ID: "underlay", Name: "eth1", Type: "physical"}}
-	cfg.WANs = []config.WAN{
-		{ID: "wan1", Index: 1, Interface: "underlay", Enabled: true, Proto: "static", Metric: 200},
-		{ID: "wan2", Index: 2, Enabled: true, Proto: "l2tp", Metric: 100},
-	}
-	if err := c.Apply(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	c.pausedUntil = time.Time{}
-	r.main["ppp-wan2"] = ""
-	// The kernel drops routes through the vanished PPP interface, including
-	// the default in the netOS-owned client table.
-	r.routes["3002"] = "blackhole default metric 32767\n"
-	c.tick(context.Background(), cfg)
-	r.main["ppp-wan2"] = "default dev ppp-wan2 scope link metric 100"
-	c.tick(context.Background(), cfg)
-	if !strings.Contains(r.routes["3002"], "default dev ppp-wan2") {
-		t.Fatalf("restored PPP default did not reach client table 3002: %q", r.routes["3002"])
+func TestPPPReturnRestoresClientRouting(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "failover"}[enabled], func(t *testing.T) {
+			r := &balanceStateRunner{
+				routes: map[string]string{},
+				main: map[string]string{
+					"eth1":     "default via 198.18.0.1 dev eth1 metric 200",
+					"ppp-wan2": "default dev ppp-wan2 scope link metric 100",
+				},
+				rules: map[string]string{},
+			}
+			c := New(r, t.TempDir(), nil)
+			cfg := config.Default()
+			cfg.MultiWAN.Enabled = enabled
+			cfg.MultiWAN.Mode = "failover"
+			cfg.Interfaces = []config.Interface{{ID: "underlay", Name: "eth1", Type: "physical"}}
+			cfg.WANs = []config.WAN{
+				{ID: "wan1", Index: 1, Interface: "underlay", Enabled: true, Proto: "static", Metric: 200},
+				{ID: "wan2", Index: 2, Enabled: true, Proto: "l2tp", Metric: 100},
+			}
+			if err := c.Apply(context.Background(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			c.pausedUntil = time.Time{}
+			r.main["ppp-wan2"] = ""
+			// The kernel drops routes through the vanished PPP interface, including
+			// the default in the netOS-owned client table.
+			r.routes["3002"] = "blackhole default metric 32767\n"
+			c.tick(context.Background(), cfg)
+			r.main["ppp-wan2"] = "default dev ppp-wan2 scope link metric 100"
+			c.tick(context.Background(), cfg)
+			if !strings.Contains(r.routes["3002"], "default dev ppp-wan2") {
+				t.Fatalf("restored PPP default did not reach client table 3002: %q", r.routes["3002"])
+			}
+		})
 	}
 }
 

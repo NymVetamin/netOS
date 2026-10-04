@@ -355,6 +355,13 @@ func TestBackupNowRestartsDaemonAfterArchiveFailure(t *testing.T) {
 	var started bool
 	m.Run = func(_ context.Context, cmd command) error {
 		if cmd.name == "tar" {
+			for i, arg := range cmd.args {
+				if arg == "-czf" && i+1 < len(cmd.args) {
+					if err := os.WriteFile(cmd.args[i+1], []byte("truncated archive"), 0o600); err != nil {
+						return err
+					}
+				}
+			}
 			return errors.New("tar failed")
 		}
 		if cmd.name == "systemctl" && len(cmd.args) > 0 && cmd.args[0] == "start" {
@@ -367,5 +374,9 @@ func TestBackupNowRestartsDaemonAfterArchiveFailure(t *testing.T) {
 	}
 	if !started {
 		t.Fatal("daemon was not restarted after backup failure")
+	}
+	entries, err := filepath.Glob(filepath.Join(m.BackupDir, "netos-*.tar.gz"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("partial backup still published: %v, %v", entries, err)
 	}
 }

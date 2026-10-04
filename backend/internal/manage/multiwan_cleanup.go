@@ -55,7 +55,13 @@ func (m *Manager) removeOwnedMultiWAN(ctx context.Context) error {
 			if !owned {
 				continue
 			}
-			args := append([]string{"-4", "rule", "del", "priority", priority}, fields[1:]...)
+			parts := make([]string, 0, len(fields)-1)
+			for _, field := range fields[1:] {
+				if field != "[detached]" {
+					parts = append(parts, field)
+				}
+			}
+			args := append([]string{"-4", "rule", "del", "priority", priority}, parts...)
 			if err := m.run(ctx, "ip", args...); err != nil {
 				return err
 			}

@@ -1563,6 +1563,7 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 	} else {
 		args := append([]string{"-C", string(filepath.Separator), "-czf", path}, sources...)
 		if err := m.run(ctx, "tar", args...); err != nil {
+			_ = os.Remove(path)
 			return "", fmt.Errorf("резервное копирование: %w", err)
 		}
 	}

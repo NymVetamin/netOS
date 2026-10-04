@@ -24,7 +24,9 @@ type Device struct {
 }
 
 func Devices(ctx context.Context, r system.Runner) ([]Device, error) {
-	out, err := r.Run(ctx, "lsblk", "--json", "--bytes", "--output", "PATH,UUID,LABEL,FSTYPE,SIZE,TRAN,TYPE,MOUNTPOINTS")
+	// lsblk otherwise flattens JSON when NAME is not among the output columns.
+	// Keep the parent disk so partitions can inherit its USB transport.
+	out, err := r.Run(ctx, "lsblk", "--json", "--tree", "--bytes", "--output", "NAME,PATH,UUID,LABEL,FSTYPE,SIZE,TRAN,TYPE,MOUNTPOINTS")
 	if err != nil {
 		return nil, err
 	}

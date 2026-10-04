@@ -25,7 +25,7 @@ func TestResetAndRestoreRollbackRemoveOwnedMultiWAN(t *testing.T) {
 		previous := m.Output
 		m.Output = func(ctx context.Context, name string, args ...string) (string, error) {
 			if name == "ip" && strings.Join(args, " ") == "-4 rule show" {
-				return "30003: from 192.0.2.5 lookup 3003\n30003: from all oif eth0 lookup 3003\n30004: from all lookup 3004\n30003: from all lookup 999\n", nil
+				return "30003: from 192.0.2.5 lookup 3003\n30003: from all oif eth0 [detached] lookup 3003\n30004: from all lookup 3004\n30003: from all lookup 999\n", nil
 			}
 			return previous(ctx, name, args...)
 		}
@@ -47,6 +47,9 @@ func TestResetAndRestoreRollbackRemoveOwnedMultiWAN(t *testing.T) {
 		}
 		if strings.Contains(text, "del priority 30004") || strings.Contains(text, "del priority 30003 from all lookup 999") {
 			t.Fatal("foreign rules removed")
+		}
+		if strings.Contains(text, "[detached]") {
+			t.Fatal("iproute2 output annotation passed to ip rule del")
 		}
 	}
 }

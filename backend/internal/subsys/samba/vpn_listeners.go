@@ -45,8 +45,14 @@ func (s *Subsystem) ReconcileVPNListeners(ctx context.Context, cfg *config.Confi
 			}
 			name := strings.TrimSuffix(fields[1], ":")
 			match := name == iface || (strings.HasSuffix(iface, "+") && strings.HasPrefix(name, strings.TrimSuffix(iface, "+")))
-			if address, parseErr := netip.ParsePrefix(fields[3]); match && parseErr == nil && address.Addr() == prefix.Addr() {
+			if !match {
+				continue
+			}
+			address, parseErr := netip.ParsePrefix(fields[3])
+			if parseErr == nil && address.Addr() == prefix.Addr() {
 				wanted[netip.AddrPortFrom(prefix.Addr(), 445).String()] = true
+			} else if bare, bareErr := netip.ParseAddr(fields[3]); bareErr == nil && bare == prefix.Addr() {
+				wanted[netip.AddrPortFrom(bare, 445).String()] = true
 			}
 		}
 	}
