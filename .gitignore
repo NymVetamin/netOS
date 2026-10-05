@@ -44,9 +44,8 @@ __pycache__/
 /docs/testing/
 /CLAUDE_TEST_*
 /CODEX_TEST_*
-# Локальные QA-отчёты, сценарии и результаты в корне проекта
-/QA_*
-/qa_*
+# Локальные QA-отчёты, сценарии и доказательства
+/QA/
 .playwright-cli/
 .playwright-mcp/
 playwright-report/
