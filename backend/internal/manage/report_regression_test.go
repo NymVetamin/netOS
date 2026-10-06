@@ -14,6 +14,9 @@ func TestReportResetAndRollbackCleanOwnedRuntime(t *testing.T) {
 		t.Run(map[bool]string{false: "reset", true: "rollback"}[rollback], func(t *testing.T) {
 			m, _ := testManager()
 			sandbox(t, m)
+			if !rollback {
+				simulateResetCredentials(t, m)
+			}
 			generated := filepath.Join(m.StateDir, "generated")
 			if err := os.MkdirAll(generated, 0700); err != nil {
 				t.Fatal(err)

@@ -13,6 +13,7 @@ import (
 func TestResetRetainsPhysicalUplinkForFactoryDetection(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	simulateResetCredentials(t, m)
 	if err := os.MkdirAll(m.sys("/sys/class/net/eth0/device"), 0700); err != nil {
 		t.Fatal(err)
 	}

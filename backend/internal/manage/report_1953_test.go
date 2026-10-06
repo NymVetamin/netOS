@@ -31,6 +31,7 @@ func TestReport1953CleanupMissingDeviceAndRealFailure(t *testing.T) {
 			t.Run(fmt.Sprintf("qos=%v/missing=%v", qos, missing), func(t *testing.T) {
 				m, _ := testManager()
 				sandbox(t, m)
+				simulateResetCredentials(t, m)
 				filename, data := "owned-network-addresses.json", `[{"interface":"br1","address":"10.60.2.1/24"}]`
 				if qos {
 					filename, data = "owned-qos-clients.json", `["br1"]`

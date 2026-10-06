@@ -105,7 +105,7 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
         Сразу после установки на машине работают только веб-панель и SSH. Роутер не
         поднимает служб, которых у него не просили: меньше открытых портов, меньше
         занятого места, меньше того, что может сломаться. Выбрано компонентов:{" "}
-        {installedCount}, работает служб: {runningCount}.
+        {installedCount}, используется компонентов: {runningCount}.
       </Notice>
 
       {Object.entries(groups).map(([group, items]) => (

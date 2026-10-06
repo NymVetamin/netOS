@@ -146,7 +146,7 @@ var Catalog = []ComponentInfo{
 		// поднимает xl2tpd со своим конфигом, и он занимает порт 1701, на
 		// котором должен работать туннель netOS.
 		Units:    []string{"xl2tpd.service"},
-		RunUnits: []string{"netos-l2tp-*.service"},
+		RunUnits: []string{"netos-l2tp-*.service", "netos-vpn-l2tp-*.service"},
 		Provides: []string{"vpn-client", "wan"},
 		SizeHint: "около 2 МБ",
 	},

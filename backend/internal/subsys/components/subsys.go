@@ -9,9 +9,11 @@ package components
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -28,6 +30,7 @@ type Subsystem struct {
 	Systemd               *system.Systemd
 	Logger                Logger
 	ExternalMigrationPath string
+	StateDir              string
 	// Keep ipset available until firewall and policy cleanup release its sets.
 	DeferIPSetRemoval bool
 	DeferSambaRemoval bool
@@ -46,6 +49,7 @@ func New(r system.Runner, logger Logger) *Subsystem {
 		Packages: system.NewPackages(r),
 		Systemd:  system.NewSystemd(r),
 		Logger:   logger,
+		StateDir: "/var/lib/netos/generated",
 	}
 }
 
@@ -565,7 +569,8 @@ func (s *Subsystem) Status(ctx context.Context) map[string]bool {
 }
 
 // Running сообщает, какие компоненты не просто установлены, а работают прямо
-// сейчас: их демон поднят юнитом netOS.
+// сейчас: их демон поднят юнитом netOS или активен принадлежащий netOS
+// kernel-интерфейс WireGuard.
 //
 // Установленный пакет и работающая служба — разные вещи, и по одному только
 // «установлен» непонятно, кто из двух установленных серверов DHCP обслуживает
@@ -583,7 +588,57 @@ func (s *Subsystem) Running(ctx context.Context) map[string]bool {
 		}
 		out[info.ID] = anyUnitActive(info.RunUnits, active)
 	}
+	// WireGuard runs in the kernel. Count only live, enabled interfaces whose
+	// ownership was recorded by netOS, never a foreign tunnel or just a package.
+	out["wireguard"] = s.wireGuardRunning(ctx)
 	return out
+}
+
+func (s *Subsystem) wireGuardRunning(ctx context.Context) bool {
+	owned := map[string]bool{}
+	for _, name := range []string{"owned-channels.json", "owned-vpn-servers.json"} {
+		data, err := os.ReadFile(filepath.Join(s.StateDir, name))
+		if err != nil {
+			continue
+		}
+		var entries []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(data, &entries) != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Type == "wireguard" {
+				owned[entry.Name] = true
+			}
+		}
+	}
+	if len(owned) == 0 {
+		return false
+	}
+	data, err := s.Runner.Run(ctx, "ip", "-j", "link", "show", "type", "wireguard")
+	if err != nil {
+		return false
+	}
+	var links []struct {
+		Name  string   `json:"ifname"`
+		Flags []string `json:"flags"`
+	}
+	if json.Unmarshal([]byte(data), &links) != nil {
+		return false
+	}
+	for _, link := range links {
+		if !owned[link.Name] {
+			continue
+		}
+		for _, flag := range link.Flags {
+			if flag == "UP" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // anyUnitActive сверяет шаблоны юнитов компонента с работающими. Шаблон нужен

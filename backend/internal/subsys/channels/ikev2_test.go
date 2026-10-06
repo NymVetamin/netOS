@@ -27,3 +27,13 @@ func TestIKEv2ClientRendersIsolatedXFRMAndEAP(t *testing.T) {
 		t.Fatal("client unit does not initiate connection")
 	}
 }
+
+func TestIKEv2PushDNSUsesChannelInterface(t *testing.T) {
+	for _, index := range []int{3, 45} {
+		ch := config.Channel{Index: index, Type: "ikev2"}
+		daemon := string(renderIKEv2ClientDaemon(ch))
+		if !strings.Contains(daemon, "iface = "+InterfaceName(ch)) || strings.Contains(daemon, "iface = lo") {
+			t.Fatalf("DNS push does not target the isolated channel: %s", daemon)
+		}
+	}
+}

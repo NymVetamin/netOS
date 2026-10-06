@@ -785,20 +785,16 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 		}
 		return fmt.Errorf("запуск после сброса: %w", err)
 	}
+	if err := m.printCredentials(ctx); err != nil {
+		return fmt.Errorf("сброс выполнен, но новые данные входа не выданы: %w", err)
+	}
 	fmt.Fprintln(m.Out, "netOS сброшен.")
 	if backup != "" {
 		fmt.Fprintf(m.Out, "Резервная копия: %s\n", backup)
 	}
-	m.printCredentials()
 	return nil
 }
 
-// printCredentials показывает данные первого входа на экране.
-//
-// Отправлять администратора читать файл незачем: он стоит перед терминалом
-// ровно затем, чтобы узнать пароль, и путь к файлу — это лишний шаг. Файл
-// после показа удаляется: прочитанный пароль не должен лежать на диске
-// открытым текстом.
 // Ownership and the old database still exist at this point. A fresh daemon
 // startup reconciles the services and addresses removed by the failed reset.
 func (m *Manager) recoverReset(cause error) error {
@@ -810,29 +806,45 @@ func (m *Manager) recoverReset(cause error) error {
 	return cause
 }
 
-func (m *Manager) printCredentials() {
+// printCredentials waits for the first login credentials, displays them, and
+// removes the plaintext file only after successful output.
+func (m *Manager) printCredentials(ctx context.Context) error {
 	credentials := filepath.Join(m.StateDir, "initial-credentials")
 	// Файл появляется не сразу: демон сначала применяет всю конфигурацию и
 	// только потом заводит учётную запись.
-	for i := 0; i < 80; i++ {
+	// Match the installer's startup budget: package cleanup and a fresh Apply
+	// can exceed 40 seconds on the smallest supported machines.
+	for i := 0; i < 720; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if info, err := os.Stat(credentials); err == nil && info.Size() > 0 {
 			break
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("проверка начальных учётных данных: %w", err)
 		}
 		m.Sleep(500 * time.Millisecond)
 	}
 	data, err := os.ReadFile(credentials)
-	if err != nil || len(data) == 0 {
-		fmt.Fprintln(m.Err, "Новые данные входа ещё создаются; проверьте: netos logs -f")
-		return
+	if err != nil {
+		return fmt.Errorf("чтение начальных учётных данных после ожидания: %w; проверьте: netos logs -f", err)
 	}
-	fmt.Fprintln(m.Out)
-	fmt.Fprintln(m.Out, "Данные для входа:")
-	fmt.Fprintln(m.Out)
+	if len(data) == 0 {
+		return fmt.Errorf("новые данные входа не созданы за 360 секунд; проверьте: netos logs -f")
+	}
+	var output strings.Builder
+	output.WriteString("\nДанные для входа:\n\n")
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		fmt.Fprintln(m.Out, "  "+line)
+		output.WriteString("  " + line + "\n")
 	}
-	fmt.Fprintln(m.Out)
-	_ = os.Remove(credentials)
+	output.WriteString("\n")
+	if _, err := io.WriteString(m.Out, output.String()); err != nil {
+		return fmt.Errorf("вывод новых данных входа: %w", err)
+	}
+	if err := os.Remove(credentials); err != nil {
+		return fmt.Errorf("удаление прочитанных начальных учётных данных: %w", err)
+	}
+	return nil
 }
 
 // backupEntry — резервная копия, найденная в каталоге.

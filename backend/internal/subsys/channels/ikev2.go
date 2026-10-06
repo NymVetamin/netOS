@@ -90,10 +90,15 @@ func renderIKEv2ClientDaemon(ch config.Channel) []byte {
       install_routes = no
       install_routes_xfrmi = no
     }
+    resolve {
+      resolvconf {
+        iface = %s
+      }
+    }
   }
 }
 include /etc/strongswan.d/*.conf
-`, InterfaceName(ch), ikev2ClientVICI(ch)))
+`, InterfaceName(ch), ikev2ClientVICI(ch), InterfaceName(ch)))
 }
 
 func renderIKEv2ClientUnit(ch config.Channel, p ikev2ClientPaths) []byte {

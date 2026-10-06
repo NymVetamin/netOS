@@ -172,6 +172,7 @@ func TestUpdateForceIgnoresVersionCheck(t *testing.T) {
 func TestResetAsksAboutBackup(t *testing.T) {
 	m, out := testManager()
 	sandbox(t, m)
+	simulateResetCredentials(t, m)
 	m.In = strings.NewReader("y\nn\n") // сброс — да, копия — нет
 
 	var archived bool
@@ -195,6 +196,7 @@ func TestResetAsksAboutBackup(t *testing.T) {
 func TestResetNoBackupFlagSkipsArchive(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	simulateResetCredentials(t, m)
 	var archived bool
 	m.Run = func(_ context.Context, spec command) error {
 		if spec.name == "tar" {
@@ -213,6 +215,7 @@ func TestResetNoBackupFlagSkipsArchive(t *testing.T) {
 func TestResetRemovesAppliedRuntimeBeforeForgettingConfiguration(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	simulateResetCredentials(t, m)
 	unit := filepath.Join(m.Root, "etc/systemd/system/netos-xray-ch7.service")
 	link := filepath.Join(m.Root, "sys/class/net/tun-ch7")
 	ownership := filepath.Join(m.Root, "etc/systemd/networkd.conf.d/99-netos.conf")
