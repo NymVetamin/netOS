@@ -102,7 +102,7 @@ func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChanne
 		paths = []string{conf, ppp, unit}
 	case "ikev2":
 		p := s.ikev2Paths(config.Channel{Index: owned.Index})
-		paths = []string{p.conf, p.daemon, p.ca, p.unit}
+		paths = []string{p.conf, p.daemon, p.ca, p.unit, filepath.Join(p.root, "dns-update")}
 	default:
 		paths = []string{filepath.Join(s.StateDir, owned.Name+".conf")}
 		snapshot.addresses, _ = s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", owned.Name)
@@ -887,6 +887,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 					{p.daemon, renderIKEv2ClientDaemon(ch), 0o600},
 					{p.ca, []byte(ike.CACert), 0o644},
 					{p.unit, renderIKEv2ClientUnit(ch, p), 0o644},
+					{filepath.Join(p.root, "dns-update"), renderIKEv2DNSUpdate(ch), 0o700},
 				} {
 					if err := healthyChannelFile(file.path, file.data, file.mode); err != nil {
 						return err

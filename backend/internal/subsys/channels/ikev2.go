@@ -93,12 +93,35 @@ func renderIKEv2ClientDaemon(ch config.Channel) []byte {
     resolve {
       resolvconf {
         iface = %s
+        path = /bin/sh /run/%s/dns-update
       }
     }
   }
 }
 include /etc/strongswan.d/*.conf
-`, InterfaceName(ch), ikev2ClientVICI(ch), InterfaceName(ch)))
+`, InterfaceName(ch), ikev2ClientVICI(ch), InterfaceName(ch), ikev2RuntimeName(ch)))
+}
+
+// Keep learned DNS in the channel's runtime directory. The resolver selected
+// in the panel owns /etc/resolv.conf; resolvconf may be a resolvectl symlink
+// even when netOS has intentionally disabled systemd-resolved.
+func renderIKEv2DNSUpdate(ch config.Channel) []byte {
+	return []byte(fmt.Sprintf(`#!/bin/sh
+set -eu
+test "$#" -eq 2
+test "$2" = '%s'
+target='/run/%s/resolv.conf'
+umask 077
+case "$1" in
+  -a)
+    trap 'rm -f "$target.tmp"' EXIT
+    cat > "$target.tmp"
+    mv -f "$target.tmp" "$target"
+    ;;
+  -d) rm -f "$target" ;;
+  *) exit 1 ;;
+esac
+`, InterfaceName(ch), ikev2RuntimeName(ch)))
 }
 
 func renderIKEv2ClientUnit(ch config.Channel, p ikev2ClientPaths) []byte {
@@ -110,6 +133,7 @@ Wants=network-online.target
 [Service]
 Type=notify
 Environment=STRONGSWAN_CONF=%s
+ExecStartPre=/usr/bin/install -m 0700 %s /run/%s/dns-update
 ExecStart=/usr/sbin/charon-systemd
 ExecStartPost=/usr/sbin/swanctl --load-all --uri %s --file %s --noprompt
 ExecStartPost=/usr/sbin/swanctl --initiate --child netos-ch%d --uri %s --timeout 30
@@ -125,7 +149,7 @@ AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
-`, ch.Name, p.daemon, ikev2ClientVICI(ch), p.conf, ch.Index, ikev2ClientVICI(ch), ikev2RuntimeName(ch)))
+`, ch.Name, p.daemon, filepath.Join(p.root, "dns-update"), ikev2RuntimeName(ch), ikev2ClientVICI(ch), p.conf, ch.Index, ikev2ClientVICI(ch), ikev2RuntimeName(ch)))
 }
 
 func (s *Subsystem) ensureIKEv2ClientInterface(ctx context.Context, ch config.Channel, wasOwned bool) (bool, error) {
@@ -159,7 +183,8 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 		return false, err
 	}
 	p := s.ikev2Paths(ch)
-	snapshots, err := captureChannelFiles(p.conf, p.daemon, p.ca, p.unit)
+	dnsUpdate := filepath.Join(p.root, "dns-update")
+	snapshots, err := captureChannelFiles(p.conf, p.daemon, p.ca, p.unit, dnsUpdate)
 	if err != nil {
 		return false, err
 	}
@@ -193,13 +218,15 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 		return created, err
 	}
 	conf, daemon, ca, unit := renderIKEv2Client(ch, ike), renderIKEv2ClientDaemon(ch), []byte(ike.CACert), renderIKEv2ClientUnit(ch, p)
-	changed := system.FileChanged(p.conf, conf) || system.FileChanged(p.daemon, daemon) || system.FileChanged(p.ca, ca) || system.FileChanged(p.unit, unit)
+	helper := renderIKEv2DNSUpdate(ch)
+	changed := system.FileChanged(p.conf, conf) || system.FileChanged(p.daemon, daemon) || system.FileChanged(p.ca, ca) || system.FileChanged(p.unit, unit) || system.FileChanged(dnsUpdate, helper)
 	for _, file := range []struct {
 		path string
 		data []byte
 		mode os.FileMode
 	}{
 		{p.conf, conf, 0o600}, {p.daemon, daemon, 0o600}, {p.ca, ca, 0o644}, {p.unit, unit, 0o644},
+		{dnsUpdate, helper, 0o700},
 	} {
 		if err := writeFileIfChanged(file.path, file.data, file.mode); err != nil {
 			return created, err

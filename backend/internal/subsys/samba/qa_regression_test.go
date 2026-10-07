@@ -278,3 +278,82 @@ func TestVPNListenerUpdateValidatesBeforeReplacingWorkingSamba(t *testing.T) {
 		t.Fatal("working Samba config or listener changed after failed validation")
 	}
 }
+
+func TestPPPReconnectUpdatesBindingDuringListenerCooldown(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner()}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	c := fixture()
+	c.Samba.VPNs = []string{"l2tp"}
+	c.VPNServers = []config.VPNServer{{ID: "l2tp", Index: 30, Enabled: true, Type: "l2tp", Subnet: "10.99.1.1/24"}}
+	ctx := context.Background()
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{
+		"17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n",
+		"",
+		"18: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n",
+	} {
+		r.address = address
+		r.calls = nil
+		if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		conf, err := os.ReadFile(filepath.Join(s.StateDir, "samba.conf"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(conf), "10.99.1.1/24") != (address != "") {
+			t.Fatalf("PPP state change was suppressed by previous repair cooldown: %q", address)
+		}
+		if !strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+			t.Fatal("changed PPP binding did not restart Samba")
+		}
+	}
+	// With unchanged bindings, retain the restart throttle while smbd starts.
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+		t.Fatal("unchanged listener repair bypassed startup cooldown")
+	}
+}
+
+func TestBoundL2TPListenerSurvivesDisconnectAndReconnect(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner()}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	c := fixture()
+	c.Samba.VPNs = []string{"l2tp"}
+	c.VPNServers = []config.VPNServer{{ID: "l2tp", Index: 30, Enabled: true, Type: "l2tp", Subnet: "10.99.1.1/24"}}
+	ctx := context.Background()
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	r.listeners += "LISTEN 0 50 10.99.1.1:445 0.0.0.0:*\n"
+	for _, address := range []string{"", r.address, "", r.address} {
+		r.address = address
+		r.calls = nil
+		if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
+			t.Fatal("healthy, selected listener restarted on PPP state change")
+		}
+	}
+	// Selection changes must still close the listener, even when PPP is down.
+	c.Samba.VPNs = nil
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	conf, err := os.ReadFile(filepath.Join(s.StateDir, "samba.conf"))
+	if err != nil || strings.Contains(string(conf), "10.99.1.1/24") {
+		t.Fatal("revoked VPN binding retained")
+	}
+}

@@ -29,37 +29,68 @@ func (s *Subsystem) ReconcileVPNListeners(ctx context.Context, cfg *config.Confi
 	if err != nil {
 		return err
 	}
+	listeners, err := s.Runner.Run(ctx, "ss", "-H", "-lnt")
+	if err != nil {
+		return fmt.Errorf("Samba VPN listeners: %w", err)
+	}
+	bound := map[string]bool{}
+	for _, line := range strings.Split(listeners, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 {
+			bound[fields[3]] = true
+		}
+	}
+	confPath := filepath.Join(s.StateDir, "samba.conf")
+	previous, err := os.ReadFile(confPath)
+	if err != nil {
+		return err
+	}
+	// A listening TCP socket survives removal of its local PPP address.
+	// Keep an already bound, still-selected L2TP listener across reconnects
+	// instead of restarting smbd twice and interrupting unrelated clients.
+	// Before the first connection there is no socket to retain. Revoking
+	// the VPN selection is handled by Apply and its ownership stamp.
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "l2tp" || !selected(cfg.Samba.VPNs, server.ID) || present[server.ID] != "" {
+			continue
+		}
+		prefix, parseErr := netip.ParsePrefix(server.Subnet)
+		if parseErr != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		address := netip.AddrPortFrom(prefix.Addr(), 445).String()
+		if !bound[address] {
+			continue
+		}
+		for _, line := range strings.Split(string(previous), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "interfaces = ") {
+				for _, field := range strings.Fields(line) {
+					if field == server.Subnet {
+						present[server.ID] = address
+					}
+				}
+			}
+		}
+	}
 	conf, err := render(cfg, s.StateDir, present)
 	if err != nil {
 		return err
 	}
-	confPath := filepath.Join(s.StateDir, "samba.conf")
 	changed := system.FileChanged(confPath, []byte(conf))
 	wanted := map[string]bool{}
 	for _, address := range present {
 		wanted[address] = true
 	}
-	if len(wanted) > 0 {
-		listeners, err := s.Runner.Run(ctx, "ss", "-H", "-lnt")
-		if err != nil {
-			return fmt.Errorf("Samba VPN listeners: %w", err)
-		}
-		for _, line := range strings.Split(listeners, "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 5 {
-				delete(wanted, fields[3])
-			}
-		}
+	for address := range bound {
+		delete(wanted, address)
 	}
-	if !changed && len(wanted) == 0 || time.Now().Before(s.nextVPNRepair) {
+	// A new PPP address set must be applied even if the previous restart
+	// was recent. Keep the cooldown only for retries of unchanged bindings
+	// so a slow-starting smbd is not restarted on every reconciliation tick.
+	if !changed && (len(wanted) == 0 || time.Now().Before(s.nextVPNRepair)) {
 		return nil
 	}
-	var previous []byte
 	if changed {
-		previous, err = os.ReadFile(confPath)
-		if err != nil {
-			return err
-		}
 		pending, err := os.CreateTemp(s.StateDir, ".samba-validate-*")
 		if err != nil {
 			return err
