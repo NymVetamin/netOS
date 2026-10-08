@@ -29,6 +29,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
+	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
 
 const installerRepo = "NymVetamin/netOS"
@@ -1222,6 +1223,9 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 		if err := os.Remove(unit); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("удаление unit %s: %w", unit, err)
 		}
+	}
+	if err := vpnservers.RemoveL2TPPreUpHooks(filepath.Join(m.StateDir, "generated"), m.sys("/etc/ppp/ip-pre-up.d")); err != nil {
+		return fmt.Errorf("удаление PPP hooks: %w", err)
 	}
 	// An automount stop can lazily detach a busy filesystem. Unmount the
 	// actual filesystems normally before stopping their automounts.

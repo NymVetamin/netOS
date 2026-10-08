@@ -357,6 +357,48 @@ func TestStartupRecoveryRestoresNetworkBeforeOptionalComponents(t *testing.T) {
 	}
 }
 
+type startupDNSFixture struct {
+	flexibleSubsystem
+	recover func(context.Context, *config.Config) error
+}
+
+func (s startupDNSFixture) RecoverStartup(ctx context.Context, cfg *config.Config) error {
+	return s.recover(ctx, cfg)
+}
+
+func TestStartupRecoveryRunsSavedDNSAfterNetworkWithoutDNSApply(t *testing.T) {
+	var calls []string
+	e := NewEngine(nil, false)
+	for _, name := range startupConnectivityOrder {
+		if err := e.Register(flexibleSubsystem{name: name, apply: func(context.Context, *config.Config) error {
+			calls = append(calls, name)
+			return nil
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.Register(startupDNSFixture{
+		flexibleSubsystem: flexibleSubsystem{name: "dns", apply: func(context.Context, *config.Config) error {
+			t.Fatal("full DNS Apply can download before recovery")
+			return nil
+		}},
+		recover: func(context.Context, *config.Config) error {
+			calls = append(calls, "saved DNS")
+			return errors.New("saved DNS unavailable")
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := e.RecoverStartupConnectivity(context.Background(), validConfig("active"))
+	if err == nil || !strings.Contains(err.Error(), "saved DNS unavailable") {
+		t.Fatalf("recovery error lost: %v", err)
+	}
+	want := strings.Join(startupConnectivityOrder, ",") + ",saved DNS"
+	if got := strings.Join(calls, ","); got != want {
+		t.Fatalf("order=%s want=%s", got, want)
+	}
+}
+
 func TestNeedsConfirmationVariants(t *testing.T) {
 	if NeedsConfirmation(nil) || NeedsConfirmation([]Action{{Subsystem: "dns"}}) {
 		t.Fatal("safe or empty plan requires confirmation")

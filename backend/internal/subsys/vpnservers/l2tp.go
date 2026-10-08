@@ -3,6 +3,7 @@ package vpnservers
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,41 @@ func renderL2TPPPP(server config.VPNServer, l2tp config.L2TPServerConfig) string
 	return fmt.Sprintf("ifname %s\nname %s\nauth\nrequire-chap\nrefuse-pap\nnodefaultroute\nmtu %d\nmru %d\nnoipv6\nlcp-echo-interval 20\nlcp-echo-failure 3\n", l2tpPPPName(server), l2tpAuthName(server), mtu, mtu)
 }
 
+func (s *Subsystem) l2tpPreUpPath(server config.VPNServer) string {
+	return filepath.Join(s.StateDir, fmt.Sprintf("vpn-l2tp-srv%d.pre-up", server.Index))
+}
+
+// pppd runs ip-pre-up synchronously after assigning the local address, before
+// passing IP traffic. Let Samba's owned-config reconciler bind that address
+// before the first SMB SYN can receive a refusal. Never restart Samba here:
+// an existing listener survives reconnects, and Apply owns access revocation.
+// Samba failure must not prevent the VPN itself from becoming usable.
+func renderL2TPPreUp(server config.VPNServer, cfg *config.Config) []byte {
+	noop := []byte("#!/bin/sh\nexit 0\n")
+	if !cfg.Samba.Enabled || !server.Enabled {
+		return noop
+	}
+	selected := false
+	for _, id := range cfg.Samba.VPNs {
+		selected = selected || id == server.ID
+	}
+	prefix, err := netip.ParsePrefix(server.Subnet)
+	if !selected || err != nil || !prefix.Addr().Is4() {
+		return noop
+	}
+	return []byte(fmt.Sprintf(`#!/bin/sh
+[ "$1" = %q ] && [ "$4" = %q ] || exit 0
+systemctl is-active --quiet netos-samba.service || exit 0
+timeout 10 /bin/sh -c '
+while :; do
+    ss -H -lnt | awk '\''$4 == "%s:445" { found=1 } END { exit !found }'\'' && exit 0
+    sleep 0.1
+done
+'
+exit 0
+`, l2tpPPPName(server), prefix.Addr().String(), prefix.Addr().String()))
+}
+
 func renderL2TPUnit(server config.VPNServer, conf string) string {
 	return fmt.Sprintf(`[Unit]
 Description=netOS: L2TP server %s
@@ -93,12 +129,17 @@ func updateL2TPChap(data []byte, server config.VPNServer, add bool) ([]byte, err
 	return []byte(text), nil
 }
 
-func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, wasOwned bool) (created bool, retErr error) {
+func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg *config.Config, wasOwned bool) (created bool, retErr error) {
 	confPath, pppPath, unitPath := s.l2tpPaths(server)
+	preUpPath := s.l2tpPreUpPath(server)
+	preUpLink := s.l2tpPreUpLink(server)
+	if err := checkPreUpLink(preUpLink, preUpPath); err != nil {
+		return false, err
+	}
 	if _, err := os.Stat(unitPath); err == nil && !wasOwned {
 		return false, fmt.Errorf("служба %s существует и не принадлежит netOS", l2tpUnitName(server))
 	}
-	snapshots, err := capturePaths(confPath, pppPath, unitPath, l2tpChapSecrets)
+	snapshots, err := capturePaths(confPath, pppPath, unitPath, preUpPath, preUpLink, l2tpChapSecrets)
 	if err != nil {
 		return false, err
 	}
@@ -143,12 +184,22 @@ func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, wasO
 		data []byte
 		mode os.FileMode
 	}{
+		// Hook content follows Samba selection without restarting PPP sessions.
+		{preUpPath, renderL2TPPreUp(server, cfg), 0o700},
 		{confPath, conf, 0o600}, {pppPath, ppp, 0o600}, {unitPath, unit, 0o644}, {l2tpChapSecrets, newChap, 0o600},
 	} {
 		if err := writeFile(file.path, file.data, file.mode); err != nil {
 			return false, err
 		}
 		mutated = true
+	}
+	if _, err := os.Lstat(preUpLink); os.IsNotExist(err) {
+		if err := os.MkdirAll(s.PreUpDir, 0o755); err != nil {
+			return false, err
+		}
+		if err := os.Symlink(preUpPath, preUpLink); err != nil {
+			return false, err
+		}
 	}
 	if changed {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -172,8 +223,9 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) {
 	unit := l2tpUnitName(server)
 	_, _ = s.Runner.Run(ctx, "systemctl", "disable", unit)
 	_, _ = s.Runner.Run(ctx, "systemctl", "stop", unit)
+	_ = removePreUpLink(s.l2tpPreUpLink(server), s.l2tpPreUpPath(server))
 	conf, ppp, unitPath := s.l2tpPaths(server)
-	for _, path := range []string{conf, ppp, unitPath} {
+	for _, path := range []string{conf, ppp, unitPath, s.l2tpPreUpPath(server)} {
 		_ = os.Remove(path)
 	}
 	if chap, err := os.ReadFile(l2tpChapSecrets); err == nil {

@@ -19,6 +19,7 @@ func TestCleanupL2TPClearsOnlyRemovedUnitsFailedState(t *testing.T) {
 	})
 	s := New(runner, t.TempDir())
 	s.UnitDir = t.TempDir()
+	s.PreUpDir = t.TempDir()
 	_, _, unitPath := s.l2tpPaths(server)
 	if err := os.WriteFile(unitPath, []byte("[Service]\n"), 0o644); err != nil {
 		t.Fatal(err)

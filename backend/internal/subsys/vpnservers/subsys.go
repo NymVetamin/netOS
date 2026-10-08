@@ -132,10 +132,11 @@ type Subsystem struct {
 	SysClassNet string
 	ProcSysNet  string
 	UnitDir     string
+	PreUpDir    string
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
-	return &Subsystem{Runner: r, StateDir: stateDir, SysClassNet: "/sys/class/net", ProcSysNet: "/proc/sys/net", UnitDir: "/etc/systemd/system"}
+	return &Subsystem{Runner: r, StateDir: stateDir, SysClassNet: "/sys/class/net", ProcSysNet: "/proc/sys/net", UnitDir: "/etc/systemd/system", PreUpDir: "/etc/ppp/ip-pre-up.d"}
 }
 
 func (s *Subsystem) Name() string { return "vpn-servers" }
@@ -304,7 +305,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			createdNow, err = s.ensureIKEv2Interface(ctx, server, retained[item.Name])
 		case "l2tp":
 			item.Unit = l2tpUnitName(server)
-			createdNow, err = s.applyL2TP(ctx, server, retained[item.Name])
+			createdNow, err = s.applyL2TP(ctx, server, cfg, retained[item.Name])
 		}
 		if err != nil {
 			for _, provisional := range created {
@@ -504,6 +505,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			}{
 				{conf, []byte(renderL2TPConf(server, l2tp, ppp)), 0o600},
 				{ppp, []byte(renderL2TPPPP(server, l2tp)), 0o600},
+				{s.l2tpPreUpPath(server), renderL2TPPreUp(server, cfg), 0o700},
 				{unit, []byte(renderL2TPUnit(server, conf)), 0o644},
 			} {
 				if err := healthyFile(file.path, file.data, file.mode); err != nil {
@@ -511,6 +513,9 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 				}
 			}
 			chap, err := os.ReadFile(l2tpChapSecrets)
+			if target, linkErr := os.Readlink(s.l2tpPreUpLink(server)); linkErr != nil || target != s.l2tpPreUpPath(server) {
+				return fmt.Errorf("L2TP pre-up hook %s отсутствует или не принадлежит netOS", s.l2tpPreUpLink(server))
+			}
 			if err != nil || !strings.Contains(string(chap), l2tpChapBlock(server)) {
 				return fmt.Errorf("учётная запись L2TP-сервера %s отсутствует", server.Name)
 			}
@@ -709,7 +714,7 @@ func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
 			return err
 		}
 		conf, ppp, unit := s.l2tpPaths(server)
-		return pathsAbsent(conf, ppp, unit)
+		return pathsAbsent(conf, ppp, unit, s.l2tpPreUpPath(server), s.l2tpPreUpLink(server))
 	}
 	if item.Type == "xray" {
 		server := config.VPNServer{Index: item.Index, Type: "xray"}

@@ -262,6 +262,16 @@ func (e *Engine) RecoverStartupConnectivity(ctx context.Context, cfg *config.Con
 			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
 		}
 	}
+	// DNS Apply can download packages and blocklists, so it must remain outside
+	// the early order. Its optional recovery hook only starts a saved resolver
+	// already selected by resolv.conf, after local connectivity is restored.
+	if s, ok := e.subsystems["dns"].(interface {
+		RecoverStartup(context.Context, *config.Config) error
+	}); ok {
+		if err := s.RecoverStartup(ctx, cfg); err != nil {
+			failures = append(failures, fmt.Sprintf("dns startup: %v", err))
+		}
+	}
 	if len(failures) > 0 {
 		return fmt.Errorf("раннее восстановление: %s", strings.Join(failures, "; "))
 	}
