@@ -297,6 +297,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [saveError, setSaveError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const discardInProgress = useRef(false);
   const [theme, setTheme] = useState<string>(
     () => localStorage.getItem("netos-theme") || "auto",
   );
@@ -380,6 +382,28 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     }
   }, [applyServerState, onLogout]);
 
+  const discard = useCallback(async () => {
+    // Invalidate queued saves before waiting for the in-flight PUT. Otherwise
+    // its late response (or a debounce timer) can recreate the discarded draft.
+    if (discardInProgress.current) return;
+    discardInProgress.current = true;
+    setDiscarding(true);
+    const generation = ++syncGeneration.current;
+    pendingCfg.current = null;
+    window.clearTimeout(saveTimer.current);
+    try {
+      await saveChain.current;
+      await api.discardDraft();
+      const res = await api.getConfig();
+      if (generation !== syncGeneration.current) throw new Error("Конфигурация обновилась во время отмены");
+      applyServerState(res);
+      setLoadError("");
+    } finally {
+      discardInProgress.current = false;
+      setDiscarding(false);
+    }
+  }, [applyServerState]);
+
   useEffect(() => {
     reload();
   }, [reload]);
@@ -443,7 +467,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   // текущего дерева, изменения сразу видны в интерфейсе.
   const patch = useCallback(
     (mutate: (draft: any) => void) => {
-      if (session.role !== "admin") return;
+      if (session.role !== "admin" || discardInProgress.current) return;
       setCfg((current: any) => {
         if (!current) return current;
         const next = structuredClone(current);
@@ -589,7 +613,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           {!cfg ? (loadError ? null :
             <Spinner />
           ) : (
-            <>
+            <fieldset disabled={discarding} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
               {page === "dashboard" && <Dashboard config={cfg} />}
               {page === "map" && <MapPage config={cfg} />}
               {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} />}
@@ -610,7 +634,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               )}
               {page === "history" && <HistoryPage onRestored={reload} />}
               {page === "diagnostics" && session.role === "admin" && <DiagnosticsPage />}
-            </>
+            </fieldset>
           )}
         </div>
       </main>
@@ -623,6 +647,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           errorCount={errors.length}
           problems={problems}
           onFlush={flushNow}
+          onDiscard={discard}
           onReload={reload}
         />
       )}
@@ -666,6 +691,7 @@ function ApplyBar({
   errorCount,
   problems,
   onFlush,
+  onDiscard,
   onReload,
 }: {
   dirty: boolean;
@@ -673,6 +699,7 @@ function ApplyBar({
   errorCount: number;
   problems: Problem[];
   onFlush: () => Promise<void>;
+  onDiscard: () => Promise<void>;
   onReload: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -821,8 +848,9 @@ function ApplyBar({
           onClick={async () => {
             setBusy(true);
             try {
-              await api.discardDraft();
-              await onReload();
+              await onDiscard();
+              setError("");
+              setPlan(null);
             } catch (err) {
               setError(err instanceof ApiError ? err.message : "Не удалось отменить черновик");
             } finally {
