@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError } from "../api";
+import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
 import { newID } from "../id";
 import { Badge, Card, Empty, Field, Notice, Switch } from "../ui";
 
@@ -38,20 +39,6 @@ async function certificateFingerprint(pem: string) {
   return Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function wireGuardClientConfig(server: any, peer: any, privateKey: string, serverPublicKey: string, presharedKey?: string) {
-  const dns = (server.config?.client_dns || []).length
-    ? `DNS = ${server.config.client_dns.join(", ")}\n`
-    : "";
-  const mtu = server.config?.mtu ? `MTU = ${server.config.mtu}\n` : "";
-  const allowed = (server.config?.client_allowed_ips || []).length
-    ? server.config.client_allowed_ips
-    : ["0.0.0.0/0"];
-  const address = String(peer.address || "").includes("/") ? peer.address : `${peer.address}/32`;
-  const preshared = (peer.credentials?.preshared_key || presharedKey)
-    ? `PresharedKey = ${peer.credentials?.preshared_key || presharedKey}\n`
-    : "";
-  return `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\n${dns}${mtu}\n[Peer]\nPublicKey = ${serverPublicKey}\n${preshared}Endpoint = ${server.config?.public_endpoint || ""}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = 25\n`;
-}
 
 function VPNCertificate({ server }: { server: any }) {
   const [error, setError] = useState("");
@@ -108,7 +95,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
       const common = { id: newID(`${type}-server`), index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
       const server = type === "wireguard" ? {
         ...common, name: `WireGuard ${index}`, port: 51819 + index,
-        config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: `${window.location.hostname}:${51819 + index}`, client_dns: [], client_allowed_ips: ["0.0.0.0/0"] },
+        config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: `${window.location.hostname}:${51819 + index}` },
       } : type === "xray" ? {
 		...common, name: `${({ reality: "VLESS Reality", vless: "VLESS TLS", vmess: "VMess", trojan: "Trojan TLS", shadowsocks: "Shadowsocks", socks: "SOCKS", http: "HTTP proxy", wireguard: "Xray WireGuard", hysteria: "Hysteria 2" } as Record<string, string>)[protocol]} ${index}`,
 		port: protocol === "reality" ? 443 : 18000 + index,
@@ -424,6 +411,20 @@ function XrayPeerEditor({ server, peer, protocol, wgPrivateKey, issuedCredential
 
 type ClientStatus = { id: string; public_key: string; state: string; endpoint: string; last_handshake: number; received: number; sent: number };
 
+function ProfileListInput({ label, values, disabled, onChange }: { label: string; values: string[]; disabled?: boolean; onChange: (values: string[]) => void }) {
+  const serialized = values.join("\n");
+  const [text, setText] = useState(serialized);
+  const parse = (value: string) => value.split(/[\s,]+/).filter(Boolean);
+  useEffect(() => {
+    setText((current) => parse(current).join("\n") === serialized ? current : serialized);
+  }, [serialized]);
+  // Keep trailing newlines while typing so a second address can be entered.
+  return <textarea aria-label={label} className="mono" disabled={disabled} value={text} onChange={(event) => {
+    setText(event.target.value);
+    onChange(parse(event.target.value));
+  }} />;
+}
+
 function ClientConnection({ status }: { status?: ClientStatus }) {
   const state = status?.state || "pending";
   const labels: Record<string, string> = { recent: "В сети · недавнее рукопожатие", idle: "Нет недавней связи", never: "Ещё не подключался", unknown: "Статистика недоступна", pending: "Нет данных для этого профиля", disabled: "Доступ отключён", server_disabled: "Сервер выключен" };
@@ -498,6 +499,7 @@ function WireGuardServer({ beforeRead, server, config, installed, patch, clientS
         enabled: true,
         address: `${prefix}.${host}`,
         channel: "",
+        wireguard_profile: newWireGuardProfile(),
         credentials: { private_key: clientPair.private_key, public_key: clientPair.public_key, preshared_key: randomWireGuardKey() },
         comment: "",
       };
@@ -537,8 +539,6 @@ function WireGuardServer({ beforeRead, server, config, installed, patch, clientS
       <Field label="Адрес подключения" hint="Домен или внешний IP роутера с портом"><input className="mono" placeholder="vpn.example.com:51820" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-      <Field label="DNS в профиле" hint="Необязательно; по одному адресу в строке"><textarea className="mono" value={(cfg.client_dns || []).join("\n")} onChange={(e) => setConfig("client_dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
-      <Field label="Трафик через VPN" hint="0.0.0.0/0 — направлять весь интернет через VPN"><textarea className="mono" value={(cfg.client_allowed_ips || ["0.0.0.0/0"]).join("\n")} onChange={(e) => setConfig("client_allowed_ips", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
       <Field label="Ключ сервера" hint="Создаётся автоматически и хранится только на роутере"><div className="row"><input aria-label="Закрытый ключ сервера" className="mono" type="password" autoComplete="new-password" value={cfg.private_key || ""} readOnly /><button type="button" className="btn sm" onClick={generateServerKey}>Перевыпустить</button></div></Field>
     </div>
     <div className="section-head"><div><strong>Устройства</strong><div className="hint">Одно нажатие создаёт ключи, адрес и готовый профиль</div></div><button type="button" className="btn primary" disabled={addingClient} onClick={() => void addPeer()}>{addingClient ? "Создаём профиль…" : "Добавить устройство"}</button></div>
@@ -549,6 +549,14 @@ function WireGuardServer({ beforeRead, server, config, installed, patch, clientS
 }
 
 function PeerEditor({ beforeRead, status, server, peer, referenced, channels, update, secret, setSecret, removeSecret, setError }: any) {
+  const profile = effectiveWireGuardProfile(server, peer);
+  const editProfile = (mutate: (value: ReturnType<typeof effectiveWireGuardProfile>) => void) => edit((draft) => {
+    const saved = draft.wireguard_profile;
+    draft.wireguard_profile = saved
+      ? { ...saved, dns: [...(saved.dns || [])], allowed_ips: [...(saved.allowed_ips || [])] }
+      : effectiveWireGuardProfile(server, draft);
+    mutate(draft.wireguard_profile);
+  });
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   secret = secret?.publicKey === peer.credentials?.public_key ? secret : undefined;
   const [profileBusy, setProfileBusy] = useState(false);
@@ -616,6 +624,11 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
+    <div className="form-grid" style={{ marginTop: "0.8rem" }}>
+      <Field label="Трафик через VPN (AllowedIPs)" hint="Подсети, которые это устройство направляет в туннель. 0.0.0.0/0 — весь IPv4-трафик; по одной подсети в строке."><ProfileListInput label="Трафик через VPN (AllowedIPs)" values={profile.allowed_ips} onChange={(items) => editProfile((value) => { value.allowed_ips = items; })} /></Field>
+      <Field label="DNS в профиле" hint="DNS роутера — адрес его WireGuard-интерфейса. Для своих DNS отключите переключатель; пустой список оставит DNS устройства. При выборочной маршрутизации включите адрес DNS роутера в AllowedIPs."><Switch checked={profile.use_router_dns} label="DNS роутера" onChange={(enabled) => editProfile((value) => { value.use_router_dns = enabled; })} /><ProfileListInput label="DNS в профиле" disabled={profile.use_router_dns} values={profile.dns} onChange={(items) => editProfile((value) => { value.dns = items; })} /></Field>
+    </div>
+    <p className="hint">После изменения этих настроек скачайте профиль заново или отсканируйте QR-код на устройстве.</p>
     {secret ? <div className="client-package">
       <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>
       <div className="client-package-copy"><strong>Профиль готов к импорту</strong><p>Отсканируйте QR-код в приложении WireGuard или скачайте файл. Профиль сохраняется на роутере после применения настроек. Его можно повторно открыть и скачать без замены ключей.</p><div className="row wrap"><button type="button" className="btn primary" onClick={download}>Скачать .conf</button><button type="button" className="btn" onClick={() => void copyConfig()}>Скопировать</button><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить</button></div></div>

@@ -605,13 +605,14 @@ type VPNServer struct {
 }
 
 type VPNPeer struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Enabled     bool              `json:"enabled"`
-	Address     string            `json:"address"`
-	Channel     string            `json:"channel,omitempty"`
-	Credentials map[string]string `json:"credentials,omitempty"`
-	Comment     string            `json:"comment,omitempty"`
+	WireGuardProfile *WireGuardClientProfile `json:"wireguard_profile,omitempty"`
+	ID               string                  `json:"id"`
+	Name             string                  `json:"name"`
+	Enabled          bool                    `json:"enabled"`
+	Address          string                  `json:"address"`
+	Channel          string                  `json:"channel,omitempty"`
+	Credentials      map[string]string       `json:"credentials,omitempty"`
+	Comment          string                  `json:"comment,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

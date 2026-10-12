@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // WireGuardServerConfig contains server-only WireGuard settings. Peer keys are
@@ -12,8 +13,37 @@ type WireGuardServerConfig struct {
 	PrivateKey       string   `json:"private_key"`
 	MTU              int      `json:"mtu,omitempty"`
 	PublicEndpoint   string   `json:"public_endpoint,omitempty"`
-	ClientDNS        []string `json:"client_dns,omitempty"`
+	ClientDNS        []string `json:"client_dns,omitempty"` // Legacy profile defaults, kept for existing clients.
 	ClientAllowedIPs []string `json:"client_allowed_ips,omitempty"`
+}
+
+// WireGuardClientProfile configures the exported client, not the server's peer
+// AllowedIPs (which must continue to contain only that peer's tunnel address).
+type WireGuardClientProfile struct {
+	UseRouterDNS bool     `json:"use_router_dns"`
+	DNS          []string `json:"dns"`
+	AllowedIPs   []string `json:"allowed_ips"`
+}
+
+func (s VPNServer) WireGuardProfileFor(peer VPNPeer) (WireGuardClientProfile, error) {
+	var profile WireGuardClientProfile
+	if peer.WireGuardProfile != nil {
+		profile = *peer.WireGuardProfile
+	} else {
+		// Preserve already-issued profiles, including profiles with no DNS.
+		wg, err := s.WireGuardConfig()
+		if err != nil {
+			return profile, err
+		}
+		profile.DNS, profile.AllowedIPs = wg.ClientDNS, wg.ClientAllowedIPs
+		if len(profile.AllowedIPs) == 0 {
+			profile.AllowedIPs = []string{"0.0.0.0/0"}
+		}
+	}
+	if profile.UseRouterDNS {
+		profile.DNS = []string{strings.SplitN(s.Subnet, "/", 2)[0]}
+	}
+	return profile, nil
 }
 
 // XrayServerConfig describes an authenticated Xray listener. An empty protocol

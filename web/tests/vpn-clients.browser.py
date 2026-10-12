@@ -76,7 +76,7 @@ async def scenario(browser, mode):
                          "endpoint": "192.0.2.5:43210", "received": 1048576, "sent": 2097152}]
         elif path.endswith("/profile"):
             state["profiles"] += 1
-            creds = state["config"]["vpn_servers"][0]["peers"][0]["credentials"]
+            creds = next(p for p in state["config"]["vpn_servers"][0]["peers"] if p["id"] == path.split("/")[-2])["credentials"]
             assert creds.get("private_key"), "read occurred before pending save"
             body = {"privateKey": creds["private_key"], "publicKey": creds["public_key"], "serverPublicKey": SERVER_PUBLIC, "presharedKey": creds["preshared_key"]}
         elif path == "/api/wireguard/keypair":
@@ -98,6 +98,63 @@ async def scenario(browser, mode):
     await expect(page.get_by_text("1 МиБ", exact=True)).to_be_visible()
     await expect(page.get_by_text("2 МиБ", exact=True)).to_be_visible()
     assert state["profiles"] == 0, "secrets fetched without user action"
+    if mode == "settings":
+        # Profile settings are in client cards, never in the server form.
+        cards = page.locator(".peer-card")
+        await expect(page.get_by_role("textbox", name="Трафик через VPN (AllowedIPs)", exact=True)).to_have_count(1)
+        await expect(cards.first.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("1.1.1.1")
+        await page.get_by_role("button", name="Добавить устройство", exact=True).click()
+        await expect(cards).to_have_count(2)
+        first, second = cards.nth(0), cards.nth(1)
+        await expect(second.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("10.9.0.1")
+        await expect(second.get_by_role("textbox", name="DNS в профиле", exact=True)).to_be_disabled()
+        await expect(second.get_by_role("textbox", name="Трафик через VPN (AllowedIPs)", exact=True)).to_have_value("0.0.0.0/0")
+        routes = first.get_by_role("textbox", name="Трафик через VPN (AllowedIPs)", exact=True)
+        await routes.fill("192.0.2.0/24")
+        await routes.press("End")
+        await routes.press("Enter")
+        await routes.press_sequentially("198.51.100.0/24")
+        await expect(routes).to_have_value("192.0.2.0/24\n198.51.100.0/24")
+        await first.get_by_role("textbox", name="DNS в профиле", exact=True).fill("192.0.2.53\n198.51.100.53")
+        toggle = first.get_by_role("checkbox", name="DNS роутера", exact=True)
+        await toggle.locator("..").click()
+        await expect(first.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("10.9.0.1")
+        await toggle.locator("..").click()
+        await expect(first.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("192.0.2.53\n198.51.100.53")
+        await first.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
+        expected = []
+        for card in (first, second):
+            async with page.expect_download() as event:
+                await card.get_by_role("button", name="Скачать .conf", exact=True).click()
+            expected.append(Path(await (await event.value).path()).read_text())
+        assert "DNS = 192.0.2.53, 198.51.100.53\n" in expected[0]
+        assert "AllowedIPs = 192.0.2.0/24, 198.51.100.0/24\n" in expected[0]
+        assert "DNS = 10.9.0.1\n" in expected[1]
+        assert "AllowedIPs = 0.0.0.0/0\n" in expected[1]
+        await page.reload()
+        for i in range(2):
+            card = page.locator(".peer-card").nth(i)
+            await card.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
+            async with page.expect_download() as event:
+                await card.get_by_role("button", name="Скачать .conf", exact=True).click()
+            assert Path(await (await event.value).path()).read_text() == expected[i]
+        # Explicitly empty DNS must remain empty after another reload.
+        first = page.locator(".peer-card").first
+        async with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/api/config")):
+            await first.get_by_role("textbox", name="DNS в профиле", exact=True).fill("")
+        await page.reload()
+        first = page.locator(".peer-card").first
+        await expect(first.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("")
+        await first.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
+        async with page.expect_download() as event:
+            await first.get_by_role("button", name="Скачать .conf", exact=True).click()
+        assert "DNS =" not in Path(await (await event.value).path()).read_text()
+        if os.environ.get("VPN_PROFILE_SCREENSHOT"):
+            await first.screenshot(path=os.environ["VPN_PROFILE_SCREENSHOT"])
+        assert not errors, errors
+        await page.close()
+        print(mode, "PASS")
+        return
     if mode == "legacy":
         await expect(page.get_by_text("Профиль создан в прежней версии", exact=True)).to_be_visible()
         upload = page.get_by_label("Загрузить прежний .conf", exact=True)
@@ -181,7 +238,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("saved", "legacy", "telemetry", "create", "reissue", "cancel")):
+        for mode in (sys.argv[1:] or ("saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

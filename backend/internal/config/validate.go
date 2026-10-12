@@ -3147,19 +3147,6 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 			r.errf(path+".config.public_endpoint", "публичный адрес должен быть в формате vpn.example.com:51820")
 		}
 	}
-	for i, address := range wg.ClientDNS {
-		if parsed := net.ParseIP(address); parsed == nil {
-			r.errf(fmt.Sprintf("%s.config.client_dns[%d]", path, i), "некорректный адрес DNS-сервера")
-		}
-	}
-	for i, cidr := range wg.ClientAllowedIPs {
-		if prefix, err := netip.ParsePrefix(cidr); err != nil || !prefix.Addr().Is4() {
-			r.errf(fmt.Sprintf("%s.config.client_allowed_ips[%d]", path, i), "некорректная IPv4-подсеть")
-		}
-	}
-	if len(wg.ClientAllowedIPs) == 0 {
-		r.errf(path+".config.client_allowed_ips", "укажите хотя бы одну подсеть для клиентов")
-	}
 	if s.Port < 1 || s.Port > 65535 {
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
 	}
@@ -3172,6 +3159,24 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 			r.errf(ppath+".id", "пустой или повторяющийся идентификатор пира")
 		}
 		seenIDs[peer.ID] = true
+
+		profile, profileErr := s.WireGuardProfileFor(peer)
+		if profileErr != nil {
+			r.errf(ppath+".wireguard_profile", "%v", profileErr)
+		}
+		for j, address := range profile.DNS {
+			if net.ParseIP(address) == nil {
+				r.errf(fmt.Sprintf("%s.wireguard_profile.dns[%d]", ppath, j), "некорректный адрес DNS-сервера")
+			}
+		}
+		if len(profile.AllowedIPs) == 0 {
+			r.errf(ppath+".wireguard_profile.allowed_ips", "укажите хотя бы одну подсеть для клиента")
+		}
+		for j, cidr := range profile.AllowedIPs {
+			if prefix, err := netip.ParsePrefix(cidr); err != nil || !prefix.Addr().Is4() {
+				r.errf(fmt.Sprintf("%s.wireguard_profile.allowed_ips[%d]", ppath, j), "некорректная IPv4-подсеть")
+			}
+		}
 		publicKey := peer.Credentials["public_key"]
 		validateWGKey(r, ppath+".credentials.public_key", publicKey, false)
 		if private := peer.Credentials["private_key"]; private != "" {
