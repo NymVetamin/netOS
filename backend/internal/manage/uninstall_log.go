@@ -43,7 +43,7 @@ func (m *Manager) beginUninstallLog() (func(error), error) {
 	m.Output = func(ctx context.Context, name string, args ...string) (string, error) {
 		log("> %s %s", name, strings.Join(args, " "))
 		text, err := output(ctx, name, args...)
-		if name == "ip" || name == "ifquery" || name == "networkctl" || name == "systemctl" {
+		if name == "apt-get" || name == "ip" || name == "ifquery" || name == "networkctl" || name == "systemctl" {
 			log("< %s: %v\n%s", name, err, strings.TrimSpace(text))
 		} else {
 			log("< %s: %v", name, err)

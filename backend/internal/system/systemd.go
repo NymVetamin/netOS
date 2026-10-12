@@ -237,10 +237,17 @@ func (s *Systemd) DaemonReload(ctx context.Context) error {
 // hostapd не входят в базовую установку и подтягиваются в момент, когда
 // пользователь включает соответствующую функцию в панели.
 type Packages struct {
-	R Runner
+	OwnershipDir string
+	R            Runner
 }
 
-func NewPackages(r Runner) *Packages { return &Packages{R: r} }
+func NewPackages(r Runner) *Packages {
+	p := &Packages{R: r}
+	if owner, ok := r.(interface{ PackageStateDir() string }); ok {
+		p.OwnershipDir = owner.PackageStateDir()
+	}
+	return p
+}
 
 // Installed проверяет наличие пакета через dpkg-query.
 func (p *Packages) Installed(ctx context.Context, pkg string) bool {
@@ -279,7 +286,7 @@ func (p *Packages) InstalledPackages(ctx context.Context, packages []string) (ma
 
 // Ensure ставит пакеты, которых нет. Возвращает список установленных, чтобы
 // панель могла показать пользователю, что именно было доустановлено.
-func (p *Packages) Ensure(ctx context.Context, pkgs ...string) ([]string, error) {
+func (p *Packages) Ensure(ctx context.Context, pkgs ...string) (installed []string, resultErr error) {
 	var missing []string
 	for _, pkg := range pkgs {
 		if !p.Installed(ctx, pkg) {
@@ -297,6 +304,15 @@ func (p *Packages) Ensure(ctx context.Context, pkgs ...string) ([]string, error)
 	}
 	defer release()
 
+	finishCapture, err := p.beginPackageCapture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := finishCapture(); err != nil {
+			resultErr = fmt.Errorf("%v; сохранение списка установленных пакетов: %w", resultErr, err)
+		}
+	}()
 	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--no-install-recommends"}, missing...)
 	if _, err := p.R.Run(ctx, "apt-get", args...); err != nil {
 		return nil, fmt.Errorf("установка пакетов %s: %w", strings.Join(missing, ", "), err)

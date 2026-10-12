@@ -31,6 +31,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
+	"github.com/netos-router/netos/internal/system"
 )
 
 const installerRepo = "NymVetamin/netOS"
@@ -1510,6 +1511,12 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	// До этого места unit, бинарник и данные остаются доступны для аварийного
 	// повторного Apply. Удаляем их только после успешного возврата системы.
 	fmt.Fprintln(m.Out, "Сеть восстановлена. Удаляем оставшиеся файлы netOS…")
+	if err := m.removeInstalledPackages(ctx); err != nil {
+		return fmt.Errorf("удаление пакетов netOS: %w", err)
+	}
+	if needDefault && !m.waitDefaultRoute(ctx, 3) {
+		return m.networkRestoreFailure(ctx, savedRoutes, fmt.Errorf("шлюз пропал после удаления пакетов"))
+	}
 	if err := components.RemoveOwnedExternal(m.Root); err != nil {
 		return err
 	}
@@ -1565,7 +1572,10 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 			return err
 		}
 	}
-	fmt.Fprintln(m.Out, "netOS удалён. Установленные через apt компоненты оставлены в системе.")
+	if err := os.RemoveAll(m.sys(system.PackageOwnershipDir)); err != nil {
+		return err
+	}
+	fmt.Fprintln(m.Out, "netOS удалён.")
 	return nil
 }
 

@@ -287,14 +287,43 @@ for package in $PACKAGES; do
     fi
 done
 
+# Keep package ownership outside installer rollback: an apt transaction remains
+# installed even when a later installation step fails. Never overwrite the
+# original package set on upgrade or on a retry.
+PACKAGE_STATE=/var/lib/netos-package-state
+install -d -m 0700 "$PACKAGE_STATE"
+package_inventory() {
+    dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' > "$PACKAGE_STATE/inventory.tmp" || return 1
+    awk '$2 != "un" && $2 != "pn" {print $1}' "$PACKAGE_STATE/inventory.tmp" | LC_ALL=C sort -u
+}
+[ ! -e "$PACKAGE_STATE/pending" ] || die "предыдущий учёт пакетов не завершён: $PACKAGE_STATE/pending"
+package_inventory > "$PACKAGE_STATE/before.txt" || die "не удалось снять список пакетов"
+if [ ! -f "$PACKAGE_STATE/initial.txt" ]; then
+    cp "$PACKAGE_STATE/before.txt" "$PACKAGE_STATE/initial.txt"
+fi
+[ -f "$PACKAGE_STATE/owned.txt" ] || : > "$PACKAGE_STATE/owned.txt"
+: > "$PACKAGE_STATE/pending"
+chmod 0600 "$PACKAGE_STATE/"*.txt "$PACKAGE_STATE/pending"
+finish_package_capture() {
+    package_inventory > "$PACKAGE_STATE/after.txt" || return 1
+    LC_ALL=C comm -13 "$PACKAGE_STATE/before.txt" "$PACKAGE_STATE/after.txt" > "$PACKAGE_STATE/added.txt" || return 1
+    LC_ALL=C comm -23 "$PACKAGE_STATE/added.txt" "$PACKAGE_STATE/initial.txt" > "$PACKAGE_STATE/new.txt" || return 1
+    cat "$PACKAGE_STATE/owned.txt" "$PACKAGE_STATE/new.txt" | LC_ALL=C sort -u > "$PACKAGE_STATE/owned.tmp" || return 1
+    chmod 0600 "$PACKAGE_STATE/owned.tmp"
+    mv "$PACKAGE_STATE/owned.tmp" "$PACKAGE_STATE/owned.txt" || return 1
+    rm -f "$PACKAGE_STATE/pending" "$PACKAGE_STATE/inventory.tmp" "$PACKAGE_STATE/before.txt" "$PACKAGE_STATE/after.txt" "$PACKAGE_STATE/added.txt" "$PACKAGE_STATE/new.txt"
+}
+
 apt-get update -qq 2>/dev/null || warn "не удалось обновить списки пакетов, пробую продолжить"
 if apt-get install -y -qq $PACKAGES >/dev/null 2>&1; then
+    finish_package_capture || die "не удалось сохранить учёт пакетов"
     if [ -n "$AUTO_PACKAGES" ]; then
         # shellcheck disable=SC2086 # fixed package names collected from PACKAGES above
         apt-mark auto $AUTO_PACKAGES >/dev/null
     fi
     ok "пакеты установлены"
 else
+    finish_package_capture || die "не удалось сохранить учёт частично установленных пакетов"
     die "не удалось установить пакеты: $PACKAGES"
 fi
 
