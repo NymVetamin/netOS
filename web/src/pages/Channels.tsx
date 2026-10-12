@@ -42,12 +42,21 @@ export function ChannelsPage({ config, patch }: Props) {
     void load();
     return () => { active = false; controller?.abort(); window.clearTimeout(timer); };
   }, []);
-  const [liveChannels, setLiveChannels] = useState<any[]>([]);
+  const [liveChannels, setLiveChannels] = useState<any[] | null>(null);
+  const [liveError, setLiveError] = useState(false);
   useEffect(() => {
     let active = true;
-    const load = () => api.status().then((status) => {
-      if (active) setLiveChannels(status.channels || []);
-    }).catch(() => {});
+    let inFlight = false;
+    const load = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const status = await api.status();
+        if (active) { setLiveChannels(status.channels || []); setLiveError(false); }
+      } catch {
+        if (active) setLiveError(true);
+      } finally { inFlight = false; }
+    };
     load();
     const timer = window.setInterval(load, 5000);
     return () => { active = false; window.clearInterval(timer); };
@@ -174,9 +183,9 @@ export function ChannelsPage({ config, patch }: Props) {
           <div className="hint" role="status">Проверяем установленные VPN-компоненты…</div> : missing.length > 0 &&
           <Notice tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <a href="#components">«Компоненты»</a>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
         {channels.map((channel: any) => <Fragment key={channel.id}>
-          {channelComponents.some(item => item.type === channel.type) && !ready(channel.type) &&
+          {installed !== null && channelComponents.some(item => item.type === channel.type) && !ready(channel.type) &&
             <Notice tone="warn" title={`${channel.name}: включение недоступно`}>
-              {installed === null ? "Ожидаем проверку компонентов." : `Для этого канала нужен установленный и выбранный компонент ${channelComponents.find(item => item.type === channel.type)?.title}.`}
+              {`Для этого канала нужен установленный и выбранный компонент ${channelComponents.find(item => item.type === channel.type)?.title}.`}
               {" "}<a href="#components">Открыть «Компоненты»</a>. Настройки канала сохранены.
             </Notice>}
           {channel.type === "direct" ? (
@@ -248,8 +257,9 @@ export function ChannelsPage({ config, patch }: Props) {
         </Fragment>)}
       </Card>
 
-      <Card title="Состояние каналов" subtitle="Проверка работающих интерфейсов и связи WireGuard">
-        {liveChannels.length === 0 ? <Empty>Активных VPN-каналов нет</Empty> :
+      <Card title="Состояние каналов" subtitle="Проверки каналов выполняются роутером в фоне, независимо от открытой страницы">
+        {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
+        {liveChannels === null ? <Empty>{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</Empty> : liveChannels.length === 0 ? <Empty>Активных VPN-каналов нет</Empty> :
           <div className="stack">{liveChannels.map((channel: any) =>
             <div key={channel.id} className="row between wrap">
               <strong>{channel.name}</strong>

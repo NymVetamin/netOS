@@ -69,7 +69,10 @@ async def scenario(browser, mode):
             await expect(page.get_by_text("Для других типов каналов нужны компоненты", exact=True)).to_be_visible()
         for _, _, label in TYPES:
             await expect(page.get_by_role("button", name=label, exact=True)).to_have_count(0)
-        await expect(page.get_by_text("Poland: включение недоступно", exact=True)).to_be_visible()
+        if mode == "error":
+            await expect(page.get_by_text("Poland: включение недоступно", exact=True)).to_have_count(0)
+        else:
+            await expect(page.get_by_text("Poland: включение недоступно", exact=True)).to_be_visible()
         if mode == "enabled-missing":
             await expect(toggle).to_be_enabled()
             await toggle.locator("..").click()

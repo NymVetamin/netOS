@@ -450,3 +450,24 @@ func TestXrayLocalEchoCannotReportHealthy(t *testing.T) {
 		t.Fatalf("used local echo: %d commands", calls)
 	}
 }
+
+func TestMonitorRunsProbesWithoutPageRequests(t *testing.T) {
+	s, _ := newTestSubsystem(t)
+	cfg := channelConfig()
+	cfg.Channels[1].Type = "xray"
+	cfg.Channels[1].Probe = config.Probe{Enabled: true, Type: "http", Interval: 1}
+	probes := make(chan struct{}, 8)
+	s.Probe = func(context.Context, config.Channel, string) bool { probes <- struct{}{}; return true }
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(ctx, func() *config.Config { return cfg }) }()
+	defer func() { cancel(); <-done }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-probes:
+		case <-ctx.Done():
+			t.Fatal("background monitoring stopped without page requests")
+		}
+	}
+}
