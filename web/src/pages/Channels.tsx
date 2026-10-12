@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../api";
+import { channelComponents, channelComponentReady } from "../channelComponents";
 import { newID } from "../id";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
@@ -19,6 +20,28 @@ const POLICY_DAYS = [
 ];
 
 export function ChannelsPage({ config, patch }: Props) {
+  const [installed, setInstalled] = useState<Record<string, boolean> | null>(null);
+  const [componentError, setComponentError] = useState(false);
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+    let controller: AbortController | undefined;
+    const load = async () => {
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller?.abort(), 15000);
+      try {
+        const catalog = await api.catalog(controller.signal);
+        if (active) { setInstalled(catalog.installed || {}); setComponentError(false); }
+      } catch {
+        if (active) { setInstalled(null); setComponentError(true); }
+      } finally {
+        window.clearTimeout(timeout);
+        if (active) timer = window.setTimeout(load, 5000);
+      }
+    };
+    void load();
+    return () => { active = false; controller?.abort(); window.clearTimeout(timer); };
+  }, []);
   const [liveChannels, setLiveChannels] = useState<any[]>([]);
   useEffect(() => {
     let active = true;
@@ -31,27 +54,20 @@ export function ChannelsPage({ config, patch }: Props) {
   }, []);
   const channels = config.channels || [];
   const policies = config.policies || [];
-  const wireguardInstalled = (config.components || []).some(
-    (component: any) => component.id === "wireguard" && component.installed,
-  );
-  const openconnectInstalled = (config.components || []).some(
-    (component: any) => component.id === "openconnect" && component.installed,
-  );
-  const xrayInstalled = (config.components || []).some(
-    (component: any) => component.id === "xray" && component.installed,
-  );
-  const l2tpInstalled = (config.components || []).some(
-    (component: any) => component.id === "l2tp" && component.installed,
-  );
-	const strongswanInstalled = (config.components || []).some(
-		(component: any) => component.id === "strongswan" && component.installed,
-	);
+  const ready = (type: string) => channelComponentReady(config, installed, type);
+  const wireguardInstalled = ready("wireguard");
+  const openconnectInstalled = ready("openconnect");
+  const xrayInstalled = ready("xray");
+  const l2tpInstalled = ready("l2tp");
+  const strongswanInstalled = ready("ikev2");
+  const missing = channelComponents.filter(component => !ready(component.type));
 
   function updateChannel(id: string, mutate: (channel: any) => void) {
     patch((draft) => mutate(draft.channels.find((channel: any) => channel.id === id)));
   }
 
   function addWireGuard() {
+    if (!ready("wireguard")) return;
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
@@ -81,6 +97,7 @@ export function ChannelsPage({ config, patch }: Props) {
   }
 
   function addOpenConnect() {
+    if (!ready("openconnect")) return;
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
@@ -95,6 +112,7 @@ export function ChannelsPage({ config, patch }: Props) {
   }
 
   function addXray() {
+    if (!ready("xray")) return;
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
@@ -109,6 +127,7 @@ export function ChannelsPage({ config, patch }: Props) {
   }
 
   function addL2TP() {
+    if (!ready("l2tp")) return;
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
@@ -123,6 +142,7 @@ export function ChannelsPage({ config, patch }: Props) {
   }
 
 	function addIKEv2() {
+    if (!ready("ikev2")) return;
 		patch((draft) => {
 			const used = new Set((draft.channels || []).map((channel: any) => channel.index));
 			let index = 1;
@@ -146,10 +166,20 @@ export function ChannelsPage({ config, patch }: Props) {
       <Card
         title="Каналы выхода"
         subtitle="Прямой выход всегда доступен; VPN-каналы защищены настраиваемым kill-switch"
-        actions={<div className="row channel-add-actions"><button className="btn" onClick={addWireGuard}>WireGuard</button><button className="btn" onClick={addOpenConnect}>OpenConnect</button><button className="btn" onClick={addXray}>Xray</button><button className="btn" onClick={addIKEv2}>IKEv2</button><button className="btn" onClick={addL2TP}>L2TP</button></div>}
+        actions={<div className="row channel-add-actions">{channelComponents.filter(component => ready(component.type)).map(component =>
+          <button key={component.type} className="btn" onClick={({ wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP })[component.type]}>{component.type === "ikev2" ? "IKEv2" : component.title}</button>
+        )}</div>}
       >
-        {channels.map((channel: any) =>
-          channel.type === "direct" ? (
+        {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed === null ?
+          <div className="hint" role="status">Проверяем установленные VPN-компоненты…</div> : missing.length > 0 &&
+          <Notice tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <a href="#components">«Компоненты»</a>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
+        {channels.map((channel: any) => <Fragment key={channel.id}>
+          {channelComponents.some(item => item.type === channel.type) && !ready(channel.type) &&
+            <Notice tone="warn" title={`${channel.name}: включение недоступно`}>
+              {installed === null ? "Ожидаем проверку компонентов." : `Для этого канала нужен установленный и выбранный компонент ${channelComponents.find(item => item.type === channel.type)?.title}.`}
+              {" "}<a href="#components">Открыть «Компоненты»</a>. Настройки канала сохранены.
+            </Notice>}
+          {channel.type === "direct" ? (
             <div className="row" key={channel.id} style={{ justifyContent: "space-between" }}>
               <div>
                 <strong>{channel.name}</strong>
@@ -214,8 +244,8 @@ export function ChannelsPage({ config, patch }: Props) {
                 draft.channels = draft.channels.filter((item: any) => item.id !== channel.id);
               })}>Удалить</button>
             </Notice>
-          ),
-        )}
+          )}
+        </Fragment>)}
       </Card>
 
       <Card title="Состояние каналов" subtitle="Проверка работающих интерфейсов и связи WireGuard">
@@ -253,10 +283,9 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
   };
   return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
     <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
-      <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "черновик"}</Badge></div>
-      <div className="row"><Switch checked={!!channel.enabled} disabled={!installed || !!error} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
+      <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div>
+      <div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && (!installed || !!error)} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
     </div>
-    {!installed && <Notice tone="info" title="Нужен компонент Xray">Установите проверенную сборку Xray в разделе «Компоненты» перед включением.</Notice>}
     {error && <Notice tone="warn" title="Конфигурация Xray не разобрана">{error}</Notice>}
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
@@ -297,8 +326,7 @@ function IKEv2Editor({ channel, channels, installed, referenced, update, remove 
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
   return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}><div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "черновик"}</Badge></div><div className="row"><Switch checked={!!channel.enabled} disabled={!installed} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div></div>
-    {!installed && <Notice tone="info" title="Нужен компонент strongSwan">Установите strongSwan перед включением IKEv2.</Notice>}
+    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}><div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div><div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && !installed} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div></div>
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-сервер"><input className="mono" placeholder="vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
@@ -322,8 +350,7 @@ function L2TPEditor({ channel, channels, installed, referenced, update, remove }
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
   return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}><div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "черновик"}</Badge></div><div className="row"><Switch checked={!!channel.enabled} disabled={!installed} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div></div>
-    {!installed && <Notice tone="info" title="Нужен компонент L2TP">Установите L2TP перед включением канала.</Notice>}
+    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}><div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div><div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && !installed} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div></div>
     <Notice tone="warn" title="L2TP без шифрования">Используйте этот канал только в доверенной сети или поверх отдельного защищённого транспорта.</Notice>
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
@@ -348,10 +375,9 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
   return (
     <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
-        <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "черновик"}</Badge></div>
-        <div className="row"><Switch checked={!!channel.enabled} disabled={!installed} onChange={(enabled) => update((draft) => (draft.enabled = enabled))} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
+        <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div>
+        <div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && !installed} onChange={(enabled) => update((draft) => (draft.enabled = enabled))} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
       </div>
-      {!installed && <Notice tone="info" title="Нужен компонент OpenConnect">Установите его перед включением канала.</Notice>}
       <div className="form-grid">
         <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} /></Field>
         <Field label="VPN-сервер"><input className="mono" placeholder="https://vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
@@ -407,13 +433,13 @@ function WireGuardEditor({
         <div className="row">
           <strong>{channel.name}</strong>
           <Badge tone={channel.enabled ? "ok" : "neutral"}>
-            {channel.enabled ? "включён" : "черновик"}
+            {channel.enabled ? "включён" : "выключен"}
           </Badge>
         </div>
         <div className="row">
           <Switch
             checked={!!channel.enabled}
-            disabled={!installed}
+            disabled={!channel.enabled && !installed}
             onChange={(enabled) => update((draft) => (draft.enabled = enabled))}
             label="Использовать"
           />
