@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, RouteEntry } from "../api";
+import { canonicalTable, observedTables, tableDetails } from "../routingTables";
 import { newID } from "../id";
 import { Badge, Card, Empty, Notice, Switch, TableWrap } from "../ui";
 
@@ -13,6 +14,7 @@ type RoutesResponse = { routes: string; rules: string; parsed: RouteEntry[] };
 export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   const [live, setLive] = useState<RoutesResponse | null>(null);
   const [liveError, setLiveError] = useState("");
+  const [selectedTable, setSelectedTable] = useState("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -21,7 +23,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
       if (inFlight) return;
       inFlight = true;
       try {
-        const result = await api.routes();
+        const result = await api.routes("all");
         if (!cancelled) {
           setLive(result);
           setLiveError("");
@@ -44,6 +46,10 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
 
   const routing = config.routing || { static: [], tables: [], rules: [] };
   const tableNames = ["main", ...(routing.tables || []).map((t: any) => t.name)];
+
+  const observed = observedTables(live?.parsed || [], live?.rules || "");
+  const automatic = observed.filter(name => !["main", "local", "default"].includes(name) && !tableDetails(name, config).manual);
+  const displayedRoutes = (live?.parsed || []).filter(r => selectedTable === "all" || canonicalTable(r.table || "main") === selectedTable);
 
   return (
     <>
@@ -246,7 +252,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
       >
         {(routing.tables || []).length === 0 ? (
           <Empty>
-            Дополнительных таблиц нет. Пока весь трафик идёт по основной таблице.
+            Пользовательские таблицы не добавлены.
           </Empty>
         ) : (
           <TableWrap>
@@ -320,6 +326,20 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
             </table>
           </TableWrap>
         )}
+        {automatic.length > 0 && (
+          <TableWrap>
+            <table aria-label="Автоматические таблицы маршрутизации">
+              <thead><tr><th>Действующая таблица</th><th>Номер</th><th>Назначение</th><th /></tr></thead>
+              <tbody>{automatic.map(name => {
+                const details = tableDetails(name, config);
+                return <tr key={name}><td className="mono">{name}</td><td className="mono">{details.number}</td><td>{details.owner}</td>
+                  <td><button className="btn sm" onClick={() => setSelectedTable(name)}>Показать маршруты</button></td></tr>;
+              })}</tbody>
+            </table>
+          </TableWrap>
+        )}
+        {!live && <Empty>{liveError ? "Действующие таблицы недоступны" : "Загрузка действующих таблиц…"}</Empty>}
+        {liveError && live && <Notice tone="danger" title="Данные о таблицах устарели">Не удалось обновить состояние ОС.</Notice>}
       </Card>
 
       <Card
@@ -507,18 +527,23 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
 
       <Card
         title="Действующие маршруты"
-        subtitle="Всё, что сейчас в таблице маршрутизации, включая полученные автоматически"
+        subtitle="Действующие маршруты IPv4 во всех таблицах, включая маршруты VPN-каналов"
+        actions={<select aria-label="Показать таблицу маршрутизации" value={selectedTable} onChange={e => setSelectedTable(e.target.value)}>
+          <option value="all">Все таблицы</option>
+          {[...new Set([...observed, ...(selectedTable !== "all" ? [selectedTable] : [])])].map(name => <option key={name} value={name}>{name}</option>)}
+        </select>}
         tight
       >
         {!live ? (
           <Empty>{liveError ? "Действующие маршруты недоступны" : "Загрузка…"}</Empty>
-        ) : (live.parsed || []).length === 0 ? (
+        ) : displayedRoutes.length === 0 ? (
           <Empty>Таблица пуста</Empty>
         ) : (
           <TableWrap>
             <table>
               <thead>
                 <tr>
+                  <th>Таблица</th>
                   <th>Куда</th>
                   <th>Через шлюз</th>
                   <th>Интерфейс</th>
@@ -527,8 +552,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 </tr>
               </thead>
               <tbody>
-                {(live.parsed || []).map((r, i) => (
+                {displayedRoutes.map((r, i) => (
                   <tr key={i}>
+                    <td className="mono">{canonicalTable(r.table || "main")}</td>
                     <td className="mono">{r.type && r.type !== "unicast" ? `${r.type} ${r.destination}` : r.destination}</td>
                     <td className="mono">{r.gateway || <span className="faint">напрямую</span>}</td>
                     <td className="mono">{r.interface}</td>
@@ -571,7 +597,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
 function originBadge(origin: string) {
   switch (origin) {
     case "netos":
-      return <Badge tone="accent">аплинк netOS</Badge>;
+      return <Badge tone="accent">создан netOS</Badge>;
     case "netos-static":
       return <Badge tone="accent">задан в netOS</Badge>;
     case "static":

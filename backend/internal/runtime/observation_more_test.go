@@ -136,3 +136,22 @@ func TestRouteObservationPropagatesRunnerErrorsAndUsesMainTable(t *testing.T) {
 		t.Fatalf("raw error=%v", err)
 	}
 }
+
+func TestParsedRoutesPreservesTablesFromAllTablesDump(t *testing.T) {
+	runner := &observationRunner{output: "default via 192.0.2.1 dev eth0 proto dhcp\ndefault dev tun-ch1 table netos-ch1 proto netos metric 100\nblackhole default table netos-ch1 proto netos metric 1000\nlocal 192.0.2.2 dev eth0 table local proto kernel\nthrow default table 3001\n"}
+	routes, err := NewCollector(runner, "").ParsedRoutes(context.Background(), "all")
+	if err != nil || len(routes) != 5 {
+		t.Fatalf("routes=%v err=%v", routes, err)
+	}
+	for i, want := range []string{"main", "netos-ch1", "netos-ch1", "local", "3001"} {
+		if routes[i].Table != want {
+			t.Fatalf("route %d table=%s want=%s", i, routes[i].Table, want)
+		}
+	}
+	if routes[2].Type != "blackhole" || routes[2].Metric != 1000 {
+		t.Fatal("kill switch route lost")
+	}
+	if runner.calls[0] != "ip -4 route show table all" {
+		t.Fatalf("commands=%v", runner.calls)
+	}
+}

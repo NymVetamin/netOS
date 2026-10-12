@@ -300,8 +300,8 @@ export const api = {
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
   leases: () => request<{ leases: any[] }>("GET", "/api/leases"),
   arp: () => request<{ arp: any[] }>("GET", "/api/arp"),
-  routes: () =>
-    request<{ routes: string; rules: string; parsed: RouteEntry[] }>("GET", "/api/routes"),
+  routes: (table = "") =>
+    request<{ routes: string; rules: string; parsed: RouteEntry[] }>("GET", `/api/routes${table ? `?table=${encodeURIComponent(table)}` : ""}`),
   diagnosticProbe: (kind: "ping" | "traceroute", host: string) =>
     request<{ output: string; success: boolean; error?: string }>("POST", "/api/diagnostics/probe", { kind, host }),
   blocklistStatus: () => request<{ sources: Record<string, { source: string; error?: string }> }>("GET", "/api/dns/blocklists/status"),

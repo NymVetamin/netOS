@@ -454,7 +454,7 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 	if err != nil {
 		return nil, err
 	}
-	if table == "" {
+	if table == "" || table == "all" {
 		table = "main"
 	}
 
@@ -484,6 +484,10 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 
 		for i := destinationIndex + 1; i < len(fields); i++ {
 			switch fields[i] {
+			case "table":
+				if i+1 < len(fields) {
+					r.Table = fields[i+1]
+				}
 			case "via":
 				if i+1 < len(fields) {
 					r.Gateway = fields[i+1]
