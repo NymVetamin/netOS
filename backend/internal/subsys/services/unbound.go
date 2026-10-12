@@ -14,11 +14,15 @@ import (
 )
 
 var (
-	unboundConfPath = "/var/lib/netos/generated/unbound.conf"
+	// Debian's AppArmor profile permits config reads below /etc/unbound and
+	// mutable trust anchors below /var/lib/unbound. Keep our files outside
+	// unbound.conf.d so the distro service never imports the netOS config.
+	unboundConfPath = "/etc/unbound/netos.conf"
 	unboundUnit     = "netos-unbound.service"
 	// Каталог для root.key: unbound обновляет якорь DNSSEC на месте, поэтому
 	// файл живёт в изменяемом состоянии, а не рядом с конфигом.
-	unboundAnchorPath = "/var/lib/netos/unbound-root.key"
+	unboundAnchorPath       = "/var/lib/unbound/netos-root.key"
+	legacyUnboundAnchorPath = "/var/lib/netos/unbound-root.key"
 )
 
 // Unbound владеет процессом unbound.
@@ -53,7 +57,7 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	w("    verbosity: 0")
 	w("    do-daemonize: no")
 	w("    username: \"\"")
-	w("    directory: \"/var/lib/netos\"")
+	w("    directory: %q", filepath.ToSlash(filepath.Dir(unboundAnchorPath)))
 	w("    chroot: \"\"")
 	w("    pidfile: \"\"")
 	w("    use-syslog: no")
@@ -427,6 +431,17 @@ func (u *Unbound) ensureTrustAnchor(ctx context.Context) error {
 	}
 	if statErr == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 		return fmt.Errorf("якорь DNSSEC %s небезопасен: нужен обычный файл без symlink", unboundAnchorPath)
+	}
+	// Preserve an existing RFC5011 anchor when upgrading from the old path.
+	if os.IsNotExist(statErr) && trustAnchorHealth(legacyUnboundAnchorPath) == nil {
+		data, err := os.ReadFile(legacyUnboundAnchorPath)
+		if err != nil {
+			return err
+		}
+		return system.WriteFileAtomic(unboundAnchorPath, data, 0600)
+	}
+	if err := os.MkdirAll(filepath.Dir(unboundAnchorPath), 0700); err != nil {
+		return err
 	}
 	_, runErr := u.Runner.Run(ctx, "unbound-anchor", "-a", unboundAnchorPath)
 	if err := trustAnchorHealth(unboundAnchorPath); err == nil {

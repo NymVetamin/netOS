@@ -21,6 +21,7 @@ func TestMain(m *testing.M) {
 	iscConfPath, iscLeasePath = filepath.Join(root, "dhcpd.conf"), filepath.Join(root, "dhcpd.leases")
 	keaConfPath, keaLeasePath = filepath.Join(root, "kea.json"), filepath.Join(root, "kea-leases.csv")
 	unboundConfPath, unboundAnchorPath = filepath.Join(root, "unbound.conf"), filepath.Join(root, "root.key")
+	legacyUnboundAnchorPath = filepath.Join(root, "legacy-root.key")
 	dnsproxyConfPath, dnsproxyHostsPath, dnsproxyBinary = filepath.Join(root, "dnsproxy.yaml"), filepath.Join(root, "dnsproxy-hosts"), filepath.Join(root, "dnsproxy")
 	blocklistCacheDir = filepath.Join(root, "blocklists")
 	dnsmasqBlocklistPath = filepath.Join(root, "dnsmasq-blocklist.conf")

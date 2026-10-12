@@ -1424,6 +1424,8 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 		m.sys("/etc/apt/apt.conf.d/99netos"),
 		m.sys("/etc/bash_completion.d/netos"),
 		m.sys("/usr/share/bash-completion/completions/netos"),
+		m.sys("/etc/unbound/netos.conf"),
+		m.sys("/etc/unbound/netos-blocklist.conf"),
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы
 		// машину с описанием сегментов, которых больше никто не создаёт.
 		m.sys("/etc/network/interfaces.d/netos.conf"),
@@ -1512,6 +1514,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 		keaLease := m.sys("/var/lib/kea/netos-leases4.csv")
 		if err := os.Remove(keaLease); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove netOS Kea leases %s: %w", keaLease, err)
+		}
+		if err := os.Remove(m.sys("/var/lib/unbound/netos-root.key")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("удаление якоря DNSSEC netOS: %w", err)
 		}
 	}
 	if err := os.Remove(m.Binary); err != nil && !os.IsNotExist(err) {

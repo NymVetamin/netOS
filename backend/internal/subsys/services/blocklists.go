@@ -32,7 +32,7 @@ const (
 var (
 	blocklistCacheDir       = "/var/lib/netos/blocklists"
 	dnsmasqBlocklistPath    = "/var/lib/netos/generated/dnsmasq-blocklist.conf"
-	unboundBlocklistPath    = "/var/lib/netos/generated/unbound-blocklist.conf"
+	unboundBlocklistPath    = "/etc/unbound/netos-blocklist.conf"
 	dnsproxyBlocklistPath   = "/var/lib/netos/generated/dnsproxy-blocklist.hosts"
 	defaultBlocklistFetcher = fetchBlocklistWithCA
 	newBlocklistHTTPClient  = func(checkRedirect func(*http.Request, []*http.Request) error) *http.Client {
