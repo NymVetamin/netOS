@@ -1281,7 +1281,7 @@ func (m *Manager) removeOwnedPolicySets(ctx context.Context) {
 	}
 }
 
-func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBackup bool) error {
+func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBackup bool) (retErr error) {
 	if yes && !keepData && !withBackup && !noBackup {
 		return fmt.Errorf("для удаления без вопросов укажите --backup или --no-backup")
 	}
@@ -1293,6 +1293,12 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	if !keepData && !withBackup && !noBackup {
 		takeBackup = m.confirm("Создать резервную копию перед удалением?")
 	}
+	finishLog, err := m.beginUninstallLog()
+	if err != nil {
+		return fmt.Errorf("журнал удаления недоступен; система не изменена: %w", err)
+	}
+	defer func() { finishLog(retErr) }()
+	fmt.Fprintln(m.Out, "Проверяем исходное состояние и сохраняем путь управления…")
 	baseline, err := m.readSystemBaseline()
 	if err != nil {
 		return fmt.Errorf("системный baseline повреждён; удаление остановлено до изменений: %w", err)
@@ -1301,6 +1307,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	if err != nil {
 		return err
 	}
+	savedRoutes := m.captureDefaultRoutes(ctx)
+	needDefault := len(savedRoutes) > 0 || (baseline != nil && len(baseline.DefaultRoutes4) > 0)
+	fmt.Fprintln(m.Out, "Останавливаем netOS и его компоненты…")
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
@@ -1336,9 +1345,8 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 			return err
 		}
 	}
-	// Дефолтные маршруты запоминаются до очистки: следующая строка сносит в том
-	// числе маршрут аплинка, и без запаса вернуть его будет неоткуда.
-	savedRoutes := m.captureDefaultRoutes(ctx)
+	// Routes were captured before stopping components; PPP/VPN shutdown and
+	// removal of managed route protocols may already remove the default.
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-6", "route", "flush", "table", "all", "proto", "201")
 	m.bestEffort(ctx, "ip", "-4", "route", "flush", "table", "all", "proto", "202")
@@ -1409,6 +1417,13 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	if _, err := os.Stat(m.sys("/etc/network/interfaces.d/netos.conf")); err == nil {
 		ifupdownMode = true
 	}
+	if ifupdownMode {
+		// Release the generated configuration before restoring its original
+		// stanzas; otherwise ifup's state cache can skip starting DHCP.
+		if err := m.run(ctx, "systemctl", "stop", "networking.service"); err != nil {
+			return m.networkRestoreFailure(ctx, savedRoutes, err)
+		}
+	}
 
 	for _, path := range []string{
 		// Старые установщики выносили hardening в drop-in. Основной unit уже
@@ -1473,15 +1488,13 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	}
 	// NetworkManager должен узнать, что интерфейсы снова его.
 	m.quiet(ctx, "systemctl", "reload", "NetworkManager.service")
-	if baseline != nil {
-		// Текущий default принадлежит уже применённому netOS; при наличии
-		// baseline возвращать его как аварийный маршрут было бы неверно.
-		savedRoutes = nil
-	}
 	if err := netconf.RestoreIfupdown(m.Root); err != nil {
 		return fmt.Errorf("восстановление исходной конфигурации networking: %w", err)
 	}
-	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
+	fmt.Fprintln(m.Out, "Возвращаем управление сетью ОС и проверяем шлюз…")
+	if err := m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes, baseline, needDefault); err != nil {
+		return err
+	}
 	if baseline != nil {
 		if err := m.restoreBaselineFirewall(ctx, baseline); err != nil {
 			_ = m.run(ctx, "systemctl", "start", "netosd")
@@ -1496,6 +1509,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	}
 	// До этого места unit, бинарник и данные остаются доступны для аварийного
 	// повторного Apply. Удаляем их только после успешного возврата системы.
+	fmt.Fprintln(m.Out, "Сеть восстановлена. Удаляем оставшиеся файлы netOS…")
 	if err := components.RemoveOwnedExternal(m.Root); err != nil {
 		return err
 	}
@@ -1683,48 +1697,52 @@ func (m *Manager) captureDefaultRoutes(ctx context.Context) []defaultRoute {
 	return routes
 }
 
-// restoreNetworking возвращает интерфейсы штатному менеджеру сети.
-//
-// Одного удаления файлов мало. Маршруты netOS сняты вместе с proto 201, но
-// systemd-networkd продолжает держать в памяти прежнюю конфигурацию линка и
-// адресацию заново не запускает: машина остаётся с адресом, но без пути
-// наружу. На роутере, который админят удалённо, это потеря доступа до
-// перезагрузки — ровно то, ради чего удаление и запускали, только без связи.
-//
-// Попытки идут молча: на машине с ifupdown нет networkctl, на машине с
-// networkd нет networking.service, и сообщать о таких неудачах нечего.
-// Значение имеет один факт — появился дефолтный маршрут или нет.
-func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdownMode bool, saved []defaultRoute) {
+// restoreNetworking returns both persistent ownership and live connectivity.
+// A failed handover must retain the binary, database and baseline for retry.
+func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdownMode bool, saved []defaultRoute, baseline *systemBaseline, needDefault bool) error {
 	m.quiet(ctx, "networkctl", "reload")
-	for _, link := range links {
-		// Виртуальных интерфейсов netOS к этому моменту уже нет, и
-		// reconfigure для них означал бы только шум в выводе.
-		if _, err := os.Stat(m.sys("/sys/class/net/" + link)); err != nil {
-			continue
+	restored, err := m.restoreOriginalNetworkServices(ctx, baseline)
+	if err != nil {
+		return m.networkRestoreFailure(ctx, saved, err)
+	}
+	// Do not reactivate networkd through its socket after restoring an
+	// originally inactive service, or let it race the restored ifupdown owner.
+	if !restored || (baseline != nil && serviceWasActive(baseline.NetworkServices["systemd-networkd.service"])) {
+		m.quiet(ctx, "networkctl", "reload")
+		for _, link := range links {
+			if _, err := os.Stat(m.sys("/sys/class/net/" + link)); err != nil {
+				continue
+			}
+			m.quiet(ctx, "networkctl", "reconfigure", link)
 		}
-		m.quiet(ctx, "networkctl", "reconfigure", link)
 	}
-	if ifupdownMode {
-		m.quiet(ctx, "systemctl", "restart", "networking")
+	if ifupdownMode && !restored {
+		if err := m.run(ctx, "systemctl", "restart", "networking"); err != nil {
+			return m.networkRestoreFailure(ctx, saved, err)
+		}
 	}
-	if m.waitDefaultRoute(ctx, 20) {
-		return
+	if !needDefault || m.waitDefaultRoute(ctx, 20) {
+		return nil
 	}
+	return m.networkRestoreFailure(ctx, saved, fmt.Errorf("штатный менеджер сети не вернул шлюз по умолчанию"))
+}
 
-	// Штатный менеджер маршрут не вернул. Ставим обратно тот, что был до
-	// удаления: маршрут чужого происхождения лучше, чем машина без связи.
-	for _, r := range saved {
-		if r.via != "" {
-			m.quiet(ctx, "ip", "-4", "route", "add", "default", "via", r.via, "dev", r.dev)
-		} else {
-			m.quiet(ctx, "ip", "-4", "route", "add", "default", "dev", r.dev)
+func (m *Manager) networkRestoreFailure(ctx context.Context, saved []defaultRoute, cause error) error {
+	// Keep a temporary escape route, but never call that a successful return
+	// to persistent OS networking or delete recovery data afterwards.
+	if !m.waitDefaultRoute(ctx, 0) {
+		for _, route := range saved {
+			if route.via != "" {
+				m.bestEffort(ctx, "ip", "-4", "route", "add", "default", "via", route.via, "dev", route.dev)
+			} else {
+				m.bestEffort(ctx, "ip", "-4", "route", "add", "default", "dev", route.dev)
+			}
+		}
+		if len(saved) > 0 && m.waitDefaultRoute(ctx, 3) {
+			fmt.Fprintln(m.Out, "Временно возвращён прежний шлюз для сохранения доступа.")
 		}
 	}
-	if len(saved) > 0 && m.waitDefaultRoute(ctx, 3) {
-		fmt.Fprintln(m.Out, "Дефолтный маршрут восстановлен вручную: штатный менеджер сети его не вернул.")
-		return
-	}
-	fmt.Fprintln(m.Err, "Предупреждение: машина осталась без дефолтного маршрута. Проверьте сеть до перезагрузки.")
+	return fmt.Errorf("удаление остановлено: восстановление сети не завершено: %w. Бинарник, данные и исходное состояние сохранены; журнал: %s", cause, uninstallLogPath)
 }
 
 // waitDefaultRoute ждёт появления дефолтного маршрута, опрашивая таблицу раз в
@@ -1732,6 +1750,9 @@ func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdow
 // reconfigure означало бы объявить восстановление неудачным раньше времени.
 func (m *Manager) waitDefaultRoute(ctx context.Context, attempts int) bool {
 	for i := 0; ; i++ {
+		if ctx.Err() != nil {
+			return false
+		}
 		out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
 		if err == nil && strings.TrimSpace(out) != "" {
 			return true

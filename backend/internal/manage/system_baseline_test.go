@@ -52,7 +52,12 @@ func TestCaptureSystemBaselineIsCompleteAndIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r := &baselineRunner{outputs: map[string]string{
+	r := &baselineRunner{errors: map[string]error{"ifquery --state eth1": errors.New("not configured")}, outputs: map[string]string{
+		"ifquery --list": "eth0\neth1\n",
+		"systemctl is-enabled networking.service":       "enabled\n",
+		"systemctl is-active networking.service":        "active\n",
+		"systemctl is-enabled systemd-networkd.service": "disabled\n",
+		"systemctl is-active systemd-networkd.service":  "inactive\n",
 		"iptables-save":  "*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n",
 		"ip6tables-save": "*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n",
 		"ip -4 route show table all proto static":        "10.0.0.0/8 via 192.0.2.1 dev eth0 proto static\n",
@@ -91,6 +96,12 @@ func TestCaptureSystemBaselineIsCompleteAndIdempotent(t *testing.T) {
 	}
 	if got.Hostname != "router-before" || got.Timezone != "Europe/Moscow" || !got.TimesyncdConfig.Exists || got.Timesyncd.Active != "active" || got.Resolved.Enabled != "disabled" {
 		t.Fatalf("host settings baseline incomplete: %#v", got)
+	}
+	if got.NetworkServices["networking.service"].Enabled != "enabled" || got.NetworkServices["networking.service"].Active != "active" || got.NetworkServices["systemd-networkd.service"].Enabled != "disabled" {
+		t.Fatal("original network services were not captured")
+	}
+	if len(got.IfupdownInterfaces) != 1 || got.IfupdownInterfaces[0] != "eth0" {
+		t.Fatalf("live ifupdown ownership: %v", got.IfupdownInterfaces)
 	}
 	beforeCalls := len(r.calls)
 	r.fail = true

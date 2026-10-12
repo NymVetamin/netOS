@@ -725,8 +725,8 @@ func TestUninstallHandsInterfacesBackToNetworkManager(t *testing.T) {
 		return "", nil
 	}
 
-	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
-		t.Fatal(err)
+	if err := m.uninstall(context.Background(), true, true, false, false); err == nil {
+		t.Fatal("temporary route without restored network owner must not count as successful uninstall")
 	}
 
 	var reconfigured, restored bool

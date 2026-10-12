@@ -30,22 +30,24 @@ type fileBaseline struct {
 }
 
 type systemBaseline struct {
-	Version         int               `json:"version"`
-	IPTables4       string            `json:"iptables4"`
-	IPTables6       string            `json:"iptables6,omitempty"`
-	IPTables6Exists bool              `json:"iptables6_exists"`
-	StaticRoutes4   []string          `json:"static_routes4,omitempty"`
-	StaticRoutes6   []string          `json:"static_routes6,omitempty"`
-	DefaultRoutes4  []string          `json:"default_routes4,omitempty"`
-	DefaultRoutes6  []string          `json:"default_routes6,omitempty"`
-	PolicyRules4    []string          `json:"policy_rules4,omitempty"`
-	Sysctl          map[string]string `json:"sysctl"`
-	Tuned           serviceBaseline   `json:"tuned"`
-	Timesyncd       serviceBaseline   `json:"timesyncd"`
-	Resolved        serviceBaseline   `json:"resolved"`
-	TimesyncdConfig fileBaseline      `json:"timesyncd_config"`
-	Hostname        string            `json:"hostname"`
-	Timezone        string            `json:"timezone"`
+	IfupdownInterfaces []string                   `json:"ifupdown_interfaces,omitempty"`
+	NetworkServices    map[string]serviceBaseline `json:"network_services,omitempty"`
+	Version            int                        `json:"version"`
+	IPTables4          string                     `json:"iptables4"`
+	IPTables6          string                     `json:"iptables6,omitempty"`
+	IPTables6Exists    bool                       `json:"iptables6_exists"`
+	StaticRoutes4      []string                   `json:"static_routes4,omitempty"`
+	StaticRoutes6      []string                   `json:"static_routes6,omitempty"`
+	DefaultRoutes4     []string                   `json:"default_routes4,omitempty"`
+	DefaultRoutes6     []string                   `json:"default_routes6,omitempty"`
+	PolicyRules4       []string                   `json:"policy_rules4,omitempty"`
+	Sysctl             map[string]string          `json:"sysctl"`
+	Tuned              serviceBaseline            `json:"tuned"`
+	Timesyncd          serviceBaseline            `json:"timesyncd"`
+	Resolved           serviceBaseline            `json:"resolved"`
+	TimesyncdConfig    fileBaseline               `json:"timesyncd_config"`
+	Hostname           string                     `json:"hostname"`
+	Timezone           string                     `json:"timezone"`
 }
 
 // CaptureSystemBaseline records host state before the first netOS Apply. It is
@@ -125,6 +127,25 @@ func captureSystemBaseline(ctx context.Context, runner system.Runner, root strin
 	b.Timesyncd.Active = commandState(ctx, runner, "is-active", "systemd-timesyncd.service")
 	b.Resolved.Enabled = commandState(ctx, runner, "is-enabled", "systemd-resolved.service")
 	b.Resolved.Active = commandState(ctx, runner, "is-active", "systemd-resolved.service")
+	b.NetworkServices = map[string]serviceBaseline{}
+	for _, unit := range networkBaselineUnits {
+		b.NetworkServices[unit] = serviceBaseline{
+			Enabled: commandState(ctx, runner, "is-enabled", unit),
+			Active:  commandState(ctx, runner, "is-active", unit),
+		}
+	}
+	// Hotplug interfaces can be configured by ifup@ even when networking.service
+	// is inactive. Record live ifupdown ownership separately from unit state.
+	if out, queryErr := runner.Run(ctx, "ifquery", "--list"); queryErr == nil {
+		for _, name := range strings.Fields(out) {
+			if !validLinkName(name) || strings.HasPrefix(name, "-") {
+				continue
+			}
+			if _, stateErr := runner.Run(ctx, "ifquery", "--state", name); stateErr == nil {
+				b.IfupdownInterfaces = append(b.IfupdownInterfaces, name)
+			}
+		}
+	}
 	if b.Hostname, err = runner.Run(ctx, "hostnamectl", "--static"); err != nil {
 		return fmt.Errorf("снимок имени машины: %w", err)
 	}
