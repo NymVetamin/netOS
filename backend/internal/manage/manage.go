@@ -324,12 +324,15 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
-		if err := onlyFlags(args[1:], "--yes", "-y", "--keep-data"); err != nil {
+		if err := onlyFlags(args[1:], "--yes", "-y", "--keep-data", "--backup", "--no-backup"); err != nil {
 			return err
+		}
+		if contains(args[1:], "--backup") && contains(args[1:], "--no-backup") {
+			return fmt.Errorf("--backup и --no-backup исключают друг друга")
 		}
 		return m.uninstall(ctx,
 			contains(args[1:], "--yes") || contains(args[1:], "-y"),
-			contains(args[1:], "--keep-data"))
+			contains(args[1:], "--keep-data"), contains(args[1:], "--backup"), contains(args[1:], "--no-backup"))
 	default:
 		return fmt.Errorf("неизвестная команда %q; используйте netos help", args[0])
 	}
@@ -438,8 +441,9 @@ func (m *Manager) help() {
   netos restore [файл] [-y|--yes]
                                восстановить из резервной копии; без файла
                                покажет список и спросит, какую брать
-  netos uninstall [--keep-data] [-y|--yes]
-                               удалить netOS (по умолчанию с резервной копией)
+  netos uninstall [--keep-data] [--backup|--no-backup] [-y|--yes]
+                               удалить netOS; перед удалением данных спросить о копии
+                               с --yes выбор копии нужно указать явно
   netos start|stop|restart     управление службой
   netos plan                   что netOS изменит в живой системе, если применить
                                конфигурацию прямо сейчас
@@ -482,7 +486,7 @@ _netos() {
             COMPREPLY=($(compgen -W "-y --yes --backup --no-backup" -- "$cur"))
             ;;
         uninstall)
-            COMPREPLY=($(compgen -W "-y --yes --keep-data" -- "$cur"))
+            COMPREPLY=($(compgen -W "-y --yes --keep-data --backup --no-backup" -- "$cur"))
             ;;
         restore)
             # Резервные копии видны только root, и у остальных список будет
@@ -1276,10 +1280,17 @@ func (m *Manager) removeOwnedPolicySets(ctx context.Context) {
 	}
 }
 
-func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
+func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBackup bool) error {
+	if yes && !keepData && !withBackup && !noBackup {
+		return fmt.Errorf("для удаления без вопросов укажите --backup или --no-backup")
+	}
 	if !yes && !m.confirm("netOS и применённая им конфигурация будут удалены. Продолжить?") {
 		fmt.Fprintln(m.Out, "Отменено.")
 		return nil
+	}
+	takeBackup := withBackup
+	if !keepData && !withBackup && !noBackup {
+		takeBackup = m.confirm("Создать резервную копию перед удалением?")
 	}
 	baseline, err := m.readSystemBaseline()
 	if err != nil {
@@ -1292,7 +1303,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
 	}
-	if !keepData {
+	if takeBackup {
 		backup, err := m.backup(ctx, "uninstall")
 		if err != nil {
 			_ = m.run(ctx, "systemctl", "start", "netosd")
@@ -1411,6 +1422,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData bool) error {
 		m.sys("/etc/iproute2/rt_tables.d/netos-channels.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),
 		m.sys("/etc/bash_completion.d/netos"),
+		m.sys("/usr/share/bash-completion/completions/netos"),
 		// Персистентная конфигурация сети: без неё удаление netOS оставило бы
 		// машину с описанием сегментов, которых больше никто не создаёт.
 		m.sys("/etc/network/interfaces.d/netos.conf"),

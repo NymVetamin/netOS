@@ -175,7 +175,7 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 		}
 		return "", nil
 	}
-	if err := m.uninstall(context.Background(), true, false); err != nil {
+	if err := m.uninstall(context.Background(), true, false, true, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -447,7 +447,7 @@ func TestUninstallKeepDataRequestsFreshFutureBaseline(t *testing.T) {
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.uninstall(context.Background(), true, true); err != nil {
+		if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -460,7 +460,7 @@ func TestUninstallKeepDataRequestsFreshFutureBaseline(t *testing.T) {
 	t.Run("legacy install requests capture on reinstall", func(t *testing.T) {
 		m, _ := testManager()
 		sandbox(t, m)
-		if err := m.uninstall(context.Background(), true, true); err != nil {
+		if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 			t.Fatal(err)
 		}
 		marker := filepath.Join(m.sys(systemBaselineDir), ".capture-required")

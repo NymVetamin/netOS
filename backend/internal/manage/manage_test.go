@@ -453,7 +453,7 @@ func TestUninstallProceedsWhenUnitIsNotLoaded(t *testing.T) {
 		}
 		return "", nil
 	}
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatalf("удаление прервалось на незагруженном юните: %v", err)
 	}
 	var cleared bool
@@ -494,7 +494,7 @@ func TestUninstallClearsOwnedBridgeIPv6AndReportsFailure(t *testing.T) {
 				}
 				return "", nil
 			}
-			err := m.uninstall(context.Background(), true, true)
+			err := m.uninstall(context.Background(), true, true, false, false)
 			if fail {
 				if err == nil || !strings.Contains(err.Error(), "bridge cleanup failed") {
 					t.Fatalf("cleanup error lost: %v", err)
@@ -523,7 +523,7 @@ func TestUninstallRemovesKeaLeaseDataUnlessKept(t *testing.T) {
 			if err := os.WriteFile(lease, []byte("192.0.2.50,client.qa.lan\n"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			if err := m.uninstall(context.Background(), true, keepData); err != nil {
+			if err := m.uninstall(context.Background(), true, keepData, !keepData, false); err != nil {
 				t.Fatal(err)
 			}
 			_, err := os.Stat(lease)
@@ -566,7 +566,7 @@ func TestUninstallRemovesGeneratedNetworkConfig(t *testing.T) {
 		}
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{ifupdown, networkd, networkdOwnership} {
@@ -594,7 +594,7 @@ func TestUninstallRemovesLegacyDaemonHardeningDropIn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dropIn); !os.IsNotExist(err) {
@@ -633,7 +633,7 @@ func TestUninstallGivesResolvConfBackToSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -674,7 +674,7 @@ func TestUninstallRecoversLegacyResolvConfFromNetworkdLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(resolv)
@@ -725,7 +725,7 @@ func TestUninstallHandsInterfacesBackToNetworkManager(t *testing.T) {
 		return "", nil
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -764,7 +764,7 @@ func TestUninstallDoesNotAddRouteWhenNetworkManagerReturnedIt(t *testing.T) {
 		return "", nil
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range commands {
@@ -797,7 +797,7 @@ func TestUninstallSkipsComponentUnitsThatWereNeverInstalled(t *testing.T) {
 		return nil
 	}
 
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if !contains(disabled, "netos-dnsmasq.service") {
@@ -840,7 +840,7 @@ func TestUninstallStopsAndRemovesDynamicNetworkUnits(t *testing.T) {
 		}
 		return nil
 	}
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, unit := range units {
@@ -866,7 +866,7 @@ func TestUninstallClearsFailedTransientMaintenanceUnit(t *testing.T) {
 		}
 		return nil
 	}
-	if err := m.uninstall(context.Background(), true, true); err != nil {
+	if err := m.uninstall(context.Background(), true, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if !contains(commands, "reset-failed netos-maintenance.service") {
@@ -891,7 +891,7 @@ func TestUninstallDoesNotClaimSuccessWithRemainingManagedArtifacts(t *testing.T)
 			}
 			return nil
 		}
-		if err := m.uninstall(context.Background(), true, true); err == nil || !strings.Contains(err.Error(), "netos-stuck.service") {
+		if err := m.uninstall(context.Background(), true, true, false, false); err == nil || !strings.Contains(err.Error(), "netos-stuck.service") {
 			t.Fatalf("component stop failure was hidden: %v", err)
 		}
 		if _, err := os.Stat(unit); err != nil {
@@ -913,7 +913,7 @@ func TestUninstallDoesNotClaimSuccessWithRemainingManagedArtifacts(t *testing.T)
 			t.Fatal(err)
 		}
 		m.Run = func(context.Context, command) error { return nil }
-		if err := m.uninstall(context.Background(), true, true); err == nil || !strings.Contains(err.Error(), "99-netos.conf") {
+		if err := m.uninstall(context.Background(), true, true, false, false); err == nil || !strings.Contains(err.Error(), "99-netos.conf") {
 			t.Fatalf("managed-file removal failure was hidden: %v", err)
 		}
 		if strings.Contains(out.String(), "netOS удалён") {

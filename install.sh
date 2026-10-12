@@ -2,7 +2,7 @@
 #
 # Установщик netOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh | sudo bash && source /etc/bash_completion.d/netos
 #
 # Скрипт ставит зависимости, разворачивает демон, определяет сетевые
 # интерфейсы и печатает адрес панели с учётными данными.
@@ -162,6 +162,7 @@ rollback_and_cleanup() {
         restore_path "$CLI_PATH" cli
         restore_path /etc/systemd/system/netosd.service unit
         restore_path /etc/bash_completion.d/netos completion
+        restore_path /usr/share/bash-completion/completions/netos completion-lazy
         restore_path /etc/apt/apt.conf.d/99netos aptconf
         restore_path "$STATE_DIR" state-dir
         restore_path "$CONF_DIR" conf-dir
@@ -238,6 +239,7 @@ snapshot_path "$BIN_PATH" binary
 snapshot_path "$CLI_PATH" cli
 snapshot_path /etc/systemd/system/netosd.service unit
 snapshot_path /etc/bash_completion.d/netos completion
+snapshot_path /usr/share/bash-completion/completions/netos completion-lazy
 snapshot_path /etc/apt/apt.conf.d/99netos aptconf
 snapshot_path "$STATE_DIR" state-dir
 snapshot_path "$CONF_DIR" conf-dir
@@ -439,11 +441,16 @@ fi
 
 # Дополнение команд генерирует сам netos: список команд задан в его коде, и
 # отдельный файл в репозитории разошёлся бы с ним при первой же новой команде.
+install -d -m 0755 /etc/bash_completion.d /usr/share/bash-completion/completions
 if "$CLI_PATH" completion bash > /etc/bash_completion.d/netos 2>/dev/null; then
     chmod 0644 /etc/bash_completion.d/netos
-    ok "дополнение команд установлено (заработает в новой сессии)"
+    # bash-completion ищет этот файл при первом Tab даже в уже открытой
+    # оболочке. compatdir выше перечитывается лишь при загрузке framework.
+    install -m 0644 /etc/bash_completion.d/netos /usr/share/bash-completion/completions/netos
+    ok "дополнение команд установлено для загрузки по Tab"
 else
     rm -f /etc/bash_completion.d/netos
+    rm -f /usr/share/bash-completion/completions/netos
     warn "не удалось установить дополнение команд"
 fi
 
@@ -567,7 +574,9 @@ else
 fi
 echo "${B}============================================================${R}"
 echo
-info "Управление:   netos help (дополнение по Tab — в новой сессии)"
+info "Управление:   netos help; список команд — netos <пробел><Tab><Tab>"
+info "Если Tab в текущем Bash ещё не работает, выполните:"
+info "  source /etc/bash_completion.d/netos"
 info "Обновление:   sudo netos update"
 info "Состояние:    netos status"
 info "Журнал:       netos logs -f"
