@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/netos-router/netos/internal/system"
 )
 
 type failingCommandRunner struct {
@@ -29,6 +31,9 @@ func (r *failingCommandRunner) RunInput(ctx context.Context, input, name string,
 func useTemporaryPaths(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
+	oldPolicy := system.PolicyRCPath
+	system.PolicyRCPath = filepath.Join(root, "policy-rc.d")
+	t.Cleanup(func() { system.PolicyRCPath = oldPolicy })
 	oldResolver := systemResolverPath
 	systemResolverPath = filepath.Join(root, "resolv.conf")
 	t.Cleanup(func() { systemResolverPath = oldResolver })

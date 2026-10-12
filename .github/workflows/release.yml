@@ -99,7 +99,7 @@ jobs:
           notes="Установка и обновление:
 
           \`\`\`
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | sudo bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/$TAG/install.sh | sudo env NETOS_VERSION=$TAG bash && source /etc/bash_completion.d/netos
           \`\`\`
 
           На уже установленной машине: \`sudo netos update\`."
