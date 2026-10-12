@@ -31,6 +31,9 @@ func (r *failingCommandRunner) RunInput(ctx context.Context, input, name string,
 func useTemporaryPaths(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
+	oldBackup := ifupdownBackupPath
+	ifupdownBackupPath = filepath.Join(root, "ifupdown-backup.json")
+	t.Cleanup(func() { ifupdownBackupPath = oldBackup })
 	oldPolicy := system.PolicyRCPath
 	system.PolicyRCPath = filepath.Join(root, "policy-rc.d")
 	t.Cleanup(func() { system.PolicyRCPath = oldPolicy })

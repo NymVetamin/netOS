@@ -20,11 +20,11 @@ func (r *ifupdownQueryRunner) Run(ctx context.Context, name string, args ...stri
 	return r.backendUnitRunner.Run(ctx, name, args...)
 }
 
-func TestIfupdownRejectsIneffectiveConfigurationBeforeStartingNetworking(t *testing.T) {
-	for _, tc := range []struct{ name, main, fragment, listed, want string }{
-		{"main DHCP conflict", "auto eth0\niface eth0 inet dhcp\n", "", "lo\neth0\n", "eth0"},
-		{"fragment DHCP conflict", "source interfaces.d/*\n", "auto eth0\niface eth0 inet dhcp\n", "lo\neth0\n", "eth0"},
-		{"missing include", "auto lo\niface lo inet loopback\n", "", "lo\n", "не читает"},
+func TestIfupdownMigratesExistingConfiguration(t *testing.T) {
+	for _, tc := range []struct{ name, main, fragment string }{
+		{"main DHCP conflict", "auto eth0\niface eth0 inet dhcp\n", ""},
+		{"fragment DHCP conflict", "source interfaces.d/*\n", "auto eth0\niface eth0 inet dhcp\n"},
+		{"missing include", "auto lo\niface lo inet loopback\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useTemporaryPaths(t)
@@ -43,16 +43,28 @@ func TestIfupdownRejectsIneffectiveConfigurationBeforeStartingNetworking(t *test
 					t.Fatal(err)
 				}
 			}
-			r := &ifupdownQueryRunner{newBackendUnitRunner(), tc.listed}
+			r := &ifupdownQueryRunner{newBackendUnitRunner(), "lo\neth0\nbr-lan\nvl-guest\n"}
 			cfg := routerConfig()
 			cfg.System.NetworkBackend = "ifupdown"
 			err := New(r, nil).Apply(context.Background(), cfg)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("unsafe config accepted, error=%v", err)
+			if err != nil {
+				t.Fatalf("automatic migration failed: %v", err)
 			}
-			for _, cmd := range r.commands {
-				if cmd == "systemctl start networking.service" || cmd == "systemctl enable networking.service" {
-					t.Fatalf("activated conflicting config: %s", cmd)
+			data, err := os.ReadFile(ifupdownMain)
+			if err != nil || strings.Contains(string(data), "iface eth0 inet dhcp") {
+				t.Fatalf("conflict remains: %s, %v", data, err)
+			}
+			if err := RestoreIfupdown(""); err != nil {
+				t.Fatal(err)
+			}
+			data, err = os.ReadFile(ifupdownMain)
+			if err != nil || string(data) != tc.main {
+				t.Fatalf("original not restored: %q %v", data, err)
+			}
+			if tc.fragment != "" {
+				data, err = os.ReadFile(filepath.Join(ifupdownDir, "eth0"))
+				if err != nil || string(data) != tc.fragment {
+					t.Fatalf("fragment not restored: %q %v", data, err)
 				}
 			}
 		})

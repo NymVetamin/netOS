@@ -10,9 +10,8 @@ import (
 
 // renderIfupdown собирает /etc/network/interfaces.d/netos.conf.
 //
-// Файл кладётся в interfaces.d, а не в сам /etc/network/interfaces: штатный
-// файл дистрибутива netOS не трогает, и его удаление возвращает машину в
-// исходное состояние.
+// Файл кладётся в interfaces.d. Конфликтующие записи штатной конфигурации
+// переносятся отдельно, с сохранением оригиналов для отката и удаления.
 func renderIfupdown(cfg *config.Config) string {
 	p := buildPlan(cfg)
 

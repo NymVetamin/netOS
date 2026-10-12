@@ -26,6 +26,7 @@ import (
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
+	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
@@ -1474,6 +1475,9 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 		// Текущий default принадлежит уже применённому netOS; при наличии
 		// baseline возвращать его как аварийный маршрут было бы неверно.
 		savedRoutes = nil
+	}
+	if err := netconf.RestoreIfupdown(m.Root); err != nil {
+		return fmt.Errorf("восстановление исходной конфигурации networking: %w", err)
 	}
 	m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes)
 	if baseline != nil {

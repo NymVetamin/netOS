@@ -151,6 +151,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	}
 	defer func() { retErr = errors.Join(retErr, restoreResolver()) }()
 	backend := cfg.System.NetworkBackend
+	var undoInput func() error
+	defer func() {
+		if retErr != nil && undoInput != nil {
+			retErr = errors.Join(retErr, undoInput())
+		}
+	}()
 	if (backend == "networkd" || backend == "ifupdown") && s.PrepareOwnership != nil {
 		if err := s.PrepareOwnership(cfg); err != nil {
 			return err
@@ -191,6 +197,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 			return err
 		}
 	}
+	if backend == "ifupdown" {
+		undoInput, err = takeOverIfupdown(managedInterfaces(cfg))
+		if err != nil {
+			return fmt.Errorf("перенос конфигурации networking: %w", err)
+		}
+	}
 	if err := s.syncNetworkdOwnership(ctx); err != nil {
 		return err
 	}
@@ -227,6 +239,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	}
 	if err != nil {
 		return err
+	}
+	if backend != "ifupdown" {
+		// networking has stopped; now its original input can safely return.
+		if err := RestoreIfupdown(""); err != nil {
+			return err
+		}
 	}
 	if err := s.Health(ctx, cfg); err != nil {
 		return fmt.Errorf("verify network configuration: %w", err)
@@ -482,32 +500,14 @@ func (s *Subsystem) applyIfupdown(ctx context.Context, cfg *config.Config) error
 // when interfaces does not include it, and a legacy DHCP stanza starts a
 // second address owner even when the generated uplink is manual.
 func (s *Subsystem) verifyIfupdownInput(ctx context.Context, cfg *config.Config) error {
-	paths, err := filepath.Glob(filepath.Join(ifupdownDir, "*"))
+	files, _, err := ifupdownInputs(os.ReadFile)
 	if err != nil {
 		return err
 	}
-	paths = append(paths, ifupdownMain)
-	for _, path := range paths {
-		if path == ifupdownPath {
-			continue
-		}
-		info, err := os.Stat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
+	for path, data := range files {
 		for _, name := range managedInterfaces(cfg) {
 			if mentionsInterface(string(data), name) {
-				return fmt.Errorf("ifupdown: %s уже настраивает интерфейс %s; уберите конфликтующее объявление перед переключением на networking", path, name)
+				return fmt.Errorf("не удалось автоматически передать интерфейс %s в networking: осталось повторное объявление в %s", name, path)
 			}
 		}
 	}
@@ -526,7 +526,7 @@ func (s *Subsystem) verifyIfupdownInput(ctx context.Context, cfg *config.Config)
 		}
 		for _, name := range fields[1:] {
 			if !active[name] {
-				return fmt.Errorf("ifupdown не читает интерфейс %s из %s; добавьте в %s строку source %s", name, ifupdownPath, ifupdownMain, ifupdownPath)
+				return fmt.Errorf("networking не читает интерфейс %s из подготовленной конфигурации", name)
 			}
 		}
 	}
