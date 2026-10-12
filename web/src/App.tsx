@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, ConfigResponse, formatUptime, PlanAction, Problem, Session } from "./api";
 import { Notice, Spinner } from "./ui";
+import { ActionError } from "./ActionError";
 import { Dashboard } from "./pages/Dashboard";
 import { Clients } from "./pages/Clients";
 import { NetworkPage } from "./pages/Network";
@@ -692,7 +693,7 @@ function ApplyBar({
       observer.disconnect();
       document.documentElement.style.removeProperty("--applybar-height");
     };
-  }, [dirty, pending]);
+  }, [dirty, pending, !!error]);
 
   useEffect(() => {
     if (!dirty) setPlan(null);
@@ -729,7 +730,7 @@ function ApplyBar({
             Если связь с роутером потеряна, ничего не нажимайте — конфигурация вернётся
             автоматически через <span className="countdown">{remaining}</span> с.
           </div>
-          {error && <div role="alert" style={{ color: "var(--danger)" }}>{error}</div>}
+          {error && <ActionError message={error} />}
         </div>
         <div className="actions">
           <button
@@ -784,7 +785,7 @@ function ApplyBar({
   return (
     <div className="applybar" ref={barRef}>
       <div className="msg">
-        <strong>Есть несохранённые изменения</strong>
+        <strong>{dirty ? "Есть несохранённые изменения" : "Изменения не применены"}</strong>
         <div className="dim">
           {errorCount > 0 ? (
             // Одного числа мало: раньше панель сообщала «ошибок 4» и не
@@ -795,11 +796,12 @@ function ApplyBar({
               <ProblemList problems={problems} />
             </span>
           ) : error ? (
-            <span style={{ color: "var(--danger)" }}>{error}</span>
+            null
           ) : (
             "Изменения вступят в силу сразу, перезагрузка не нужна."
           )}
         </div>
+        {error && <ActionError message={error} />}
         {plan !== null && (
           <div className="dim" style={{ marginTop: ".35rem" }}>
             {plan.length === 0
