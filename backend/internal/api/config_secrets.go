@@ -136,6 +136,11 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 		for j := range next.VPNServers[i].Peers {
 			credentials := next.VPNServers[i].Peers[j].Credentials
 			previousCredentials := oldPeers[next.VPNServers[i].Peers[j].ID].Credentials
+			// A manually replaced public key invalidates a retained client key.
+			// Do not merge the old private key into a different identity.
+			if next.VPNServers[i].Type == "wireguard" && credentials["public_key"] != previousCredentials["public_key"] && credentials["private_key"] == "" {
+				delete(credentials, "private_key")
+			}
 			for key, value := range credentials {
 				if secretField(key) && value == "" {
 					credentials[key] = previousCredentials[key]

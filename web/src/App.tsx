@@ -622,7 +622,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               )}
               {page === "routing" && <RoutingPage config={cfg} patch={patch} />}
               {page === "channels" && <ChannelsPage key={configGeneration} config={cfg} patch={patch} />}
-              {page === "vpn-servers" && <VPNServersPage config={cfg} patch={patch} />}
+              {page === "vpn-servers" && <VPNServersPage key={configGeneration} config={cfg} patch={patch} beforeRead={flushNow} />}
               {page === "wifi" && <WiFiPage config={cfg} patch={patch} />}
               {page === "storage" && <StoragePage config={cfg} patch={patch} admin={session.role === "admin"} />}
               {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}

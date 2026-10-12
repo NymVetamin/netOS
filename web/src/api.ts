@@ -210,6 +210,12 @@ export const api = {
       "POST", "/api/wireguard/keypair", privateKey ? { private_key: privateKey } : undefined,
     ),
 
+  vpnClientProfile: (serverID: string, peerID: string) =>
+    request<{ privateKey: string; publicKey: string; serverPublicKey: string; presharedKey: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/profile`),
+
+  vpnClientStatus: (serverID: string, signal?: AbortSignal) =>
+    request<any[]>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/clients`, undefined, undefined, signal),
+
   wireGuardServerPublicKey: (serverID: string) =>
     request<{ private_key: string; public_key: string }>("POST", "/api/wireguard/keypair", { server_id: serverID }),
 

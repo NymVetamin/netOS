@@ -170,6 +170,8 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/wireguard/keypair", s.handleWireGuardKeypair)
 	auth("POST /api/xray/keypair", s.handleXrayKeypair)
 	auth("GET /api/vpn-servers/{id}/certificate", s.handleVPNServerCertificate)
+	auth("GET /api/vpn-servers/{id}/peers/{peer}/profile", s.handleVPNClientProfile)
+	auth("GET /api/vpn-servers/{id}/clients", s.handleVPNClientStatus)
 
 	auth("GET /api/config", s.handleGetConfig)
 	auth("PUT /api/config", s.handleSaveConfig)

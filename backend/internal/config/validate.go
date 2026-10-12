@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/ecdh"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
@@ -3173,6 +3174,18 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 		seenIDs[peer.ID] = true
 		publicKey := peer.Credentials["public_key"]
 		validateWGKey(r, ppath+".credentials.public_key", publicKey, false)
+		if private := peer.Credentials["private_key"]; private != "" {
+			raw, err := base64.StdEncoding.DecodeString(private)
+			if err == nil {
+				key, keyErr := ecdh.X25519().NewPrivateKey(raw)
+				if keyErr != nil || base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()) != publicKey {
+					r.errf(ppath+".credentials.private_key", "закрытый ключ клиента не соответствует публичному")
+				}
+			} else {
+				r.errf(ppath+".credentials.private_key", "некорректный закрытый ключ клиента")
+			}
+		}
+
 		if publicKey != "" && seenKeys[publicKey] {
 			r.errf(ppath+".credentials.public_key", "этот публичный ключ уже назначен другому пиру")
 		}
