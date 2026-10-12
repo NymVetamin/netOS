@@ -29,6 +29,9 @@ func (r *failingCommandRunner) RunInput(ctx context.Context, input, name string,
 func useTemporaryPaths(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
+	oldResolver := systemResolverPath
+	systemResolverPath = filepath.Join(root, "resolv.conf")
+	t.Cleanup(func() { systemResolverPath = oldResolver })
 	oldIfupdown, oldNetworkd := ifupdownPath, networkdDir
 	oldMain, oldDir := ifupdownMain, ifupdownDir
 	oldWait, oldOwnership, oldNM := waitOnlineDropIn, networkdOwnershipDropIn, nmConfPath

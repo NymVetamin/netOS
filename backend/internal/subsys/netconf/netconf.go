@@ -30,6 +30,7 @@ package netconf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -143,7 +144,12 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	}
 }
 
-func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
+func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
+	restoreResolver, err := preserveSystemResolver(systemResolverPath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, restoreResolver()) }()
 	backend := cfg.System.NetworkBackend
 	if (backend == "networkd" || backend == "ifupdown") && s.PrepareOwnership != nil {
 		if err := s.PrepareOwnership(cfg); err != nil {
@@ -211,7 +217,6 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	var err error
 	switch backend {
 	case "ifupdown":
 		err = s.applyIfupdown(ctx, cfg)

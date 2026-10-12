@@ -70,3 +70,4 @@ netos.db-*
 /openrc.sh
 /features.md
 .mcp*
+/.codex/
