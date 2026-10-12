@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
+import { vpnMapServers } from "../mapVPN";
 import { interfaceName, wanInterfaceName } from "./Dashboard";
 
 // Карта сети: как роутер связан с провайдерами, каналами и сегментами прямо
@@ -15,6 +16,9 @@ type NodeID = string; // router | wan:<id> | channel:<id> | segment:<id>
 export function MapPage({ config }: { config: any }) {
   const [status, setStatus] = useState<any>(null);
   const [clients, setClients] = useState<any[]>([]);
+  const [vpnTelemetry, setVPNTelemetry] = useState<Record<string, any[]>>({});
+  const [vpnError, setVPNError] = useState(false);
+  const vpnIDs = JSON.stringify((config.vpn_servers || []).filter((s: any) => s.type === "wireguard").map((s: any) => s.id));
   const [error, setError] = useState(false);
   const [rates, setRates] = useState<Rates>(new Map());
   const [selected, setSelected] = useState<NodeID>("router");
@@ -56,7 +60,24 @@ export function MapPage({ config }: { config: any }) {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
-  const graph = buildGraph(config, status, clients, rates);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const ids: string[] = JSON.parse(vpnIDs);
+    async function loadVPN() {
+      const results = await Promise.allSettled(ids.map(id => api.vpnClientStatus(id, controller.signal)));
+      if (controller.signal.aborted) return;
+      const next: Record<string, any[]> = {};
+      results.forEach((result, i) => { if (result.status === "fulfilled") next[ids[i]] = result.value; });
+      setVPNTelemetry(next);
+      setVPNError(results.some(result => result.status === "rejected"));
+      timer = setTimeout(loadVPN, POLL_MS);
+    }
+    void loadVPN();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [vpnIDs]);
+
+  const graph = buildGraph(config, status, clients, rates, vpnTelemetry);
 
   return (
     <>
@@ -69,6 +90,7 @@ export function MapPage({ config }: { config: any }) {
           {status ? "Показаны последние полученные данные. " : ""}Повторная попытка выполняется автоматически.
         </Notice>
       )}
+      {vpnError && <Notice tone="warn" title="Состояние VPN-клиентов недоступно">Клиенты показаны по конфигурации. Их подключение сейчас не подтверждено; проверка повторится автоматически.</Notice>}
       {!status ? (error ? null : <Empty>Загрузка состояния роутера…</Empty>) : (
         <div className="map-layout">
           <Card
@@ -99,7 +121,7 @@ type WanNode = { id: string; name: string; iface: string; up: boolean; primary: 
 type ChannelNode = { id: string; name: string; type: string; up: boolean; channel: any };
 type SegmentNode = { id: string; name: string; iface: string; address: string; online: number; total: number; network: any };
 
-function buildGraph(config: any, status: any, clients: any[], rates: Rates) {
+function buildGraph(config: any, status: any, clients: any[], rates: Rates, vpnTelemetry: Record<string, any[]>) {
   const liveWans = new Map<string, any>((status?.wans || []).map((w: any) => [w.id, w]));
   const liveChannels = new Map<string, any>((status?.channels || []).map((c: any) => [c.id, c]));
 
@@ -125,7 +147,7 @@ function buildGraph(config: any, status: any, clients: any[], rates: Rates) {
       return { id: n.id, name: n.name || n.id, iface, address: n.router_address, online: own.filter((c) => c.online).length, total: own.length, network: n };
     });
 
-  return { wans, channels, segments };
+  return { wans, channels, segments, vpn: vpnMapServers(config, vpnTelemetry) };
 }
 
 function channelType(type: string): string {
@@ -156,16 +178,24 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
   config: any;
   status: any;
 }) {
-  const { wans, channels, segments } = graph;
+  const { wans, channels, segments, vpn } = graph;
   const top = channels.length > 0 ? 130 : 40;
-  const rows = Math.max(wans.length, segments.length, 2);
+  const rightRows = segments.length + vpn.reduce((sum, server) => sum + Math.max(1, server.peers.length), 0);
+  const rows = Math.max(wans.length, rightRows, 2);
   const height = top + rows * ROW;
   const bodyTop = top + ROW / 2;
   const bodyBottom = height - ROW / 2;
   const cy = (bodyTop + bodyBottom) / 2;
   const router = { x: 530, y: cy, w: 190, h: 130 };
   const wanY = spread(wans.length, bodyTop, bodyBottom);
-  const segY = spread(segments.length, bodyTop, bodyBottom);
+  const rightY = spread(rightRows, bodyTop, bodyBottom);
+  const segY = rightY.slice(0, segments.length);
+  let nextRow = segments.length;
+  const vpnLayout = vpn.map(server => {
+    const positions = rightY.slice(nextRow, nextRow + Math.max(1, server.peers.length));
+    nextRow += positions.length;
+    return { server, positions, y: (positions[0] + positions[positions.length - 1]) / 2 };
+  });
   const chX = spread(channels.length, 360, 700);
   const live = new Map<string, any>((status?.interfaces || []).map((i: any) => [i.name, i]));
   const ports = (config.interfaces || []).filter((i: any) => i.type === "physical").slice(0, 6);
@@ -190,7 +220,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
 
   return (
     <div className="map-canvas">
-      <svg viewBox={`0 0 ${W} ${height}`} role="group" aria-label="Схема сети">
+      <svg viewBox={`0 0 ${vpn.length ? 1240 : W} ${height}`} role="group" aria-label="Схема сети">
         {wans.map((w, i) => (
           <g key={`e-${w.id}`}>
             <path className={`edge ${edgeState(w.up, w.primary)}`} d={curve(122, cy, 205, wanY[i])} />
@@ -203,6 +233,11 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
         {channels.map((c, i) => (
           <path key={`e-${c.id}`} className={`edge ${c.up ? "live" : "dead"}`} d={`M${chX[i]},78 C${chX[i]},${top - 10} ${router.x},${top - 10} ${router.x},${router.y - router.h / 2}`} />
         ))}
+
+        {vpnLayout.map(({server, positions, y}) => <g key={`vpn-lines-${server.id}`}>
+          <path className={`edge ${server.enabled ? "idle" : "dead"}`} d={curve(router.x + router.w / 2, cy, 755, y)} />
+          {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${peer.state === "recent" ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
+        </g>)}
 
         <g>
           <circle cx={80} cy={cy} r={44} className="cloud" />
@@ -242,6 +277,10 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
         </g>
 
         {segments.map((s, i) => node(`segment:${s.id}`, 840, segY[i], 170, 62, s.name, `${s.address} · ${s.online}/${s.total}`, "ok"))}
+        {vpnLayout.map(({server, positions, y}) => <g key={`vpn-nodes-${server.id}`}>
+          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.peers.length} клиентов`, server.enabled ? "idle" : "danger")}
+          {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), peer.state === "recent" ? "ok" : "idle"))}
+        </g>)}
       </svg>
     </div>
   );
@@ -342,6 +381,31 @@ function NodeDetails({ graph, id, config, status, clients }: {
         </div>
       </>
     );
+  }
+
+  const vpnServer = kind === "vpn" ? graph.vpn.find(s => s.id === key) : kind === "peer" ? graph.vpn.find(s => s.id === decodeURIComponent(key)) : undefined;
+  if (vpnServer) {
+    const peerID = kind === "peer" ? decodeURIComponent(id.split(":")[2] || "") : "";
+    const peer = vpnServer.peers.find(p => p.id === peerID);
+    title = peer ? peer.name : vpnServer.name;
+    const selectedChannel = peer?.peer.channel || vpnServer.server.default_channel || "direct";
+    const channelName = (config.channels || []).find((c: any) => c.id === selectedChannel)?.name || (selectedChannel === "direct" ? "Напрямую" : selectedChannel);
+    body = <>
+      <dl className="kv">
+        <dt>VPN-сервер</dt><dd>{vpnServer.name} · {channelType(vpnServer.type)}</dd>
+        <dt>VPN-подсеть</dt><dd className="mono">{vpnServer.subnet || "—"}</dd>
+        {peer ? <>
+          <dt>VPN-адрес</dt><dd className="mono">{peer.address || "—"}</dd>
+          <dt>Состояние</dt><dd>{peer.label}</dd>
+          <dt>Адрес подключения</dt><dd className="mono">{peer.endpoint || "—"}</dd>
+          <dt>Последний handshake</dt><dd>{peer.handshake ? new Date(peer.handshake * 1000).toLocaleString() : "—"}</dd>
+          <dt>Получено / отправлено</dt><dd>{peer.handshake ? `${peer.received.toLocaleString()} / ${peer.sent.toLocaleString()} байт` : "—"}</dd>
+          <dt>Канал выхода</dt><dd>{channelName}</dd>
+        </> : <><dt>Сервер включён</dt><dd>{vpnServer.enabled ? "да" : "нет"}</dd><dt>Клиенты</dt><dd>{vpnServer.peers.length}</dd></>}
+      </dl>
+      {vpnServer.type === "wireguard" && <p className="hint">Недавний handshake подтверждает обмен с клиентом, но не непрерывное подключение.</p>}
+      <a href="#vpn-servers">Открыть VPN-серверы</a>
+    </>;
   }
 
   return (
