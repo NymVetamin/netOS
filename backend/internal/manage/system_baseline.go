@@ -409,6 +409,17 @@ func (m *Manager) restoreServiceBaseline(ctx context.Context, unit string, state
 	case "active", "activating", "reloading":
 		return m.run(ctx, "systemctl", "start", unit)
 	case "inactive", "failed", "deactivating":
+		// is-active reports inactive even for a unit that does not exist.
+		// Such a unit is already stopped; systemctl stop would fail and abort
+		// uninstall. Check the current load state rather than skipping based
+		// on the baseline: a previously absent unit may now be installed.
+		loadState, err := m.Output(ctx, "systemctl", "show", "--property=LoadState", "--value", unit)
+		if err != nil {
+			return fmt.Errorf("проверка состояния %s: %w", unit, err)
+		}
+		if strings.TrimSpace(loadState) == "not-found" {
+			return nil
+		}
 		return m.run(ctx, "systemctl", "stop", unit)
 	}
 	return nil

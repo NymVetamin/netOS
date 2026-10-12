@@ -339,6 +339,51 @@ func TestRestoreServiceBaselineEverySystemdState(t *testing.T) {
 	}
 }
 
+func TestRestoreAbsentServiceBaseline(t *testing.T) {
+	probeErr := errors.New("systemd unavailable")
+	stopErr := errors.New("stop denied")
+	for _, unit := range []string{"tuned.service", "systemd-resolved.service", "systemd-timesyncd.service"} {
+		for _, tt := range []struct {
+			name      string
+			loadState string
+			probeErr  error
+			stopErr   error
+			wantStop  bool
+			wantErr   error
+		}{
+			{name: "still absent", loadState: "not-found\n"},
+			{name: "installed since baseline", loadState: "loaded\n", wantStop: true},
+			{name: "masked", loadState: "masked\n", wantStop: true},
+			{name: "probe failure", probeErr: probeErr, wantErr: probeErr},
+			{name: "failed probe with output", loadState: "not-found\n", probeErr: probeErr, wantErr: probeErr},
+			{name: "real stop failure", loadState: "loaded\n", stopErr: stopErr, wantStop: true, wantErr: stopErr},
+		} {
+			t.Run(unit+"/"+tt.name, func(t *testing.T) {
+				m, _ := testManager()
+				m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+					if got := name + " " + strings.Join(args, " "); got != "systemctl show --property=LoadState --value "+unit {
+						t.Fatalf("unexpected query: %s", got)
+					}
+					return tt.loadState, tt.probeErr
+				}
+				stopped := false
+				m.Run = func(_ context.Context, c command) error {
+					if got := c.name + " " + strings.Join(c.args, " "); got != "systemctl stop "+unit {
+						t.Fatalf("unexpected mutation: %s", got)
+					}
+					stopped = true
+					return tt.stopErr
+				}
+				// This is the exact state saved on netostest before installation.
+				err := m.restoreServiceBaseline(context.Background(), unit, serviceBaseline{Enabled: "not-found", Active: "inactive"})
+				if !errors.Is(err, tt.wantErr) || stopped != tt.wantStop {
+					t.Fatalf("err=%v stopped=%v; want err=%v stopped=%v", err, stopped, tt.wantErr, tt.wantStop)
+				}
+			})
+		}
+	}
+}
+
 func TestRestoreBaselineFirewallPropagatesBothFamilyFailures(t *testing.T) {
 	for _, failed := range []string{"iptables-restore", "ip6tables-restore"} {
 		t.Run(failed, func(t *testing.T) {
