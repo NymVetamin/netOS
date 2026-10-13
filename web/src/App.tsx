@@ -175,8 +175,7 @@ function Login({ onSuccess, sessionEnded = false }: { onSuccess: (s: Session) =>
     <div className="login-screen">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
-          <h1 className="logo">netOS</h1>
-          <span className="faint" style={{ fontSize: 12 }}>панель управления роутером</span>
+          <h1 className="logo" aria-label="netOS">net<i>OS</i></h1>
         </div>
 
         <div className="login-body">

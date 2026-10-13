@@ -17,8 +17,17 @@ NEW_PUBLIC = base64.b64encode(b"d" * 32).decode()
 SERVER_PUBLIC = base64.b64encode(b"e" * 32).decode()
 
 
+# Записи свёрнуты в строки; настройки раскрываются под строкой. Остальные
+# сценарии проверяют сами настройки, поэтому раскрывают каждую строку сразу,
+# в том числе после перезагрузки страницы и отмены черновика.
+OPEN_ROWS = """new MutationObserver(() => document.querySelectorAll('details.xd:not([data-opened])')
+  .forEach((row) => { row.dataset.opened = '1'; row.open = true; })).observe(document, {childList: true, subtree: true})"""
+
+
 async def scenario(browser, mode):
     page = await browser.new_page()
+    if mode != "collapsed":
+        await page.add_init_script(OPEN_ROWS)
     peer = {"id": "phone", "name": "Телефон", "enabled": True, "address": "10.9.0.2", "credentials": {"public_key": PUBLIC, "preshared_key": "stored-psk"}}
     if mode != "legacy":
         peer["credentials"]["private_key"] = PRIVATE
@@ -95,6 +104,32 @@ async def scenario(browser, mode):
     await expect(page.get_by_role("heading", name="VPN-доступ", exact=True, level=1)).to_be_visible()
     await expect(page.get_by_text("В сети · недавнее рукопожатие", exact=True)).to_be_visible()
     await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+    if mode == "collapsed":
+        # The state and the external address are readable without opening the row.
+        name = page.get_by_role("textbox", name="Название устройства", exact=True)
+        row = page.locator(".peer-card")
+        await expect(name).to_have_count(0)
+        await row.locator("summary.xsum").click()
+        await expect(name).to_be_visible()
+        await row.locator("summary.xsum").click()
+        await expect(name).to_have_count(0)
+        # The access switch sits in the row and must not open it.
+        async with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/api/config")):
+            await row.locator(".xsw label.switch").click()
+        assert state["config"]["vpn_servers"][0]["peers"][0]["enabled"] is False
+        await expect(name).to_have_count(0)
+        # A device added by the administrator opens by itself.
+        await page.get_by_role("button", name="Добавить устройство", exact=True).click()
+        await expect(page.get_by_role("button", name="Скачать .conf", exact=True)).to_be_visible()
+        # Thirteen "add" buttons became one menu; the items keep their names.
+        await page.locator("details.addmenu > summary").click()
+        await page.get_by_role("button", name="Добавить L2TP", exact=True).click()
+        await expect(page.locator("form.vpn-server")).to_have_count(2)
+        await expect(page.get_by_role("textbox", name="Адрес прослушивания", exact=True)).to_be_visible()
+        assert not errors, errors
+        await page.close()
+        print(mode, "PASS")
+        return
     await expect(page.get_by_text("1 МиБ", exact=True)).to_be_visible()
     await expect(page.get_by_text("2 МиБ", exact=True)).to_be_visible()
     assert state["profiles"] == 0, "secrets fetched without user action"
@@ -238,7 +273,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("collapsed", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

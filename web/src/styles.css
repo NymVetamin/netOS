@@ -1,6 +1,8 @@
 /* Оформление панели netOS — «Графит».
-   Панель стилизована под лицевую панель железа: порты со светодиодами,
-   моноширинные заголовки, янтарный акцент. Токены задаются один раз здесь;
+   Лицевая панель сверху — как у железа: порты со светодиодами. Содержимое
+   спокойное: заголовок раздела стоит снаружи карточки обычным шрифтом,
+   моноширинный остаётся для адресов и имён интерфейсов, акцент янтарный.
+   Токены задаются один раз здесь;
    страницы обращаются только к переменным, поэтому имена прежние
    (--surface, --border, --danger…), а значения — новой палитры. */
 
@@ -33,6 +35,10 @@
   --warn-soft: #fbecd8;
   --danger: #c9302a;
   --danger-soft: #fbe1de;
+  /* Подсветка конфигов в «Диагностике». */
+  --code-flag: #2f62a8;
+  --code-string: #7a5c00;
+  --code-number: #6a3fa0;
 
   /* Лицевая панель: металл и отсек портов. Отсек тёмный в обеих темах, как
      у настоящего железа. */
@@ -44,20 +50,26 @@
   --knob: #9aa3ad;
   --applybar-bg: #fff5df;
 
-  --radius: 3px;
-  --radius-sm: 3px;
+  /* --radius — элементы управления, --radius-lg — карточки и таблицы. */
+  --radius: 7px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
   --shadow: 0 1px 2px rgba(30, 40, 55, 0.06);
   --shadow-lg: 0 12px 30px rgba(30, 40, 55, 0.18);
 
   /* Интерфейс целиком увеличен на 5 %: плотная раскладка в 100 % читалась
      мелко. Высоты во весь экран делятся на этот множитель. */
   --zoom: 1.05;
-  --sidebar-width: 204px;
-  --control-height: 28px;
-  --control-sm: 24px;
-  --pad: 10px;
-  --cell-y: 6px;
+  --sidebar-width: 208px;
+  --control-height: 32px;
+  --control-sm: 26px;
+  --pad: 14px;
+  --cell-y: 10px;
   --cell-x: 12px;
+  --section-gap: 30px;
+  /* Поле на полтона темнее карточки и в тусклой рамке. Тёмное поле в яркой
+     рамке было самой контрастной вещью на экране и «торчало» из формы. */
+  --input-bg: color-mix(in srgb, var(--bg) 55%, var(--surface));
   --font: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
   --display: "Tektur", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
@@ -86,6 +98,9 @@
     --warn-soft: rgba(240, 160, 60, 0.13);
     --danger: #ff6b5a;
     --danger-soft: rgba(255, 107, 90, 0.13);
+    --code-flag: #7fb0e8;
+    --code-string: #d9b36a;
+    --code-number: #c39af0;
     --panel-a: #272c32;
     --panel-b: #1b1f23;
     --panel-edge: #0b0d0f;
@@ -120,6 +135,9 @@
   --warn-soft: rgba(240, 160, 60, 0.13);
   --danger: #ff6b5a;
   --danger-soft: rgba(255, 107, 90, 0.13);
+  --code-flag: #7fb0e8;
+  --code-string: #d9b36a;
+  --code-number: #c39af0;
   --panel-a: #272c32;
   --panel-b: #1b1f23;
   --panel-edge: #0b0d0f;
@@ -195,28 +213,51 @@ code, pre {
   padding: 1.5rem;
 }
 
+.login-screen {
+  background: radial-gradient(900px 520px at 50% -10%, var(--surface-3), var(--bg));
+}
+
 .login-card {
   width: 100%;
-  max-width: 360px;
+  max-width: 372px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 18px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
 .login-card form,
 .login-card > .login-body {
-  padding: 1.25rem;
+  padding: 1.5rem 2rem 1.9rem;
+}
+
+.login-card .field input {
+  min-height: 40px;
+}
+
+.login-card .btn {
+  min-height: 42px;
+  margin-top: 0.3rem;
+  font-size: 15px;
 }
 
 .login-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  padding: 0.9rem 1.25rem;
-  background: linear-gradient(var(--panel-a), var(--panel-b));
-  border-bottom: 1px solid var(--panel-edge);
+  display: grid;
+  place-items: center;
+  padding: 2.1rem 2rem 1.6rem;
+  background: linear-gradient(180deg, var(--accent-soft), transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.login-brand .logo {
+  font-size: 44px;
+  line-height: 1;
+}
+
+.logo i {
+  font-style: normal;
+  color: var(--accent);
 }
 
 .logo {
@@ -390,10 +431,8 @@ code, pre {
 }
 
 .nav-group-title {
-  padding: 9px 10px 4px;
-  font: 500 10px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
+  padding: 11px 10px 4px;
+  font-size: 11.5px;
   color: var(--text-faint);
 }
 
@@ -402,7 +441,7 @@ code, pre {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 5px 10px;
+  padding: 6px 10px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
@@ -420,19 +459,9 @@ code, pre {
 }
 
 .nav-item.active {
-  background: var(--surface-2);
+  background: var(--accent-soft);
   color: var(--accent);
-}
-
-.nav-item.active::after {
-  content: "";
-  margin-left: auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-fill);
-  box-shadow: 0 0 8px var(--accent-fill);
-  flex: none;
+  font-weight: 500;
 }
 
 .nav-item .icon {
@@ -482,19 +511,17 @@ code, pre {
 
 .page {
   display: flow-root;
-  padding: 16px 18px calc(var(--applybar-height, 0px) + 20px);
+  padding: 22px 26px calc(var(--applybar-height, 0px) + 28px);
   width: 100%;
 }
 
 .page-head {
-  margin-bottom: 12px;
+  margin-bottom: 26px;
 }
 
 .page-head h1 {
-  font-family: var(--display);
-  font-size: 21px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
+  font-size: 22px;
+  font-weight: 600;
   line-height: 1.2;
 }
 
@@ -504,22 +531,28 @@ code, pre {
   color: var(--text-dim);
 }
 
-/* --- карточки --- */
+/* --- разделы. Карточка — это раздел страницы: заголовок стоит снаружи, в
+   рамке только содержимое. Так разделы отделены друг от друга воздухом, а не
+   полосами одного и того же цвета. Рамку рисует .card-body, сама .card —
+   лишь обёртка; разметка при этом прежняя. --- */
 
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: var(--pad);
+  margin-bottom: var(--section-gap);
   min-width: 0;
 }
 
+.card-body .card,
+.map-layout > .card {
+  margin-bottom: var(--pad);
+}
+
+.card-body .card:last-child {
+  margin-bottom: 0;
+}
+
 .card-head {
-  min-height: 34px;
-  padding: 5px var(--pad);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  border-radius: var(--radius) var(--radius) 0 0;
+  min-height: var(--control-height);
+  padding: 0 2px 9px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -535,23 +568,372 @@ code, pre {
 }
 
 .card-head h2 {
-  font: 500 11px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--text-dim);
+  font-size: 15.5px;
+  font-weight: 600;
 }
 
 .card-head .sub {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-faint);
+}
+
+.card-body,
+.card > pre.output {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
 .card-body {
   padding: var(--pad);
 }
 
+.card-body.split {
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.card-part {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.card-part.pad {
+  padding: var(--pad);
+}
+
+.card-sub {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: var(--section-gap) 2px 9px;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.card-sub .sub {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* Таблица доходит до рамки, поэтому углы обрезаются по ней. */
 .card-body.tight {
   padding: 0;
+  overflow: hidden;
+}
+
+/* --- строки записей: одна сетка столбцов на все таблицы панели --- */
+
+.xrows {
+  --xcols: 38px 22% 16% 19% 16% minmax(0, 1fr) 84px;
+}
+
+.xhead,
+.xsum {
+  display: grid;
+  grid-template-columns: var(--xcols);
+  align-items: center;
+}
+
+.xhead {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+}
+
+.xhead > span {
+  padding: 9px var(--cell-x);
+  white-space: nowrap;
+}
+
+.xhead > span:last-child {
+  text-align: right;
+  padding-right: 16px;
+}
+
+.xrow {
+  position: relative;
+  margin: 0;
+}
+
+.xrow + .xrow,
+.xgroup + .xrow,
+.xrow + .xgroup,
+.peer-group + .peer-group {
+  border-top: 1px solid var(--border);
+}
+
+.xsum {
+  min-height: 46px;
+  list-style: none;
+}
+
+.xsum::-webkit-details-marker {
+  display: none;
+}
+
+/* Первая ячейка сетки — шеврон; у строки без раскрытия она пустая. */
+.xsum::before {
+  content: "";
+  justify-self: center;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.12s;
+}
+
+summary.xsum {
+  cursor: pointer;
+}
+
+summary.xsum::before {
+  content: "›";
+}
+
+summary.xsum:hover,
+.xd[open] > .xsum {
+  background: var(--surface-2);
+}
+
+.xd[open] > .xsum::before {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
+
+.xsum > span {
+  padding: 6px var(--cell-x);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Переключатель лежит вне <summary>: нажатие на него не должно раскрывать
+   строку. Позиционируется в последний столбец той же сетки. */
+.xsw {
+  z-index: 1;
+  position: absolute;
+  top: 0;
+  right: 16px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+}
+
+.xsw .switch > span:last-child:empty {
+  display: none;
+}
+
+/* Открытая запись отмечена янтарной чертой по всей высоте. */
+.xrow:has(> .xd[open]) {
+  box-shadow: inset 3px 0 0 var(--accent-fill);
+}
+
+.xbody {
+  padding: 14px 16px 18px 50px;
+  border-top: 1px solid var(--border);
+}
+
+.xbody > .notice:last-child {
+  margin-bottom: 0;
+}
+
+/* Сообщения над строками и между ними в карточке без внутренних полей. */
+.rows-notes {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rows-notes:empty {
+  display: none;
+}
+
+.rows-notes > .notice,
+.xrows > .notice {
+  margin-bottom: 0;
+}
+
+.xrows > .notice {
+  margin: 10px 16px;
+}
+
+/* Блок внутри карточки без полей: форма добавления под строками (.rows-foot)
+   или общие настройки над ними (.rows-foot.top). */
+.rows-foot {
+  padding: 14px 16px;
+}
+
+.rows-foot:empty {
+  display: none;
+}
+
+.xrows + .rows-foot {
+  border-top: 1px solid var(--border);
+}
+
+.rows-foot.top {
+  border-bottom: 1px solid var(--border);
+}
+
+.rows-foot .form-grid {
+  align-items: center;
+}
+
+.card-sub > .btn,
+.card-sub > .addmenu {
+  margin-left: auto;
+  font-weight: 500;
+}
+
+.card-body.split > .notice {
+  margin-bottom: 0;
+}
+
+.xbody > .hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.xsum .row {
+  gap: 6px;
+}
+
+/* Редко нужная часть настроек записи. */
+.more {
+  margin-top: 14px;
+}
+
+.more.first {
+  margin-top: 0;
+}
+
+.more > summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.more[open] > summary {
+  margin-bottom: 10px;
+}
+
+.xgroup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-height: 40px;
+  padding: 5px 16px;
+  background: var(--surface-2);
+}
+
+.xgroup > .faint {
+  font-size: 12.5px;
+}
+
+.xgroup > .btn {
+  margin-left: auto;
+}
+
+/* Кнопки записи: действия слева, удаление справа. */
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.row-actions.end {
+  justify-content: flex-end;
+}
+
+.row-actions > .to-right {
+  margin-left: auto;
+}
+
+/* --- меню «Добавить» --- */
+
+.addmenu {
+  position: relative;
+}
+
+.addmenu > summary {
+  list-style: none;
+}
+
+.addmenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.addmenu > summary::after {
+  content: "▾";
+  font-size: 0.85em;
+}
+
+.addmenu > .menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.addmenu > .menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.addmenu > .menu button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.addmenu > .menu small {
+  display: block;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+@media (max-width: 860px) {
+  .xrows {
+    --xcols: 34px minmax(0, 1.4fr) minmax(0, 1fr) 64px;
+  }
+  .xhead > span:nth-child(n + 3):nth-child(-n + 5),
+  .xsum > span:nth-child(n + 2):nth-child(-n + 4) {
+    display: none;
+  }
+  .xbody {
+    padding-left: 16px;
+  }
+  .addmenu > .menu {
+    grid-template-columns: 1fr;
+    width: 240px;
+  }
 }
 
 /* --- показания: плитки сводки --- */
@@ -562,20 +944,18 @@ code, pre {
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  margin-bottom: var(--pad);
+  margin-bottom: var(--section-gap);
 }
 
 .tile {
   background: var(--surface);
-  padding: var(--pad) 14px;
+  padding: var(--pad) 18px;
 }
 
 .tile .label {
-  font: 500 10px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
+  font-size: 12.5px;
   color: var(--text-faint);
   display: flex;
   align-items: center;
@@ -587,7 +967,7 @@ code, pre {
 }
 
 .tile .value {
-  font: 400 26px/1.15 var(--display);
+  font: 600 22px/1.2 var(--font);
   margin-top: 5px;
   font-variant-numeric: tabular-nums;
 }
@@ -595,11 +975,11 @@ code, pre {
 /* Текстовые значения — основным шрифтом: кириллица Tektur («д», «ц»)
    читается хуже цифр. */
 .tile .value.small {
-  font: 500 17px/1.3 var(--font);
+  font: 600 18px/1.3 var(--font);
 }
 
 .tile .note {
-  font: 11px var(--mono);
+  font-size: 12px;
   color: var(--text-faint);
   margin-top: 2px;
 }
@@ -613,13 +993,23 @@ table {
 
 th {
   text-align: left;
-  font: 500 10.5px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-faint);
-  padding: var(--cell-y) var(--cell-x);
+  padding: 9px var(--cell-x);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+}
+
+/* Крайние ячейки отступают от рамки так же, как содержимое карточки. */
+th:first-child,
+td:first-child {
+  padding-left: 16px;
+}
+
+th:last-child,
+td:last-child {
+  padding-right: 16px;
 }
 
 td {
@@ -667,15 +1057,13 @@ tr:last-child td {
 .field-label,
 .field > label:not([class]) {
   display: block;
-  font: 500 10.5px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
+  font-size: 12.5px;
+  color: var(--text-dim);
   margin-bottom: 4px;
 }
 
 .field .hint {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-faint);
   margin-top: 3px;
 }
@@ -686,14 +1074,15 @@ input[type="password"],
 input[type="number"],
 input[type="time"],
 input[type="search"],
+input[type="url"],
 select,
 textarea {
   width: 100%;
   min-height: var(--control-height);
   padding: 0.25rem 0.6rem;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background-color: var(--surface);
+  background-color: var(--input-bg);
   color: var(--text);
   font: inherit;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -744,7 +1133,7 @@ select {
   }
   select option {
     padding: 5px 10px 5px 6px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     color: var(--text);
     font-size: 13px;
     gap: 8px;
@@ -794,7 +1183,7 @@ input[type="radio"] {
 input:hover:not(:disabled),
 select:hover:not(:disabled),
 textarea:hover:not(:disabled) {
-  border-color: var(--text-faint);
+  border-color: var(--border-strong);
 }
 
 input:disabled,
@@ -809,7 +1198,7 @@ select:focus,
 textarea:focus {
   outline: 0;
   border-color: var(--accent-fill);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-fill) 22%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-fill) 18%, transparent);
 }
 
 textarea {
@@ -819,14 +1208,37 @@ textarea {
   resize: vertical;
 }
 
+/* Ширина поля соответствует тому, что в него вводят: число — короткое,
+   текст — среднее, список строк — длинное. Одинаковые широкие колонки
+   растягивали порт и MTU на треть экрана. */
 .form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 280px));
-  align-items: start;
-  gap: 0.65rem 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 14px 12px;
 }
 
-.form-grid .field,
+.form-grid .field {
+  width: 204px;
+  max-width: 100%;
+  margin-bottom: 0;
+}
+
+.form-grid .field:has(> input[type="number"]):not(:has(.hint)) {
+  width: 96px;
+  min-width: min-content;
+}
+
+.form-grid .field:has(textarea),
+.form-grid .field:has(.row),
+.form-grid .field.wide {
+  width: 420px;
+}
+
+.form-grid .field-label {
+  white-space: nowrap;
+}
+
 .field:has(textarea) {
   max-width: none;
 }
@@ -851,7 +1263,8 @@ textarea {
   flex: 1;
 }
 
-/* переключатель: тумблер с зелёным огоньком, как на железе */
+/* переключатель: включённый залит зелёным целиком — состояние читается с
+   любого расстояния, а не по цвету маленькой ручки */
 
 .switch {
   position: relative;
@@ -870,13 +1283,14 @@ textarea {
 }
 
 .switch .track {
-  width: 38px;
+  width: 34px;
   height: 20px;
-  border-radius: var(--radius);
+  border-radius: 99px;
   background: var(--switch-bg);
   border: 1px solid var(--border-strong);
   position: relative;
   flex: none;
+  transition: background-color 0.15s, border-color 0.15s;
 }
 
 .switch .track::after {
@@ -886,15 +1300,19 @@ textarea {
   left: 2px;
   width: 14px;
   height: 14px;
-  border-radius: 1px;
+  border-radius: 50%;
   background: var(--knob);
   transition: transform 0.15s;
 }
 
-.switch input:checked + .track::after {
+.switch input:checked + .track {
   background: var(--ok);
-  box-shadow: 0 0 8px var(--ok);
-  transform: translateX(18px);
+  border-color: var(--ok);
+}
+
+.switch input:checked + .track::after {
+  background: #fff;
+  transform: translateX(14px);
 }
 
 .switch input:disabled + .track {
@@ -994,18 +1412,21 @@ summary:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 0.45em;
-  font: 500 11px var(--mono);
+  padding: 2px 9px;
+  border-radius: 99px;
+  background: var(--surface-3);
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
   color: var(--text-dim);
 }
 
 .badge::before {
   content: "";
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 6px currentColor;
   flex: none;
 }
 
@@ -1014,18 +1435,13 @@ summary:focus-visible {
   display: none;
 }
 
-.badge.ok { color: var(--ok); }
-.badge.warn { color: var(--warn); }
-.badge.danger { color: var(--danger); }
-.badge.accent { color: var(--accent); }
+.badge.ok { color: var(--ok); background: var(--ok-soft); }
+.badge.warn { color: var(--warn); background: var(--warn-soft); }
+.badge.danger { color: var(--danger); background: var(--danger-soft); }
+.badge.accent { color: var(--accent); background: var(--accent-soft); }
 
 .badge.neutral {
-  color: var(--text-faint);
-}
-
-.badge.neutral::before {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px currentColor;
+  color: var(--text-dim);
 }
 
 .dot {
@@ -1085,7 +1501,7 @@ summary:focus-visible {
   width: 17px;
   height: 17px;
   margin-top: 1px;
-  border-radius: 2px;
+  border-radius: 50%;
   border: 1.5px solid currentColor;
   font: 700 11px var(--mono);
   flex: none;
@@ -1127,7 +1543,7 @@ summary:focus-visible {
   margin-top: 0.1rem;
 }
 
-/* --- панель применения: жёлто-чёрная кромка, как у предупреждающей ленты --- */
+/* --- панель применения: одна на всю панель, с янтарной кромкой --- */
 
 .applybar {
   position: fixed;
@@ -1135,10 +1551,9 @@ summary:focus-visible {
   right: 0;
   bottom: 0;
   background: var(--applybar-bg);
-  border-top: 4px solid transparent;
-  border-image: repeating-linear-gradient(-45deg, var(--accent-fill) 0 10px, var(--bg) 10px 20px) 4;
+  border-top: 2px solid var(--accent-fill);
   box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.18);
-  padding: 10px 18px calc(10px + env(safe-area-inset-bottom));
+  padding: 12px 26px calc(12px + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -1202,21 +1617,62 @@ summary:focus-visible {
   gap: 0.6rem;
 }
 
+/* Пустой список — одна строка, а не высокий блок посреди страницы. */
 .empty {
-  padding: 1.6rem 1rem;
-  text-align: center;
+  padding: 13px 16px;
   color: var(--text-faint);
+}
+
+.card-body:not(.tight) > .empty {
+  padding: 0;
 }
 
 pre.output {
   margin: 0;
   padding: 0.8rem 1rem;
   background: var(--surface-2);
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-radius: var(--radius);
   overflow-x: auto;
   max-height: 560px;
   overflow-y: auto;
   line-height: 1.5;
+}
+
+.hl-comment { color: var(--text-faint); }
+.hl-head { color: var(--accent); font-weight: 500; }
+.hl-string { color: var(--code-string); }
+.hl-flag { color: var(--code-flag); }
+.hl-number { color: var(--code-number); }
+.hl-ok { color: var(--ok); font-weight: 500; }
+.hl-bad { color: var(--danger); font-weight: 500; }
+
+/* Закрепление адреса в строке устройства: булавка рядом с адресом. */
+.pin-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-faint);
+  vertical-align: middle;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.pin-btn:hover,
+.pin-btn:focus-visible {
+  background: var(--surface-2);
+  color: var(--text);
+  opacity: 1;
+}
+
+.pin-btn.on {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .spinner {
@@ -1302,13 +1758,11 @@ pre.output {
      до него не доходило — последняя кнопка уезжала за край экрана вместе со
      всей страницей. */
   .card-head .row,
-  .card-head .vpn-add-actions,
   .card-head .channel-add-actions {
     flex-wrap: wrap;
     min-width: 0;
     max-width: 100%;
   }
-  .card-head .vpn-add-actions .btn,
   .card-head .channel-add-actions .btn {
     flex: 1 1 8rem;
   }
@@ -1341,36 +1795,14 @@ pre.output {
   .page-head h1 {
     font-size: 19px;
   }
-  .form-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .form-grid .field,
+  .form-grid .field:has(textarea),
+  .form-grid .field:has(.row) {
+    width: 100%;
   }
   .row {
     min-width: 0;
   }
-}
-
-/* --- вложенные карточки: аплинк, сегмент --- */
-
-.subcard {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.subcard-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.5rem 0.8rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  border-radius: var(--radius) var(--radius) 0 0;
-  flex-wrap: wrap;
-}
-
-.subcard-body {
-  padding: 0.8rem;
 }
 
 /* --- выбор из вариантов --- */
@@ -1406,37 +1838,29 @@ pre.output {
   flex: none;
 }
 
-/* --- зоны файрволла --- */
-
-.zone-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.7rem;
-}
-
-.zone-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem;
-  background: var(--surface-2);
-}
-
 /* --- компоненты --- */
 
+/* Компонент — строка списка: состояние показывают плашки и переключатель,
+   а не заливка всей строки. */
 .component {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
+  padding: 11px 2px;
 }
 
-.component.on {
-  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
-  background: var(--ok-soft);
+.stack > .component {
+  margin: 0;
+}
+
+.component + .component {
+  border-top: 1px solid var(--border);
+}
+
+.card-body > .stack:has(> .component) {
+  gap: 0;
+  margin: -11px 0;
 }
 
 .component-main {
@@ -1448,48 +1872,6 @@ pre.output {
 }
 
 /* --- VPN-серверы и готовые профили клиентов --- */
-
-.vpn-server {
-  padding-top: 0.9rem;
-  margin-top: 0.9rem;
-  border-top: 1px solid var(--border);
-}
-
-.vpn-server:first-child {
-  padding-top: 0;
-  margin-top: 0;
-  border-top: 0;
-}
-
-.server-head,
-.peer-head,
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  margin-bottom: 0.75rem;
-}
-
-.section-head {
-  padding-top: 0.9rem;
-  margin-top: 0.25rem;
-  border-top: 1px solid var(--border);
-}
-
-.section-head .hint {
-  color: var(--text-faint);
-  font-size: 11.5px;
-  margin-top: 0.15rem;
-}
-
-.peer-card {
-  margin-top: 0.7rem;
-  padding: 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
 
 .client-package {
   display: grid;
@@ -1525,9 +1907,8 @@ pre.output {
 .advanced summary {
   width: fit-content;
   cursor: pointer;
-  font: 500 10.5px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-weight: 500;
+  color: var(--accent);
 }
 
 .advanced[open] summary {
@@ -1643,23 +2024,6 @@ tr.disabled-row td {
 }
 
 @media (max-width: 520px) {
-  .server-head,
-  .peer-head,
-  .section-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .server-head > .row,
-  .peer-head > .row,
-  .section-head > .btn {
-    width: 100%;
-  }
-
-  .section-head > .btn {
-    justify-content: center;
-  }
-
   .client-package {
     grid-template-columns: 1fr;
   }

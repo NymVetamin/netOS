@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { newID } from "../id";
 import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
@@ -340,13 +340,16 @@ function DNSSection({
         )}
 
         {provider === "unbound" && (
-          <Field label="Дополнительные директивы DNS" hint="Вставляются в unbound.conf; по одной директиве в строке">
-            <textarea
-              className="mono"
-              value={config.dns?.advanced_options || ""}
-              onChange={(e) => patch((d) => (d.dns.advanced_options = e.target.value))}
-            />
-          </Field>
+          <details className="more" open={!!config.dns?.advanced_options}>
+            <summary>Дополнительные директивы DNS</summary>
+            <Field label="Дополнительные директивы DNS" hint="Вставляются в unbound.conf; по одной директиве в строке">
+              <textarea
+                className="mono"
+                value={config.dns?.advanced_options || ""}
+                onChange={(e) => patch((d) => (d.dns.advanced_options = e.target.value))}
+              />
+            </Field>
+          </details>
         )}
 
         <ResolutionChain config={config} />
@@ -360,35 +363,35 @@ function DNSSection({
         {(config.dns?.upstreams || []).length === 0 ? (
           <Empty>Апстримы не заданы</Empty>
         ) : (
-          <TableWrap>
-            <table>
-              <thead>
-                <tr>
-                  <th>Адрес</th>
-                  <th>Тип</th>
-                  <th>Канал</th>
-                  <th>Комментарий</th>
-                  <th>Вкл.</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {config.dns.upstreams.map((u: any, idx: number) => (
-                  <tr key={u.id}>
-                    <td>
-                      <input
+          <Rows cols={["Адрес", "Тип", "Канал", "Комментарий", ""]} toggle="Вкл.">
+          {config.dns.upstreams.map((u: any, idx: number) => (
+            <Row
+              key={u.id}
+              id={u.id}
+              cells={[
+                <strong className="mono">{u.address || "—"}</strong>,
+                DNS_TYPE[u.type] || u.type,
+                (config.channels || []).find((channel: any) => channel.id === (u.channel || "direct"))?.name || "—",
+                <span className="dim">{u.comment}</span>,
+              ]}
+              toggle={<Switch
+                        checked={u.enabled}
+                        label=""
+                        ariaLabel={`DNS-сервер ${u.address || idx + 1} включён`}
+                        onChange={(v) => patch((d) => (d.dns.upstreams[idx].enabled = v))}
+                      />}
+            >
+              <div className="form-grid">
+                <Cap label="Адрес"><input
                         type="text"
                         aria-label={`Адрес DNS-сервера ${idx + 1}`}
                         className="mono"
-                        style={{ width: 240 }}
                         value={u.address}
                         onChange={(e) =>
                           patch((d) => (d.dns.upstreams[idx].address = e.target.value))
                         }
-                      />
-                    </td>
-                    <td>
-                      <select
+                      /></Cap>
+                <Cap label="Тип"><select
                         aria-label={`Тип DNS-сервера ${idx + 1}`}
                         value={u.type}
                         onChange={(e) => patch((d) => (d.dns.upstreams[idx].type = e.target.value))}
@@ -397,33 +400,20 @@ function DNSSection({
                         <option value="dot">DoT</option>
                         <option value="doh">DoH</option>
                         <option value="doq">DoQ</option>
-                      </select>
-                    </td>
-                    <td>
-                      <select aria-label={`Канал DNS-сервера ${idx + 1}`} value={u.channel || "direct"} onChange={(e) => patch((d) => (d.dns.upstreams[idx].channel = e.target.value))}>
+                      </select></Cap>
+                <Cap label="Канал"><select aria-label={`Канал DNS-сервера ${idx + 1}`} value={u.channel || "direct"} onChange={(e) => patch((d) => (d.dns.upstreams[idx].channel = e.target.value))}>
                         {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      <input
+                      </select></Cap>
+                <Cap label="Комментарий"><input
                         type="text"
                         aria-label={`Комментарий DNS-сервера ${idx + 1}`}
                         value={u.comment || ""}
                         onChange={(e) =>
                           patch((d) => (d.dns.upstreams[idx].comment = e.target.value))
                         }
-                      />
-                    </td>
-                    <td>
-                      <Switch
-                        checked={u.enabled}
-                        label=""
-                        ariaLabel={`DNS-сервер ${u.address || idx + 1} включён`}
-                        onChange={(v) => patch((d) => (d.dns.upstreams[idx].enabled = v))}
-                      />
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
+                      /></Cap>
+              </div>
+              <div className="row-actions end"><button
                         className="btn ghost sm"
                         disabled={(config.dns?.split_rules || []).some((rule: any) => rule.upstream === u.id)}
                         onClick={() =>
@@ -433,22 +423,19 @@ function DNSSection({
                         }
                       >
                         Убрать
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                      </button></div>
+            </Row>
+          ))}
+        </Rows>
         )}
-        <div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+        <div className="rows-foot row wrap">
           <button
             className="btn"
             onClick={() =>
               patch((d) => {
                 d.dns.upstreams = d.dns.upstreams || [];
                 d.dns.upstreams.push({
-                  id: newID("up"),
+                  id: openOnCreate(newID("up")),
                   type: "plain",
                   address: "",
                   channel: "direct",
@@ -466,62 +453,71 @@ function DNSSection({
         {(config.dns?.static_records || []).length === 0 ? (
           <Empty>Локальных записей нет</Empty>
         ) : (
-          <TableWrap>
-            <table>
-              <thead><tr><th>Тип</th><th>Имя</th><th>Значение</th><th /></tr></thead>
-              <tbody>
-                {config.dns.static_records.map((record: any, idx: number) => (
-                  <tr key={record.id}>
-                    <td>
-                      <select aria-label={`Тип DNS-записи ${idx + 1}`} value={record.type || "A"} onChange={(e) => patch((d) => (d.dns.static_records[idx].type = e.target.value))}>
+          <Rows cols={["Имя", "Тип", "Значение", "", ""]}>
+          {config.dns.static_records.map((record: any, idx: number) => (
+            <Row
+              key={record.id}
+              id={record.id}
+              cells={[<strong className="mono">{record.name || "—"}</strong>, record.type || "A", <span className="mono">{record.value}</span>]}
+            >
+              <div className="form-grid">
+                <Cap label="Тип"><select aria-label={`Тип DNS-записи ${idx + 1}`} value={record.type || "A"} onChange={(e) => patch((d) => (d.dns.static_records[idx].type = e.target.value))}>
                         {['A', 'CNAME', 'TXT', 'SRV', 'MX'].map((type) => <option key={type} value={type}>{type}</option>)}
-                      </select>
-                    </td>
-                    <td><input aria-label={`Имя DNS-записи ${idx + 1}`} className="mono" value={record.name || ""} onChange={(e) => patch((d) => (d.dns.static_records[idx].name = e.target.value))} /></td>
-                    <td><input aria-label={`Значение DNS-записи ${idx + 1}`} className="mono" value={record.value || ""} onChange={(e) => patch((d) => (d.dns.static_records[idx].value = e.target.value))} /></td>
-                    <td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.static_records = d.dns.static_records.filter((item: any) => item.id !== record.id); })}>Убрать</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                      </select></Cap>
+                <Cap label="Имя"><input aria-label={`Имя DNS-записи ${idx + 1}`} className="mono" value={record.name || ""} onChange={(e) => patch((d) => (d.dns.static_records[idx].name = e.target.value))} /></Cap>
+                <Cap label="Значение" wide><input aria-label={`Значение DNS-записи ${idx + 1}`} className="mono" value={record.value || ""} onChange={(e) => patch((d) => (d.dns.static_records[idx].value = e.target.value))} /></Cap>
+              </div>
+              <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.static_records = d.dns.static_records.filter((item: any) => item.id !== record.id); })}>Убрать</button></div>
+            </Row>
+          ))}
+        </Rows>
         )}
-        <div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+        <div className="rows-foot row wrap">
           <button className="btn" onClick={() => patch((d) => {
             d.dns.static_records = d.dns.static_records || [];
-            d.dns.static_records.push({ id: newID("dns"), type: "A", name: "", value: "" });
+            d.dns.static_records.push({ id: openOnCreate(newID("dns")), type: "A", name: "", value: "" });
           })}>Добавить запись</button>
         </div>
       </Card>
 
       <Card title="Split-DNS" subtitle="Отдельные домены — через отдельный DNS-сервер и, при необходимости, VPN-канал" tight>
         {(config.dns?.split_rules || []).length === 0 ? <Empty>Раздельных правил DNS нет</Empty> : (
-          <TableWrap>
-            <table>
-              <thead><tr><th>Домены</th><th>Апстрим</th><th>Канал</th><th>Вкл.</th><th /></tr></thead>
-              <tbody>
-                {config.dns.split_rules.map((rule: any, idx: number) => (
-                  <tr key={rule.id}>
-                    <td><textarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></td>
-                    <td><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
+          <Rows cols={["Домены", "Апстрим", "Канал", "", "Состояние"]} toggle="Вкл.">
+          {config.dns.split_rules.map((rule: any, idx: number) => {
+            const upstream = (config.dns?.upstreams || []).find((up: any) => up.id === rule.upstream);
+            return (
+            <Row
+              key={rule.id}
+              id={rule.id}
+              cells={[
+                <strong className="mono">{(rule.domains || [])[0] || "—"}{(rule.domains || []).length > 1 ? ` и ещё ${rule.domains.length - 1}` : ""}</strong>,
+                upstream ? upstream.comment || upstream.address : <span className="dim">не выбран</span>,
+                (config.channels || []).find((channel: any) => channel.id === (rule.channel || "direct"))?.name || "—",
+                "",
+                <Badge tone={rule.enabled ? "ok" : "neutral"}>{rule.enabled ? "включено" : "выключено"}</Badge>,
+              ]}
+              toggle={<Switch checked={!!rule.enabled} label="" ariaLabel={`Правило Split-DNS ${idx + 1} включено`} onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} />}
+            >
+              <div className="form-grid">
+                <Cap label="Домены" wide><textarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></Cap>
+                <Cap label="Апстрим"><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
                       <option value="">Выберите сервер</option>
                       {(config.dns?.upstreams || []).filter((up: any) => up.enabled).map((up: any) => <option key={up.id} value={up.id}>{up.comment || up.address}</option>)}
-                    </select></td>
-                    <td><select aria-label={`Канал правила Split-DNS ${idx + 1}`} value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
+                    </select></Cap>
+                <Cap label="Канал"><select aria-label={`Канал правила Split-DNS ${idx + 1}`} value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
                       {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                    </select></td>
-                    <td><Switch checked={!!rule.enabled} label="" ariaLabel={`Правило Split-DNS ${idx + 1} включено`} onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} /></td>
-                    <td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.split_rules = d.dns.split_rules.filter((item: any) => item.id !== rule.id); })}>Убрать</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                    </select></Cap>
+              </div>
+              <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.split_rules = d.dns.split_rules.filter((item: any) => item.id !== rule.id); })}>Убрать</button></div>
+            </Row>
+            );
+          })}
+        </Rows>
         )}
-        <div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+        <div className="rows-foot row wrap">
           <button className="btn" onClick={() => patch((d) => {
             d.dns.split_rules = d.dns.split_rules || [];
-            d.dns.split_rules.push({ id: newID("split"), domains: [], upstream: "", channel: "direct", enabled: false });
+            d.dns.split_rules.push({ id: openOnCreate(newID("split")), domains: [], upstream: "", channel: "direct", enabled: false });
           })}>Добавить правило</button>
         </div>
       </Card>
@@ -533,36 +529,43 @@ function DNSSection({
 		  </Notice>
 		)}
 		{(config.dns?.blocklists || []).length === 0 ? <Empty>Списки блокировки не заданы</Empty> : (
-		  <TableWrap>
-			<table>
-			  <thead><tr><th>Название</th><th>HTTPS URL списка</th><th>CA-файл (необязательно)</th><th>Вкл.</th><th>Источник</th><th /></tr></thead>
-			  <tbody>
-				{config.dns.blocklists.map((list: any, idx: number) => (
-				  <tr key={list.id}>
-					<td><input aria-label={`Название DNS blocklist ${idx + 1}`} value={list.name || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].name = e.target.value))} /></td>
-					<td><input type="url" aria-label={`URL DNS blocklist ${idx + 1}`} className="mono" style={{ width: 360 }} placeholder="https://example.org/hosts.txt" value={list.url || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].url = e.target.value))} /></td>
-					<td><input aria-label={`CA-файл DNS blocklist ${idx + 1}`} className="mono" style={{ width: 280 }} placeholder="/etc/netos/blocklist-ca.pem" value={list.ca_file || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].ca_file = e.target.value))} /></td>
-					<td><Switch checked={!!list.enabled} disabled={!config.dns?.enabled} label="" ariaLabel={`DNS blocklist ${list.name || idx + 1} включён`} onChange={(enabled) => patch((d) => (d.dns.blocklists[idx].enabled = enabled))} /></td>
-					<td title={blocklistStatus[list.url]?.error || ""}>{!list.enabled ? "Выключен" : blocklistStatus[list.url]?.source === "cache" ? "Кэш: источник недоступен" : blocklistStatus[list.url]?.source === "unavailable" ? "Источник недоступен: нет рабочего кэша" : blocklistStatus[list.url]?.source === "fetched" ? "Загружен" : "Нет данных"}</td>
-					<td><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.blocklists = d.dns.blocklists.filter((item: any) => item.id !== list.id); })}>Убрать</button></td>
-				  </tr>
-				))}
-			  </tbody>
-			</table>
-		  </TableWrap>
+		  <Rows cols={["Название", "HTTPS URL списка", "", "Источник", ""]} toggle="Вкл.">
+          {config.dns.blocklists.map((list: any, idx: number) => (
+            <Row
+              key={list.id}
+              id={list.id}
+              cells={[
+                <strong>{list.name || "—"}</strong>,
+                <span className="mono" title={list.url}>{list.url || "—"}</span>,
+                "",
+                <span className="dim" title={blocklistStatus[list.url]?.error || ""}>{!list.enabled ? "Выключен" : blocklistStatus[list.url]?.source === "cache" ? "Кэш: источник недоступен" : blocklistStatus[list.url]?.source === "unavailable" ? "Источник недоступен: нет рабочего кэша" : blocklistStatus[list.url]?.source === "fetched" ? "Загружен" : "Нет данных"}</span>,
+              ]}
+              toggle={<Switch checked={!!list.enabled} disabled={!config.dns?.enabled} label="" ariaLabel={`DNS blocklist ${list.name || idx + 1} включён`} onChange={(enabled) => patch((d) => (d.dns.blocklists[idx].enabled = enabled))} />}
+            >
+              <div className="form-grid">
+                <Cap label="Название"><input aria-label={`Название DNS blocklist ${idx + 1}`} value={list.name || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].name = e.target.value))} /></Cap>
+                <Cap label="HTTPS URL списка" wide><input type="url" aria-label={`URL DNS blocklist ${idx + 1}`} className="mono" placeholder="https://example.org/hosts.txt" value={list.url || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].url = e.target.value))} /></Cap>
+                <Cap label="CA-файл (необязательно)" wide><input aria-label={`CA-файл DNS blocklist ${idx + 1}`} className="mono" placeholder="/etc/netos/blocklist-ca.pem" value={list.ca_file || ""} onChange={(e) => patch((d) => (d.dns.blocklists[idx].ca_file = e.target.value))} /></Cap>
+              </div>
+              <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.blocklists = d.dns.blocklists.filter((item: any) => item.id !== list.id); })}>Убрать</button></div>
+            </Row>
+          ))}
+        </Rows>
 		)}
-		<div style={{ padding: "1.1rem", borderTop: "1px solid var(--border)" }}>
+		<div className="rows-foot row wrap">
 		  <button className="btn" onClick={() => void refreshBlocklistStatus()}>Обновить статусы</button>
 		  {statusError && <span role="alert">{statusError}</span>}
 		  <button className="btn" onClick={() => patch((d) => {
 			d.dns.blocklists = d.dns.blocklists || [];
-			d.dns.blocklists.push({ id: newID("blocklist"), name: "", url: "", ca_file: "", enabled: false });
+			d.dns.blocklists.push({ id: openOnCreate(newID("blocklist")), name: "", url: "", ca_file: "", enabled: false });
 		  })}>Добавить DNS blocklist</button>
 		</div>
 	  </Card>
     </>
   );
 }
+
+const DNS_TYPE: Record<string, string> = { plain: "открытый", dot: "DoT", doh: "DoH", doq: "DoQ" };
 
 function installedProviders(config: any, candidates: string[]): string[] {
   const installed = new Set(

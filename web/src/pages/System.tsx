@@ -105,7 +105,7 @@ export function SystemPage({
           />
         </div>
         <div className="form-grid" style={{ marginTop: "0.8rem" }}>
-          <Field label="Серверы времени" hint="До 8 DNS-имён или IP-адресов, через запятую">
+          <Field wide label="Серверы времени" hint="До 8 DNS-имён или IP-адресов, через запятую">
             <input
               type="text"
               disabled={!config.system?.ntp?.enabled}
@@ -352,10 +352,12 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
   const failed = !running && !!status.failed;
   return (
     <Card
+      split
       title="Резервные копии и обновление"
       subtitle="Операции выполняются отдельно от панели и продолжаются после перезапуска службы"
       actions={<Badge tone={running ? "warn" : failed ? "danger" : "neutral"}>{running ? "выполняется" : failed ? "последняя операция завершилась ошибкой" : "готово"}</Badge>}
     >
+      <div className="card-part pad">
       {message && <Notice tone="info" title={message} />}
       {error && <Notice tone="danger" title={error} />}
       <div className="row wrap" style={{ margin: ".8rem 0" }}>
@@ -398,9 +400,9 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
         </div>
       </div>}
 
-      <div style={{ marginTop: "1.2rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
-        <strong>Обновление netOS</strong>
-        {installedVersion && <div className="faint">Установлена версия: <span className="mono">{installedVersion}</span></div>}
+      </div>
+      <h3 className="card-sub">Обновление netOS{installedVersion && <span className="sub">Установлена версия: <span className="mono">{installedVersion}</span></span>}</h3>
+      <div className="card-part pad">
         <div className="faint" style={{ fontSize: 12.5, margin: ".25rem 0 .7rem" }}>Перед обновлением установщик сохраняет данные; укажите latest или тег релиза, например v0.06.</div>
         <div className="row wrap">
           <input aria-label="Версия netOS для обновления" style={{ maxWidth: 160 }} value={version} onChange={(e) => setVersion(e.target.value.trim())} />

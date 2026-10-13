@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Problem } from "../api";
 import { newID } from "../id";
-import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -113,16 +113,19 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
       {wans.filter((wan) => wan.enabled).length < 2 && <div className="hint">Включите минимум два подключения.</div>}
     </Card>
     <Card
+      tight
       title="Подключение к интернету"
       subtitle="Как роутер выходит наружу"
       actions={
         <button
           className="btn sm"
-          onClick={() =>
+          onClick={() => {
+            const id = newID("wan");
+            openOnCreate(id);
             patch((d) => {
               d.wans = d.wans || [];
               d.wans.push({
-                id: newID("wan"),
+                id,
                 index: Math.max(0, ...d.wans.map((wan: any) => wan.index || 0)) + 1,
                 name: "Аплинк " + (d.wans.length + 1),
                 interface: d.interfaces?.[0]?.id || "",
@@ -132,8 +135,8 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                 weight: 1,
                 probe: { enabled: true, type: "icmp", targets: ["1.1.1.1", "8.8.8.8"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
               });
-            })
-          }
+            });
+          }}
         >
           Добавить
         </button>
@@ -142,33 +145,23 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
       {wans.length === 0 ? (
         <Empty>Подключение не настроено</Empty>
       ) : (
-        <div className="stack">
+        <Rows cols={["Подключение", "Порт", "Адрес", "Тип", "Состояние"]} toggle="Включено">
           {wans.map((w, idx) => (
-            <div key={w.id} className="subcard">
-              <div className="subcard-head">
-                <Switch
-                  checked={w.enabled}
-                  label={<strong>{w.name}</strong>}
-                  onChange={(v) => patch((d) => (d.wans[idx].enabled = v))}
-                />
-                <div className="row">
-                  <Badge tone="neutral">{ifaceName(config, w.interface)}</Badge>
-                  {w.enabled && liveWANs[w.id] && <Badge tone={liveWANs[w.id].up ? "ok" : "warn"}>{liveWANs[w.id].probe_down ? "проба не прошла" : liveWANs[w.id].up ? "на связи" : "нет связи"}</Badge>}
-                  {liveWANs[w.id]?.address && <span className="mono faint">{liveWANs[w.id].address}</span>}
-                  {wans.length > 1 && (
-                    <button
-                      className="btn ghost sm"
-                      onClick={() =>
-                        patch((d) => (d.wans = d.wans.filter((x: any) => x.id !== w.id)))
-                      }
-                    >
-                      Удалить
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="subcard-body">
+            <Row
+              key={w.id}
+              id={w.id}
+              className="subcard"
+              cells={[
+                <strong>{w.name}</strong>,
+                <span className="mono">{ifaceName(config, w.interface)}</span>,
+                <span className="mono">{liveWANs[w.id]?.address || w.address || "—"}</span>,
+                WAN_PROTO[w.proto] || w.proto,
+                w.enabled && liveWANs[w.id]
+                  ? <Badge tone={liveWANs[w.id].up ? "ok" : "warn"}>{liveWANs[w.id].probe_down ? "проба не прошла" : liveWANs[w.id].up ? "на связи" : "нет связи"}</Badge>
+                  : <Badge tone="neutral">{w.enabled ? "включено" : "выключено"}</Badge>,
+              ]}
+              toggle={<Switch checked={w.enabled} label="" ariaLabel={w.name} onChange={(v) => patch((d) => (d.wans[idx].enabled = v))} />}
+            >
                 <div className="form-grid">
                   <Field label="Название">
                     <input
@@ -385,10 +378,16 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                     </Field>
                   )}
                 </div>
-              </div>
-            </div>
+                {wans.length > 1 && (
+                  <div className="row-actions">
+                    <button className="btn ghost sm to-right" onClick={() => patch((d) => (d.wans = d.wans.filter((x: any) => x.id !== w.id)))}>
+                      Удалить
+                    </button>
+                  </div>
+                )}
+            </Row>
           ))}
-        </div>
+        </Rows>
       )}
     </Card>
     </>
@@ -402,18 +401,21 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
 
   return (
     <Card
+      tight
       title="Локальные сегменты"
       subtitle="Подсети, которые обслуживает роутер"
       actions={
         <button
           className="btn sm"
           disabled={(config.interfaces || []).length === 0}
-          onClick={() =>
+          onClick={() => {
+            const id = newID("net");
+            openOnCreate(id);
             patch((d) => {
               d.networks = d.networks || [];
               const n = d.networks.length + 1;
               d.networks.push({
-                id: newID("net"),
+                id,
                 name: "Сегмент " + n,
                 interface: d.interfaces?.[0]?.id || "",
                 router_address: `192.168.${10 * n}.1/24`,
@@ -427,8 +429,8 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                   lease_time: 43200,
                 },
               });
-            })
-          }
+            });
+          }}
         >
           Добавить
         </button>
@@ -440,46 +442,29 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
           него уже был.
         </Empty>
       ) : (
-        <div className="stack">
+        <Rows cols={["Сегмент", "Интерфейс", "Адрес и сеть", "DHCP", "Состояние"]} toggle="Включён">
           {networks.map((n, idx) => (
-            <div key={n.id} className="subcard">
-              <div className="subcard-head">
-                <Switch
-                  checked={n.enabled}
-                  label={
-                    <span>
-                      <strong>{n.name}</strong>{" "}
-                      <span className="faint" style={{ fontWeight: 400 }}>
-                        {n.enabled ? "обслуживается" : "не обслуживается"}
-                      </span>
-                    </span>
-                  }
-                  onChange={(v) => patch((d) => (d.networks[idx].enabled = v))}
-                />
-                <div className="row">
-                  <Badge tone="neutral">{ifaceName(config, n.interface)}</Badge>
-                  <button
-                    className="btn ghost sm"
-                    onClick={() =>
-                      patch((d) => (d.networks = d.networks.filter((x: any) => x.id !== n.id)))
-                    }
-                  >
-                    Удалить
-                  </button>
-                </div>
-              </div>
-
+            <Row
+              key={n.id}
+              id={n.id}
+              className="subcard"
+              cells={[
+                <strong>{n.name}</strong>,
+                <span className="mono">{ifaceName(config, n.interface)}</span>,
+                <span className="mono">{n.router_address || "—"}</span>,
+                <span className="dim">{n.dhcp_pool?.enabled ? "выдаёт адреса" : "выключен"}</span>,
+                <Badge tone={n.enabled ? "ok" : "neutral"}>{n.enabled ? "обслуживается" : "не обслуживается"}</Badge>,
+              ]}
+              toggle={<Switch checked={n.enabled} label="" ariaLabel={`${n.name} ${n.enabled ? "обслуживается" : "не обслуживается"}`} onChange={(v) => patch((d) => (d.networks[idx].enabled = v))} />}
+            >
               {!n.enabled && (
-                <div style={{ padding: "0 1rem" }}>
                   <Notice tone="info" title="Сегмент выключен">
                     Адрес с интерфейса снимется, DHCP в этом сегменте работать не будет.
                     Сам интерфейс останется — его состояние настраивается ниже, в списке
                     портов.
                   </Notice>
-                </div>
               )}
 
-              <div className="subcard-body">
                 <div className="form-grid">
                   <Field label="Название">
                     <input
@@ -630,10 +615,15 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                     </Field>
                   </>
                 )}
-              </div>
-            </div>
+              
+                <div className="row-actions">
+                  <button className="btn ghost sm to-right" onClick={() => patch((d) => (d.networks = d.networks.filter((x: any) => x.id !== n.id)))}>
+                    Удалить
+                  </button>
+                </div>
+            </Row>
           ))}
-        </div>
+        </Rows>
       )}
     </Card>
   );
@@ -672,102 +662,73 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
           <button className="btn ghost sm" onClick={refreshPorts}>
             Обновить порты
           </button>
-          <button
-            className="btn sm"
-            onClick={() =>
-              patch((d) => {
+          <AddMenu
+            label="Добавить"
+            items={[
+              { label: "Мост", ariaLabel: "Добавить мост", onSelect: () => patch((d) => {
                 d.interfaces = d.interfaces || [];
                 d.interfaces.push({
-                  id: newID("br"),
+                  id: openOnCreate(newID("br")),
                   name: freeName(d.interfaces, "br"),
                   type: "bridge",
                   members: [],
                   enabled: true,
                 });
-              })
-            }
-          >
-            Добавить мост
-          </button>
-          <button
-            className="btn sm"
-            onClick={() =>
-              patch((d) => {
+              }) },
+              { label: "Агрегация", ariaLabel: "Добавить агрегацию", onSelect: () => patch((d) => {
                 d.interfaces = d.interfaces || [];
                 d.interfaces.push({
-                  id: newID("bond"),
+                  id: openOnCreate(newID("bond")),
                   name: freeName(d.interfaces, "bond"),
                   type: "bond",
                   members: [],
                   enabled: true,
                 });
-              })
-            }
-          >
-            Добавить агрегацию
-          </button>
-          <button
-            className="btn sm"
-            disabled={vlanParents(config).length === 0}
-            title={
-              vlanParents(config).length === 0
-                ? "Нет интерфейса, над которым можно поднять VLAN: все порты отданы мостам"
-                : undefined
-            }
-            onClick={() =>
-              patch((d) => {
+              }) },
+              {
+                label: "VLAN",
+                ariaLabel: "Добавить VLAN",
+                // Нет интерфейса, над которым можно поднять VLAN: все порты отданы мостам или агрегациям.
+                disabled: vlanParents(config).length === 0,
+                note: vlanParents(config).length === 0 ? "все порты заняты мостами" : undefined,
+                onSelect: () => patch((d) => {
                 d.interfaces = d.interfaces || [];
                 const parent = vlanParents(d)[0];
                 if (!parent) return;
                 const vid = freeVlanID(d, parent.id);
                 d.interfaces.push({
-                  id: newID("vl"),
+                  id: openOnCreate(newID("vl")),
                   name: vlanName(parent.name, vid),
                   type: "vlan",
                   parent: parent.id,
                   vlan_id: vid,
                   enabled: true,
                 });
-              })
-            }
-          >
-            Добавить VLAN
-          </button>
+              }),
+              },
+            ]}
+          />
         </div>
       }
     >
-      <TableWrap>
-        <table>
-          <thead>
-            <tr>
-              <th>Имя</th>
-              <th>Тип</th>
-              <th>Состав</th>
-              <th>Занят</th>
-              <th>MAC</th>
-              <th>MTU</th>
-              <th>Включён</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {discovered.map((i: any) => (
-              <tr key={`discovered-${i.name}`}>
-                <td><span className="mono">{i.name}</span></td>
-                <td><Badge tone="accent">новый порт</Badge></td>
-                <td className="faint mono">—</td>
-                <td className="faint" style={{ fontSize: 12.5 }}>не настроен</td>
-                <td className="mono faint">{i.mac || "—"}</td>
-                <td className="mono">{i.mtu || "—"}</td>
-                <td><Badge tone={i.up ? "ok" : "neutral"}>{i.up ? "up" : "down"}</Badge></td>
-                <td style={{ textAlign: "right" }}>
-                  <button
+      <Rows cols={["Имя", "Тип", "Используется", "MAC", "Линк"]} toggle="Включён">
+          {discovered.map((i: any) => (
+            <Row
+              key={`discovered-${i.name}`}
+              cells={[
+                <strong className="mono">{i.name}</strong>,
+                <Badge tone="accent">новый порт</Badge>,
+                <span className="dim">не настроен</span>,
+                <span className="mono dim">{i.mac || "—"}</span>,
+                <Badge tone={i.up ? "ok" : "neutral"}>{i.up ? "up" : "down"}</Badge>,
+              ]}
+              toggle={<button
                     className="btn sm"
                     onClick={() => patch((d) => {
                       d.interfaces = d.interfaces || [];
                       if (d.interfaces.some((item: any) => item.name === i.name)) return;
                       d.interfaces.push({
-                        id: newID("if"),
+                        id: openOnCreate(newID("if")),
                         name: i.name,
                         type: "physical",
                         enabled: true,
@@ -775,20 +736,31 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                     })}
                   >
                     Настроить
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {interfaces.map((i: any, idx: number) => (
-              <tr key={i.id}>
-                <td>
-                  {i.type === "physical" ? (
-                    <span className="mono">{i.name}</span>
-                  ) : (
-                    <input
+                  </button>}
+            />
+          ))}
+          {interfaces.map((i: any, idx: number) => (
+            <Row
+              key={i.id}
+              id={i.id}
+              cells={[
+                <strong className="mono">{i.name}</strong>,
+                <Badge tone="neutral">{typeLabel(i.type)}</Badge>,
+                <span className="dim">{usageOf(config, i) || "свободен"}</span>,
+                <span className="mono">{i.mac || liveInterfaces.find((live: any) => live.name === i.name)?.mac || "—"}</span>,
+                liveInterfaces.find((live: any) => live.name === i.name) ? <Badge tone={liveInterfaces.find((live: any) => live.name === i.name).up ? "ok" : "neutral"}>{liveInterfaces.find((live: any) => live.name === i.name).up ? "линк есть" : "нет линка"}</Badge> : "",
+              ]}
+              toggle={<Switch
+                    checked={i.enabled}
+                    label=""
+                    ariaLabel={`Интерфейс ${i.name || idx + 1} включён`}
+                    onChange={(v) => patch((d) => (d.interfaces[idx].enabled = v))}
+                  />}
+            >
+              <div className="form-grid">
+                {i.type !== "physical" && <Cap label="Имя"><input
                       type="text"
                       className="mono"
-                      style={{ width: 130 }}
                       value={i.name}
                       onChange={(e) =>
                         patch((d) => {
@@ -799,54 +771,33 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                           renameVLANChildren(d, i.id, i.name, e.target.value);
                         })
                       }
-                    />
-                  )}
-                </td>
-                <td>
-                  <Badge tone="neutral">{typeLabel(i.type)}</Badge>
-                </td>
-                <td className="faint mono">
-                  {i.type === "vlan" ? (
+                    /></Cap>}
+                {i.type !== "physical" && <Cap label={i.type === "vlan" ? "Номер и родитель" : "Состав"} wide><div className="mono">{i.type === "vlan" ? (
                     <VLANPicker config={config} patch={patch} index={idx} iface={i} />
                   ) : i.type === "bridge" || i.type === "bond" ? (
                     <MemberPicker config={config} patch={patch} index={idx} iface={i} />
                   ) : (
                     "—"
-                  )}
-                </td>
-                <td className="faint" style={{ fontSize: 12.5 }}>
-                  {usageOf(config, i) || "свободен"}
-                </td>
-                <td>
-                  <input
+                  )}</div></Cap>}
+                <Cap label="MAC-адрес"><input
                     type="text"
                     className="mono"
                     aria-label={`MAC интерфейса ${i.name}`}
-                    placeholder="не менять"
-                    style={{ width: 150 }}
+                    placeholder={liveInterfaces.find((live: any) => live.name === i.name)?.mac || "не менять"}
+                    title="Пусто — оставить заводской адрес"
                     value={i.mac || ""}
                     onChange={(e) => patch((d) => (d.interfaces[idx].mac = e.target.value.trim()))}
-                  />
-                </td>
-                <td>
-                  <input
+                  /></Cap>
+                <Cap label="MTU"><input
                     type="number"
                     aria-label={`MTU интерфейса ${i.name}`}
-                    style={{ width: 90 }}
-                    value={i.mtu || 0}
+                    placeholder={String(liveInterfaces.find((live: any) => live.name === i.name)?.mtu || "")}
+                    title="Пусто — не менять"
+                    value={i.mtu || ""}
                     onChange={(e) => patch((d) => (d.interfaces[idx].mtu = Number(e.target.value)))}
-                  />
-                </td>
-                <td>
-                  <Switch
-                    checked={i.enabled}
-                    label=""
-                    ariaLabel={`Интерфейс ${i.name || idx + 1} включён`}
-                    onChange={(v) => patch((d) => (d.interfaces[idx].enabled = v))}
-                  />
-                </td>
-                <td style={{ textAlign: "right" }}>
-                  {i.type !== "physical" && (
+                  /></Cap>
+              </div>
+              <div className="row-actions end">{i.type !== "physical" && (
                     <button
                       className="btn ghost sm"
                       disabled={isInterfaceReferenced(config, i.id)}
@@ -855,15 +806,12 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                     >
                       Удалить
                     </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableWrap>
-      {scanError && <Notice tone="warn" title="Список портов недоступен">{scanError}</Notice>}
-      <div className="faint" style={{ fontSize: 12.5, marginTop: "0.7rem" }}>
+                  )}</div>
+            </Row>
+          ))}
+        </Rows>
+      {scanError && <div className="rows-notes"><Notice tone="warn" title="Список портов недоступен">{scanError}</Notice></div>}
+      <div className="rows-foot faint" style={{ fontSize: 12.5 }}>
         Порт входит только в один мост. У подчинённого порта нет своего адреса:
         сегмент и подключение к провайдеру назначаются самому мосту.
       </div>
@@ -1021,6 +969,8 @@ function ifaceName(config: any, id: string): string {
 function hasComponent(config: any, id: string): boolean {
   return (config.components || []).some((c: any) => c.id === id && c.installed);
 }
+
+const WAN_PROTO: Record<string, string> = { dhcp: "Автоматически", static: "Фиксированный адрес", pppoe: "PPPoE", l2tp: "L2TP" };
 
 function typeLabel(t: string): string {
   switch (t) {

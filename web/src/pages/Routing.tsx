@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, RouteEntry } from "../api";
 import { canonicalTable, observedTables, tableDetails } from "../routingTables";
 import { newID } from "../id";
-import { Badge, Card, Empty, Notice, Switch, TableWrap } from "../ui";
+import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -70,7 +70,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 d.routing = d.routing || { static: [], tables: [], rules: [] };
                 d.routing.static = d.routing.static || [];
                 d.routing.static.push({
-                  id: newID("route"),
+                  id: openOnCreate(newID("route")),
                   name: "Маршрут",
                   enabled: true,
                   destination: "",
@@ -89,48 +89,39 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         {(routing.static || []).length === 0 ? (
           <Empty>Статических маршрутов нет</Empty>
         ) : (
-          <TableWrap>
-            <table>
-              <thead>
-                <tr>
-                  <th>Название</th>
-                  <th>Куда</th>
-                  <th>Тип</th>
-                  <th>Через шлюз</th>
-                  <th>Или интерфейс</th>
-                  <th>Метрика</th>
-                  <th>Таблица</th>
-                  <th>Вкл.</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {routing.static.map((r: any, idx: number) => (
-                  <tr key={r.id}>
-                    <td>
-                      <input
+          <Rows cols={["Название", "Куда", "Через", "Таблица", ""]} toggle="Вкл.">
+          {routing.static.map((r: any, idx: number) => (
+              <Row
+                key={r.id}
+                id={r.id}
+                cells={[<strong>{r.name}</strong>, <span className="mono">{r.destination || "—"}</span>,
+                  r.type && r.type !== "unicast" ? <span className="dim">{ROUTE_TYPE[r.type] || r.type}</span> : <span className="mono">{r.gateway || r.interface || "—"}</span>,
+                  <span className="mono">{r.table || "основная"}</span>]}
+                toggle={<Switch
+                        checked={r.enabled}
+                        label=""
+                        ariaLabel={`Статический маршрут ${r.destination || idx + 1} включён`}
+                        onChange={(v) => patch((d) => (d.routing.static[idx].enabled = v))}
+                      />}
+              >
+                <div className="form-grid">
+                  <Cap label="Название"><input
                         type="text"
                         aria-label={`Название статического маршрута ${idx + 1}`}
-                        style={{ width: 130 }}
                         value={r.name}
                         onChange={(e) => patch((d) => (d.routing.static[idx].name = e.target.value))}
-                      />
-                    </td>
-                    <td>
-                      <input
+                      /></Cap>
+                  <Cap label="Куда"><input
                         type="text"
                         aria-label={`Назначение статического маршрута ${r.name || idx + 1}`}
                         className="mono"
-                        style={{ width: 150 }}
                         placeholder="10.0.0.0/8 или default"
                         value={r.destination}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].destination = e.target.value))
                         }
-                      />
-                    </td>
-                    <td>
-                      <select
+                      /></Cap>
+                  <Cap label="Тип"><select
                         value={r.type || "unicast"}
                         onChange={(e) => patch((d) => (d.routing.static[idx].type = e.target.value))}
                         aria-label={`Тип маршрута ${r.name || idx + 1}`}
@@ -139,47 +130,36 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         <option value="blackhole">Отбросить без ответа</option>
                         <option value="unreachable">Сеть недоступна</option>
                         <option value="prohibit">Доступ запрещён</option>
-                      </select>
-                    </td>
-                    <td>
-                      <input
+                      </select></Cap>
+                  <Cap label="Через шлюз"><input
                         type="text"
                         aria-label={`Шлюз статического маршрута ${r.name || idx + 1}`}
                         className="mono"
-                        style={{ width: 130 }}
                         disabled={r.type && r.type !== "unicast"}
                         value={r.gateway || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].gateway = e.target.value))
                         }
-                      />
-                    </td>
-                    <td>
-                      <input
+                      /></Cap>
+                  <Cap label="Или интерфейс"><input
                         type="text"
                         aria-label={`Интерфейс статического маршрута ${r.name || idx + 1}`}
                         className="mono"
-                        style={{ width: 100 }}
                         disabled={r.type && r.type !== "unicast"}
                         value={r.interface || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].interface = e.target.value))
                         }
-                      />
-                    </td>
-                    <td>
-                      <input
+                      /></Cap>
+                  <Cap label="Метрика"><input
                         type="number"
                         aria-label={`Метрика статического маршрута ${r.name || idx + 1}`}
-                        style={{ width: 80 }}
                         value={r.metric || 0}
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].metric = Number(e.target.value)))
                         }
-                      />
-                    </td>
-                    <td>
-                      <select
+                      /></Cap>
+                  <Cap label="Таблица"><select
                         aria-label={`Таблица статического маршрута ${r.name || idx + 1}`}
                         value={r.table || ""}
                         onChange={(e) =>
@@ -192,18 +172,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                             {t.name}
                           </option>
                         ))}
-                      </select>
-                    </td>
-                    <td>
-                      <Switch
-                        checked={r.enabled}
-                        label=""
-                        ariaLabel={`Статический маршрут ${r.destination || idx + 1} включён`}
-                        onChange={(v) => patch((d) => (d.routing.static[idx].enabled = v))}
-                      />
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
+                      </select></Cap>
+                </div>
+                <div className="row-actions end"><button
                         className="btn ghost sm"
                         onClick={() =>
                           patch(
@@ -215,13 +186,10 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         }
                       >
                         Удалить
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                      </button></div>
+              </Row>
+          ))}
+        </Rows>
         )}
       </Card>
 
@@ -238,7 +206,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 d.routing.tables = d.routing.tables || [];
                 const n = d.routing.tables.length + 1;
                 d.routing.tables.push({
-                  id: newID("table"),
+                  id: openOnCreate(newID("table")),
                   name: "netos-t" + n,
                   number: 100 + n,
                   system: false,
@@ -255,54 +223,41 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
             Пользовательские таблицы не добавлены.
           </Empty>
         ) : (
-          <TableWrap>
-            <table>
-              <thead>
-                <tr>
-                  <th>Имя</th>
-                  <th>Номер</th>
-                  <th>Комментарий</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {routing.tables.map((t: any, idx: number) => (
-                  <tr key={t.id}>
-                    <td>
-                      <input
+          <Rows cols={["Имя", "Номер", "Комментарий", "", ""]}>
+          {routing.tables.map((t: any, idx: number) => (
+              <Row
+                key={t.id}
+                id={t.id}
+                cells={[<strong className="mono">{t.name}</strong>, <span className="mono">{t.number}</span>, <span className="dim">{t.comment}</span>]}
+              >
+                <div className="form-grid">
+                  <Cap label="Имя"><input
                         type="text"
                         aria-label={`Имя таблицы маршрутизации ${idx + 1}`}
                         className="mono"
-                        style={{ width: 150 }}
                         value={t.name}
                         disabled={t.system}
                         onChange={(e) => patch((d) => (d.routing.tables[idx].name = e.target.value))}
-                      />
-                    </td>
-                    <td>
-                      <input
+                      /></Cap>
+                  <Cap label="Номер"><input
                         type="number"
                         aria-label={`Номер таблицы маршрутизации ${t.name || idx + 1}`}
-                        style={{ width: 90 }}
                         value={t.number}
                         disabled={t.system}
                         onChange={(e) =>
                           patch((d) => (d.routing.tables[idx].number = Number(e.target.value)))
                         }
-                      />
-                    </td>
-                    <td>
-                      <input
+                      /></Cap>
+                  <Cap label="Комментарий"><input
                         type="text"
                         aria-label={`Комментарий таблицы маршрутизации ${t.name || idx + 1}`}
                         value={t.comment || ""}
                         onChange={(e) =>
                           patch((d) => (d.routing.tables[idx].comment = e.target.value))
                         }
-                      />
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      {t.system ? (
+                      /></Cap>
+                </div>
+                <div className="row-actions end">{t.system ? (
                         <Badge tone="neutral">создана netOS</Badge>
                       ) : (
                         <button
@@ -318,13 +273,10 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         >
                           Удалить
                         </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                      )}</div>
+              </Row>
+          ))}
+        </Rows>
         )}
         {automatic.length > 0 && (
           <TableWrap>
@@ -357,7 +309,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 let priority = 20100;
                 while (used.includes(priority)) priority += 10;
                 d.routing.rules.push({
-                  id: newID("rule"),
+                  id: openOnCreate(newID("rule")),
                   name: "Правило",
                   enabled: true,
                   priority,
@@ -378,97 +330,76 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         ) : (routing.rules || []).length === 0 ? (
           <Empty>Правил нет</Empty>
         ) : (
-          <TableWrap>
-            <table>
-              <thead>
-                <tr>
-                  <th>Приоритет</th>
-                  <th>Название</th>
-                  <th>От кого</th>
-                  <th>Куда</th>
-                  <th>Входной интерфейс</th>
-                  <th>Метка</th>
-                  <th>В таблицу</th>
-                  <th>Вкл.</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {[...(routing.rules || [])]
+          <Rows cols={["Название", "От кого", "Куда", "В таблицу", "Приоритет"]} toggle="Вкл.">
+          {[...(routing.rules || [])]
                   .map((r: any, i: number) => ({ r, i }))
                   .sort((a, b) => a.r.priority - b.r.priority)
                   .map(({ r, i }) => (
-                    <tr key={r.id}>
-                      <td>
-                        <input
+              <Row
+                key={r.id}
+                id={r.id}
+                cells={[<strong>{r.name}</strong>, r.from ? <span className="mono">{r.from}</span> : <span className="dim">любой</span>,
+                  r.to ? <span className="mono">{r.to}</span> : <span className="dim">любой</span>,
+                  <span className="mono">{r.table}</span>, <span className="mono">{r.priority}</span>]}
+                toggle={<Switch
+                          checked={r.enabled}
+                          label=""
+                          ariaLabel={`Правило маршрутизации ${i + 1} включено`}
+                          onChange={(v) => patch((d) => (d.routing.rules[i].enabled = v))}
+                        />}
+              >
+                <div className="form-grid">
+                  <Cap label="Приоритет"><input
                           type="number"
                           aria-label={`Приоритет правила маршрутизации ${r.name || i + 1}`}
-                          style={{ width: 90 }}
                           value={r.priority}
                           onChange={(e) =>
                             patch((d) => (d.routing.rules[i].priority = Number(e.target.value)))
                           }
-                        />
-                      </td>
-                      <td>
-                        <input
+                        /></Cap>
+                  <Cap label="Название"><input
                           type="text"
                           aria-label={`Название правила маршрутизации ${i + 1}`}
-                          style={{ width: 130 }}
                           value={r.name}
                           onChange={(e) => patch((d) => (d.routing.rules[i].name = e.target.value))}
-                        />
-                      </td>
-                      <td>
-                        <input
+                        /></Cap>
+                  <Cap label="От кого"><input
                           type="text"
                           aria-label={`Источник правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
-                          style={{ width: 140 }}
                           placeholder="любой"
                           value={r.from || ""}
                           onChange={(e) => patch((d) => (d.routing.rules[i].from = e.target.value))}
-                        />
-                      </td>
-                      <td>
-                        <input
+                        /></Cap>
+                  <Cap label="Куда"><input
                           type="text"
                           aria-label={`Назначение правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
-                          style={{ width: 140 }}
                           placeholder="любой"
                           value={r.to || ""}
                           onChange={(e) => patch((d) => (d.routing.rules[i].to = e.target.value))}
-                        />
-                      </td>
-                      <td>
-                        <input
+                        /></Cap>
+                  <Cap label="Входной интерфейс"><input
                           type="text"
                           aria-label={`Входной интерфейс правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
-                          style={{ width: 120 }}
                           placeholder="любой"
                           value={r.interface || ""}
                           onChange={(e) =>
                             patch((d) => (d.routing.rules[i].interface = e.target.value))
                           }
-                        />
-                      </td>
-                      <td>
-                        <input
+                        /></Cap>
+                  <Cap label="Метка"><input
                           type="text"
                           aria-label={`Метка правила маршрутизации ${r.name || i + 1}`}
                           className="mono"
-                          style={{ width: 90 }}
                           placeholder="—"
                           value={r.fwmark || ""}
                           onChange={(e) =>
                             patch((d) => (d.routing.rules[i].fwmark = e.target.value))
                           }
-                        />
-                      </td>
-                      <td>
-                        <select
+                        /></Cap>
+                  <Cap label="В таблицу"><select
                           aria-label={`Таблица правила маршрутизации ${r.name || i + 1}`}
                           value={r.table}
                           onChange={(e) => patch((d) => (d.routing.rules[i].table = e.target.value))}
@@ -478,18 +409,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                               {t}
                             </option>
                           ))}
-                        </select>
-                      </td>
-                      <td>
-                        <Switch
-                          checked={r.enabled}
-                          label=""
-                          ariaLabel={`Правило маршрутизации ${i + 1} включено`}
-                          onChange={(v) => patch((d) => (d.routing.rules[i].enabled = v))}
-                        />
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        <button
+                        </select></Cap>
+                </div>
+                <div className="row-actions end"><button
                           className="btn ghost sm"
                           onClick={() =>
                             patch(
@@ -501,15 +423,12 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                           }
                         >
                           Удалить
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                        </button></div>
+              </Row>
+          ))}
+        </Rows>
         )}
-        <div style={{ padding: "0.8rem 1.1rem", borderTop: "1px solid var(--border)" }}>
+        <div className="rows-foot">
           <span className="faint" style={{ fontSize: 12.5 }}>
             Приоритеты 20000–29999 отведены под netOS: остальной диапазон занимает
             система, и правила там лучше не трогать.
@@ -566,7 +485,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
             </table>
           </TableWrap>
         )}
-        <div style={{ padding: "0.8rem 1.1rem", borderTop: "1px solid var(--border)" }}>
+        <div className="rows-foot">
           <span className="faint" style={{ fontSize: 12.5 }}>
             Маршруты, полученные от провайдера по DHCP, и созданные ядром при назначении
             адреса менять здесь нельзя — они появляются и исчезают сами. Управлять можно
@@ -594,6 +513,8 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
 // originBadge объясняет, откуда взялся маршрут. Это первое, что нужно знать,
 // прежде чем пытаться его исправить: маршрут от провайдера или созданный ядром
 // живёт сам по себе, и править его в панели бессмысленно.
+const ROUTE_TYPE: Record<string, string> = { blackhole: "отбросить без ответа", unreachable: "сеть недоступна", prohibit: "доступ запрещён" };
+
 function originBadge(origin: string) {
   switch (origin) {
     case "netos":

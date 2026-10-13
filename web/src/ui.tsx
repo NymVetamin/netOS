@@ -1,7 +1,7 @@
 // Базовые элементы интерфейса. Держим их в одном месте, чтобы страницы
 // занимались данными, а не оформлением.
 
-import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useId } from "react";
+import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useEffect, useId, useRef } from "react";
 import { formatBitrate } from "./api";
 
 function labelNestedControls(node: ReactNode, label: string, hintID?: string): ReactNode {
@@ -27,12 +27,16 @@ export function Card({
   actions,
   children,
   tight,
+  split,
 }: {
   title?: string;
   subtitle?: string;
   actions?: ReactNode;
   children: ReactNode;
   tight?: boolean;
+  // Карточка из нескольких частей: каждая .card-part рисует свою рамку, между
+  // ними стоят подзаголовки .card-sub.
+  split?: boolean;
 }) {
   return (
     <section className="card">
@@ -45,7 +49,7 @@ export function Card({
           {actions && <div className="row">{actions}</div>}
         </header>
       )}
-      <div className={tight ? "card-body tight" : "card-body"}>{children}</div>
+      <div className={split ? "card-body split" : tight ? "card-body tight" : "card-body"}>{children}</div>
     </section>
   );
 }
@@ -88,10 +92,13 @@ export function Badge({
 export function Field({
   label,
   hint,
+  wide,
   children,
 }: {
   label: string;
   hint?: string;
+  // Длинное значение: список серверов, адрес с путём.
+  wide?: boolean;
   children: ReactNode;
 }) {
   const generatedID = useId();
@@ -101,12 +108,23 @@ export function Field({
   const isControl = element != null && typeof element.type === "string" && ["input", "select", "textarea"].includes(element.type);
   const controlID = isControl ? element.props.id || generatedID : undefined;
   return (
-    <div className="field">
+    <div className={wide ? "field wide" : "field"}>
       <label id={labelID} className="field-label" htmlFor={controlID}>{label}</label>
       {isControl
         ? cloneElement(element, { id: controlID, "aria-describedby": hintID })
         : <div className="field-control" role="group" aria-labelledby={labelID} aria-describedby={hintID}>{labelNestedControls(children, label, hintID)}</div>}
       {hint && <div id={hintID} className="hint">{hint}</div>}
+    </div>
+  );
+}
+
+// Подпись над полем, у которого уже есть своё имя в aria-label. Это не <label>:
+// имя поля для вспомогательных технологий и проверок панели остаётся прежним.
+export function Cap({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) {
+  return (
+    <div className={wide ? "field wide" : "field"}>
+      <div className="field-label" aria-hidden="true">{label}</div>
+      {children}
     </div>
   );
 }
@@ -160,6 +178,110 @@ export function Notice({
       </div>
       {actions && <div className="row">{actions}</div>}
     </div>
+  );
+}
+
+// Строки записей. Любая запись панели — сервер, устройство, сегмент, правило —
+// это одна строка; настройки раскрываются под ней. Столбцы у всех таблиц
+// панели общие: имя, три столбца, состояние и переключатель, поэтому они
+// стоят на одной вертикали на любой странице.
+//
+// Раскрытие — системный <details>, а не состояние React: содержимое остаётся
+// в документе и свёрнутым, так что поиск по странице его находит, а проверки
+// панели видят те же поля, что и раньше.
+export function Rows({ cols, toggle, children }: { cols: string[]; toggle?: string; children: ReactNode }) {
+  return (
+    <div className="xrows">
+      <div className="xhead">
+        <span />
+        {[0, 1, 2, 3, 4].map((i) => <span key={i}>{cols[i] || ""}</span>)}
+        <span>{toggle || ""}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Только что созданная запись открывается сразу: её добавили, чтобы настроить.
+const created = new Set<string>();
+export function openOnCreate(id: string) {
+  created.add(id);
+  return id;
+}
+
+export function Row({
+  id,
+  cells,
+  toggle,
+  children,
+  className,
+  as: Tag = "div",
+  ...rest
+}: {
+  id?: string;
+  cells: ReactNode[];
+  toggle?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  as?: "div" | "form";
+  [attribute: string]: unknown;
+}) {
+  const details = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (id && created.delete(id) && details.current) details.current.open = true;
+  }, [id]);
+  const summary = [0, 1, 2, 3, 4].map((i) => <span key={i}>{cells[i] ?? ""}</span>);
+  const Wrapper = Tag as "div";
+  return (
+    <Wrapper className={`xrow ${className || ""}`} {...rest}>
+      {/* Переключатель в документе первый: это «главный переключатель записи». */}
+      {toggle && <div className="xsw">{toggle}</div>}
+      {children
+        ? <details className="xd" ref={details}><summary className="xsum">{summary}</summary><div className="xbody">{children}</div></details>
+        : <div className="xsum">{summary}</div>}
+    </Wrapper>
+  );
+}
+
+// Одна кнопка «Добавить» с выбором типа вместо ряда из десятка кнопок.
+export function AddMenu({
+  label,
+  items,
+}: {
+  label: string;
+  items: { label: string; ariaLabel?: string; note?: string; disabled?: boolean; onSelect: () => void }[];
+}) {
+  const menu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: Event) => {
+      if (!menu.current) return;
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !menu.current.contains(event.target as Node)) menu.current.open = false;
+    };
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, []);
+  return (
+    <details className="addmenu" ref={menu}>
+      <summary className="btn primary">{label}</summary>
+      <div className="menu">
+        {items.map((item) => (
+          <button
+            type="button"
+            key={item.ariaLabel || item.label}
+            aria-label={item.ariaLabel}
+            disabled={item.disabled}
+            onClick={() => { if (menu.current) menu.current.open = false; item.onSelect(); }}
+          >
+            {item.label}
+            {item.note && <small>{item.note}</small>}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }
 

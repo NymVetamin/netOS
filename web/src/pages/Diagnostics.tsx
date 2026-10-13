@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, ReactNode } from "react";
 import { api } from "../api";
 import { Card, Empty, Notice, TableWrap } from "../ui";
 
@@ -236,9 +236,33 @@ export function DiagnosticsPage() {
               {copyStatus || "Скопировать"}
             </button>
           </div>
-          <pre className="output">{pending ? "Загрузка…" : error || content}</pre>
+          <pre className="output">{pending ? "Загрузка…" : error || <Highlight text={content} />}</pre>
         </div>
       )}
     </>
   );
+}
+
+// Подсветка сгенерированных конфигов: комментарии, заголовки разделов, строки
+// в кавычках, флаги, адреса и вердикты файрволла. Текст не меняется — копируется
+// исходный. Разбор построчный и общий для всех артефактов: это не парсер
+// формата, а помощь глазу.
+const TOKEN = /("(?:[^"\\]|\\.)*")|((?<![\w.-])-{1,2}[A-Za-z][\w-]*)|((?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?(?![\w.]))|(\b(?:ACCEPT|MASQUERADE)\b)|(\b(?:DROP|REJECT)\b)/g;
+
+function Highlight({ text }: { text: string }) {
+  return <>{text.split("\n").map((line, n) => {
+    const trimmed = line.trimStart();
+    if (/^[#;]/.test(trimmed)) return <span key={n} className="hl-comment">{line}{"\n"}</span>;
+    if (/^(\[.*\]|\*\w+|COMMIT)$/.test(trimmed)) return <span key={n} className="hl-head">{line}{"\n"}</span>;
+    const parts: ReactNode[] = [];
+    let last = 0;
+    for (const match of line.matchAll(TOKEN)) {
+      const at = match.index ?? 0;
+      parts.push(line.slice(last, at));
+      parts.push(<span key={at} className={match[1] ? "hl-string" : match[2] ? "hl-flag" : match[3] ? "hl-number" : match[4] ? "hl-ok" : "hl-bad"}>{match[0]}</span>);
+      last = at + match[0].length;
+    }
+    parts.push(line.slice(last));
+    return <span key={n}>{parts}{"\n"}</span>;
+  })}</>;
 }

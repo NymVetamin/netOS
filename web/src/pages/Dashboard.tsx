@@ -272,8 +272,8 @@ function TrafficChart({ points, interfaces }: { points: any[]; interfaces: strin
         <span className="up">↑ исходящий · <b className="mono">{formatBitrate(last.up)}</b></span>
         <span className="faint">пик {formatBitrate(peak)}</span>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="График входящей и исходящей скорости" style={{ width: "100%", height: 190, display: "block" }}>
-        {[0.25, 0.5, 0.75, 1].map((part) => <line key={part} x1={pad} x2={width - pad} y1={height - pad - part * (height - pad * 2)} y2={height - pad - part * (height - pad * 2)} stroke="var(--border)" strokeWidth="1" />)}
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="График входящей и исходящей скорости" style={{ width: "100%", height: 190, display: "block" }}>
+        {[0.25, 0.5, 0.75, 1].map((part) => <line key={part} x1={pad} x2={width - pad} y1={height - pad - part * (height - pad * 2)} y2={height - pad - part * (height - pad * 2)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" />)}
         <path d={`${path("down")} L${width - pad},${height - pad} L${pad},${height - pad} Z`} fill="var(--ok)" opacity="0.14" />
         <path d={path("down")} fill="none" stroke="var(--ok)" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
         <path d={path("up")} fill="none" stroke="var(--accent-fill)" strokeWidth="1.6" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />

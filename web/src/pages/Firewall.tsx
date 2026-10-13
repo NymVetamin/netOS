@@ -1,7 +1,7 @@
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
-import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Problem } from "../api";
 import { ProblemsFor } from "./Network";
 
@@ -11,17 +11,18 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
   const sets: any[] = config.firewall?.ipsets || [];
   const [editing, setEditing] = useState<{ id: string; name: string; text: string } | null>(null);
   const installed = (config.components || []).some((c: any) => c.id === "ipset" && c.installed);
-  return <Card title="Наборы адресов">
-    <p>Объединяйте IPv4-адреса и подсети, чтобы использовать их в правилах доступа.</p>
-    {!installed && <Notice tone="warn" title="Нужен компонент «Наборы адресов»">Включите его на странице компонентов перед применением настройки.</Notice>}
-    {sets.map((item: any) => {
+  return <Card tight title="Наборы адресов" subtitle="IPv4-адреса и подсети для правил доступа">
+    {!installed && <div className="rows-notes"><Notice tone="warn" title="Нужен компонент «Наборы адресов»">Включите его на странице компонентов перед применением настройки.</Notice></div>}
+    {sets.length === 0 && !editing && <Empty>Наборов нет</Empty>}
+    {sets.length > 0 && <Rows cols={["Набор", "Состав", "", "", ""]}>{sets.map((item: any) => {
       const used = (config.firewall?.rules || []).some((r: any) => r.src_ipset === item.id || r.dst_ipset === item.id);
-      return <div className="row wrap" key={item.id} style={{ gap: "1rem", marginBottom: "0.5rem" }}>
-        <strong>{item.name}</strong><span>{(item.entries || []).length} адресов и подсетей</span>
-        <button className="btn" onClick={() => setEditing({ id: item.id, name: item.name, text: (item.entries || []).join("\n") })}>Изменить набор</button>
-        <button className="btn danger" disabled={used} title={used ? "Сначала уберите набор из правил" : "Удалить набор"} onClick={() => patch((d) => { d.firewall.ipsets = d.firewall.ipsets.filter((s: any) => s.id !== item.id); })}>Удалить</button>
-      </div>;
-    })}
+      return <Row key={item.id} cells={[<strong>{item.name}</strong>, <span>{(item.entries || []).length} адресов и подсетей</span>, used ? <span className="dim">используется в правилах</span> : "", "",
+        <span className="row">
+          <button className="btn sm" onClick={() => setEditing({ id: item.id, name: item.name, text: (item.entries || []).join("\n") })}>Изменить набор</button>
+          <button className="btn ghost sm" disabled={used} title={used ? "Сначала уберите набор из правил" : "Удалить набор"} onClick={() => patch((d) => { d.firewall.ipsets = d.firewall.ipsets.filter((s: any) => s.id !== item.id); })}>Удалить</button>
+        </span>]} />;
+    })}</Rows>}
+    <div className="rows-foot">
     {!editing && <button className="btn" onClick={() => setEditing({ id: newID("set"), name: "", text: "" })}>Добавить набор адресов</button>}
     {editing && <div>
       <Field label="Название набора"><input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></Field>
@@ -37,6 +38,7 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
         <button className="btn" onClick={() => setEditing(null)}>Отмена</button>
       </div>
     </div>}
+    </div>
   </Card>;
 }
 
@@ -55,6 +57,8 @@ const ACTIONS = [
   { id: "reject", title: "Отклонить с ответом", tone: "danger" as const },
   { id: "continue", title: "Передать дальше по списку", tone: "neutral" as const },
 ];
+
+const ZONE_POLICY: Record<string, string> = { accept: "пропустить", reject: "отклонить с ответом", drop: "отбросить молча" };
 
 const SCHEDULE_DAYS = [
   { id: "Mon", title: "Пн" },
@@ -125,68 +129,70 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
 
       <AddressSets config={config} patch={patch} />
 
-      <Card title="Зоны и политики">
-        <div className="row wrap" style={{ marginBottom: "1rem", gap: "1.5rem" }}>
-          <Switch
-            checked={fw.enabled}
-            label="Файрволл включён"
-            onChange={(v) => patch((d) => (d.firewall.enabled = v))}
-          />
+      <Card tight title="Зоны и политики">
+        <div className="rows-foot top">
+          <div className="form-grid">
+            <Switch
+              checked={fw.enabled}
+              label="Файрволл включён"
+              onChange={(v) => patch((d) => (d.firewall.enabled = v))}
+            />
+            <Field
+              wide
+              label="Исходящий трафик самого роутера"
+              hint="Обновления, запросы DNS от роутера, его подключения к VPN"
+            >
+              <select
+                value={fw.output_policy || "accept"}
+                onChange={(e) => patch((d) => (d.firewall.output_policy = e.target.value))}
+              >
+                <option value="accept">разрешён</option>
+                <option value="drop">запрещён, кроме разрешённого правилами</option>
+              </select>
+            </Field>
+          </div>
         </div>
 
-        <div className="zone-grid">
+        <Rows cols={["Зона", "Цепочки", "Интерфейсы", "Без правила", "Размер пакетов"]}>
           {zones.map((z: any, idx: number) => {
             const ifaces = interfacesOfZone(config, z.name);
             return (
-              <div key={z.name} className="zone-card">
-                <div className="row between">
-                  <strong>{z.title || z.name}</strong>
-                  <code className="faint">{z.name.toUpperCase()}-*</code>
+              <Row
+                key={z.name}
+                className="zone-card"
+                cells={[
+                  <strong>{z.title || z.name}</strong>,
+                  <code className="faint">{z.name.toUpperCase()}-*</code>,
+                  ifaces.length > 0 ? <span className="mono">{ifaces.join(", ")}</span> : <Badge tone="warn">нет интерфейсов</Badge>,
+                  ZONE_POLICY[z.policy] || z.policy,
+                  <span className="dim">{z.mss_clamp ? "подгоняется" : "не меняется"}</span>,
+                ]}
+              >
+                <div className="dim">{z.description}</div>
+                {ifaces.length === 0 && <div className="faint">Ни одного интерфейса — правила этой зоны сейчас не работают</div>}
+                <div className="form-grid" style={{ marginTop: "0.8rem" }}>
+                  <Field label="Если ни одно правило не подошло">
+                    <select
+                      value={z.policy}
+                      onChange={(e) => patch((d) => (d.firewall.zones[idx].policy = e.target.value))}
+                    >
+                      <option value="accept">пропустить</option>
+                      <option value="reject">отклонить с ответом</option>
+                      <option value="drop">отбросить молча</option>
+                    </select>
+                  </Field>
+                  <div className="field"><div className="field-label">&nbsp;</div>
+                    <Switch
+                      checked={z.mss_clamp}
+                      label="Подгонять размер пакетов"
+                      onChange={(v) => patch((d) => (d.firewall.zones[idx].mss_clamp = v))}
+                    />
+                  </div>
                 </div>
-                <div className="faint" style={{ fontSize: 12.5, margin: "0.3rem 0 0.6rem" }}>
-                  {z.description}
-                </div>
-                <Field label="Если ни одно правило не подошло">
-                  <select
-                    value={z.policy}
-                    onChange={(e) => patch((d) => (d.firewall.zones[idx].policy = e.target.value))}
-                  >
-                    <option value="accept">пропустить</option>
-                    <option value="reject">отклонить с ответом</option>
-                    <option value="drop">отбросить молча</option>
-                  </select>
-                </Field>
-                <Switch
-                  checked={z.mss_clamp}
-                  label="Подгонять размер пакетов"
-                  onChange={(v) => patch((d) => (d.firewall.zones[idx].mss_clamp = v))}
-                />
-                <div className="faint" style={{ fontSize: 12, marginTop: "0.5rem" }}>
-                  {ifaces.length > 0 ? (
-                    <>Интерфейсы: {ifaces.join(", ")}</>
-                  ) : (
-                    <>Ни одного интерфейса — правила этой зоны сейчас не работают</>
-                  )}
-                </div>
-              </div>
+              </Row>
             );
           })}
-        </div>
-
-        <div style={{ marginTop: "1rem", maxWidth: 360 }}>
-          <Field
-            label="Исходящий трафик самого роутера"
-            hint="Обновления, запросы DNS от роутера, его подключения к VPN"
-          >
-            <select
-              value={fw.output_policy || "accept"}
-              onChange={(e) => patch((d) => (d.firewall.output_policy = e.target.value))}
-            >
-              <option value="accept">разрешён</option>
-              <option value="drop">запрещён, кроме разрешённого правилами</option>
-            </select>
-          </Field>
-        </div>
+        </Rows>
       </Card>
 
       <Card
@@ -858,6 +864,8 @@ function AccessTip({ tipRef, from, to, access }: { tipRef: Ref<HTMLDivElement>; 
 // объявленных портов, мостов и VLAN сюда входят сессии PPPoE и L2TP: пакеты
 // клиентов уходят через ppp-<id>, а не через физический порт провайдера, и
 // правило, оставленное на порту, оставляло локальную сеть без выхода наружу.
+const NAT_PROTO: Record<string, string> = { tcp: "TCP", udp: "UDP", tcpudp: "TCP+UDP" };
+
 function natInterfaceOptions(config: any): { key: string; name: string; hint?: string }[] {
   const options = (config.interfaces || []).map((x: any) => ({ key: String(x.id), name: String(x.name) }));
   for (const wan of config.wans || []) {
@@ -877,11 +885,13 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
   const source = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction !== "destination");
   const dest = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction === "destination");
 
-  const addRule = (direction: string) =>
+  const addRule = (direction: string) => {
+    const id = newID("nat");
+    openOnCreate(id);
     patch((d) => {
       d.firewall.nat = d.firewall.nat || [];
       const base = {
-        id: newID("nat"),
+        id,
         enabled: true,
         system: false,
         interface: d.interfaces?.[0]?.name || "",
@@ -902,72 +912,69 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
             },
       );
     });
+  };
 
   const remove = (id: string) =>
     patch((d) => (d.firewall.nat = d.firewall.nat.filter((x: any) => x.id !== id)));
 
   return (
-    <Card title="Трансляция адресов" subtitle="NAT: подмена адресов на выходе и на входе">
+    <Card split title="Трансляция адресов" subtitle="NAT: подмена адресов на выходе и на входе">
       <Notice tone="info" title="Чем это отличается от правил файрволла">
         Правило файрволла решает, <b>пропустить ли</b> пакет. Трансляция решает,{" "}
         <b>какой адрес</b> в нём подменить. Чтобы клиенты вышли в интернет, нужны обе
         вещи: разрешение на транзит и подмена адреса отправителя.
       </Notice>
 
-      <div className="row between wrap" style={{ margin: "1.2rem 0 0.6rem" }}>
-        <div>
-          <strong>Подмена адреса отправителя</strong>
-          <div className="faint" style={{ fontSize: 12.5 }}>
-            Трафик уходит наружу с адресом роутера, а не с адресом клиента
-          </div>
-        </div>
+      <h3 className="card-sub">
+        Подмена адреса отправителя
+        <span className="sub">Трафик уходит наружу с адресом роутера, а не с адресом клиента</span>
         <button className="btn sm" onClick={() => addRule("source")}>
           Добавить
         </button>
-      </div>
-
+      </h3>
+      <div className="card-part">
       {source.length === 0 ? (
         <Empty>Правил нет — клиенты не смогут выйти в интернет</Empty>
       ) : (
-        <TableWrap>
-          <table>
-            <thead>
-              <tr>
-                <th>Название</th>
-                <th>Уходит через</th>
-                <th>От кого</th>
-                <th>Подменять на</th>
-                <th>Вкл.</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {source.map(({ n, i }) => (
-                <tr key={n.id}>
-                  <td>
-                    <input
+        <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]} toggle="Вкл.">
+          {source.map(({ n, i }) => (
+            <Row
+              key={n.id}
+              id={n.id}
+              cells={[
+                <strong>{n.name}</strong>,
+                <span className="mono">{n.interface || "—"}</span>,
+                n.source ? <span className="mono">{n.source}</span> : <span className="dim">кто угодно</span>,
+                n.to_source ? <span className="mono">{n.to_source}</span> : <span className="dim">адрес интерфейса</span>,
+                n.system ? <Badge tone="neutral">создано netOS</Badge> : <span className="dim">{n.comment}</span>,
+              ]}
+              toggle={<Switch
+                checked={n.enabled}
+                label=""
+                ariaLabel={`Правило NAT ${n.name || i + 1} включено`}
+                onChange={(v) => patch((d) => (d.firewall.nat[i].enabled = v))}
+              />}
+            >
+              <div className="form-grid">
+                <Cap label="Название">
+                  <input
                       type="text"
                       aria-label="Название правила NAT"
-                      style={{ width: 180 }}
                       value={n.name}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].name = e.target.value))}
                     />
-                    <input
+                </Cap>
+                <Cap label="Комментарий">
+                  <input
                       type="text"
                       aria-label="Комментарий правила NAT"
                       placeholder="комментарий"
-                      style={{ width: 180, marginTop: 4 }}
                       value={n.comment || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].comment = e.target.value))}
                     />
-                    {n.system && (
-                      <div style={{ marginTop: 3 }}>
-                        <Badge tone="neutral">создано netOS</Badge>
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <select
+                </Cap>
+                <Cap label="Уходит через">
+                  <select
                       aria-label="Исходящий интерфейс правила NAT"
                       value={n.interface || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].interface = e.target.value))}
@@ -979,111 +986,92 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                         </option>
                       ))}
                     </select>
-                  </td>
-                  <td>
-                    <input
+                </Cap>
+                <Cap label="От кого">
+                  <input
                       type="text"
                       aria-label="Источник правила NAT"
                       className="mono"
-                      style={{ width: 150 }}
                       placeholder="от кого угодно"
                       value={n.source || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].source = e.target.value))}
                     />
-                  </td>
-                  <td>
-                    <input
+                </Cap>
+                <Cap label="Подменять на">
+                  <input
                       type="text"
                       aria-label="Адрес подмены правила NAT"
                       className="mono"
-                      style={{ width: 160 }}
                       placeholder="адрес интерфейса"
                       value={n.to_source || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].to_source = e.target.value))}
                     />
-                  </td>
-                  <td>
-                    <Switch
-                      checked={n.enabled}
-                      label=""
-                      ariaLabel={`Правило NAT ${n.name || i + 1} включено`}
-                      onChange={(v) => patch((d) => (d.firewall.nat[i].enabled = v))}
-                    />
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {!n.system && (
-                      <button className="btn ghost sm" onClick={() => remove(n.id)}>
-                        Удалить
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
+                </Cap>
+              </div>
+              <div className="hint">Пустое поле подмены означает маскарад: подставится текущий адрес интерфейса. Именно это нужно, когда провайдер выдаёт адрес динамически.</div>
+              {!n.system && (
+                <div className="row-actions">
+                  <button className="btn ghost sm to-right" onClick={() => remove(n.id)}>
+                    Удалить
+                  </button>
+                </div>
+              )}
+            </Row>
+          ))}
+        </Rows>
       )}
-      <div className="faint" style={{ fontSize: 12, marginTop: "0.5rem" }}>
-        Пустое поле подмены означает маскарад: подставится текущий адрес интерфейса.
-        Именно это нужно, когда провайдер выдаёт адрес динамически.
       </div>
 
-      <div className="row between wrap" style={{ margin: "1.6rem 0 0.6rem" }}>
-        <div>
-          <strong>Проброс портов внутрь</strong>
-          <div className="faint" style={{ fontSize: 12.5 }}>
-            Обращение снаружи на порт роутера уезжает на устройство в локальной сети
-          </div>
-        </div>
+      <h3 className="card-sub">
+        Проброс портов внутрь
+        <span className="sub">Обращение снаружи на порт роутера уезжает на устройство в локальной сети</span>
         <button className="btn sm" onClick={() => addRule("destination")}>
           Добавить
         </button>
-      </div>
-
+      </h3>
+      <div className="card-part">
       {dest.length === 0 ? (
         <Empty>Проброшенных портов нет</Empty>
       ) : (
-        <TableWrap>
-          <table>
-            <thead>
-              <tr>
-                <th>Название</th>
-                <th>Приходит на</th>
-                <th>Протокол</th>
-                <th>Внешний порт</th>
-                <th>Куда</th>
-                <th>Только с адресов</th>
-                <th>Вкл.</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {dest.map(({ n, i }) => (
-                <tr key={n.id}>
-                  <td>
-                    <input
+        <Rows cols={["Название", "Приходит на", "Внешний порт", "Куда", "Только с адресов"]} toggle="Вкл.">
+          {dest.map(({ n, i }) => (
+            <Row
+              key={n.id}
+              id={n.id}
+              cells={[
+                <strong>{n.name}</strong>,
+                n.interface ? <span className="mono">{n.interface}</span> : <span className="dim">любой</span>,
+                <span className="mono">{NAT_PROTO[n.protocol || "tcp"]} {n.ext_port || "—"}</span>,
+                <span className="mono">{n.dest_ip || "—"}:{n.dest_port || n.ext_port || "—"}</span>,
+                n.allow_from ? <span className="mono">{n.allow_from}</span> : <span className="dim">с любых</span>,
+              ]}
+              toggle={<Switch
+                checked={n.enabled}
+                label=""
+                ariaLabel={`Проброс порта ${n.name || i + 1} включён`}
+                onChange={(v) => patch((d) => (d.firewall.nat[i].enabled = v))}
+              />}
+            >
+              <div className="form-grid">
+                <Cap label="Название">
+                  <input
                       type="text"
                       aria-label={`Название проброса порта ${i + 1}`}
-                      style={{ width: 130 }}
                       value={n.name}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].name = e.target.value))}
                     />
-                    <input
+                </Cap>
+                <Cap label="Комментарий">
+                  <input
                       type="text"
                       aria-label={`Комментарий проброса порта ${i + 1}`}
                       placeholder="комментарий"
-                      style={{ width: 130, marginTop: 4 }}
                       value={n.comment || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].comment = e.target.value))}
                     />
-                    {n.system && (
-                      <div style={{ marginTop: 3 }}>
-                        <Badge tone="neutral">создано netOS</Badge>
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <select
+                </Cap>
+                <Cap label="Приходит на">
+                  <select
                       aria-label={`Входящий интерфейс проброса порта ${n.name || i + 1}`}
                       value={n.interface || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].interface = e.target.value))}
@@ -1095,9 +1083,9 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                         </option>
                       ))}
                     </select>
-                  </td>
-                  <td>
-                    <select
+                </Cap>
+                <Cap label="Протокол">
+                  <select
                       aria-label={`Протокол проброса порта ${n.name || i + 1}`}
                       value={n.protocol || "tcp"}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].protocol = e.target.value))}
@@ -1106,81 +1094,63 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       <option value="udp">UDP</option>
                       <option value="tcpudp">оба</option>
                     </select>
-                  </td>
-                  <td>
-                    <input
+                </Cap>
+                <Cap label="Внешний порт">
+                  <input
                       type="text"
                       aria-label={`Внешний порт проброса ${n.name || i + 1}`}
                       className="mono"
-                      style={{ width: 90 }}
                       value={n.ext_port || ""}
                       onChange={(e) => patch((d) => (d.firewall.nat[i].ext_port = e.target.value))}
                     />
-                  </td>
-                  <td>
-                    <div className="row" style={{ gap: "0.25rem" }}>
-                      <input
+                </Cap>
+                <Cap label="Адрес назначения">
+                  <input
                         type="text"
                         aria-label={`Адрес назначения проброса ${n.name || i + 1}`}
                         className="mono"
-                        style={{ width: 125 }}
                         placeholder="192.168.10.5"
                         value={n.dest_ip || ""}
                         onChange={(e) => patch((d) => (d.firewall.nat[i].dest_ip = e.target.value))}
                       />
-                      <span className="faint">:</span>
-                      <input
+                </Cap>
+                <Cap label="Порт назначения">
+                  <input
                         type="text"
                         aria-label={`Порт назначения проброса ${n.name || i + 1}`}
                         className="mono"
-                        style={{ width: 78 }}
                         placeholder="тот же"
                         value={n.dest_port || ""}
                         onChange={(e) =>
                           patch((d) => (d.firewall.nat[i].dest_port = e.target.value))
                         }
                       />
-                    </div>
-                  </td>
-                  <td>
-                    <input
+                </Cap>
+                <Cap label="Только с адресов">
+                  <input
                       type="text"
                       aria-label={`Разрешённые источники проброса ${n.name || i + 1}`}
                       className="mono"
-                      style={{ width: 125 }}
                       placeholder="с любых"
                       value={n.allow_from || ""}
                       onChange={(e) =>
                         patch((d) => (d.firewall.nat[i].allow_from = e.target.value))
                       }
                     />
-                  </td>
-                  <td>
-                    <Switch
-                      checked={n.enabled}
-                      label=""
-                      ariaLabel={`Проброс порта ${n.name || i + 1} включён`}
-                      onChange={(v) => patch((d) => (d.firewall.nat[i].enabled = v))}
-                    />
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {!n.system && (
-                      <button className="btn ghost sm" onClick={() => remove(n.id)}>
-                        Удалить
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
+                </Cap>
+              </div>
+              <div className="hint">Разрешение на транзит проброшенных пакетов netOS добавляет само — отдельное правило файрволла заводить не нужно. Внешний и внутренний порт задаются одним портом или одним диапазоном, например 443 или 8000-8010; списки здесь не поддерживаются.</div>
+              {!n.system && (
+                <div className="row-actions">
+                  <button className="btn ghost sm to-right" onClick={() => remove(n.id)}>
+                    Удалить
+                  </button>
+                </div>
+              )}
+            </Row>
+          ))}
+        </Rows>
       )}
-      <div className="faint" style={{ fontSize: 12, marginTop: "0.5rem" }}>
-        Разрешение на транзит проброшенных пакетов netOS добавляет само — отдельное
-        правило файрволла заводить не нужно. Внешний и внутренний порт задаются одним
-        портом или одним диапазоном, например 443 или 8000-8010; списки здесь не
-        поддерживаются.
       </div>
     </Card>
   );

@@ -1,10 +1,10 @@
-import { Fragment, useEffect, useState } from "react";
+import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
 import { api } from "../api";
 import { channelComponents, channelComponentReady } from "../channelComponents";
 import { newID } from "../id";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
-import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 
 type Props = {
   config: any;
@@ -77,12 +77,14 @@ export function ChannelsPage({ config, patch }: Props) {
 
   function addWireGuard() {
     if (!ready("wireguard")) return;
+    const id = newID("wg");
+    openOnCreate(id);
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: newID("wg"),
+        id,
         index,
         name: `WireGuard ${index}`,
         enabled: false,
@@ -107,12 +109,14 @@ export function ChannelsPage({ config, patch }: Props) {
 
   function addOpenConnect() {
     if (!ready("openconnect")) return;
+    const id = newID("oc");
+    openOnCreate(id);
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: newID("oc"), index, name: `OpenConnect ${index}`, enabled: false,
+        id, index, name: `OpenConnect ${index}`, enabled: false,
         type: "openconnect", mode: "tun", fail_mode: "block", fallback: "",
         probe: { enabled: true, type: "icmp", targets: ["1.1.1.1"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: { server: "", username: "", password: "", protocol: "anyconnect", authgroup: "", servercert: "", mtu: 1400, no_dtls: false, no_system_trust: false },
@@ -122,12 +126,14 @@ export function ChannelsPage({ config, patch }: Props) {
 
   function addXray() {
     if (!ready("xray")) return;
+    const id = newID("xray");
+    openOnCreate(id);
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: newID("xray"), index, name: `Xray ${index}`, enabled: false,
+        id, index, name: `Xray ${index}`, enabled: false,
         type: "xray", mode: "tun", fail_mode: "block", fallback: "",
         probe: { enabled: true, type: "http", targets: ["https://www.cloudflare.com/cdn-cgi/trace"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: { mtu: 1400, outbound: { protocol: "vless", settings: { vnext: [] }, streamSettings: { network: "tcp", security: "none" } } },
@@ -137,12 +143,14 @@ export function ChannelsPage({ config, patch }: Props) {
 
   function addL2TP() {
     if (!ready("l2tp")) return;
+    const id = newID("l2tp");
+    openOnCreate(id);
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
       let index = 1;
       while (used.has(index)) index++;
       draft.channels.push({
-        id: newID("l2tp"), index, name: `L2TP ${index}`, enabled: false,
+        id, index, name: `L2TP ${index}`, enabled: false,
         type: "l2tp", mode: "tun", fail_mode: "block", fallback: "",
         probe: { enabled: true, type: "http", targets: ["https://www.cloudflare.com/cdn-cgi/trace"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
         config: { server: "", username: "", password: "", mtu: 1400 },
@@ -152,18 +160,28 @@ export function ChannelsPage({ config, patch }: Props) {
 
 	function addIKEv2() {
     if (!ready("ikev2")) return;
+    const id = newID("ikev2");
+    openOnCreate(id);
 		patch((draft) => {
 			const used = new Set((draft.channels || []).map((channel: any) => channel.index));
 			let index = 1;
 			while (used.has(index)) index++;
 			draft.channels.push({
-				id: newID("ikev2"), index, name: `IKEv2 ${index}`, enabled: false,
+				id, index, name: `IKEv2 ${index}`, enabled: false,
 				type: "ikev2", mode: "tun", fail_mode: "block", fallback: "",
 				probe: { enabled: true, type: "http", targets: ["https://www.cloudflare.com/cdn-cgi/trace"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
 				config: { server: "", server_identity: "", username: "", password: "", ca_cert: "", mtu: 1200 },
 			});
 		});
 	}
+
+  // В меню только те типы, чей компонент установлен: создать канал, который
+  // нельзя включить, панель не даёт.
+  const adders: Record<string, () => void> = { wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP };
+  const addItems = channelComponents.filter(component => ready(component.type)).map(component => {
+    const name = component.type === "ikev2" ? "IKEv2" : component.title;
+    return { label: name, ariaLabel: name, onSelect: adders[component.type] };
+  });
 
   return (
     <>
@@ -173,15 +191,20 @@ export function ChannelsPage({ config, patch }: Props) {
       </div>
 
       <Card
+        tight
         title="Каналы выхода"
         subtitle="Прямой выход всегда доступен; VPN-каналы защищены настраиваемым kill-switch"
-        actions={<div className="row channel-add-actions">{channelComponents.filter(component => ready(component.type)).map(component =>
-          <button key={component.type} className="btn" onClick={({ wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP })[component.type]}>{component.type === "ikev2" ? "IKEv2" : component.title}</button>
-        )}</div>}
+        actions={addItems.length > 0 && <AddMenu label="Добавить канал" items={addItems} />}
       >
+        <div className="rows-notes">
         {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed === null ?
           <div className="hint" role="status">Проверяем установленные VPN-компоненты…</div> : missing.length > 0 &&
           <Notice tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <a href="#components">«Компоненты»</a>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
+        {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
+        {liveChannels === null && <div className="hint" role="status">{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</div>}
+        </div>
+        <Live.Provider value={liveChannels}>
+        <Rows cols={["Канал", "Тип", "Интерфейс", "Проверка", "Состояние"]} toggle="Включён">
         {channels.map((channel: any) => <Fragment key={channel.id}>
           {installed !== null && channelComponents.some(item => item.type === channel.type) && !ready(channel.type) &&
             <Notice tone="warn" title={`${channel.name}: включение недоступно`}>
@@ -189,13 +212,7 @@ export function ChannelsPage({ config, patch }: Props) {
               {" "}<a href="#components">Открыть «Компоненты»</a>. Настройки канала сохранены.
             </Notice>}
           {channel.type === "direct" ? (
-            <div className="row" key={channel.id} style={{ justifyContent: "space-between" }}>
-              <div>
-                <strong>{channel.name}</strong>
-                <div className="hint">Обычная таблица маршрутизации провайдера</div>
-              </div>
-              <Badge tone="ok">активен</Badge>
-            </div>
+            <Row key={channel.id} cells={[<strong>{channel.name}</strong>, <span className="dim">через провайдера</span>, "—", "—", <Badge tone="ok">активен</Badge>]} />
           ) : channel.type === "wireguard" ? (
             <WireGuardEditor
               key={channel.id}
@@ -255,23 +272,36 @@ export function ChannelsPage({ config, patch }: Props) {
             </Notice>
           )}
         </Fragment>)}
-      </Card>
-
-      <Card title="Состояние каналов" subtitle="Проверки каналов выполняются роутером в фоне, независимо от открытой страницы">
-        {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
-        {liveChannels === null ? <Empty>{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</Empty> : liveChannels.length === 0 ? <Empty>Активных VPN-каналов нет</Empty> :
-          <div className="stack">{liveChannels.map((channel: any) =>
-            <div key={channel.id} className="row between wrap">
-              <strong>{channel.name}</strong>
-              <span className="mono faint">{channel.interface}</span>
-              <Badge tone={channel.up ? "ok" : "warn"}>{channel.probe_down ? "проба не прошла" : channel.up ? "поднят" : "нет связи"}</Badge>
-            </div>)}</div>}
+        </Rows>
+        </Live.Provider>
       </Card>
 
       <SegmentDefaults config={config} patch={patch} />
       <Policies config={config} patch={patch} policies={policies} />
     </>
   );
+}
+
+const TYPE_NAMES: Record<string, string> = { wireguard: "WireGuard", openconnect: "OpenConnect", xray: "Xray", ikev2: "IKEv2", l2tp: "L2TP" };
+
+// Живое состояние каналов из /api/status: его показывает строка самого канала.
+const Live = createContext<any[] | null>(null);
+
+function ChannelRow({ channel, installed, referenced, blocked, update, remove, children }: {
+  channel: any; installed: boolean; referenced: boolean; blocked?: boolean;
+  update: (mutate: (channel: any) => void) => void; remove: () => void; children: ReactNode;
+}) {
+  const live = (useContext(Live) || []).find((item: any) => item.id === channel.id);
+  const probe = channel.probe?.enabled === false ? "выключена" : `${String(channel.probe?.type || "").toUpperCase()}, каждые ${channel.probe?.interval || 10} с`;
+  const state = !channel.enabled ? <Badge tone="neutral">выключен</Badge>
+    : !live ? <Badge tone="ok">включён</Badge>
+    : <Badge tone={live.up ? "ok" : "warn"}>{live.probe_down ? "проба не прошла" : live.up ? "поднят" : "нет связи"}</Badge>;
+  return <Row as="form" className="channel-row" id={channel.id} data-channel-id={channel.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
+    cells={[<strong>{channel.name}</strong>, TYPE_NAMES[channel.type] || channel.type, <span className="mono">{live?.interface || "—"}</span>, <span className="dim">{probe}</span>, state]}
+    toggle={<Switch checked={!!channel.enabled} disabled={!channel.enabled && (!installed || !!blocked)} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="" ariaLabel="Использовать" />}>
+    {children}
+    <div className="row-actions"><button type="button" className="btn ghost sm to-right" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
+  </Row>;
 }
 
 function XrayEditor({ channel, channels, installed, referenced, update, remove }: {
@@ -291,11 +321,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
       setLink(""); setError("");
     } catch (err: any) { setError(err?.message || "Ссылка не распознана"); }
   };
-  return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
-      <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div>
-      <div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && (!installed || !!error)} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
-    </div>
+  return <ChannelRow blocked={!!error} channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
     {error && <Notice tone="warn" title="Конфигурация Xray не разобрана">{error}</Notice>}
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
@@ -319,6 +345,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
         <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => draft.probe.rise_threshold = Number(e.target.value))} /></Field>
       </>}
     </div>
+    <details className="more"><summary>Outbound Xray (JSON)</summary>
     <Field label="Outbound Xray (JSON)" hint="Можно использовать любой поддержанный Xray transport: Reality, XTLS, XHTTP, WebSocket, gRPC, mKCP и другие.">
       <textarea className="mono" style={{ minHeight: 260 }} spellCheck={false} value={raw} onChange={(e) => {
         const value = e.target.value; setRaw(value);
@@ -326,7 +353,8 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
         catch (err: any) { setError(err.message); }
       }} />
     </Field>
-  </form>;
+    </details>
+  </ChannelRow>;
 }
 
 function IKEv2Editor({ channel, channels, installed, referenced, update, remove }: {
@@ -335,8 +363,7 @@ function IKEv2Editor({ channel, channels, installed, referenced, update, remove 
 }) {
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
-  return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}><div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div><div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && !installed} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div></div>
+  return <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-сервер"><input className="mono" placeholder="vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
@@ -350,7 +377,7 @@ function IKEv2Editor({ channel, channels, installed, referenced, update, remove 
       {channel.probe?.enabled !== false && <><Field label="Тип проверки"><select value={channel.probe?.type || "http"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field><Field label="Цели"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field></>}
     </div>
     <Field label="Доверенный CA-сертификат (PEM)" hint="Скачайте сертификат IKEv2-сервера и вставьте его целиком; соединение проверяет также идентификатор сервера."><textarea className="mono" style={{ minHeight: 160 }} value={cfg.ca_cert || ""} onChange={(e) => setConfig("ca_cert", e.target.value)} /></Field>
-  </form>;
+  </ChannelRow>;
 }
 
 function L2TPEditor({ channel, channels, installed, referenced, update, remove }: {
@@ -359,8 +386,7 @@ function L2TPEditor({ channel, channels, installed, referenced, update, remove }
 }) {
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
-  return <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-    <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}><div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div><div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && !installed} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div></div>
+  return <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
     <Notice tone="warn" title="L2TP без шифрования">Используйте этот канал только в доверенной сети или поверх отдельного защищённого транспорта.</Notice>
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
@@ -373,7 +399,7 @@ function L2TPEditor({ channel, channels, installed, referenced, update, remove }
       <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe.enabled = enabled; })} /></Field>
       {channel.probe?.enabled !== false && <><Field label="Тип проверки"><select value={channel.probe?.type || "http"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field><Field label="Цели"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field></>}
     </div>
-  </form>;
+  </ChannelRow>;
 }
 
 function OpenConnectEditor({ channel, channels, installed, referenced, update, remove }: {
@@ -383,11 +409,7 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
   return (
-    <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
-        <div className="row"><strong>{channel.name}</strong><Badge tone={channel.enabled ? "ok" : "neutral"}>{channel.enabled ? "включён" : "выключен"}</Badge></div>
-        <div className="row"><Switch checked={!!channel.enabled} disabled={!channel.enabled && !installed} onChange={(enabled) => update((draft) => (draft.enabled = enabled))} label="Использовать" /><button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
-      </div>
+    <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
       <div className="form-grid">
         <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} /></Field>
         <Field label="VPN-сервер"><input className="mono" placeholder="https://vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
@@ -411,7 +433,7 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
           <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => (draft.probe.rise_threshold = Number(e.target.value)))} /></Field>
         </>}
       </div>
-    </form>
+    </ChannelRow>
   );
 }
 
@@ -438,26 +460,7 @@ function WireGuardEditor({
     });
 
   return (
-    <form onSubmit={(event) => event.preventDefault()} style={{ borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem" }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: "1rem" }}>
-        <div className="row">
-          <strong>{channel.name}</strong>
-          <Badge tone={channel.enabled ? "ok" : "neutral"}>
-            {channel.enabled ? "включён" : "выключен"}
-          </Badge>
-        </div>
-        <div className="row">
-          <Switch
-            checked={!!channel.enabled}
-            disabled={!channel.enabled && !installed}
-            onChange={(enabled) => update((draft) => (draft.enabled = enabled))}
-            label="Использовать"
-          />
-          <button type="button" className="btn ghost sm" disabled={channel.enabled || referenced} onClick={remove}>
-            Удалить
-          </button>
-        </div>
-      </div>
+    <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
       <div className="form-grid">
         <Field label="Название">
           <input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} />
@@ -520,7 +523,7 @@ function WireGuardEditor({
         </>}
       </div>
       <div className="hint">Проверка идёт через интерфейс самого туннеля; переключение выполняется только после заданного числа ошибок.</div>
-    </form>
+    </ChannelRow>
   );
 }
 
@@ -559,27 +562,32 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
   const choices = enabledChannels(config);
 
   return (
-    <Card title="Политики" subtitle="Меньшее число — более высокий приоритет">
+    <Card tight title="Политики" subtitle="Меньшее число — более высокий приоритет">
       {policies.length === 0 ? <Empty>Явных политик нет</Empty> : (
-        <TableWrap>
-          <table>
-            <thead><tr><th>Вкл.</th><th>Приоритет</th><th>Название</th><th>Источник</th><th>Назначение</th><th>Протокол / порт</th><th>Канал</th><th /></tr></thead>
-            <tbody>
-              {policies.map((policy: any) => (
-                <Fragment key={policy.id}>
-                <tr>
-                  <td><input aria-label={`Политика ${policy.name || policy.id} включена`} type="checkbox" checked={!!policy.enabled} onChange={(e) => updatePolicy(patch, policy.id, "enabled", e.target.checked)} /></td>
-                  <td><input aria-label={`Приоритет политики ${policy.name || policy.id}`} type="number" style={{ width: 85 }} value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></td>
-                  <td><input aria-label="Название политики" value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></td>
-                  <td><input aria-label={`IP источника политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.src_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_ip", e.target.value)} /></td>
-                  <td><input aria-label={`IP назначения политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.dst_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_ip", e.target.value)} /></td>
-                  <td><div className="row"><select aria-label={`Протокол политики ${policy.name || policy.id}`} value={policy.protocol || "any"} onChange={(e) => updatePolicy(patch, policy.id, "protocol", e.target.value)}><option value="any">any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select><input aria-label={`Порт назначения политики ${policy.name || policy.id}`} className="mono" style={{ width: 90 }} placeholder="порт" value={policy.dst_port || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_port", e.target.value)} /></div></td>
-                  <td><select aria-label={`Канал политики ${policy.name || policy.id}`} value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
-                  <td><button className="btn ghost sm" onClick={() => patch((draft) => { draft.policies = draft.policies.filter((item: any) => item.id !== policy.id); })}>Убрать</button></td>
-                </tr>
-                <tr>
-                  <td colSpan={8} style={{ background: "var(--surface-2)" }}>
-                    <details className="advanced">
+        <Rows cols={["Политика", "Источник", "Назначение", "Канал", "Приоритет"]} toggle="Вкл.">
+          {policies.map((policy: any) => (
+              <Row
+                key={policy.id}
+                id={policy.id}
+                cells={[<strong>{policy.name || "без названия"}</strong>,
+                  policy.src_ip ? <span className="mono">{policy.src_ip}</span> : <span className="dim">любой</span>,
+                  policy.dst_ip || policy.dst_port || (policy.domains || []).length
+                    ? <span className="mono">{[policy.dst_ip, policy.dst_port && `порт ${policy.dst_port}`, (policy.domains || []).length ? `доменов: ${policy.domains.length}` : ""].filter(Boolean).join(", ")}</span>
+                    : <span className="dim">любое</span>,
+                  choices.find((item: any) => item.id === policy.channel)?.name || policy.channel,
+                  <span className="mono">{policy.priority || 0}</span>]}
+                toggle={<Switch checked={!!policy.enabled} label="" ariaLabel={`Политика ${policy.name || policy.id} включена`} onChange={(enabled) => updatePolicy(patch, policy.id, "enabled", enabled)} />}
+              >
+                <div className="form-grid">
+                  <Cap label="Приоритет"><input aria-label={`Приоритет политики ${policy.name || policy.id}`} type="number" value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></Cap>
+                  <Cap label="Название"><input aria-label="Название политики" value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></Cap>
+                  <Cap label="Источник"><input aria-label={`IP источника политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.src_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_ip", e.target.value)} /></Cap>
+                  <Cap label="Назначение"><input aria-label={`IP назначения политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.dst_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_ip", e.target.value)} /></Cap>
+                  <Cap label="Протокол"><select aria-label={`Протокол политики ${policy.name || policy.id}`} value={policy.protocol || "any"} onChange={(e) => updatePolicy(patch, policy.id, "protocol", e.target.value)}><option value="any">any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></Cap>
+                  <Cap label="Порт назначения"><input aria-label={`Порт назначения политики ${policy.name || policy.id}`} className="mono" placeholder="порт" value={policy.dst_port || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_port", e.target.value)} /></Cap>
+                  <Cap label="Канал"><select aria-label={`Канал политики ${policy.name || policy.id}`} value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Cap>
+                </div>
+                <details className="advanced">
                       <summary>Все условия и служебные поля</summary>
                       <div className="form-grid" style={{ marginTop: ".8rem" }}>
                         <Field label="MAC источника">
@@ -628,22 +636,19 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
                         <Field label="Окончание (UTC)"><input type="time" value={policy.schedule.time_stop || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_stop", e.target.value)} /></Field>
                       </div>}
                     </details>
-                  </td>
-                </tr>
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
+                <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((draft) => { draft.policies = draft.policies.filter((item: any) => item.id !== policy.id); })}>Убрать</button></div>
+              </Row>
+          ))}
+        </Rows>
       )}
-      <div className="row policy-add-row" style={{ marginTop: "1rem" }}>
+      <div className="rows-foot row policy-add-row">
         <input aria-label="Название новой политики" placeholder="Название новой политики" value={name} onChange={(e) => setName(e.target.value)} />
         <select aria-label="Канал новой политики" value={channel} onChange={(e) => setChannel(e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
         <button className="btn primary" disabled={!name.trim()} onClick={() => {
           patch((draft) => {
             const priority = Math.max(0, ...(draft.policies || []).map((item: any) => item.priority || 0)) + 100;
             draft.policies = draft.policies || [];
-            draft.policies.push({ id: newID("policy"), name: name.trim(), enabled: false, priority, channel, src_ip: "", src_mac: "", network: "", vpn_server: "", vpn_peer: "", protocol: "any", dst_port: "", dst_ip: "", domains: [], comment: "" });
+            draft.policies.push({ id: openOnCreate(newID("policy")), name: name.trim(), enabled: false, priority, channel, src_ip: "", src_mac: "", network: "", vpn_server: "", vpn_peer: "", protocol: "any", dst_port: "", dst_ip: "", domains: [], comment: "" });
           });
           setName("");
         }}>Добавить</button>

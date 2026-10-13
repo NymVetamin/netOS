@@ -9,6 +9,12 @@ from playwright.async_api import async_playwright, expect
 DIST = Path(__file__).resolve().parents[2] / "backend/internal/api/webdist"
 
 
+# Записи свёрнуты в строки; сценарий проверяет их настройки, поэтому раскрывает
+# каждую строку сразу, как только она появляется.
+OPEN_ROWS = """new MutationObserver(() => document.querySelectorAll('details.xd:not([data-opened])')
+  .forEach((row) => { row.dataset.opened = '1'; row.open = true; })).observe(document, {childList: true, subtree: true})"""
+
+
 async def scenario(browser, mode):
     page = await browser.new_page()
     gate = asyncio.Event()
@@ -37,6 +43,7 @@ async def scenario(browser, mode):
             body = {"interfaces":[],"channels":[{"id":"vpn","name":"Xray test","interface":"tun-ch1","up":mode!="down","probe_down":mode=="down"}]}
             if mode == "error": status, body = 503,{"error":"unavailable"}
         await route.fulfill(status=status,json=body)
+    await page.add_init_script(OPEN_ROWS)
     await page.route("**/*",route_request)
     await page.goto("http://netos-ui.test/#channels")
     await expect(page.get_by_role("heading",name="Интернет-каналы",exact=True)).to_be_visible()

@@ -11,6 +11,12 @@ TYPES = [("wireguard", "wireguard", "WireGuard"), ("openconnect", "openconnect",
          ("xray", "xray", "Xray"), ("ikev2", "strongswan", "IKEv2"), ("l2tp", "l2tp", "L2TP")]
 
 
+# Записи свёрнуты в строки; сценарий проверяет их настройки, поэтому раскрывает
+# каждую строку сразу, как только она появляется.
+OPEN_ROWS = """new MutationObserver(() => document.querySelectorAll('details.xd:not([data-opened])')
+  .forEach((row) => { row.dataset.opened = '1'; row.open = true; })).observe(document, {childList: true, subtree: true})"""
+
+
 async def scenario(browser, mode):
     page = await browser.new_page()
     selected = mode != "absent"
@@ -49,26 +55,35 @@ async def scenario(browser, mode):
             body = config()
         await route.fulfill(status=status, json=body)
 
+    await page.add_init_script(OPEN_ROWS)
     await page.route("**/*", route_request)
     await page.goto("http://netos-ui.test/#channels")
     await expect(page.get_by_role("heading", name="Интернет-каналы", exact=True)).to_be_visible()
     toggle = page.get_by_role("checkbox", name="Использовать", exact=True).first
     await expect(page.locator('input[value="Poland"]')).to_be_visible()
+    add = page.locator("details.addmenu > summary")
     if mode == "ready":
+        await add.click()
         for _, _, label in TYPES:
             await expect(page.get_by_role("button", name=label, exact=True)).to_be_visible()
+        # Escape closes the menu; it must not stay over the row switches.
+        await page.keyboard.press("Escape")
+        await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_have_count(0)
         await expect(toggle).to_be_enabled()
         await toggle.locator("..").click()
         await expect(toggle).to_be_checked()
+        await add.click()
         await page.get_by_role("button", name="WireGuard", exact=True).click()
+        # The menu closes after a choice and the new channel opens by itself.
+        await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_have_count(0)
         await expect(page.locator('input[value="WireGuard 2"]')).to_be_visible()
     else:
         if mode == "error":
             await expect(page.get_by_text("Не удалось проверить компоненты", exact=True)).to_be_visible()
         else:
             await expect(page.get_by_text("Для других типов каналов нужны компоненты", exact=True)).to_be_visible()
-        for _, _, label in TYPES:
-            await expect(page.get_by_role("button", name=label, exact=True)).to_have_count(0)
+        # No type can be created, so there is no "add" menu at all.
+        await expect(add).to_have_count(0)
         if mode == "error":
             await expect(page.get_by_text("Poland: включение недоступно", exact=True)).to_have_count(0)
         else:
@@ -82,7 +97,8 @@ async def scenario(browser, mode):
             await expect(page.get_by_text("выключен", exact=True)).to_be_visible()
         if mode in ("pending", "error"):
             state.update(ready=True, error=False)
-            await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_be_visible(timeout=10000)
+            await add.click(timeout=10000)
+            await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_be_visible()
             await expect(toggle).to_be_enabled()
             await expect(page.locator('input[value="Poland"]')).to_be_visible()
         else:
