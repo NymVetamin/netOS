@@ -192,3 +192,49 @@ func TestUninstallRetryAfterPackagePurge(t *testing.T) {
 		}
 	}
 }
+
+func TestUninstallFirewallCheckpointBoundToBaselineAndInvalidated(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	b := &systemBaseline{Version: 1, IPTables4: "*filter\n:INPUT DROP [0:0]\nCOMMIT\n"}
+	m.Output = func(context.Context, string, ...string) (string, error) { return "", exec.ErrNotFound }
+	if m.uninstallFirewallAlreadyRestored(context.Background(), b, exec.ErrNotFound) {
+		t.Fatal("missing tools accepted without completed restore")
+	}
+	if err := m.recordUninstallFirewallRestored(b); err != nil {
+		t.Fatal(err)
+	}
+	if !m.uninstallFirewallAlreadyRestored(context.Background(), b, exec.ErrNotFound) {
+		t.Fatal("completed restore requires purged tools")
+	}
+	changed := *b
+	changed.Hostname = "different-baseline"
+	if m.uninstallFirewallAlreadyRestored(context.Background(), &changed, exec.ErrNotFound) {
+		t.Fatal("accepted checkpoint for a different baseline")
+	}
+	if m.uninstallFirewallAlreadyRestored(context.Background(), b, errors.New("permission denied")) {
+		t.Fatal("checkpoint hid an unrelated error")
+	}
+	if err := InvalidateUninstallCheckpoint(m.Root); err != nil {
+		t.Fatal(err)
+	}
+	if m.uninstallFirewallAlreadyRestored(context.Background(), b, exec.ErrNotFound) {
+		t.Fatal("new Apply still trusts previous uninstall")
+	}
+}
+
+func TestLegacyPermissiveFirewallDump(t *testing.T) {
+	for _, tc := range []struct {
+		dump string
+		want bool
+	}{
+		{"", true}, {"# saved\n*filter\n:INPUT ACCEPT [42:99]\nCOMMIT\n", true},
+		{"*filter\n:INPUT DROP [0:0]\nCOMMIT", false},
+		{"*filter\n:INPUT ACCEPT [0:0]\n-A INPUT -j ACCEPT\nCOMMIT", false},
+		{"*filter\n:INPUT ACCEPT [0:0]", false}, {"garbage", false},
+	} {
+		if got := permissiveFirewallDump(tc.dump); got != tc.want {
+			t.Fatalf("dump %q got %v want %v", tc.dump, got, tc.want)
+		}
+	}
+}

@@ -1331,6 +1331,10 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	}
 	savedRoutes := m.captureDefaultRoutes(ctx)
 	needDefault := len(savedRoutes) > 0 || (baseline != nil && len(baseline.DefaultRoutes4) > 0)
+	releaseSSH, err := m.protectUninstallSSH(ctx, uplink)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(m.Out, "Останавливаем netOS и его компоненты…")
 	if err := m.stopDaemon(ctx); err != nil {
 		return err
@@ -1529,6 +1533,9 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
 		return fmt.Errorf("удаление адресов netOS: %w", err)
 	}
+	if err := m.recordUninstallFirewallRestored(baseline); err != nil {
+		return fmt.Errorf("сохранение этапа восстановления firewall: %w", err)
+	}
 	// До этого места unit, бинарник и данные остаются доступны для аварийного
 	// повторного Apply. Удаляем их только после успешного возврата системы.
 	fmt.Fprintln(m.Out, "Сеть восстановлена. Удаляем оставшиеся файлы netOS…")
@@ -1537,6 +1544,9 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	}
 	if needDefault && !m.waitDefaultRoute(ctx, 3) {
 		return m.networkRestoreFailure(ctx, savedRoutes, fmt.Errorf("шлюз пропал после удаления пакетов"))
+	}
+	if err := releaseSSH(); err != nil {
+		return err
 	}
 	if err := components.RemoveOwnedExternal(m.Root); err != nil {
 		return err
