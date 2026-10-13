@@ -263,6 +263,9 @@ func (m *Manager) restoreBaselineFirewall(ctx context.Context, b *systemBaseline
 		rules6 = emptyFirewall6
 	}
 	if err := m.Run(ctx, command{name: "iptables-restore", stdin: rules4, feedStdin: true}); err != nil {
+		if m.uninstallFirewallAlreadyRestored(ctx, b, err) {
+			return nil
+		}
 		return fmt.Errorf("восстановление IPv4 firewall: %w", err)
 	}
 	if b.IPTables6Exists {

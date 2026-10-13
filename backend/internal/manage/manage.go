@@ -79,6 +79,7 @@ type Manager struct {
 	Output             func(context.Context, string, ...string) (string, error)
 	Sleep              func(time.Duration)
 	AcquireMaintenance func() (func(), error)
+	LaunchUninstall    func(context.Context, bool, bool) error
 	// RecordRestoreAudit appends the completion record after the restored
 	// database has replaced the old one. Tests may replace it with a recorder.
 	RecordRestoreAudit func(string) error
@@ -127,6 +128,7 @@ func New(version string) *Manager {
 	m.Output = m.outputOS
 	m.RecordRestoreAudit = m.recordRestoreAudit
 	m.AcquireMaintenance = m.lockMaintenance
+	m.LaunchUninstall = m.launchUninstall
 	return m
 }
 
@@ -150,9 +152,13 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 	// systemd serializes panel jobs, but independent CLI processes can bypass
 	// that queue. Keep ownership across the whole operation, including rollback.
 	switch args[0] {
-	case "backup", "restore", "reset", "uninstall", "update", "reinstall", "internal-panel-activate", "password-reset", "start", "stop", "restart":
+	case "backup", "restore", "reset", "uninstall", "internal-uninstall", "update", "reinstall", "internal-panel-activate", "password-reset", "start", "stop", "restart":
 		if err := m.requireRoot(); err != nil {
 			return err
+		}
+		// The systemd worker takes the lock; the waiting SSH client must not hold it.
+		if args[0] == "uninstall" && m.LaunchUninstall != nil {
+			break
 		}
 		release, err := m.AcquireMaintenance()
 		if err != nil {
@@ -322,6 +328,14 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		}
 		fmt.Fprint(m.Out, bashCompletion())
 		return nil
+	case "internal-uninstall":
+		if err := onlyFlags(args[1:], "--keep-data", "--backup", "--no-backup"); err != nil {
+			return err
+		}
+		if contains(args[1:], "--backup") == contains(args[1:], "--no-backup") {
+			return fmt.Errorf("требуется ровно один выбор резервной копии")
+		}
+		return m.uninstallRun(ctx, contains(args[1:], "--keep-data"), contains(args[1:], "--backup"))
 	case "uninstall":
 		if err := m.requireRoot(); err != nil {
 			return err
@@ -1294,6 +1308,13 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	if !keepData && !withBackup && !noBackup {
 		takeBackup = m.confirm("Создать резервную копию перед удалением?")
 	}
+	if m.LaunchUninstall != nil {
+		return m.LaunchUninstall(ctx, keepData, takeBackup)
+	}
+	return m.uninstallRun(ctx, keepData, takeBackup)
+}
+
+func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (retErr error) {
 	finishLog, err := m.beginUninstallLog()
 	if err != nil {
 		return fmt.Errorf("журнал удаления недоступен; система не изменена: %w", err)
@@ -1359,7 +1380,7 @@ func (m *Manager) uninstall(ctx context.Context, yes, keepData, withBackup, noBa
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return err
 	}
-	if err := firewall.ClearBridgeIPv6(ctx, m.Output); err != nil {
+	if err := firewall.ClearBridgeIPv6(ctx, m.Output); err != nil && !m.uninstallFirewallAlreadyRestored(ctx, baseline, err) {
 		return fmt.Errorf("удаление Ethernet-фильтра IPv6: %w", err)
 	}
 	m.removeVirtualInterfaces(ctx)
@@ -1764,7 +1785,7 @@ func (m *Manager) waitDefaultRoute(ctx context.Context, attempts int) bool {
 			return false
 		}
 		out, err := m.Output(ctx, "ip", "-4", "route", "show", "default")
-		if err == nil && strings.TrimSpace(out) != "" {
+		if err == nil && usableDefaultRoute(out) {
 			return true
 		}
 		if i >= attempts {

@@ -19,6 +19,7 @@ import (
 func testManager() (*Manager, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	m := New("v1.2.3")
+	m.LaunchUninstall = nil
 	m.In = strings.NewReader("")
 	m.Out, m.Err = out, out
 	m.EUID = func() int { return 0 }
