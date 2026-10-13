@@ -167,6 +167,22 @@ async def main():
         await expect(page.get_by_label(f"MAC интерфейса {bridges[1]['name']}", exact=True)).to_be_visible()
         print("network add PASS")
 
+        # Mobile rows retain data and actions, including rows without details.
+        state["config"]["samba"]["volumes"] = [{"id": "vol1", "uuid": "test-volume", "filesystem": "ext4", "enabled": False}]
+        await page.set_viewport_size({"width": 390, "height": 844})
+        await page.goto("http://netos-ui.test/#storage")
+        await page.reload()
+        forget = page.get_by_role("button", name="Забыть том", exact=True)
+        await expect(forget).to_be_visible()
+        async with page.expect_response(is_put):
+            await forget.click()
+        assert state["config"]["samba"]["volumes"] == []
+        await page.goto("http://netos-ui.test/#clients")
+        pin = page.get_by_role("button", name=f"Закрепить адрес за устройством {MAC}", exact=True)
+        await expect(pin).to_be_visible()
+        await expect(page.get_by_text(MAC, exact=True)).to_be_visible()
+        print("mobile storage action and client address PASS")
+
         assert not errors, errors
         await browser.close()
 

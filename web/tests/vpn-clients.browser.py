@@ -26,7 +26,7 @@ OPEN_ROWS = """new MutationObserver(() => document.querySelectorAll('details.xd:
 
 async def scenario(browser, mode):
     page = await browser.new_page()
-    if mode != "collapsed":
+    if mode not in ("collapsed", "mobile"):
         await page.add_init_script(OPEN_ROWS)
     peer = {"id": "phone", "name": "Телефон", "enabled": True, "address": "10.9.0.2", "credentials": {"public_key": PUBLIC, "preshared_key": "stored-psk"}}
     if mode != "legacy":
@@ -104,6 +104,16 @@ async def scenario(browser, mode):
     await expect(page.get_by_role("heading", name="VPN-доступ", exact=True, level=1)).to_be_visible()
     await expect(page.get_by_text("В сети · недавнее рукопожатие", exact=True)).to_be_visible()
     await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+    if mode == "mobile":
+        await page.set_viewport_size({"width": 390, "height": 844})
+        await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+        await page.locator(".peer-card summary.xsum").click()
+        await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+        await page.locator(".peer-card").screenshot(path="output/playwright/vpn-client-mobile.png")
+        assert not errors, errors
+        await page.close()
+        print(mode, "PASS")
+        return
     if mode == "collapsed":
         # The state and the external address are readable without opening the row.
         name = page.get_by_role("textbox", name="Название устройства", exact=True)
@@ -273,7 +283,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("collapsed", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("collapsed", "mobile", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

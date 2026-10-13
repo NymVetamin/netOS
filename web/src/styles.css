@@ -921,10 +921,34 @@ summary.xsum:hover,
 
 @media (max-width: 860px) {
   .xrows {
-    --xcols: 34px minmax(0, 1.4fr) minmax(0, 1fr) 64px;
+    --xcols: 34px minmax(0, 1fr) 64px;
   }
-  .xhead > span:nth-child(n + 3):nth-child(-n + 5),
-  .xsum > span:nth-child(n + 2):nth-child(-n + 4) {
+  .xhead {
+    display: none;
+  }
+  /* На узком экране переносим данные под имя, сохраняя адреса и действия. */
+  .xsum {
+    padding-bottom: 8px;
+  }
+  .xsum::before {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .xsum > span {
+    grid-column: 2 / -1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+  .xsum > span:first-child {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+  }
+  .xsum > span:empty {
     display: none;
   }
   .xbody {
