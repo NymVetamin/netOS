@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
+import { localDevices } from "../deviceList";
+import { vpnMapServers } from "../mapVPN";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
 
@@ -47,6 +49,31 @@ export function Clients({
     };
   }, [reloadKey]);
 
+  const [manual, setManual] = useState(false);
+  const [vpnTelemetry, setVPNTelemetry] = useState<Record<string, any[]>>({});
+  const [vpnError, setVPNError] = useState(false);
+  const vpnIDs = JSON.stringify((config.vpn_servers || []).filter((s: any) => s.type === "wireguard").map((s: any) => s.id));
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const ids: string[] = JSON.parse(vpnIDs);
+    setVPNTelemetry({});
+    async function load() {
+      const results = await Promise.allSettled(ids.map(id => api.vpnClientStatus(id, controller.signal)));
+      if (controller.signal.aborted) return;
+      const next: Record<string, any[]> = {};
+      results.forEach((r, i) => { if (r.status === "fulfilled") next[ids[i]] = r.value; });
+      setVPNTelemetry(next);
+      setVPNError(results.some(r => r.status === "rejected"));
+      timer = setTimeout(load, 5000);
+    }
+    void load();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [vpnIDs]);
+  const devices = localDevices(clients, config);
+  const vpn = vpnMapServers(config, vpnTelemetry);
+  const vpnCount = vpn.reduce((n, s) => n + s.peers.length, 0);
+
   const leaseByMAC = new Map(leases.map((l) => [l.mac, l]));
 
   // Устройство описывается в конфигурации только когда о нём что-то задали:
@@ -79,7 +106,7 @@ export function Clients({
 
   // Булавка рядом с адресом: закрепить его за устройством или открепить.
   const pinButton = (c: any) => {
-    if (!c.ip || (config.networks || []).length === 0) return null;
+    if (!reserved.has(String(c.mac).toLowerCase()) && (!c.ip || (config.networks || []).length === 0)) return null;
     const pinned: any = reserved.get(String(c.mac).toLowerCase());
     return <button
                             type="button"
@@ -93,12 +120,11 @@ export function Clients({
                           </button>;
   };
 
-  const known = new Map((config.clients || []).map((c: any) => [c.mac, c]));
+  const known = new Map((config.clients || []).map((c: any) => [String(c.mac).toLowerCase(), c]));
   const reserved = new Map((config.dhcp?.reservations || []).map((r: any) => [String(r.mac).toLowerCase(), r]));
 
   // Закрепить за устройством адрес, который у него сейчас, — одним нажатием в
-  // его же строке. Форма ниже нужна только для устройства, которого роутер
-  // ещё не видел.
+  // его же строке, включая сохранённое отключённое устройство.
   function togglePin(client: any) {
     const mac = String(client.mac).toLowerCase();
     patch((draft) => {
@@ -128,9 +154,11 @@ export function Clients({
         <p>Телефоны, компьютеры и другая техника, которую видит роутер</p>
       </div>
 
+      {manual && <AddReservation config={config} patch={patch} clients={clients} />}
       <Card
+        actions={(config.networks || []).length > 0 ? <button className="btn sm" onClick={() => setManual(!manual)}>{manual ? "Закрыть добавление" : "Добавить по MAC"}</button> : undefined}
         title="Устройства"
-        subtitle={loadError && loaded ? "Показаны последние полученные данные" : loaded ? `${clients.filter((c) => c.online).length} в сети из ${clients.length}` : loading ? "Загрузка данных" : "Данные недоступны"}
+        subtitle={`${devices.length} локальных · ${vpnCount} VPN · ${devices.filter(c => c.online && !loadError).length} локальных в сети · ${vpn.reduce((n, s) => n + s.peers.filter(p => p.state === "recent").length, 0)} VPN недавно на связи`}
         tight
       >
         {loadError && (
@@ -139,22 +167,22 @@ export function Clients({
             <button className="btn sm" disabled={loading} onClick={() => setReloadKey((key) => key + 1)}>Повторить</button>
           </Notice>
         )}
-        {!loaded && loading ? <Empty>Загрузка устройств…</Empty> : !loaded ? null : clients.length === 0 ? (
-          <Empty>Устройств пока не видно</Empty>
-        ) : (
+        {vpnError && <Notice tone="warn" title="Состояние VPN-клиентов недоступно">Подключение не подтверждено. Проверка повторится автоматически.</Notice>}
+        {!loaded && loading && <Empty>Загрузка локальных устройств…</Empty>}
+        {loaded && devices.length + vpnCount === 0 && <Empty>Устройств пока не видно</Empty>}
           <Rows cols={["Устройство", "Адрес", "MAC", "Подключение", "Состояние"]}>
-          {clients.map((c) => {
+          {devices.map((c) => {
                   const cfgClient: any = known.get(c.mac);
                   const lease = leaseByMAC.get(c.mac);
                   return (
               <Row
-                key={c.mac}
-                id={c.mac}
+                key={`lan:${c.mac}`}
+                id={`lan:${c.mac}`}
                 cells={[<strong>{cfgClient?.name || c.hostname || "без имени"}</strong>,
                   <span className="mono">{c.ip || "—"}{pinButton(c)}</span>,
                   <span className="mono dim">{c.mac}</span>,
-                  <span className="dim">{[c.interface, c.source === "dhcp" ? "DHCP" : c.source === "arp" ? "ARP" : "DHCP + ARP", lease ? `до ${formatTime(lease.expires)}` : ""].filter(Boolean).join(" · ")}</span>,
-                  cfgClient?.blocked ? <Badge tone="danger">заблокирован</Badge> : <Badge tone={c.online ? "ok" : "neutral"}>{c.online ? "в сети" : "молчит"}</Badge>]}
+                  <span className="dim">{[c.interface, c.source === "dhcp" ? "DHCP" : c.source === "arp" ? "ARP" : c.source === "reservation" ? "Закреплённый адрес" : "DHCP + ARP", lease ? `до ${formatTime(lease.expires)}` : ""].filter(Boolean).join(" · ")}</span>,
+                  loadError ? <Badge tone="neutral">данные устарели</Badge> : cfgClient?.blocked ? <Badge tone="danger">заблокирован</Badge> : <Badge tone={c.online ? "ok" : "neutral"}>{c.online ? "в сети" : "молчит"}</Badge>]}
               >
                 <div className="form-grid">
                   <Cap label="Имя"><input
@@ -198,47 +226,22 @@ export function Clients({
               </Row>
           );
                 })}
+          {vpn.flatMap(server => server.peers.map(peer => <Row
+            key={`vpn:${server.id}:${peer.id}`} id={`vpn:${server.id}:${peer.id}`}
+            cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="dim">—</span>,
+              <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
+              <Badge tone={peer.state === "recent" ? "ok" : peer.state === "disabled" ? "danger" : "neutral"}>{peer.label}</Badge>]}>
+            <div className="form-grid">
+              <Cap label="VPN-сервер"><span>{server.name}</span></Cap>
+              <Cap label="Адрес подключения"><span>{peer.endpoint || "—"}</span></Cap>
+              <Cap label="Последний handshake"><span>{peer.handshake ? formatTime(new Date(peer.handshake * 1000).toISOString()) : "—"}</span></Cap>
+              <Cap label="Получено / отправлено"><span>{peer.handshake ? `${peer.received} / ${peer.sent} байт` : "—"}</span></Cap>
+            </div>
+            <a className="btn sm" href="#vpn-servers">Настройки VPN-клиента</a>
+          </Row>))}
         </Rows>
-        )}
       </Card>
 
-      <Card
-        title="Закреплённые адреса"
-        subtitle="Устройство всегда получает один и тот же адрес"
-        tight
-      >
-        {(config.dhcp?.reservations || []).length === 0 ? (
-          <Empty>Закреплённых адресов нет</Empty>
-        ) : (
-          <Rows cols={["MAC", "Адрес", "Имя", "Сеть", ""]}>
-            {config.dhcp.reservations.map((r: any) => (
-              <Row
-                key={r.id}
-                cells={[
-                  <strong className="mono">{r.mac}</strong>,
-                  <span className="mono">{r.ip}</span>,
-                  r.hostname || <span className="faint">—</span>,
-                  <span className="dim">{(config.networks || []).find((n: any) => n.id === r.network)?.name || r.network}</span>,
-                ]}
-                toggle={<button
-                        className="btn ghost sm"
-                        onClick={() =>
-                          patch((d) => {
-                            d.dhcp.reservations = d.dhcp.reservations.filter(
-                              (x: any) => x.id !== r.id,
-                            );
-                          })
-                        }
-                      >
-                        Убрать
-                      </button>}
-              />
-            ))}
-          </Rows>
-        )}
-      </Card>
-
-      <AddReservation config={config} patch={patch} clients={clients} />
     </>
   );
 }
@@ -262,9 +265,7 @@ function AddReservation({
   if (networks.length === 0) return null;
 
   return (
-    <Card title="Закрепить адрес">
-      <details className="more first">
-      <summary>Указать MAC и адрес вручную</summary>
+    <Card title="Добавить устройство по MAC" subtitle="Для устройства, которое ещё не подключалось: заранее закрепить адрес DHCP">
       <div className="form-grid">
         <div className="field">
           <label>Устройство</label>
@@ -333,6 +334,7 @@ function AddReservation({
         onClick={() => {
           setError("");
           patch((d) => {
+            d.dhcp = d.dhcp || {};
             d.dhcp.reservations = d.dhcp.reservations || [];
             d.dhcp.reservations.push({
               id: newID("res"),
@@ -350,7 +352,6 @@ function AddReservation({
       >
         Закрепить
       </button>
-      </details>
     </Card>
   );
 }
