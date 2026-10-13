@@ -86,7 +86,7 @@ async def open_rows_above(control):
 
 
 async def main():
-    state = {"config": copy.deepcopy(CONFIG)}
+    state = {"config": copy.deepcopy(CONFIG), "hostname": "laptop"}
     errors = []
     async with async_playwright() as p:
         executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
@@ -112,7 +112,7 @@ async def main():
             elif path == "/api/status":
                 body = {"interfaces": LIVE, "channels": [], "wans": [], "uptime_seconds": 1}
             elif path == "/api/clients":
-                body = {"clients": [{"mac": MAC, "ip": "192.168.10.23", "hostname": "laptop", "interface": "br-lan", "source": "dhcp", "online": True}]}
+                body = {"clients": [{"mac": MAC, "ip": "192.168.10.23", "hostname": state["hostname"], "interface": "br-lan", "source": "dhcp", "online": True}]}
             elif path == "/api/leases":
                 body = {"leases": []}
             elif path == "/api/interfaces":
@@ -135,18 +135,27 @@ async def main():
                 await page.locator("main.main").screenshot(path=str(Path(shots) / f"{name}.png"))
             print(name, label, "PASS")
 
-        # Pin an address from the device row: one click, and it must not open the row.
-        await page.goto("http://netos-ui.test/#clients")
-        pin = page.get_by_role("button", name=f"Закрепить адрес за устройством {MAC}", exact=True)
-        async with page.expect_response(is_put):
-            await pin.click()
-        pinned = [item for item in state["config"]["dhcp"]["reservations"] if item["mac"] == MAC]
-        assert len(pinned) == 1 and pinned[0]["ip"] == "192.168.10.23" and pinned[0]["network"] == "lan", pinned
-        assert not await page.get_by_label(f"Комментарий устройства {MAC}", exact=True).is_visible()
-        async with page.expect_response(is_put):
-            await page.get_by_role("button", name=f"Открепить адрес устройства {MAC}", exact=True).click()
-        assert not [item for item in state["config"]["dhcp"]["reservations"] if item["mac"] == MAC]
-        print("clients pin PASS")
+        # Display names never become DHCP hostnames; invalid discovered names
+        # are omitted so a quick reservation cannot block applying the draft.
+        state["config"]["clients"][0]["name"] = "Ноутбук мамы"
+        for hostname, expected in [("laptop", "laptop"), ("pc-1.home", "pc-1.home"),
+                                   ("bad name", ""), ("Ноутбук", ""), ("-pc", ""),
+                                   ("a" * 64, ""), ("", "")]:
+            state["hostname"] = hostname
+            await page.goto("http://netos-ui.test/#clients")
+            await page.reload()
+            pin = page.get_by_role("button", name=f"Закрепить адрес за устройством {MAC}", exact=True)
+            async with page.expect_response(is_put):
+                await pin.click()
+            pinned = [item for item in state["config"]["dhcp"]["reservations"] if item["mac"] == MAC]
+            assert len(pinned) == 1 and pinned[0]["ip"] == "192.168.10.23" and pinned[0]["network"] == "lan", pinned
+            assert pinned[0]["hostname"] == expected, pinned
+            assert state["config"]["clients"][0]["name"] == "Ноутбук мамы"
+            assert not await page.get_by_label(f"Комментарий устройства {MAC}", exact=True).is_visible()
+            async with page.expect_response(is_put):
+                await page.get_by_role("button", name=f"Открепить адрес устройства {MAC}", exact=True).click()
+            assert not [item for item in state["config"]["dhcp"]["reservations"] if item["mac"] == MAC]
+        print("clients pin hostname cases PASS")
 
         # One "add" menu for bridges, bonds and VLANs; the new record opens by itself.
         await page.goto("http://netos-ui.test/#network")

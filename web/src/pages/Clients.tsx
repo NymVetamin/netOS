@@ -111,7 +111,12 @@ export function Clients({
       const network = (draft.networks || []).find((item: any) =>
         (draft.interfaces || []).find((iface: any) => iface.id === item.interface)?.name === client.interface)?.id
         || draft.networks?.[0]?.id || "";
-      const name = (draft.clients || []).find((item: any) => item.mac === client.mac)?.name || client.hostname || "";
+      // Отображаемое имя может содержать пробелы и кириллицу. В DHCP берём
+      // только корректное DNS-имя, полученное от самого устройства.
+      const hostname = String(client.hostname || "");
+      const name = hostname.length <= 253 && hostname.split(".").every(label =>
+        label.length <= 63 && /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(label)
+      ) ? hostname : "";
       draft.dhcp.reservations = [...list, { id: newID("res"), enabled: true, mac, ip: client.ip, hostname: name, network }];
     });
   }
