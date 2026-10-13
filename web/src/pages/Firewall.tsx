@@ -16,11 +16,12 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
     {sets.length === 0 && !editing && <Empty>Наборов нет</Empty>}
     {sets.length > 0 && <Rows cols={["Набор", "Состав", "", "", ""]}>{sets.map((item: any) => {
       const used = (config.firewall?.rules || []).some((r: any) => r.src_ipset === item.id || r.dst_ipset === item.id);
-      return <Row key={item.id} cells={[<strong>{item.name}</strong>, <span>{(item.entries || []).length} адресов и подсетей</span>, used ? <span className="dim">используется в правилах</span> : "", "",
-        <span className="row">
+      return <Row key={item.id} cells={[<strong>{item.name}</strong>, <span>{(item.entries || []).length} адресов и подсетей</span>, used ? <span className="dim">используется в правилах</span> : ""]}>
+        <div className="row-actions">
           <button className="btn sm" onClick={() => setEditing({ id: item.id, name: item.name, text: (item.entries || []).join("\n") })}>Изменить набор</button>
           <button className="btn ghost sm" disabled={used} title={used ? "Сначала уберите набор из правил" : "Удалить набор"} onClick={() => patch((d) => { d.firewall.ipsets = d.firewall.ipsets.filter((s: any) => s.id !== item.id); })}>Удалить</button>
-        </span>]} />;
+        </div>
+      </Row>;
     })}</Rows>}
     <div className="rows-foot">
     {!editing && <button className="btn" onClick={() => setEditing({ id: newID("set"), name: "", text: "" })}>Добавить набор адресов</button>}

@@ -183,6 +183,45 @@ async def main():
         await expect(page.get_by_text(MAC, exact=True)).to_be_visible()
         print("mobile storage action and client address PASS")
 
+        # Action buttons must be fully visible before Playwright can scroll
+        # overflow:hidden programmatically. Also preserve referenced-set protection.
+        for width in [1440, 1280, 1024, 390]:
+            state["config"]["firewall"]["ipsets"] = [{"id": "set1", "name": "Office", "entries": ["10.0.0.0/8"]}]
+            state["config"]["firewall"]["rules"][0]["src_ipset"] = "set1"
+            await page.set_viewport_size({"width": width, "height": 1000})
+            await page.goto("http://netos-ui.test/#firewall")
+            await page.reload()
+            card = page.locator("section.card", has=page.get_by_role("heading", name="Наборы адресов", exact=True))
+            await card.locator("summary.xsum").click()
+            buttons = card.locator(".row-actions button")
+            assert await buttons.count() == 2
+            for button in await buttons.all():
+                await expect(button).to_be_visible()
+                assert await button.evaluate("""e => {
+                    const r = e.getBoundingClientRect();
+                    for (let p = e.parentElement; p; p = p.parentElement) {
+                        if (['hidden', 'clip', 'auto', 'scroll'].includes(getComputedStyle(p).overflowX)) {
+                            const a = p.getBoundingClientRect();
+                            if (r.left < a.left - 1 || r.right > a.right + 1) return false;
+                        }
+                    }
+                    return r.left >= 0 && r.right <= innerWidth;
+                }"""), f"clipped action at {width}px"
+            await expect(card.get_by_role("button", name="Удалить", exact=True)).to_be_disabled()
+            await card.get_by_role("button", name="Изменить набор", exact=True).click()
+            await expect(card.get_by_label("IPv4-адреса и подсети", exact=True)).to_have_value("10.0.0.0/8")
+            await card.get_by_label("Название набора", exact=True).fill("Updated")
+            async with page.expect_response(is_put):
+                await card.get_by_role("button", name="Сохранить набор в черновик", exact=True).click()
+            assert state["config"]["firewall"]["ipsets"][0]["name"] == "Updated"
+            del state["config"]["firewall"]["rules"][0]["src_ipset"]
+            await page.reload()
+            await card.locator("summary.xsum").click()
+            async with page.expect_response(is_put):
+                await card.get_by_role("button", name="Удалить", exact=True).click()
+            assert state["config"]["firewall"]["ipsets"] == []
+        print("address set actions at four widths PASS")
+
         assert not errors, errors
         await browser.close()
 
