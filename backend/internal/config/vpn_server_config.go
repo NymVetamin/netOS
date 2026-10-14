@@ -67,6 +67,7 @@ type XrayServerConfig struct {
 // certificate is generated and owned by netOS; per-user passwords live on
 // VPNPeer credentials and are hashed before ocserv sees them.
 type OcservServerConfig struct {
+	UseRouterDNS   bool     `json:"use_router_dns,omitempty"`
 	PublicEndpoint string   `json:"public_endpoint,omitempty"`
 	DNS            []string `json:"dns,omitempty"`
 	Routes         []string `json:"routes,omitempty"`

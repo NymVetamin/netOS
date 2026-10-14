@@ -24,6 +24,8 @@ type StorageVolume struct {
 	Enabled    bool   `json:"enabled"`
 }
 type SambaUser struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Password string `json:"password,omitempty"`

@@ -1,3 +1,4 @@
+import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
 import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
@@ -196,7 +197,7 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
               {(ddns.provider === "duckdns" || ddns.provider === "cloudflare") && (
                 <div className="field">
                   <label>API-токен</label>
-                  <input aria-label="API-токен DDNS" type="password" autoComplete="off" value={ddns.token || ""} onChange={(e) => patch((d) => (d.ddns.token = e.target.value))} />
+                  <input aria-label="API-токен DDNS" type="password" autoComplete="off" {...secretInput(ddns, "token")} value={ddns.token || ""} onChange={(e) => patch((d) => (d.ddns.token = e.target.value))} />
                 </div>
               )}
               {ddns.provider === "cloudflare" && <>
@@ -205,7 +206,7 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
               </>}
               {ddns.provider === "noip" && <>
                 <div className="field"><label>Имя пользователя</label><input aria-label="Имя пользователя No-IP" autoComplete="username" value={ddns.username || ""} onChange={(e) => patch((d) => (d.ddns.username = e.target.value))} /></div>
-                <div className="field"><label>Пароль</label><input aria-label="Пароль No-IP" type="password" autoComplete="new-password" value={ddns.password || ""} onChange={(e) => patch((d) => (d.ddns.password = e.target.value))} /></div>
+                <div className="field"><label>Пароль</label><input aria-label="Пароль No-IP" type="password" autoComplete="new-password" {...secretInput(ddns, "password")} value={ddns.password || ""} onChange={(e) => patch((d) => (d.ddns.password = e.target.value))} /></div>
               </>}
             </div>
           </>

@@ -1,3 +1,4 @@
+import { secretInput } from "../secrets";
 import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { newID } from "../id";
 
@@ -74,7 +75,7 @@ function SSIDEditor({ ssid, networks, update }: any) {
       <Field label="Имя сети (SSID)"><input value={ssid.ssid || ""} maxLength={32} onChange={(e) => edit((draft) => draft.ssid = e.target.value)} /></Field>
       <Field label="Сегмент" hint="Для Wi-Fi нужен сегмент на мосте. Мост можно создать в разделе «Сеть»."><select value={ssid.network || ""} onChange={(e) => edit((draft) => draft.network = e.target.value)}><option value="">Выберите сегмент</option>{networks.map((item: any) => <option key={item.id} value={item.id} disabled={!item.wifiBridge}>{item.name}{item.wifiBridge ? "" : " — нужен мост"}</option>)}</select></Field>
       <Field label="Защита"><select value={ssid.security || "wpa2/wpa3"} onChange={(e) => edit((draft) => draft.security = e.target.value)}><option value="wpa2/wpa3">WPA2/WPA3</option><option value="wpa3">WPA3</option><option value="wpa2">WPA2</option><option value="open">Открытая сеть</option></select></Field>
-      {ssid.security !== "open" && <Field label="Пароль" hint="От 8 до 63 символов"><input type="password" minLength={8} maxLength={63} autoComplete="new-password" value={ssid.password || ""} onChange={(e) => edit((draft) => draft.password = e.target.value)} /></Field>}
+      {ssid.security !== "open" && <Field label="Пароль" hint="От 8 до 63 символов"><input type="password" minLength={8} maxLength={63} autoComplete="new-password" {...secretInput(ssid, "password")} value={ssid.password || ""} onChange={(e) => edit((draft) => draft.password = e.target.value)} /></Field>}
       <Field label="Дополнительно"><div className="row"><Switch checked={!!ssid.hidden} label="Скрывать SSID" onChange={(value) => edit((draft) => draft.hidden = value)} /><Switch checked={!!ssid.isolate} label="Изолировать клиентов" onChange={(value) => edit((draft) => draft.isolate = value)} /></div></Field>
     </div>
     <div className="row-actions end"><button type="button" className="btn ghost sm" disabled={ssid.enabled} onClick={() => update((draft: any) => { draft.ssids = draft.ssids.filter((item: any) => item.id !== ssid.id); })}>Удалить</button></div>

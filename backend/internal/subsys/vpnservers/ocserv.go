@@ -82,7 +82,28 @@ func RenderOcserv(server config.VPNServer, cfg *config.Config, stateDir string) 
 			fmt.Fprintf(&b, "route = %s\n", route)
 		}
 	}
-	for _, dns := range oc.DNS {
+	dnsServers := oc.DNS
+	if oc.UseRouterDNS {
+		// ocserv assigns its local tunnel address from the network, not the
+		// host part of the configured prefix. /31 follows RFC 3021.
+		router := network.Addr()
+		if network.Bits() < 31 {
+			router = router.Next()
+		}
+		dnsServers = []string{router.String()}
+		if len(oc.Routes) > 0 {
+			covered := false
+			for _, route := range oc.Routes {
+				if prefix, err := netip.ParsePrefix(route); err == nil && prefix.Contains(router) {
+					covered = true
+				}
+			}
+			if !covered {
+				fmt.Fprintf(&b, "route = %s/32\n", router)
+			}
+		}
+	}
+	for _, dns := range dnsServers {
 		fmt.Fprintf(&b, "dns = %s\n", dns)
 	}
 	if oc.Banner != "" {

@@ -1,3 +1,4 @@
+import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
 import { api, Problem } from "../api";
 import { newID } from "../id";
@@ -326,7 +327,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                     <Field label="Пароль">
                       <input
                         type="password"
-                        value={w.password || ""}
+                        {...secretInput(w, "password")} value={w.password || ""}
                         onChange={(e) => patch((d) => (d.wans[idx].password = e.target.value))}
                       />
                     </Field>

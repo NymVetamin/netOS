@@ -166,6 +166,8 @@ type Network struct {
 // ---------------------------------------------------------------------------
 
 type WAN struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	ID        string `json:"id"`
 	Index     int    `json:"index"`
 	Name      string `json:"name"`
@@ -233,6 +235,8 @@ type QoSWAN struct {
 
 // DDNS keeps one public DNS A record in sync with the router address.
 type DDNS struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	Enabled       bool   `json:"enabled"`
 	Provider      string `json:"provider"` // duckdns | cloudflare | noip
 	Hostname      string `json:"hostname"`
@@ -560,6 +564,8 @@ type Client struct {
 // ---------------------------------------------------------------------------
 
 type Channel struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	ID       string         `json:"id"`
 	Index    int            `json:"index"`
 	Name     string         `json:"name"`
@@ -592,6 +598,8 @@ type Policy struct {
 }
 
 type VPNServer struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	RealityKeySet  bool           `json:"reality_key_set,omitempty"` // Read response metadata; never a credential.
 	ID             string         `json:"id"`
 	Index          int            `json:"index"`
@@ -606,6 +614,8 @@ type VPNServer struct {
 }
 
 type VPNPeer struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	WireGuardProfile *WireGuardClientProfile `json:"wireguard_profile,omitempty"`
 	ID               string                  `json:"id"`
 	Name             string                  `json:"name"`
@@ -633,6 +643,8 @@ type WiFiRadio struct {
 }
 
 type WiFiSSID struct {
+	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+
 	ID       string `json:"id"`
 	SSID     string `json:"ssid"`
 	Enabled  bool   `json:"enabled"`

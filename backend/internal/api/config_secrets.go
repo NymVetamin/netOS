@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -22,31 +23,41 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 		return nil, err
 	}
 	for i := range out.WANs {
+		out.WANs[i].SecretsSet = secretPresence(map[string]any{"password": out.WANs[i].Password})
 		out.WANs[i].Password = ""
 	}
 	for i := range out.WiFi {
 		for j := range out.WiFi[i].SSIDs {
+			out.WiFi[i].SSIDs[j].SecretsSet = secretPresence(map[string]any{"password": out.WiFi[i].SSIDs[j].Password})
 			out.WiFi[i].SSIDs[j].Password = ""
 		}
 	}
 	for i := range out.Channels {
+		out.Channels[i].SecretsSet = secretPresence(out.Channels[i].Config)
 		redactSecretValues(out.Channels[i].Config)
 	}
 	for i := range out.VPNServers {
 		key, _ := cfg.VPNServers[i].Config["private_key"].(string)
 		out.VPNServers[i].RealityKeySet = cfg.VPNServers[i].Type == "xray" && key != ""
+		out.VPNServers[i].SecretsSet = secretPresence(out.VPNServers[i].Config)
 		redactSecretValues(out.VPNServers[i].Config)
 		for j := range out.VPNServers[i].Peers {
-			for key := range out.VPNServers[i].Peers[j].Credentials {
+			out.VPNServers[i].Peers[j].SecretsSet = map[string]bool{}
+			for key, value := range out.VPNServers[i].Peers[j].Credentials {
 				if secretField(key) {
+					if value != "" {
+						out.VPNServers[i].Peers[j].SecretsSet[key] = true
+					}
 					out.VPNServers[i].Peers[j].Credentials[key] = ""
 				}
 			}
 		}
 	}
+	out.DDNS.SecretsSet = secretPresence(map[string]any{"token": out.DDNS.Token, "password": out.DDNS.Password})
 	out.DDNS.Token = ""
 	out.DDNS.Password = ""
 	for i := range out.Samba.Users {
+		out.Samba.Users[i].SecretsSet = secretPresence(map[string]any{"password": out.Samba.Users[i].Password})
 		out.Samba.Users[i].Password = ""
 	}
 	return &out, nil
@@ -80,7 +91,32 @@ func secretConfigField(path, key string) bool {
 // Empty secret fields in an edited, redacted tree mean "keep the current
 // value". New nonempty credentials always replace the old ones.
 func mergeRedactedSecrets(next, previous *config.Config) {
-	if next == nil || previous == nil {
+	if next == nil {
+		return
+	}
+	next.DDNS.SecretsSet = nil
+	for i := range next.WANs {
+		next.WANs[i].SecretsSet = nil
+	}
+	for i := range next.WiFi {
+		for j := range next.WiFi[i].SSIDs {
+			next.WiFi[i].SSIDs[j].SecretsSet = nil
+		}
+	}
+	for i := range next.Samba.Users {
+		next.Samba.Users[i].SecretsSet = nil
+	}
+	for i := range next.Channels {
+		next.Channels[i].SecretsSet = nil
+	}
+	for i := range next.VPNServers {
+		next.VPNServers[i].SecretsSet = nil
+		next.VPNServers[i].RealityKeySet = false
+		for j := range next.VPNServers[i].Peers {
+			next.VPNServers[i].Peers[j].SecretsSet = nil
+		}
+	}
+	if previous == nil {
 		return
 	}
 	for i := range next.Samba.Users {
@@ -129,7 +165,6 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 		oldServers[value.ID] = value
 	}
 	for i := range next.VPNServers {
-		next.VPNServers[i].RealityKeySet = false
 		old := oldServers[next.VPNServers[i].ID]
 		mergeSecretMap(next.VPNServers[i].Config, old.Config)
 		oldPeers := map[string]config.VPNPeer{}
@@ -225,4 +260,35 @@ func correspondingSecretMap(child map[string]any, oldList []any, index int) map[
 		return oldMap
 	}
 	return nil
+}
+
+// Presence follows exactly the same field classification as redaction. Array
+// indices are only used inside an opaque outbound, never as entity identities.
+func secretPresence(values map[string]any) map[string]bool {
+	result := map[string]bool{}
+	var walk func(map[string]any, string, string)
+	walk = func(values map[string]any, schemaPath, displayPath string) {
+		for key, value := range values {
+			field := configChildPath(displayPath, key)
+			if secretConfigField(schemaPath, key) {
+				if text, ok := value.(string); ok && text != "" {
+					result[field] = true
+				}
+				continue
+			}
+			childPath := configChildPath(schemaPath, key)
+			switch v := value.(type) {
+			case map[string]any:
+				walk(v, childPath, field)
+			case []any:
+				for i, item := range v {
+					if m, ok := item.(map[string]any); ok {
+						walk(m, childPath, field+"["+strconv.Itoa(i)+"]")
+					}
+				}
+			}
+		}
+	}
+	walk(values, "", "")
+	return result
 }

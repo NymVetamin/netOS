@@ -1,3 +1,4 @@
+import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { newID } from "../id";
@@ -63,7 +64,7 @@ export function StoragePage({ config, patch, admin }: Props) {
         {(s.users || []).length === 0 && <Empty>Добавьте логин и пароль для подключения к папкам.</Empty>}
         {(s.users || []).length > 0 && <Rows cols={["Логин", "Папки", "", "", ""]}>{(s.users || []).map((u: any) =>
           <Row key={u.id} id={u.id} cells={[<strong>{u.name || "без имени"}</strong>, <span className="dim">{(s.shares || []).filter((sh: any) => (sh.users || []).includes(u.id)).map((sh: any) => sh.name).join(", ") || "нет доступа к папкам"}</span>]}>
-            <div className="form-grid"><Field label="Логин"><input value={u.name} maxLength={20} autoComplete="off" onChange={e => edit(d => d.users.find((x: any) => x.id === u.id).name = e.target.value)} /></Field><Field label="Пароль" hint="Минимум 8 символов. Пустое поле сохраняет ранее заданный пароль."><input type="password" autoComplete="new-password" value={u.password || ""} onChange={e => edit(d => d.users.find((x: any) => x.id === u.id).password = e.target.value)} /></Field></div>
+            <div className="form-grid"><Field label="Логин"><input value={u.name} maxLength={20} autoComplete="off" onChange={e => edit(d => d.users.find((x: any) => x.id === u.id).name = e.target.value)} /></Field><Field label="Пароль" hint="Минимум 8 символов. Пустое поле сохраняет ранее заданный пароль."><input type="password" autoComplete="new-password" {...secretInput(u, "password")} value={u.password || ""} onChange={e => edit(d => d.users.find((x: any) => x.id === u.id).password = e.target.value)} /></Field></div>
             <div className="row-actions end"><button className="btn ghost sm" disabled={(s.shares || []).some((sh: any) => (sh.users || []).includes(u.id))} onClick={() => edit(d => d.users = d.users.filter((x: any) => x.id !== u.id))}>Удалить</button></div>
           </Row>)}</Rows>}
       </Card>
