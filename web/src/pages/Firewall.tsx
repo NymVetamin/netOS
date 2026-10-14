@@ -1,3 +1,4 @@
+import { automaticNAT } from "../automaticNAT";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
@@ -883,6 +884,7 @@ function natInterfaceOptions(config: any): { key: string; name: string; hint?: s
 function NATSection({ config, patch }: { config: any; patch: Patch }) {
   const nat: any[] = config.firewall?.nat || [];
   const interfaces = natInterfaceOptions(config);
+  const automatic = automaticNAT(config);
   const source = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction !== "destination");
   const dest = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction === "destination");
 
@@ -934,8 +936,9 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
         </button>
       </h3>
       <div className="card-part">
-      {source.length === 0 ? (
-        <Empty>Правил нет — клиенты не смогут выйти в интернет</Empty>
+      <p className="hint">Правила по текущим настройкам, включая автоматический NAT подключений. Изменения черновика попадут в firewall после применения.</p>
+      {source.length + automatic.length === 0 ? (
+        <Empty>Правил подмены адреса отправителя в настройках нет</Empty>
       ) : (
         <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]} toggle="Вкл.">
           {source.map(({ n, i }) => (
@@ -1019,6 +1022,14 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
               )}
             </Row>
           ))}
+          {automatic.map(rule => <Row key={rule.id} id={rule.id} cells={[
+            <strong>{rule.name}</strong>, <span className="mono">{rule.iface}</span>,
+            <span className="dim">кто угодно</span>, <span className="dim">адрес интерфейса</span>,
+            <Badge tone="neutral">{rule.kind === "channel" ? "авто · канал" : "авто · аплинк"}</Badge>,
+          ]}>
+            <p className="hint">netOS создаёт это правило автоматически, пока соответствующее подключение включено. Оно подменяет исходящий адрес на адрес интерфейса подключения.</p>
+            <a className="btn sm" href={rule.kind === "channel" ? "#channels" : "#network"}>{rule.kind === "channel" ? "Настроить интернет-канал" : "Настроить аплинк"}</a>
+          </Row>)}
         </Rows>
       )}
       </div>
