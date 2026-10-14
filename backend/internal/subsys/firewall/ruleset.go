@@ -562,9 +562,13 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
 	// Explicit source NAT must see the packet before the catch-all egress rules.
+	masqueraded := map[string]bool{}
 	for _, n := range cfg.Firewall.NAT {
 		if n.Enabled && n.Direction != "destination" {
 			b.natSource(n)
+			if n.Interface != "" && n.Source == "" && n.ToSource == "" {
+				masqueraded[n.Interface] = true
+			}
 		}
 	}
 	// A configured WAN is an Internet egress regardless of whether Multi-WAN
@@ -572,7 +576,9 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	// client addresses (and made PPP/L2TP fail completely) in every sole-WAN
 	// matrix other than the image's incidental eth0 path.
 	for _, wan := range cfg.WANs {
-		if wan.Enabled {
+		iface := wanInterface(cfg, wan)
+		if wan.Enabled && !masqueraded[iface] {
+			masqueraded[iface] = true
 			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE", wanInterface(cfg, wan), "NAT аплинка «"+wan.Name+"»")
 		}
 	}
