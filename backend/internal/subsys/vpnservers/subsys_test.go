@@ -83,6 +83,8 @@ func newTestSubsystem(t *testing.T) (*Subsystem, *fakeRunner) {
 	s := New(nil, filepath.Join(root, "state"))
 	s.SysClassNet = filepath.Join(root, "sys", "class", "net")
 	s.ProcSysNet = filepath.Join(root, "proc", "sys", "net")
+	s.AppArmorDir = filepath.Join(root, "apparmor.d")
+	s.AppArmorProfiles = filepath.Join(root, "apparmor-profiles")
 	r := &fakeRunner{s: s}
 	s.Runner = r
 	return s, r

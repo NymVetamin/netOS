@@ -263,8 +263,7 @@ func (s *Subsystem) ensureIKEv2Interface(ctx context.Context, server config.VPNS
 func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers []config.VPNServer, unitWasOwned bool) (retErr error) {
 	paths := s.ikev2Paths()
 	if len(servers) == 0 {
-		s.cleanupIKEv2(ctx)
-		return nil
+		return s.cleanupIKEv2(ctx)
 	}
 	_, unitStatErr := os.Stat(paths.unit)
 	unitExisted := unitStatErr == nil
@@ -273,7 +272,11 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	} else if unitStatErr != nil && !os.IsNotExist(unitStatErr) {
 		return unitStatErr
 	}
-	snapshots, err := capturePaths(paths.root, paths.unit)
+	snapshotPaths := []string{paths.root, paths.unit}
+	for _, profile := range ikeArmorProfiles {
+		snapshotPaths = append(snapshotPaths, filepath.Join(s.AppArmorDir, "local", profile))
+	}
+	snapshots, err := capturePaths(snapshotPaths...)
 	if err != nil {
 		return err
 	}
@@ -283,16 +286,25 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 			return
 		}
 		if !unitExisted {
-			s.cleanupIKEv2(context.Background())
+			if err := s.cleanupIKEv2(context.Background()); err != nil {
+				retErr = fmt.Errorf("%v; восстановление AppArmor: %w", retErr, err)
+			}
 			return
 		}
 		if err := restorePaths(snapshots); err != nil {
 			retErr = fmt.Errorf("%v; восстановление IKEv2: %w", retErr, err)
 			return
 		}
+		if err := reloadIKEArmor(context.Background(), s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run); err != nil {
+			retErr = fmt.Errorf("%v; восстановление AppArmor: %w", retErr, err)
+			return
+		}
 		_, _ = s.Runner.Run(context.Background(), "systemctl", "daemon-reload")
 		_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", ikev2Unit)
 	}()
+	if err := s.ensureIKEArmor(ctx); err != nil {
+		return fmt.Errorf("разрешения AppArmor IKEv2: %w", err)
+	}
 	for _, dir := range []string{paths.root, filepath.Dir(paths.cert), filepath.Dir(paths.key)} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
@@ -467,11 +479,11 @@ func (s *Subsystem) runQuiet(ctx context.Context, name string, args ...string) s
 	return out
 }
 
-func (s *Subsystem) cleanupIKEv2(ctx context.Context) {
+func (s *Subsystem) cleanupIKEv2(ctx context.Context) error {
 	paths := s.ikev2Paths()
 	if _, unitErr := os.Stat(paths.unit); os.IsNotExist(unitErr) {
 		if _, rootErr := os.Stat(paths.root); os.IsNotExist(rootErr) {
-			return
+			return RemoveIKEv2AppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run)
 		}
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "disable", ikev2Unit)
@@ -479,4 +491,5 @@ func (s *Subsystem) cleanupIKEv2(ctx context.Context) {
 	_ = os.Remove(paths.unit)
 	_ = os.RemoveAll(paths.root)
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
+	return RemoveIKEv2AppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run)
 }

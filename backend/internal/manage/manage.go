@@ -1247,6 +1247,9 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 	if err := vpnservers.RemoveL2TPPreUpHooks(filepath.Join(m.StateDir, "generated"), m.sys("/etc/ppp/ip-pre-up.d")); err != nil {
 		return fmt.Errorf("удаление PPP hooks: %w", err)
 	}
+	if err := vpnservers.RemoveIKEv2AppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
+		return fmt.Errorf("удаление разрешений AppArmor IKEv2: %w", err)
+	}
 	// An automount stop can lazily detach a busy filesystem. Unmount the
 	// actual filesystems normally before stopping their automounts.
 	if err := samba.UnmountOwnedVolumes(ctx, filepath.Join(m.StateDir, "generated"), m.Output); err != nil {

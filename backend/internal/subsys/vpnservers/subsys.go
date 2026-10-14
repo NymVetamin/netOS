@@ -129,18 +129,20 @@ func restorePaths(snapshots []pathSnapshot) error {
 }
 
 type Subsystem struct {
-	Certificates *certificates.Manager
-	PKI          *vpnpki.Store
-	Runner       system.Runner
-	StateDir     string
-	SysClassNet  string
-	ProcSysNet   string
-	UnitDir      string
-	PreUpDir     string
+	Certificates     *certificates.Manager
+	PKI              *vpnpki.Store
+	Runner           system.Runner
+	StateDir         string
+	SysClassNet      string
+	ProcSysNet       string
+	UnitDir          string
+	PreUpDir         string
+	AppArmorDir      string
+	AppArmorProfiles string
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
-	return &Subsystem{Runner: r, StateDir: stateDir, SysClassNet: "/sys/class/net", ProcSysNet: "/proc/sys/net", UnitDir: "/etc/systemd/system", PreUpDir: "/etc/ppp/ip-pre-up.d"}
+	return &Subsystem{Runner: r, StateDir: stateDir, SysClassNet: "/sys/class/net", ProcSysNet: "/proc/sys/net", UnitDir: "/etc/systemd/system", PreUpDir: "/etc/ppp/ip-pre-up.d", AppArmorDir: "/etc/apparmor.d", AppArmorProfiles: "/sys/kernel/security/apparmor/profiles"}
 }
 
 func (s *Subsystem) Name() string { return "vpn-servers" }
