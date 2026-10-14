@@ -147,7 +147,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
       {servers.length > 0 && <><h3 className="card-sub">Устройства<span className="sub">Профили и пользователи каждого сервера</span></h3>
       <div className="card-part"><Rows cols={["Устройство", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
-        server.type === "xray" ? <XrayPeers key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
+        server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя IKEv2." /> :
         server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя L2TP." /> : null)}</Rows></div></>}
@@ -311,21 +311,21 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       {protocol === "reality" && <>
       <Field label="Сайт-маскировка" hint="Доступный TLS-сайт с портом"><input className="mono" value={cfg.destination || ""} onChange={(e) => setConfig("destination", e.target.value)} /></Field>
       <Field label="Имена сервера (SNI)" hint="По одному домену в строке"><textarea className="mono" value={(cfg.server_names || []).join("\n")} onChange={(e) => setConfig("server_names", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
-      <Field label="Short ID" hint="Чётное число hex-символов, до 16"><textarea className="mono" value={(cfg.short_ids || []).join("\n")} onChange={(e) => setConfig("short_ids", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <Field label="Short ID" hint="Чётное число hex-символов, до 16"><textarea className="mono" value={(cfg.short_ids || []).join("\n")} onChange={(e) => setConfig("short_ids", e.target.value.split(/\s+/).filter(Boolean))} /><button type="button" className="btn ghost sm" onClick={() => { if (!(cfg.short_ids || []).length || window.confirm("Заменить все Short ID? После применения старые ссылки перестанут работать. Передайте клиентам новые ссылки или QR-коды.")) setConfig("short_ids", [randomHex(8)]); }}>Перегенерировать Short ID</button></Field>
       <Field label="Flow"><select value={cfg.flow ?? "xtls-rprx-vision"} onChange={(e) => setConfig("flow", e.target.value)}><option value="xtls-rprx-vision">XTLS Vision</option><option value="">Без flow</option></select></Field>
       <Field label="Диагностика Reality" hint="Показывать отладочные сведения Reality в журнале Xray">
         <Switch checked={!!cfg.show} label="Включить show" onChange={(value) => setConfig("show", value)} />
       </Field>
       </>}
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-      {protocol === "reality" && <Field label="Закрытый ключ Reality" hint="Хранится в конфигурации с правами 0600"><div className="row"><input className="mono" type="password" autoComplete="new-password" value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={generateKey}>Сгенерировать</button></div></Field>}
+      {protocol === "reality" && <Field label="Закрытый ключ Reality" hint={cfg.private_key || server.reality_key_set ? "Ключ задан. Пустое поле сохраняет прежний ключ." : "Ключ ещё не создан"}><div className="row"><input className="mono" type="password" autoComplete="new-password" placeholder={server.reality_key_set ? "••••••••" : "Ключ не создан"} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={generateKey}>Сгенерировать</button></div></Field>}
       {protocol === "wireguard" && <><Field label="Закрытый ключ Xray WireGuard"><div className="row"><input className="mono" type="password" autoComplete="new-password" value={cfg.wg_private_key || ""} onChange={(e) => setConfig("wg_private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={() => void generateWGServerKey()}>Сгенерировать</button></div></Field><Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field></>}
       {(protocol === "vless" || protocol === "trojan" || protocol === "hysteria") && <Field label="TLS-сертификат" hint="После применения скачайте сертификат и доверьте ему на клиенте"><VPNCertificate server={server} /></Field>}
     </div>
   </ServerRow>;
 }
 
-function XrayPeers({ server, config, patch, setError }: any) {
+function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   const { cfg, channels, update } = serverTools(server, config, patch);
   const protocol = cfg.protocol || "reality";
   const [wgClientKeys, setWGClientKeys] = useState<Record<string, string>>({});
@@ -352,11 +352,11 @@ function XrayPeers({ server, config, patch, setError }: any) {
 
   return <PeerGroup server={server} add={<button type="button" className="btn sm" onClick={() => void addPeer()}>Добавить устройство</button>}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
 }
 
-function XrayPeerEditor({ server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
+function XrayPeerEditor({ beforeRead, server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   async function downloadClient() {
     setError("");
@@ -404,17 +404,18 @@ function XrayPeerEditor({ server, peer, protocol, wgPrivateKey, issuedCredential
       const link = document.createElement("a"); link.href = url; link.download = `${peer.name || peer.id}.conf`; link.click(); URL.revokeObjectURL(url);
     } catch (err: any) { setError(err?.message || "Не удалось скачать WireGuard-профиль"); }
   }
-  async function download() {
-    const cfg = server.config || {};
-    if (!cfg.private_key || !cfg.public_endpoint || !cfg.server_names?.[0] || !cfg.short_ids?.[0]) { setError("Заполните ключ, публичный адрес, SNI и Short ID сервера."); return; }
+  const [realityLink, setRealityLink] = useState("");
+  const [realityBusy, setRealityBusy] = useState(false);
+  useEffect(() => { setRealityLink(""); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name]);
+  async function openReality(downloadFile = false) {
+    setError(""); setRealityBusy(true); setRealityLink("");
     try {
-      const pair = await api.xrayKeypair(cfg.private_key);
-      const query = new URLSearchParams({ encryption: "none", security: "reality", sni: cfg.server_names[0], fp: "chrome", pbk: pair.public_key, sid: cfg.short_ids[0], type: "tcp" });
-      if (cfg.flow) query.set("flow", cfg.flow);
-      const body = `vless://${peer.credentials?.uuid}@${cfg.public_endpoint}?${query.toString()}#${encodeURIComponent(peer.name || peer.id)}`;
-      const url = URL.createObjectURL(new Blob([body + "\n"], { type: "text/plain;charset=utf-8" }));
-      const link = document.createElement("a"); link.href = url; link.download = `${peer.name || peer.id}.txt`; link.click(); URL.revokeObjectURL(url);
+      await beforeRead();
+      const profile = await api.realityClientProfile(server.id, peer.id);
+      setRealityLink(profile.link);
+      if (downloadFile) saveClientFile(`${peer.name || peer.id}.txt`, profile.link + "\n");
     } catch (err: any) { setError(err?.message || "Не удалось создать ссылку подключения"); }
+    finally { setRealityBusy(false); }
   }
   return <Row className="peer-card" id={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <Badge tone={peer.enabled ? "ok" : "neutral"}>{peer.enabled ? "разрешён" : "отключён"}</Badge>]}
@@ -429,8 +430,9 @@ function XrayPeerEditor({ server, peer, protocol, wgPrivateKey, issuedCredential
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
+    {protocol === "reality" && realityLink && <div className="client-package"><div className="qr-card"><QRCodeSVG value={realityLink} size={176} level="M" marginSize={2} title={`Reality-профиль ${peer.name || peer.id}`} /></div><div className="client-package-copy"><strong>Профиль Reality</strong><p>Отсканируйте QR-код в VPN-приложении. Изменения черновика начнут работать после применения настроек.</p><button type="button" className="btn" onClick={async () => { try { await navigator.clipboard.writeText(realityLink); } catch { setError("Не удалось скопировать ссылку. Скачайте её файлом."); } }}>Скопировать ссылку</button></div></div>}
     <div className="row-actions peer-head">
-    {protocol === "reality" && <button type="button" className="btn sm" onClick={download}>Скачать VLESS-ссылку</button>}
+    {protocol === "reality" && <><button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality(true)}>Скачать VLESS-ссылку</button><button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality()}>Открыть QR-код</button></>}
     {protocol === "wireguard" && <button type="button" className="btn sm" onClick={() => void downloadWG()}>Скачать WireGuard-профиль</button>}
     {protocol !== "reality" && protocol !== "wireguard" && <button type="button" className="btn sm" onClick={() => void downloadClient()}>Скачать профиль подключения</button>}
       <button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button>
@@ -494,7 +496,7 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
       <Field label="Адрес подключения" hint="Домен или внешний IP роутера с портом"><input className="mono" placeholder="vpn.example.com:51820" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-      <Field label="Ключ сервера" hint="Создаётся автоматически и хранится только на роутере"><div className="row"><input aria-label="Закрытый ключ сервера" className="mono" type="password" autoComplete="new-password" value={cfg.private_key || ""} readOnly /><button type="button" className="btn sm" onClick={generateServerKey}>Перевыпустить</button></div></Field>
+      <Field label="Ключ сервера" hint="Создаётся автоматически и хранится только на роутере"><div className="row"><input aria-label="Закрытый ключ сервера" className="mono" type="password" autoComplete="new-password" placeholder={server.reality_key_set ? "••••••••" : "Ключ не создан"} value={cfg.private_key || ""} readOnly /><button type="button" className="btn sm" onClick={generateServerKey}>Перевыпустить</button></div></Field>
     </div>
   </ServerRow>;
 }

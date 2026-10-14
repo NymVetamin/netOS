@@ -33,6 +33,8 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 		redactSecretValues(out.Channels[i].Config)
 	}
 	for i := range out.VPNServers {
+		key, _ := cfg.VPNServers[i].Config["private_key"].(string)
+		out.VPNServers[i].RealityKeySet = cfg.VPNServers[i].Type == "xray" && key != ""
 		redactSecretValues(out.VPNServers[i].Config)
 		for j := range out.VPNServers[i].Peers {
 			for key := range out.VPNServers[i].Peers[j].Credentials {
@@ -127,6 +129,7 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 		oldServers[value.ID] = value
 	}
 	for i := range next.VPNServers {
+		next.VPNServers[i].RealityKeySet = false
 		old := oldServers[next.VPNServers[i].ID]
 		mergeSecretMap(next.VPNServers[i].Config, old.Config)
 		oldPeers := map[string]config.VPNPeer{}

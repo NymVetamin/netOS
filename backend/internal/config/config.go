@@ -592,6 +592,7 @@ type Policy struct {
 }
 
 type VPNServer struct {
+	RealityKeySet  bool           `json:"reality_key_set,omitempty"` // Read response metadata; never a credential.
 	ID             string         `json:"id"`
 	Index          int            `json:"index"`
 	Name           string         `json:"name"`
