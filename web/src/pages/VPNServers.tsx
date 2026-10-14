@@ -1,6 +1,6 @@
 import { secretInput } from "../secrets";
 import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError } from "../api";
 import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
@@ -9,6 +9,27 @@ import { AddMenu, Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Sw
 
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
 type ClientSecret = { publicKey: string; privateKey: string; serverPublicKey: string; presharedKey?: string };
+
+const ClientCreators = createContext<{ current: Record<string, () => void | Promise<void>> }>({ current: {} });
+function useClientCreator(id: string, create: () => void | Promise<void>) {
+  const registry = useContext(ClientCreators);
+  const latest = useRef(create);
+  latest.current = create;
+  useEffect(() => {
+    registry.current[id] = () => latest.current();
+    return () => { delete registry.current[id]; };
+  }, [id, registry]);
+}
+
+function ClientBadge({ server, peer, status }: any) {
+  const state = !peer.enabled || !server.enabled ? "disabled" : status?.state || "unknown";
+  const online = state === "recent" || state === "online";
+  const label = state === "disabled" || state === "server_disabled" ? "Отключён"
+    : online ? "Онлайн" : state === "idle" || state === "never" || state === "offline" ? "Оффлайн" : "Нет данных";
+  return <span title={label === "Нет данных" ? "Нет сведений о текущем подключении клиента" : undefined}><Badge tone={online ? "ok" : "neutral"}>{label}</Badge>
+    {state === "idle" && status?.last_handshake > 0 && <small className="faint" style={{ display: "block" }}>Последняя связь: {new Date(status.last_handshake * 1000).toLocaleString("ru-RU")}</small>}
+  </span>;
+}
 
 function randomHex(bytes: number) {
   const value = new Uint8Array(bytes);
@@ -73,6 +94,20 @@ function VPNCertificate({ server }: { server: any }) {
 const XRAY_NAMES: Record<string, string> = { reality: "VLESS Reality", vless: "VLESS TLS", vmess: "VMess", trojan: "Trojan TLS", shadowsocks: "Shadowsocks", socks: "SOCKS", http: "HTTP proxy", wireguard: "Xray WireGuard", hysteria: "Hysteria 2" };
 
 export function VPNServersPage({ config, patch, beforeRead }: Props) {
+  const creators = useRef<Record<string, () => void | Promise<void>>>({});
+  const [addingTo, setAddingTo] = useState("");
+  async function addClient(id: string) {
+    if (addingTo) return;
+    setAddingTo(id);
+    setError("");
+    try {
+      const create = creators.current[id];
+      if (!create) throw new Error("Сервер больше недоступен. Выберите другой сервер.");
+      await create();
+    }
+    catch (err) { setError(err instanceof Error ? err.message : "Не удалось добавить клиента"); }
+    finally { setAddingTo(""); }
+  }
   const servers = config.vpn_servers || [];
   const wireguardInstalled = (config.components || []).some((item: any) => item.id === "wireguard" && item.installed);
   const xrayInstalled = (config.components || []).some((item: any) => item.id === "xray" && item.installed);
@@ -132,28 +167,37 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     { label: "L2TP", ariaLabel: "Добавить L2TP", note: needs(l2tpInstalled), onSelect: () => void addServer("l2tp") },
   ];
 
+  const clientItems = servers
+    .filter((s: any) => ["wireguard", "xray", "ocserv", "ikev2", "l2tp"].includes(s.type))
+    .map((s: any) => ({
+      label: s.name || s.id,
+      ariaLabel: `Добавить клиента на ${s.name || s.id}`,
+      note: s.type === "xray" ? XRAY_NAMES[s.config?.protocol || "reality"]
+        : ({ wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[s.type],
+      disabled: !!addingTo,
+      onSelect: () => void addClient(s.id),
+    }));
+
   return <>
     <div className="page-head"><h1>VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
 	{!wireguardInstalled && !xrayInstalled && !ocservInstalled && !strongswanInstalled && !l2tpInstalled && <Notice tone="info" title="Нужен VPN-компонент">Установите нужный VPN-компонент в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
-    {/* Одна карточка из двух частей: заголовок «VPN-доступ» — то, по чему раздел
-        находят проверки панели, поэтому серверы и устройства остаются в ней. */}
-    <Card split title="VPN-доступ" subtitle="Создайте сервер, затем выдавайте каждому устройству отдельный готовый профиль" actions={<AddMenu label="Добавить сервер" items={addItems} />}>
-      <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Устройств", "Состояние"]} toggle="Включён">{servers.map((server: any) =>
+    <ClientCreators.Provider value={creators}><Card split title="VPN-доступ" subtitle="Создайте сервер, затем выдавайте каждому клиенту отдельный готовый профиль" actions={<AddMenu label="Добавить сервер" items={addItems} />}>
+      <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]} toggle="Включён">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <OcservServer key={server.id} server={server} config={config} installed={ocservInstalled} patch={patch} /> :
         server.type === "ikev2" ? <IKEv2Server key={server.id} server={server} config={config} installed={strongswanInstalled} patch={patch} /> :
         server.type === "l2tp" ? <L2TPServer key={server.id} server={server} config={config} installed={l2tpInstalled} patch={patch} /> :
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}</Rows>}</div>
-      {servers.length > 0 && <><h3 className="card-sub">Устройства<span className="sub">Профили и пользователи каждого сервера</span></h3>
-      <div className="card-part"><Rows cols={["Устройство", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{servers.map((server: any) =>
+      {servers.length > 0 && <><div className="card-sub"><h3>Клиенты</h3><span className="sub">Профили и пользователи каждого сервера</span><AddMenu label={addingTo ? "Создаём клиента…" : "Добавить клиента"} items={clientItems} /></div>
+      <div className="card-part"><Rows cols={["Клиент", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя IKEv2." /> :
         server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя L2TP." /> : null)}</Rows></div></>}
-    </Card>
+    </Card></ClientCreators.Provider>
   </>;
 }
 
@@ -161,16 +205,16 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
 // лежат отдельным разделом ниже — список серверов не растягивается на экраны.
 function ServerRow({ server, type, endpoint, installed, referenced, update, patch, children }: any) {
   return <Row as="form" className="vpn-server" id={server.id} data-server-id={server.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
-    cells={[<strong>{server.name}</strong>, type, <span className="mono">{endpoint || "—"}</span>, (server.peers || []).length, <Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "работает" : "черновик"}</Badge>]}
+    cells={[<strong>{server.name}</strong>, type, <span className="mono">{endpoint || "—"}</span>, (server.peers || []).length, <Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "Включён" : "Отключён"}</Badge>]}
     toggle={<Switch checked={!!server.enabled} disabled={!installed} label="" ariaLabel="Включить" onChange={(value) => update((draft: any) => draft.enabled = value)} />}>
     {children}
     <div className="row-actions server-head"><button type="button" className="btn ghost sm to-right" disabled={server.enabled || referenced} onClick={() => patch((draft: any) => { draft.vpn_servers = draft.vpn_servers.filter((item: any) => item.id !== server.id); })}>Удалить</button></div>
   </Row>;
 }
 
-function PeerGroup({ server, add, hint, children }: any) {
+function PeerGroup({ server, hint, children }: any) {
   return <div className="peer-group" data-peers-of={server.id}>
-    <div className="xgroup"><strong>{server.name}</strong><span className="faint">{(server.peers || []).length}</span>{hint && <span className="faint">{hint}</span>}{add}</div>
+    <div className="xgroup"><strong>{server.name}</strong><span className="faint">{(server.peers || []).length}</span>{hint && <span className="faint">{hint}</span>}</div>
     {children}
   </div>;
 }
@@ -260,10 +304,11 @@ function PasswordPeers({ server, config, patch, singleActive, empty }: any) {
       const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
       draft.peers = draft.peers || [];
       const number = draft.peers.length + 1;
-      draft.peers.push({ id, name: `Пользователь ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+      draft.peers.push({ id, name: `Клиент ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
     });
   }
-  return <PeerGroup server={server} add={<button type="button" className="btn sm" onClick={addPeer}>Добавить пользователя</button>}>
+  useClientCreator(server.id, addPeer);
+  return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>{empty}</Empty> : (server.peers || []).map((peer: any) =>
       <OcservPeer key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={!singleActive || peer.enabled || enabledPeers === 0} />)}
   </PeerGroup>;
@@ -274,7 +319,7 @@ function OcservPeer({ server, peer, referenced, channels, update, canEnable = tr
   const passwordAuth = !certAuth || server.config?.auth_mode === "certificate_password";
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   return <Row className="peer-card" id={peer.id}
-    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <Badge tone={peer.enabled ? "ok" : "neutral"}>{peer.enabled ? "разрешён" : "отключён"}</Badge>]}
+    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <ClientBadge server={server} peer={peer} />]}
     toggle={<Switch checked={!!peer.enabled} disabled={!canEnable} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <div className="form-grid">
       <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
@@ -354,13 +399,14 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
     update((draft) => {
       const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
       draft.peers = draft.peers || [];
-      draft.peers.push({ id: peerID, name: `Устройство ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${draft.peers.length + 2}`, channel: "", credentials, comment: "" });
+      draft.peers.push({ id: peerID, name: `Клиент ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${draft.peers.length + 2}`, channel: "", credentials, comment: "" });
     });
     setPeerCredentials((old) => ({ ...old, [peerID]: credentials }));
     if (wgPair) setWGClientKeys((old) => ({ ...old, [peerID]: wgPair.private_key }));
   }
 
-  return <PeerGroup server={server} add={<button type="button" className="btn sm" onClick={() => void addPeer()}>Добавить устройство</button>}>
+  useClientCreator(server.id, addPeer);
+  return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
       <XrayPeerEditor beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
@@ -428,10 +474,10 @@ function XrayPeerEditor({ beforeRead, server, peer, protocol, wgPrivateKey, issu
     finally { setRealityBusy(false); }
   }
   return <Row className="peer-card" id={peer.id}
-    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <Badge tone={peer.enabled ? "ok" : "neutral"}>{peer.enabled ? "разрешён" : "отключён"}</Badge>]}
+    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <ClientBadge server={server} peer={peer} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <div className="form-grid">
-      <Field label="Устройство"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="Клиент"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       {(protocol === "reality" || protocol === "vless" || protocol === "vmess") && <Field label="UUID клиента"><div className="row"><input className="mono" {...secretInput(peer, "uuid")} value={peer.credentials?.uuid || ""} onChange={(e) => { const uuid = e.target.value; rememberCredentials({ uuid }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }} /><button type="button" className="btn ghost sm" onClick={() => { const uuid = crypto.randomUUID(); rememberCredentials({ uuid }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }}>Новый</button></div></Field>}
       {(protocol === "socks" || protocol === "http") && <Field label="Логин"><input className="mono" value={peer.credentials?.username || ""} onChange={(e) => { const username = e.target.value; rememberCredentials({ username }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = username; }); }} /></Field>}
       {(protocol === "trojan" || protocol === "shadowsocks" || protocol === "socks" || protocol === "http") && <Field label="Пароль"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; rememberCredentials({ password }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
@@ -466,7 +512,6 @@ function ProfileListInput({ label, values, disabled, onChange }: { label: string
   }} />;
 }
 
-const CLIENT_STATES: Record<string, string> = { recent: "В сети · недавнее рукопожатие", idle: "Нет недавней связи", never: "Ещё не подключался", unknown: "Статистика недоступна", pending: "Нет данных для этого профиля", disabled: "Доступ отключён", server_disabled: "Сервер выключен" };
 
 // Живое состояние клиента. Сама отметка и внешний адрес стоят в строке
 // устройства; здесь то, что нужно реже.
@@ -513,7 +558,6 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
 
 function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setClientSecrets, setError }: any) {
   const { cfg, channels, update } = serverTools(server, config, patch);
-  const [addingClient, setAddingClient] = useState(false);
   const [clientStatus, setClientStatus] = useState<ClientStatus[]>([]);
   const [statusFailed, setStatusFailed] = useState(false);
   useEffect(() => {
@@ -532,7 +576,6 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
 
   async function addPeer() {
     setError("");
-    setAddingClient(true);
     try {
       const serverPair = cfg.private_key
         ? await api.wireGuardKeypair(cfg.private_key)
@@ -548,7 +591,7 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
       const endpoint = cfg.public_endpoint || `${window.location.hostname}:${server.port || 51820}`;
       const peer = {
         id,
-        name: `Устройство ${(server.peers || []).length + 1}`,
+        name: `Клиент ${(server.peers || []).length + 1}`,
         enabled: true,
         address: `${prefix}.${host}`,
         channel: "",
@@ -574,12 +617,11 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
       }));
     } catch (err: any) {
       setError(err?.message || "Не удалось создать готовый профиль WireGuard");
-    } finally {
-      setAddingClient(false);
     }
   }
 
-  return <PeerGroup server={server} hint="«В сети» — рукопожатие за последние 3 минуты, обновление каждые 5 секунд" add={<button type="button" className="btn sm" disabled={addingClient} onClick={() => void addPeer()}>{addingClient ? "Создаём профиль…" : "Добавить устройство"}</button>}>
+  useClientCreator(server.id, addPeer);
+  return <PeerGroup server={server} hint="«Онлайн» — рукопожатие за последние 3 минуты, обновление каждые 5 секунд">
     {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер — netOS сам подготовит всё необходимое.</Empty> : (server.peers || []).map((peer: any) =>
       <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : clientStatus.find((row) => row.id === peer.id && row.public_key === peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
   </PeerGroup>;
@@ -655,11 +697,11 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
   const state = status?.state || "pending";
   const known = ["recent", "idle", "never"].includes(state);
   return <Row className="peer-card" id={peer.id}
-    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{known ? status?.endpoint || "Неизвестен" : "—"}</span>, channelName(channels, peer), <Badge tone={state === "recent" ? "ok" : "neutral"}>{CLIENT_STATES[state] || CLIENT_STATES.unknown}</Badge>]}
+    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{known ? status?.endpoint || "Неизвестен" : "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} />
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
-      <Field label="Название устройства"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
+      <Field label="Название клиента"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>

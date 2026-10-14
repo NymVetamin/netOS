@@ -150,14 +150,14 @@ export function Clients({
   return (
     <>
       <div className="page-head">
-        <h1>Устройства</h1>
+        <h1>Клиенты</h1>
         <p>Телефоны, компьютеры и другая техника, которую видит роутер</p>
       </div>
 
       {manual && <AddReservation config={config} patch={patch} clients={clients} />}
       <Card
         actions={(config.networks || []).length > 0 ? <button className="btn sm" onClick={() => setManual(!manual)}>{manual ? "Закрыть добавление" : "Добавить по MAC"}</button> : undefined}
-        title="Устройства"
+        title="Клиенты"
         subtitle={`${devices.length} локальных · ${vpnCount} VPN · ${devices.filter(c => c.online && !loadError).length} локальных в сети · ${vpn.reduce((n, s) => n + s.peers.filter(p => p.state === "recent").length, 0)} VPN недавно на связи`}
         tight
       >

@@ -37,6 +37,11 @@ async def scenario(browser, mode):
            "vpn_servers": [{"id": "srv", "type": "wireguard", "name": "WireGuard", "index": 1, "enabled": True,
                             "subnet": "10.9.0.1/24", "port": 51820, "peers": [peer],
                             "config": {"public_endpoint": "vpn.example.test:51820", "client_dns": ["1.1.1.1"]}}]}
+    if mode == "multi":
+        for i, kind in enumerate(("xray", "ocserv", "ikev2", "l2tp"), 2):
+            cfg["vpn_servers"].append({"id": kind, "name": kind, "type": kind, "index": i,
+                "enabled": False, "subnet": f"10.{8+i}.0.1/24", "port": 443, "peers": [],
+                "config": {"protocol": "reality"} if kind == "xray" else {}})
     original = copy.deepcopy(cfg)
     state = {"dirty": False, "config": cfg, "telemetry": "recent", "profiles": 0, "keys": 0}
     errors = []
@@ -102,8 +107,26 @@ async def scenario(browser, mode):
     await page.route("**/*", route_request)
     await page.goto("https://netos-ui.test/#vpn-servers")
     await expect(page.get_by_role("heading", name="VPN-доступ", exact=True, level=1)).to_be_visible()
-    await expect(page.get_by_text("В сети · недавнее рукопожатие", exact=True)).to_be_visible()
+    await expect(page.get_by_text("Онлайн", exact=True)).to_be_visible()
     await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+    if mode == "multi":
+        await expect(page.locator("form.vpn-server").get_by_text("Отключён", exact=True)).to_have_count(4)
+        await expect(page.locator("form.vpn-server").get_by_text("черновик", exact=True)).to_have_count(0)
+        await expect(page.locator("details.addmenu > summary").filter(has_text="Добавить клиента")).to_have_count(1)
+        for sid, name in (("srv", "WireGuard"), ("xray", "xray"), ("ocserv", "ocserv"), ("ikev2", "ikev2"), ("l2tp", "l2tp")):
+            before = {s["id"]: len(s["peers"]) for s in state["config"]["vpn_servers"]}
+            await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+            async with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("/api/config")):
+                await page.get_by_role("button", name=f"Добавить клиента на {name}", exact=True).click()
+            after = {s["id"]: len(s["peers"]) for s in state["config"]["vpn_servers"]}
+            assert after == {key: value + (key == sid) for key, value in before.items()}, (sid, before, after)
+            await expect(page.locator(f'[data-peers-of="{sid}"] .peer-card').last.locator(".xbody")).to_be_visible()
+        assert not errors, errors
+        await page.set_viewport_size({"width": 390, "height": 844})
+        await page.locator(".card-sub").screenshot(path="output/playwright/vpn-clients-menu-mobile.png")
+        await page.close()
+        print(mode, "PASS")
+        return
     if mode == "mobile":
         await page.set_viewport_size({"width": 390, "height": 844})
         await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
@@ -116,7 +139,7 @@ async def scenario(browser, mode):
         return
     if mode == "collapsed":
         # The state and the external address are readable without opening the row.
-        name = page.get_by_role("textbox", name="Название устройства", exact=True)
+        name = page.get_by_role("textbox", name="Название клиента", exact=True)
         row = page.locator(".peer-card")
         await expect(name).to_have_count(0)
         await row.locator("summary.xsum").click()
@@ -127,12 +150,14 @@ async def scenario(browser, mode):
         async with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/api/config")):
             await row.locator(".xsw label.switch").click()
         assert state["config"]["vpn_servers"][0]["peers"][0]["enabled"] is False
+        await expect(row.get_by_text("Отключён", exact=True)).to_be_visible()
         await expect(name).to_have_count(0)
         # A device added by the administrator opens by itself.
-        await page.get_by_role("button", name="Добавить устройство", exact=True).click()
+        await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+        await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
         await expect(page.get_by_role("button", name="Скачать .conf", exact=True)).to_be_visible()
         # Thirteen "add" buttons became one menu; the items keep their names.
-        await page.locator("details.addmenu > summary").click()
+        await page.locator("details.addmenu > summary").filter(has_text="Добавить сервер").click()
         await page.get_by_role("button", name="Добавить L2TP", exact=True).click()
         await expect(page.locator("form.vpn-server")).to_have_count(2)
         await expect(page.get_by_role("textbox", name="Адрес прослушивания", exact=True)).to_be_visible()
@@ -148,7 +173,8 @@ async def scenario(browser, mode):
         cards = page.locator(".peer-card")
         await expect(page.get_by_role("textbox", name="Трафик через VPN (AllowedIPs)", exact=True)).to_have_count(1)
         await expect(cards.first.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("1.1.1.1")
-        await page.get_by_role("button", name="Добавить устройство", exact=True).click()
+        await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+        await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
         await expect(cards).to_have_count(2)
         first, second = cards.nth(0), cards.nth(1)
         await expect(second.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("10.9.0.1")
@@ -208,14 +234,16 @@ async def scenario(browser, mode):
         await upload.set_input_files({"name": "phone.conf", "mimeType": "text/plain", "buffer": f"[Interface]\nPrivateKey = {PRIVATE}\n".encode()})
     elif mode == "telemetry":
         state["telemetry"] = "idle"
-        await expect(page.get_by_text("Нет недавней связи", exact=True)).to_be_visible(timeout=10000)
+        await expect(page.get_by_text("Оффлайн", exact=True)).to_be_visible(timeout=10000)
+        await expect(page.get_by_text("Последняя связь:", exact=False)).to_be_visible()
         state["telemetry"] = "error"
-        await expect(page.get_by_text("Статистика недоступна", exact=True)).to_be_visible(timeout=10000)
+        await expect(page.get_by_text("Нет данных", exact=True)).to_be_visible(timeout=10000)
         await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_have_count(0)
         state["telemetry"] = "never"
-        await expect(page.get_by_text("Ещё не подключался", exact=True)).to_be_visible(timeout=10000)
+        await expect(page.get_by_text("Оффлайн", exact=True)).to_be_visible(timeout=10000)
     elif mode == "create":
-        await page.get_by_role("button", name="Добавить устройство", exact=True).click()
+        await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+        await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
         await expect(page.get_by_role("button", name="Скачать .conf", exact=True)).to_be_visible()
         # Opening an existing profile flushes pending changes in the app.
         await page.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
@@ -236,7 +264,7 @@ async def scenario(browser, mode):
             await button.click()
         assert state["keys"] == 1
         assert state["config"]["vpn_servers"][0]["peers"][0]["credentials"]["private_key"] == NEW_PRIVATE
-        await expect(page.get_by_text("Нет данных для этого профиля", exact=True)).to_be_visible()
+        await expect(page.get_by_text("Нет данных", exact=True)).to_be_visible()
         if mode == "cancel":
             await page.get_by_role("button", name="Отменить", exact=True).click()
             await expect(page.get_by_role("button", name="Открыть профиль и QR-код", exact=True)).to_be_visible()
@@ -283,7 +311,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("collapsed", "mobile", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

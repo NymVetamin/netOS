@@ -45,7 +45,7 @@ const NAV: { group: string; items: { id: PageID; label: string; icon: IconName }
     items: [
       { id: "dashboard", label: "Сводка", icon: "dashboard" },
       { id: "map", label: "Карта сети", icon: "map" },
-      { id: "clients", label: "Устройства", icon: "clients" },
+      { id: "clients", label: "Клиенты", icon: "clients" },
     ],
   },
   {
