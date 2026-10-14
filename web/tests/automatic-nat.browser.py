@@ -45,7 +45,11 @@ async def main():
   Path('output/playwright').mkdir(parents=True,exist_ok=True)
   await page.get_by_text('NAT канала «Riga»',exact=True).scroll_into_view_if_needed()
   await page.screenshot(path='output/playwright/automatic-nat.png')
-  for changes in ({'enabled':False},{'source':'192.0.2.0/24'},{'to_source':'198.51.100.1'},{'direction':'destination'}):
+  state['cfg']['firewall']['nat'][0]['enabled']=False
+  await page.reload()
+  await expect(page.get_by_text('NAT аплинка «Uplink»',exact=True)).to_have_count(0)
+  await expect(page.get_by_text('NAT канала «Riga»',exact=True)).to_be_visible()
+  for changes in ({'source':'192.0.2.0/24'},{'to_source':'198.51.100.1'},{'direction':'destination'}):
    state['cfg']['firewall']['nat']=[{'id':'manual','name':'Explicit WAN','enabled':True,'direction':'source','interface':'enp8s0',**changes}]
    await page.reload()
    await expect(page.get_by_text('NAT аплинка «Uplink»',exact=True)).to_be_visible()

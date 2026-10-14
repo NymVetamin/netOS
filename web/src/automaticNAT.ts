@@ -5,7 +5,7 @@ export type AutomaticNAT = { id: string; name: string; iface: string; kind: "wan
 export function automaticNAT(config: any): AutomaticNAT[] {
   const result: AutomaticNAT[] = [];
   const covered = new Set<string>((config.firewall?.nat || [])
-    .filter((n: any) => n.enabled && n.direction !== "destination" && n.interface && !n.source && !n.to_source)
+    .filter((n: any) => n.direction !== "destination" && n.interface && !n.source && !n.to_source)
     .map((n: any) => n.interface));
   for (const wan of config.wans || []) {
     const iface = ["pppoe", "l2tp"].includes(wan.proto) ? `ppp-${wan.id}`

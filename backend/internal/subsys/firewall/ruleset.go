@@ -564,10 +564,14 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	// Explicit source NAT must see the packet before the catch-all egress rules.
 	masqueraded := map[string]bool{}
 	for _, n := range cfg.Firewall.NAT {
-		if n.Enabled && n.Direction != "destination" {
-			b.natSource(n)
+		if n.Direction != "destination" {
+			// An explicit catch-all owns this interface's masquerade setting.
+			// Disabling it must not silently recreate NAT via the WAN fallback.
 			if n.Interface != "" && n.Source == "" && n.ToSource == "" {
 				masqueraded[n.Interface] = true
+			}
+			if n.Enabled {
+				b.natSource(n)
 			}
 		}
 	}
