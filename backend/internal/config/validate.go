@@ -2713,7 +2713,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			}
 		}
 		if s.DefaultChannel != "" && !channels[s.DefaultChannel] {
-			r.errf(path+".default_channel", "неизвестный канал %q", s.DefaultChannel)
+			r.errf(path+".default_channel", "VPN-сервер %q: канал %q отсутствует или выключен; выберите включённый канал", s.Name, s.DefaultChannel)
 		}
 		if s.Type == "wireguard" {
 			c.validateWireGuardServer(r, path, s)
@@ -2757,7 +2757,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			}
 			seenAddr[peer.Address] = true
 			if peer.Channel != "" && !channels[peer.Channel] {
-				r.errf(ppath+".channel", "неизвестный канал %q", peer.Channel)
+				r.errf(ppath+".channel", "VPN-клиент %q сервера %q: канал %q отсутствует или выключен; выберите включённый канал", peer.Name, s.Name, peer.Channel)
 			}
 		}
 	}

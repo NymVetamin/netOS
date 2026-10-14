@@ -1,3 +1,4 @@
+import { channelReferences, canReplaceChannel } from "../channelReferences";
 import { secretInput } from "../secrets";
 import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
 import { api } from "../api";
@@ -72,7 +73,25 @@ export function ChannelsPage({ config, patch }: Props) {
   const strongswanInstalled = ready("ikev2");
   const missing = channelComponents.filter(component => !ready(component.type));
 
+  const [disableID, setDisableID] = useState("");
+  const [replacement, setReplacement] = useState("");
+  const disabling = channels.find((c: any) => c.id === disableID);
+  const dependencies = disabling ? channelReferences(config, disableID) : [];
+
+  useEffect(() => {
+    if (disableID) document.getElementById("channel-disable-choice")?.scrollIntoView({ block: "center" });
+  }, [disableID]);
+
   function updateChannel(id: string, mutate: (channel: any) => void) {
+    const current = channels.find((c: any) => c.id === id);
+    if (!current) return;
+    const next = structuredClone(current);
+    mutate(next);
+    if (current.enabled && !next.enabled && channelReferences(config, id).length) {
+      setDisableID(id);
+      setReplacement("");
+      return;
+    }
     patch((draft) => mutate(draft.channels.find((channel: any) => channel.id === id)));
   }
 
@@ -186,6 +205,28 @@ export function ChannelsPage({ config, patch }: Props) {
 
   return (
     <>
+      {disabling && <div id="channel-disable-choice"><Notice tone="warn" title={`Канал «${disabling.name || disabling.id}» используется`}>
+        <p>Перед отключением выберите новый выход для связанных настроек:</p>
+        <ul>{dependencies.map((ref, i) => <li key={i}>{ref.label}</li>)}</ul>
+        <div className="form-grid"><Field label="Новый канал выхода"><select aria-label="Новый канал вместо отключаемого" value={replacement} onChange={e => setReplacement(e.target.value)}>
+          <option value="">— выберите —</option>
+          {channels.filter((c: any) => canReplaceChannel(config, disableID, c.id)).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
+        </select></Field></div>
+        {replacement === "direct" && <p>Связанный трафик пойдёт напрямую, без этого VPN-канала.</p>}
+        <div className="row wrap">
+          <button type="button" className="btn" onClick={() => { setDisableID(""); setReplacement(""); }}>Отмена</button>
+          <button type="button" className="btn danger" disabled={!canReplaceChannel(config, disableID, replacement)} onClick={() => {
+            patch(draft => {
+              const target = draft.channels.find((c: any) => c.id === disableID);
+              if (!target || !canReplaceChannel(draft, disableID, replacement)) return;
+              for (const ref of channelReferences(draft, disableID)) ref.owner[ref.key] = replacement;
+              target.enabled = false;
+            });
+            setDisableID(""); setReplacement("");
+          }}>Переназначить и выключить</button>
+        </div>
+        <p className="hint">Изменения вступят в силу после применения. Можно также отменить действие и изменить назначения по отдельности.</p>
+      </Notice></div>}
       <div className="page-head">
         <h1>Интернет-каналы</h1>
         <p>VPN-выходы и правила выбора подключения для устройств и сетей</p>
@@ -683,12 +724,5 @@ function updatePolicyDay(patch: Props["patch"], id: string, day: string, checked
 }
 
 function isChannelReferenced(config: any, id: string) {
-  return (config.clients || []).some((item: any) => item.channel === id) ||
-    (config.networks || []).some((item: any) => item.default_channel === id) ||
-    (config.policies || []).some((item: any) => item.channel === id) ||
-    (config.channels || []).some((item: any) => item.id !== id && item.fallback === id) ||
-    (config.dns?.upstreams || []).some((item: any) => item.channel === id) ||
-    (config.dns?.split_rules || []).some((item: any) => item.channel === id) ||
-    (config.vpn_servers || []).some((server: any) => server.default_channel === id ||
-      (server.peers || []).some((peer: any) => peer.channel === id));
+  return channelReferences(config, id).length > 0;
 }
