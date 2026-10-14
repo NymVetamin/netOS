@@ -5,6 +5,18 @@ import { vpnMapServers } from "../mapVPN";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
 
+function ClientChannel({ config, value, inherited, source, label, onChange }: {
+  config: any; value: string; inherited?: string; source: string; label: string; onChange: (value: string) => void;
+}) {
+  const channels = config.channels || [];
+  const name = (id: string) => channels.find((c: any) => c.id === id)?.name || (id === "direct" ? "Напрямую" : id);
+  return <select className="client-channel" aria-label={label} value={value} onChange={e => onChange(e.target.value)} onClick={e => e.stopPropagation()}>
+    <option value="">{source}{inherited ? ` — ${name(inherited)}` : ""}</option>
+    {value && !channels.some((c: any) => c.id === value && c.enabled) && <option value={value} disabled>{name(value)} (недоступен)</option>}
+    {channels.filter((c: any) => c.enabled).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
+  </select>;
+}
+
 // Для каждого клиента можно переопределить канал сегмента. Явные политики
 // всё равно стоят выше этой настройки.
 export function Clients({
@@ -170,17 +182,20 @@ export function Clients({
         {vpnError && <Notice tone="warn" title="Состояние VPN-клиентов недоступно">Подключение не подтверждено. Проверка повторится автоматически.</Notice>}
         {!loaded && loading && <Empty>Загрузка локальных устройств…</Empty>}
         {loaded && devices.length + vpnCount === 0 && <Empty>Устройств пока не видно</Empty>}
-          <Rows cols={["Устройство", "Адрес", "MAC", "Подключение", "Состояние"]}>
+          <Rows cols={["Устройство", "Адрес", "Канал выхода", "Подключение", "Состояние"]}>
           {devices.map((c) => {
                   const cfgClient: any = known.get(c.mac);
                   const lease = leaseByMAC.get(c.mac);
+                  const network = (config.networks || []).find((n: any) => cfgClient?.network ? n.id === cfgClient.network
+                    : (config.interfaces || []).find((i: any) => i.id === n.interface)?.name === c.interface);
                   return (
               <Row
                 key={`lan:${c.mac}`}
                 id={`lan:${c.mac}`}
                 cells={[<strong>{cfgClient?.name || c.hostname || "без имени"}</strong>,
                   <span className="mono">{c.ip || "—"}{pinButton(c)}</span>,
-                  <span className="mono dim">{c.mac}</span>,
+                  <ClientChannel config={config} value={cfgClient?.channel || ""} inherited={network?.default_channel || (network ? "direct" : "")}
+                    source="По сегменту" label={`Канал для устройства ${c.mac}`} onChange={channel => updateClient(c.mac, { channel })} />,
                   <span className="dim">{[c.interface, c.source === "dhcp" ? "DHCP" : c.source === "arp" ? "ARP" : c.source === "reservation" ? "Закреплённый адрес" : "DHCP + ARP", lease ? `до ${formatTime(lease.expires)}` : ""].filter(Boolean).join(" · ")}</span>,
                   loadError ? <Badge tone="neutral">данные устарели</Badge> : cfgClient?.blocked ? <Badge tone="danger">заблокирован</Badge> : <Badge tone={c.online ? "ok" : "neutral"}>{c.online ? "в сети" : "молчит"}</Badge>]}
               >
@@ -192,16 +207,7 @@ export function Clients({
                             value={cfgClient?.name || ""}
                             onChange={(e) => updateClient(c.mac, { name: e.target.value })}
                           /></Cap>
-                  <Cap label="Канал"><select
-                          aria-label={`Канал для устройства ${c.mac}`}
-                          value={cfgClient?.channel || ""}
-                          onChange={(e) => updateClient(c.mac, { channel: e.target.value })}
-                        >
-                          <option value="">По настройке сегмента</option>
-                          {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => (
-                            <option key={channel.id} value={channel.id}>{channel.name}</option>
-                          ))}
-                        </select></Cap>
+                  <Cap label="MAC"><span className="mono">{c.mac}</span></Cap>
                   <Cap label="Сегмент"><select aria-label={`Сегмент для устройства ${c.mac}`} value={cfgClient?.network || ""} onChange={(e) => updateClient(c.mac, { network: e.target.value })}>
                           <option value="">— не выбран —</option>
                           {(config.networks || []).filter((network: any) => network.enabled).map((network: any) => (
@@ -228,7 +234,13 @@ export function Clients({
                 })}
           {vpn.flatMap(server => server.peers.map(peer => <Row
             key={`vpn:${server.id}:${peer.id}`} id={`vpn:${server.id}:${peer.id}`}
-            cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="dim">—</span>,
+            cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>,
+              <ClientChannel config={config} value={peer.peer.channel || ""} inherited={server.server.default_channel || "direct"}
+                source="По серверу" label={`Канал VPN-клиента ${server.name} / ${peer.name}`}
+                onChange={channel => patch(draft => {
+                  const target = (draft.vpn_servers || []).find((s: any) => s.id === server.id)?.peers?.find((p: any) => p.id === peer.id);
+                  if (target) target.channel = channel;
+                })} />,
               <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
               <Badge tone={["recent", "online"].includes(peer.state) ? "ok" : peer.state === "disabled" ? "danger" : "neutral"}>{peer.label}</Badge>]}>
             <div className="form-grid">
@@ -240,6 +252,7 @@ export function Clients({
             <a className="btn sm" href="#vpn-servers">Настройки VPN-клиента</a>
           </Row>))}
         </Rows>
+        <div className="clients-channel-hint hint">Каналы показаны по настройкам черновика. Изменения начнут действовать после применения. Явные правила маршрутизации имеют приоритет.</div>
       </Card>
 
     </>

@@ -483,7 +483,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
     try {
       const pair = await api.wireGuardServerPublicKey(server.id);
       const body = wireGuardClientConfig(server, peer, wgPrivateKey, pair.public_key, peer.credentials?.preshared_key);
-      const url = URL.createObjectURL(new Blob([body], { type: name.endsWith(".json") ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" }));
+      const url = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
       const link = document.createElement("a"); link.href = url; link.download = `${peer.name || peer.id}.conf`; link.click(); URL.revokeObjectURL(url);
     } catch (err: any) { setError(err?.message || "Не удалось скачать WireGuard-профиль"); }
   }

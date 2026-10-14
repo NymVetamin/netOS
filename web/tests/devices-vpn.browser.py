@@ -24,6 +24,8 @@ async def scenario(browser, mode):
     if mode=="many":
         cfg["vpn_servers"].append({"id":"wg2","name":"Other server","type":"wireguard","enabled":False,"peers":[{"id":"phone","name":"Other phone","enabled":True}]})
     cfg["dhcp"]={"reservations":[{"id":"saved","mac":"aa:bb:cc:dd:ee:ff","ip":"192.168.10.50","hostname":"Offline laptop","network":"lan","enabled":True}]}
+    cfg["channels"]=[{"id":"direct","name":"Напрямую","enabled":True},{"id":"exit","name":"Xray Riga","enabled":True},{"id":"off","name":"Disabled exit","enabled":False}]
+    cfg["networks"][0]["default_channel"]="exit"
     telemetry_error=mode=="error"
     async def route_request(route):
         req,path=route.request,urlparse(route.request.url).path
@@ -70,6 +72,28 @@ async def scenario(browser, mode):
             await expect(page.get_by_text("недавно на связи",exact=True)).to_have_count(0)
             telemetry_error=False
             await expect(page.get_by_text("недавно на связи",exact=True)).to_be_visible(timeout=10000)
+    if mode=="many":
+        first=page.get_by_label("Канал VPN-клиента VPN server / Phone",exact=True)
+        second=page.get_by_label("Канал VPN-клиента Other server / Other phone",exact=True)
+        await expect(first).to_have_value("")
+        async with page.expect_response(lambda r:r.request.method=="PUT" and r.url.endswith("/api/config")):
+            await first.select_option("exit")
+        assert cfg["vpn_servers"][0]["peers"][0]["channel"]=="exit"
+        assert not cfg["vpn_servers"][1]["peers"][0].get("channel")
+        await expect(second).to_have_value("")
+        await page.reload()
+        await expect(first).to_have_value("exit")
+        async with page.expect_response(lambda r:r.request.method=="PUT" and r.url.endswith("/api/config")):
+            await first.select_option("")
+        assert cfg["vpn_servers"][0]["peers"][0]["channel"]==""
+        lan=page.get_by_label("Канал для устройства aa:bb:cc:dd:ee:ff",exact=True)
+        await expect(lan.locator("option:checked")).to_have_text("По сегменту — Xray Riga")
+        async with page.expect_response(lambda r:r.request.method=="PUT" and r.url.endswith("/api/config")):
+            await lan.select_option("direct")
+        assert cfg["clients"][0]["channel"]=="direct"
+        await page.reload()
+        await expect(lan).to_have_value("direct")
+        await page.screenshot(path="output/playwright/client-channels.png")
     await page.get_by_role("button",name="Добавить по MAC",exact=True).click()
     await expect(page.get_by_text("Добавить устройство по MAC",exact=True)).to_be_visible()
     await page.get_by_role("button",name="Закрыть добавление",exact=True).click()
@@ -82,7 +106,7 @@ async def scenario(browser, mode):
     assert cfg["dhcp"]["reservations"]==[]
     await page.reload()
     await expect(page.get_by_text("Offline laptop",exact=True)).to_have_count(0)
-    assert writes==["/api/config"],writes
+    assert writes==["/api/config"]*(4 if mode=="many" else 1),writes
     await page.close();print(mode,"PASS")
 
 async def main():

@@ -2443,3 +2443,6 @@ td > select {
 .peer-group-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 16px 20px; background: var(--bg); border-bottom: 1px solid var(--border); }
 .peer-group-heading h3 { margin: 2px 0 0; font-size: 18px; overflow-wrap: anywhere; }
 .peer-group-hint { padding: 12px 20px; border-top: 1px solid var(--border); }
+
+.client-channel { width: 100%; min-width: 0; }
+.clients-channel-hint { padding: 12px 16px; border-top: 1px solid var(--border); }
