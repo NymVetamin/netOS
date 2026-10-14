@@ -115,7 +115,7 @@ func (m *Maintenance) DeleteBackup(name string) error {
 
 var versionPattern = regexp.MustCompile(`^(?:latest|v?[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)$`)
 
-func (m *Maintenance) Schedule(ctx context.Context, operation, argument string) error {
+func (m *Maintenance) Schedule(ctx context.Context, operation, argument string, backup ...bool) error {
 	var command []string
 	switch operation {
 	case "backup":
@@ -134,6 +134,9 @@ func (m *Maintenance) Schedule(ctx context.Context, operation, argument string) 
 			return fmt.Errorf("некорректная версия")
 		}
 		command = []string{m.Binary, "update", argument}
+		if len(backup) > 0 && backup[0] {
+			command = append(command, "--backup")
+		}
 	default:
 		return fmt.Errorf("неизвестная операция обслуживания")
 	}

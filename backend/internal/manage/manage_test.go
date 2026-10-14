@@ -374,6 +374,7 @@ func TestUpdateBuildsFromSourceWhenAskedExplicitly(t *testing.T) {
 // или несовместимого бинарника. Выбранная версия передаётся отдельно.
 func TestUpdateUsesCurrentInstallerForRequestedTag(t *testing.T) {
 	m, _ := testManager()
+	m.Version = "v0.04"
 	var fetched []string
 	m.Run = func(_ context.Context, spec command) error {
 		if spec.name == "curl" {
@@ -976,4 +977,64 @@ func TestResetFailsClosedWhenCleanupIsIncomplete(t *testing.T) {
 			t.Fatalf("reset claimed success: %s", out.String())
 		}
 	})
+}
+
+func TestUpdateBackupFailurePreventsInstallation(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	if err := os.MkdirAll(m.StateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	installed, restarted := false, false
+	m.Run = func(_ context.Context, c command) error {
+		if c.name == "tar" {
+			return fmt.Errorf("disk full")
+		}
+		if c.name == "bash" {
+			installed = true
+		}
+		if c.name == "systemctl" && strings.Join(c.args, " ") == "start netosd" {
+			restarted = true
+		}
+		return nil
+	}
+	err := m.Execute(context.Background(), []string{"update", "v1.2.4", "--backup"})
+	if err == nil || !strings.Contains(err.Error(), "disk full") || installed || !restarted {
+		t.Fatalf("err=%v installed=%v restarted=%v", err, installed, restarted)
+	}
+}
+func TestUpdateRejectsDowngradeEvenWithForce(t *testing.T) {
+	m, _ := testManager()
+	m.Run = func(context.Context, command) error { t.Fatal("downgrade reached installer"); return nil }
+	if err := m.Execute(context.Background(), []string{"update", "v1.2.2", "--force"}); err == nil {
+		t.Fatal("downgrade accepted")
+	}
+}
+
+func TestUpdateWithBackupArchivesBeforeInstaller(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	started := false
+	m.Run = func(_ context.Context, c command) error {
+		if c.name == "systemctl" && strings.Join(c.args, " ") == "start netosd" {
+			if err := os.MkdirAll(filepath.Dir(m.sys(m.ReadyFile)), 0700); err != nil {
+				return err
+			}
+			return os.WriteFile(m.sys(m.ReadyFile), []byte("ready"), 0600)
+		}
+		if c.name == "bash" {
+			archives, _ := filepath.Glob(filepath.Join(m.BackupDir, "*.tar.gz"))
+			if len(archives) != 1 {
+				t.Fatal("installer ran before backup")
+			}
+			started = true
+		}
+		return nil
+	}
+	if err := m.Execute(context.Background(), []string{"update", "v1.2.4", "--backup"}); err != nil {
+		t.Fatal(err)
+	}
+	if !started {
+		t.Fatal("installer was not run")
+	}
 }

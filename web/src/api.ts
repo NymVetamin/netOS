@@ -302,8 +302,9 @@ export const api = {
   deleteBackup: (name: string) => request<{ ok: boolean }>("DELETE", `/api/backups/${encodeURIComponent(name)}`),
   restoreBackup: (name: string, confirm: string) =>
     request<{ scheduled: boolean }>("POST", "/api/maintenance/restore", { name, confirm }),
-  updateSystem: (version: string, confirm: string) =>
-    request<{ scheduled: boolean }>("POST", "/api/maintenance/update", { version, confirm }),
+  releases: () => request<any>("GET", "/api/maintenance/releases"),
+  updateSystem: (version: string, confirm: string, backup = false) =>
+    request<{ scheduled: boolean }>("POST", "/api/maintenance/update", { version, confirm, backup }),
   reconfigurePanel: (panel: any, confirm: string) =>
     request<{ scheduled: boolean; revision: number; port: number }>("POST", "/api/maintenance/panel", { panel, confirm }),
   maintenanceStatus: () => request<any>("GET", "/api/maintenance/status"),

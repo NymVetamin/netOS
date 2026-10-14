@@ -55,6 +55,7 @@ func TestReportResetAndRollbackCleanOwnedRuntime(t *testing.T) {
 
 func TestReportReinstallNetworkFailureIsNotMissingRelease(t *testing.T) {
 	m, _ := testManager()
+	m.Version = "v0.04"
 	m.Output = func(context.Context, string, ...string) (string, error) {
 		return "", errors.New("curl: (35) Connection reset by peer")
 	}

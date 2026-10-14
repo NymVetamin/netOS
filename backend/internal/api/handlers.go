@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/netos-router/netos/internal/releaseversion"
 	"io"
 	"net"
 	"net/http"
@@ -838,6 +839,7 @@ func (s *Server) handleMaintenanceRestore(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleMaintenanceUpdate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		Backup  bool   `json:"backup"`
 		Version string `json:"version"`
 		Confirm string `json:"confirm"`
 	}
@@ -845,7 +847,11 @@ func (s *Server) handleMaintenanceUpdate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "для обновления требуется подтверждение UPDATE")
 		return
 	}
-	s.scheduleMaintenance(w, r, "update", input.Version, "update")
+	if cmp, known := releaseversion.Compare(input.Version, s.Version); known && cmp < 0 {
+		writeError(w, http.StatusConflict, "установка старой версии доступна только после удаления netOS")
+		return
+	}
+	s.scheduleMaintenance(w, r, "update", input.Version, "update", input.Backup)
 }
 
 func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) {
@@ -976,7 +982,7 @@ func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, operation, argument, action string) {
+func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, operation, argument, action string, backup ...bool) {
 	if s.Maintenance == nil {
 		writeError(w, http.StatusServiceUnavailable, "обслуживание недоступно")
 		return
@@ -997,7 +1003,7 @@ func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, ope
 			return
 		}
 	}
-	if err := s.Maintenance.Schedule(r.Context(), operation, argument); err != nil {
+	if err := s.Maintenance.Schedule(r.Context(), operation, argument, backup...); err != nil {
 		_ = s.Store.Audit(store.AuditEntry{User: userOf(r), Action: action, Target: argument, Detail: err.Error(), Success: false})
 		writeError(w, http.StatusConflict, "%v", err)
 		return

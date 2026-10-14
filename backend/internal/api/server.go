@@ -215,6 +215,7 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/backups", s.handleCreateBackup)
 	auth("DELETE /api/backups/{name}", s.handleDeleteBackup)
 	auth("POST /api/maintenance/restore", s.handleMaintenanceRestore)
+	auth("GET /api/maintenance/releases", s.handleReleases)
 	auth("POST /api/maintenance/update", s.handleMaintenanceUpdate)
 	auth("POST /api/maintenance/panel", s.handleMaintenancePanel)
 	auth("GET /api/clients", s.handleClients)

@@ -1,3 +1,4 @@
+import { Updates } from "../Updates";
 import { confirmAction } from "../confirm";
 import { useEffect, useRef, useState } from "react";
 import { api, formatBytes, formatTime, Session } from "../api";
@@ -290,9 +291,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
   const [error, setError] = useState("");
   const [restoreName, setRestoreName] = useState("");
   const [restoreConfirm, setRestoreConfirm] = useState("");
-  const [version, setVersion] = useState("latest");
   const [installedVersion, setInstalledVersion] = useState("");
-  const [updateConfirm, setUpdateConfirm] = useState("");
   const [waitingForRestore, setWaitingForRestore] = useState(false);
   const restoreObservedRunning = useRef(false);
   const restoreScheduledAt = useRef(0);
@@ -402,15 +401,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
       </div>}
 
       </div>
-      <h3 className="card-sub">Обновление netOS{installedVersion && <span className="sub">Установлена версия: <span className="mono">{installedVersion}</span></span>}</h3>
-      <div className="card-part pad">
-        <div className="faint" style={{ fontSize: 12.5, margin: ".25rem 0 .7rem" }}>Перед обновлением установщик сохраняет данные; укажите latest или тег релиза, например v0.06.</div>
-        <div className="row wrap">
-          <input aria-label="Версия netOS для обновления" style={{ maxWidth: 160 }} value={version} onChange={(e) => setVersion(e.target.value.trim())} />
-          <input aria-label="Подтверждение обновления" style={{ maxWidth: 220 }} placeholder="Введите UPDATE" value={updateConfirm} onChange={(e) => setUpdateConfirm(e.target.value)} />
-          <button className="btn" disabled={busy || running || updateConfirm !== "UPDATE" || !version} onClick={() => action(() => api.updateSystem(version, updateConfirm), "Обновление запланировано")}>Обновить</button>
-        </div>
-      </div>
+      <Updates current={installedVersion} disabled={busy || running} action={action} />
     </Card>
   );
 }

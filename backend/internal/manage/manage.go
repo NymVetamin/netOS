@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"github.com/netos-router/netos/internal/releaseversion"
 	"io"
 	"os"
 	"os/exec"
@@ -279,6 +280,7 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 			return err
 		}
 		rest, force := extractFlags(args[1:], "--force", "-f")
+		rest, backup := extractFlags(rest, "--backup")
 		version, err := positionalVersion(rest)
 		if err != nil {
 			return err
@@ -286,7 +288,7 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		// reinstall разворачивает версию заново по определению: за этой
 		// командой приходят, когда установка развалилась, и отказ «у вас уже
 		// последняя» был бы ровно тем, чего от неё не ждут.
-		return m.install(ctx, version, force || args[0] == "reinstall")
+		return m.install(ctx, version, force || args[0] == "reinstall", backup)
 	case "reset":
 		if err := m.requireRoot(); err != nil {
 			return err
@@ -445,7 +447,7 @@ func (m *Manager) help() {
   netos status                 живая сводка роутера (при отказе — состояние службы)
   netos logs [-f|--follow]     журнал действий как в панели
   netos logs --system [-f]    технический журнал службы
-  netos update [версия] [-f|--force]
+  netos update [версия] [-f|--force] [--backup]
                                обновить до latest или указанной версии;
                                без --force ничего не делает, если версия та же
   netos reinstall [версия]     развернуть версию заново, даже если она уже стоит
@@ -563,7 +565,7 @@ func (m *Manager) resetPasswordFromStdin(username string) error {
 	return nil
 }
 
-func (m *Manager) install(ctx context.Context, version string, force bool) error {
+func (m *Manager) install(ctx context.Context, version string, force bool, backup ...bool) error {
 	fromSource := os.Getenv("NETOS_FROM_SOURCE") == "1"
 	resolvedVersion := version
 	if !fromSource && (resolvedVersion == "" || resolvedVersion == "latest") {
@@ -571,6 +573,9 @@ func (m *Manager) install(ctx context.Context, version string, force bool) error
 		if resolvedVersion == "" {
 			return fmt.Errorf("не удалось определить тег последнего релиза; повторите позже или укажите версию явно")
 		}
+	}
+	if cmp, known := releaseversion.Compare(resolvedVersion, m.Version); known && cmp < 0 {
+		return fmt.Errorf("установка старой версии доступна только после удаления netOS")
 	}
 	name := resolvedVersion
 	if name == "" {
@@ -630,6 +635,12 @@ func (m *Manager) install(ctx context.Context, version string, force bool) error
 	fmt.Fprintln(m.Out, "Загружаю установщик netOS…")
 	if err := m.run(ctx, "curl", "-4", "-fsSL", "--retry", "3", "-o", path, installerURL(resolvedVersion)); err != nil {
 		return fmt.Errorf("не удалось загрузить установщик версии %s: %w", name, err)
+	}
+
+	if len(backup) > 0 && backup[0] {
+		if err := m.backupNow(ctx); err != nil {
+			return fmt.Errorf("копия перед обновлением: %w", err)
+		}
 	}
 
 	var env []string
