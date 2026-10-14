@@ -1,3 +1,5 @@
+import { CopyButton } from "../CopyButton";
+import { realityClientConfig } from "../xrayProfile";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
 import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
@@ -66,7 +68,7 @@ function randomWireGuardKey() {
 }
 
 function saveClientFile(name: string, body: string) {
-  const url = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
+  const url = URL.createObjectURL(new Blob([body], { type: name.endsWith(".json") ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
   link.download = name;
@@ -211,12 +213,12 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         server.type === "l2tp" ? <L2TPServer key={server.id} server={server} config={config} installed={l2tpInstalled} patch={patch} /> :
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}</Rows>}</div>
       {servers.length > 0 && <><div className="card-sub"><h3>Клиенты</h3><span className="sub">Профили и пользователи каждого сервера</span><AddMenu label={addingTo ? "Создаём клиента…" : "Добавить клиента"} items={clientItems} /></div>
-      <div className="card-part"><Rows cols={["Клиент", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{servers.map((server: any) =>
+      <div className="card-part vpn-client-groups">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя IKEv2." /> :
-        server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя L2TP." /> : null)}</Rows></div></>}
+        server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя L2TP." /> : null)}</div></>}
     </Card></ClientCreators.Provider>
   </>;
 }
@@ -233,10 +235,12 @@ function ServerRow({ server, type, endpoint, installed, referenced, update, patc
 }
 
 function PeerGroup({ server, hint, children }: any) {
-  return <div className="peer-group" data-peers-of={server.id}>
-    <div className="xgroup"><strong>{server.name}</strong><span className="faint">{(server.peers || []).length}</span>{hint && <span className="faint">{hint}</span>}</div>
-    {children}
-  </div>;
+  const type = server.type === "xray" ? XRAY_NAMES[server.config?.protocol || "reality"] : ({ wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[server.type];
+  return <section className="peer-group" data-peers-of={server.id} aria-label={`Клиенты сервера ${server.name || server.id}`}>
+    <header className="peer-group-heading"><div><span className="faint">Сервер</span><h3>{server.name || server.id}</h3></div><Badge>{type}</Badge><span className="dim">Клиентов: {(server.peers || []).length}</span></header>
+    <Rows cols={["Клиент", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{children}</Rows>
+    {hint && <div className="peer-group-hint hint">{hint}</div>}
+  </section>;
 }
 
 function channelName(channels: any[], peer: any) {
@@ -479,7 +483,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
     try {
       const pair = await api.wireGuardServerPublicKey(server.id);
       const body = wireGuardClientConfig(server, peer, wgPrivateKey, pair.public_key, peer.credentials?.preshared_key);
-      const url = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
+      const url = URL.createObjectURL(new Blob([body], { type: name.endsWith(".json") ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" }));
       const link = document.createElement("a"); link.href = url; link.download = `${peer.name || peer.id}.conf`; link.click(); URL.revokeObjectURL(url);
     } catch (err: any) { setError(err?.message || "Не удалось скачать WireGuard-профиль"); }
   }
@@ -487,12 +491,12 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
   const [realityBusy, setRealityBusy] = useState(false);
   useEffect(() => { setRealityLink(""); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name]);
   async function openReality(downloadFile = false) {
-    setError(""); setRealityBusy(true); setRealityLink("");
+    setError(""); setRealityBusy(true);
     try {
       await beforeRead();
       const profile = await api.realityClientProfile(server.id, peer.id);
       setRealityLink(profile.link);
-      if (downloadFile) saveClientFile(`${peer.name || peer.id}.txt`, profile.link + "\n");
+      if (downloadFile) saveClientFile(`${peer.name || peer.id}.json`, JSON.stringify(realityClientConfig(profile.link), null, 2) + "\n");
     } catch (err: any) { setError(err?.message || "Не удалось создать ссылку подключения"); }
     finally { setRealityBusy(false); }
   }
@@ -510,9 +514,9 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
-    {protocol === "reality" && realityLink && <div className="client-package"><div className="qr-card"><QRCodeSVG value={realityLink} size={176} level="M" marginSize={2} title={`Reality-профиль ${peer.name || peer.id}`} /></div><div className="client-package-copy"><strong>Профиль Reality</strong><p>Отсканируйте QR-код в VPN-приложении. Изменения черновика начнут работать после применения настроек.</p><button type="button" className="btn" onClick={async () => { try { await navigator.clipboard.writeText(realityLink); } catch { setError("Не удалось скопировать ссылку. Скачайте её файлом."); } }}>Скопировать ссылку</button></div></div>}
+    {protocol === "reality" && realityLink && <div className="client-package"><div className="qr-card"><QRCodeSVG value={realityLink} size={176} level="M" marginSize={2} title={`Reality-профиль ${peer.name || peer.id}`} /></div><div className="client-package-copy"><strong>Профиль Reality</strong><p>Отсканируйте QR-код в VPN-приложении. Изменения черновика начнут работать после применения настроек.</p><CopyButton text={realityLink} label="Скопировать ссылку" onError={setError} /></div></div>}
     <div className="row-actions peer-head">
-    {protocol === "reality" && <><button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality(true)}>Скачать VLESS-ссылку</button><button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality()}>Открыть QR-код</button></>}
+    {protocol === "reality" && <><button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality(true)}>Скачать JSON Xray</button>{!realityLink && <button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality()}>Открыть QR-код</button>}</>}
     {protocol === "wireguard" && <button type="button" className="btn sm" onClick={() => void downloadWG()}>Скачать WireGuard-профиль</button>}
     {protocol !== "reality" && protocol !== "wireguard" && <button type="button" className="btn sm" onClick={() => void downloadClient()}>Скачать профиль подключения</button>}
       <button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button>
@@ -702,10 +706,6 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     link.click();
     URL.revokeObjectURL(url);
   }
-  async function copyConfig() {
-    if (!preparedConfig) return;
-    try { await navigator.clipboard.writeText(preparedConfig); } catch { setError("Браузер не разрешил скопировать профиль. Скачайте файл конфигурации."); }
-  }
   const state = status?.state || "pending";
   const known = ["recent", "idle", "never"].includes(state);
   return <Row className="peer-card" id={peer.id}
@@ -725,7 +725,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     <p className="hint">После изменения этих настроек скачайте профиль заново или отсканируйте QR-код на устройстве.</p>
     {secret ? <div className="client-package">
       <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>
-      <div className="client-package-copy"><strong>Профиль готов к импорту</strong><p>Отсканируйте QR-код в приложении WireGuard или скачайте файл. Профиль сохраняется на роутере после применения настроек. Его можно повторно открыть и скачать без замены ключей.</p><div className="row wrap"><button type="button" className="btn primary" onClick={download}>Скачать .conf</button><button type="button" className="btn" onClick={() => void copyConfig()}>Скопировать</button><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить</button></div></div>
+      <div className="client-package-copy"><strong>Профиль готов к импорту</strong><p>Отсканируйте QR-код в приложении WireGuard или скачайте файл. Профиль сохраняется на роутере после применения настроек. Его можно повторно открыть и скачать без замены ключей.</p><div className="row wrap"><button type="button" className="btn primary" onClick={download}>Скачать .conf</button><CopyButton text={preparedConfig} onError={setError} /><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить</button></div></div>
     </div> : Object.hasOwn(peer.credentials || {}, "private_key") ? <div className="row wrap" style={{ marginTop: "0.8rem" }}><button type="button" className="btn primary" disabled={profileBusy} onClick={() => void openProfile()}>{profileBusy ? "Загрузка…" : "Открыть профиль и QR-код"}</button><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить профиль</button></div> : <Notice tone="info" title="Профиль создан в прежней версии">Подключение клиента продолжает работать. Для повторной выдачи загрузите его прежний .conf: ключ будет сохранён без изменения подключения. Если файла нет, перевыпустите профиль и передайте новый клиенту.<div className="row wrap" style={{ marginTop: "0.65rem" }}><label className="btn">Загрузить прежний .conf<input aria-label="Загрузить прежний .conf" type="file" accept=".conf" hidden onChange={(event) => { void importProfile(event.target.files?.[0]); event.target.value = ""; }} /></label><button type="button" className="btn" onClick={() => void generateClient()}>Перевыпустить профиль</button></div></Notice>}
 
     <details className="advanced"><summary>Технические данные</summary><div className="form-grid"><Field label="Публичный ключ устройства"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; delete draft.credentials.private_key; removeSecret(); })} /></Field><Field label="Предварительный общий ключ"><input className="mono" type="password" autoComplete="off" {...secretInput(peer, "preshared_key")} value={peer.credentials?.preshared_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.preshared_key = e.target.value; })} /></Field></div></details>

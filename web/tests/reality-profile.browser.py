@@ -1,5 +1,5 @@
 """Saved Reality credentials stay redacted; profile export reads after draft flush."""
-import asyncio, copy, mimetypes, os
+import asyncio, copy, mimetypes, os, json
 from pathlib import Path
 from urllib.parse import urlparse, urlencode
 from playwright.async_api import async_playwright, expect
@@ -28,7 +28,7 @@ async def main():
    elif path.endswith('/reality-profile'):
     state['reads']+=1
     sid=state['cfg']['vpn_servers'][0]['config']['short_ids'][0]
-    state['link']='vless://12345678-1234-1234-1234-123456789abc@vpn.example:443?'+urlencode({'security':'reality','pbk':'public','sid':sid,'sni':'example.com'})+'#phone'
+    state['link']='vless://12345678-1234-1234-1234-123456789abc@vpn.example:443?'+urlencode({'security':'reality','pbk':'A'*43,'sid':sid,'sni':'example.com'})+'#phone'
     body={'link':state['link']}
    elif path=='/api/xray/keypair':raise AssertionError('export requested private key derivation in browser')
    await r.fulfill(json=body)
@@ -39,8 +39,32 @@ async def main():
   await page.get_by_role('button',name='Открыть QR-код',exact=True).click()
   await expect(page.locator('.qr-card svg')).to_be_visible()
   first_svg=await page.locator('.qr-card svg').inner_html()
-  async with page.expect_download() as event:await page.get_by_role('button',name='Скачать VLESS-ссылку',exact=True).click()
-  assert Path(await (await event.value).path()).read_text().strip()==state['link']
+  async with page.expect_download() as event:await page.get_by_role('button',name='Скачать JSON Xray',exact=True).click()
+  download=await event.value
+  assert download.suggested_filename.endswith('.json')
+  exported=json.loads(Path(await download.path()).read_text())
+  assert exported['inbounds'][0]['listen']=='127.0.0.1'
+  outbound=exported['outbounds'][0]
+  assert outbound['settings']['vnext'][0]['users'][0]['id']=='12345678-1234-1234-1234-123456789abc'
+  assert outbound['streamSettings']['realitySettings']['shortId']=='abcd'
+  Path('output/playwright').mkdir(parents=True,exist_ok=True)
+  Path('output/playwright/reality-client.json').write_text(json.dumps(exported))
+  await expect(page.get_by_role('button',name='Открыть QR-код',exact=True)).to_have_count(0)
+  await page.evaluate("Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:async text=>{window.copiedText=text}}})")
+  await page.get_by_role('button',name='Скопировать ссылку',exact=True).click()
+  await expect(page.get_by_role('button',name='Скопировано',exact=True)).to_be_visible()
+  assert await page.evaluate('window.copiedText')==state['link']
+  await page.get_by_role('button',name='Скопировано',exact=True).click()
+  await page.evaluate("()=>{navigator.clipboard.writeText=async()=>{throw new Error('denied')}}")
+  await page.get_by_role('button',name='Скопировано',exact=True).click()
+  await expect(page.get_by_text('Не удалось скопировать.',exact=False)).to_be_visible()
+  await expect(page.get_by_role('region',name='Клиенты сервера Reality')).to_be_visible()
+  await page.locator('.peer-group-heading').scroll_into_view_if_needed()
+  await page.screenshot(path='output/playwright/vpn-profile-groups.png')
+  await page.set_viewport_size({'width':390,'height':900})
+  await page.locator('.peer-group-heading').scroll_into_view_if_needed()
+  await page.screenshot(path='output/playwright/vpn-profile-groups-mobile.png')
+  await page.set_viewport_size({'width':1280,'height':900})
   await page.reload()
   await page.get_by_role('button',name='Открыть QR-код',exact=True).click()
   await expect(page.locator('.qr-card svg')).to_be_visible()
