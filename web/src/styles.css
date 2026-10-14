@@ -2310,6 +2310,11 @@ table.access .corner {
 /* --- перетаскивание правил --- */
 
 .grip {
+  border: 0;
+  background: transparent;
+  padding: 8px 4px;
+  touch-action: none;
+  user-select: none;
   display: inline-grid;
   place-items: center;
   color: var(--text-faint);
@@ -2446,3 +2451,7 @@ td > select {
 
 .client-channel { width: 100%; min-width: 0; }
 .clients-channel-hint { padding: 12px 16px; border-top: 1px solid var(--border); }
+
+.grip svg { pointer-events: none; }
+.grip:active { cursor: grabbing; }
+.grip:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; }

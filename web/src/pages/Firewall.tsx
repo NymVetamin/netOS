@@ -92,18 +92,20 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
   // Перетаскивание строки: правило встаёт на место той, на которую его
   // бросили. Порядок внутри цепочки и есть порядок проверки.
   const [dragging, setDragging] = useState<number | null>(null);
+  const dragSource = useRef<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const drag: Drag = {
     dragging,
     over,
-    start: (index) => setDragging(index),
+    start: (index) => { dragSource.current = index; setDragging(index); },
     enter: (index) => setOver(index),
     drop: (index) => {
-      if (dragging !== null) moveTo(dragging, index);
+      if (dragSource.current !== null && dragSource.current !== index) moveTo(dragSource.current, index);
+      dragSource.current = null;
       setDragging(null);
       setOver(null);
     },
-    end: () => { setDragging(null); setOver(null); },
+    end: () => { dragSource.current = null; setDragging(null); setOver(null); },
   };
 
   const groups = buildGroups(config, rules);
@@ -598,6 +600,20 @@ function RuleRow({
   expanded: boolean;
   onToggleExpand: () => void;
 }) {
+  const gesture = useRef<{ x: number; y: number; active: boolean } | null>(null);
+  const latestDrag = useRef(drag);
+  latestDrag.current = drag;
+  useEffect(() => {
+    const cancel = () => { if (gesture.current) { gesture.current = null; latestDrag.current.end(); } };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") cancel(); };
+    window.addEventListener("keydown", key);
+    window.addEventListener("blur", cancel);
+    return () => { window.removeEventListener("keydown", key); window.removeEventListener("blur", cancel); };
+  }, []);
+  const targetAt = (x: number, y: number) => {
+    const row = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-rule-index]");
+    return row ? Number(row.dataset.ruleIndex) : null;
+  };
   const action = ACTIONS.find((a) => a.id === rule.action);
   const target = drag.over === index && drag.dragging !== null && drag.dragging !== index;
   const rowClass = [
@@ -610,19 +626,52 @@ function RuleRow({
     <>
       <tr
         className={rowClass}
-        onDragOver={(e) => { if (drag.dragging !== null) { e.preventDefault(); drag.enter(index); } }}
-        onDrop={(e) => { e.preventDefault(); drag.drop(index); }}
+        data-rule-index={index}
       >
         <td style={{ width: 24, paddingRight: 0 }}>
-          <span
+          <button
+            type="button"
             className="grip"
-            draggable
+            aria-label={`Переместить правило ${rule.name}`}
             title="Перетащите, чтобы поменять порядок"
-            onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(index)); drag.start(index); }}
-            onDragEnd={drag.end}
+            onDragStart={e => e.preventDefault()}
+            onPointerDown={e => {
+              if (e.button !== 0 || !e.isPrimary) return;
+              e.preventDefault();
+              e.currentTarget.focus();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              gesture.current = { x: e.clientX, y: e.clientY, active: false };
+            }}
+            onPointerMove={e => {
+              const current = gesture.current;
+              if (!current) return;
+              if (!current.active) {
+                if (Math.hypot(e.clientX - current.x, e.clientY - current.y) < 5) return;
+                current.active = true;
+                drag.start(index);
+              }
+              const target = targetAt(e.clientX, e.clientY);
+              if (target !== null) drag.enter(target);
+            }}
+            onPointerUp={e => {
+              const current = gesture.current;
+              gesture.current = null;
+              const target = targetAt(e.clientX, e.clientY);
+              if (current?.active && target !== null) drag.drop(target);
+              else drag.end();
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+            }}
+            onPointerCancel={() => { gesture.current = null; drag.end(); }}
+            onLostPointerCapture={() => { if (gesture.current) { gesture.current = null; drag.end(); } }}
+            onKeyDown={e => {
+              if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault();
+                if (!gesture.current) onMove(index, e.key === "ArrowUp" ? -1 : 1);
+              }
+            }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" /><circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" /><circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" /></svg>
-          </span>
+          </button>
         </td>
         <td style={{ width: 46 }}>
           <Switch
