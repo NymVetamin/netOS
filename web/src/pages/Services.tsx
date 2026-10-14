@@ -1,3 +1,4 @@
+import { DDNSSection } from "./DDNS";
 import { useEffect, useState } from "react";
 import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { newID } from "../id";
@@ -34,10 +35,11 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
         <p>Автоматическая настройка устройств и разрешение доменных имён</p>
       </div>
 
-      <ProblemsFor problems={problems} prefixes={["dns", "dhcp"]} />
+      <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns"]} />
 
       <DHCPSection config={config} patch={patch} providers={dhcpProviders} />
       <DNSSection config={config} patch={patch} providers={dnsProviders} />
+      <DDNSSection config={config} patch={patch} />
     </>
   );
 }

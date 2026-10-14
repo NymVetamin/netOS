@@ -2378,3 +2378,23 @@ td > select {
 }
 .storage-settings .row { flex-wrap: wrap; }
 .storage-settings .mono { overflow-wrap: anywhere; }
+
+
+/* DDNS: доменам и подписям нужна ширина, не зависящая от типа input. */
+.ddns-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px 20px;
+  max-width: 1000px;
+}
+.ddns-grid .field {
+  min-width: 0;
+  margin-bottom: 0;
+}
+.ddns-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}

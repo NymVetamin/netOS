@@ -40,11 +40,26 @@ async def main():
      value['ddns']['secrets_set'] = {'password': bool(state['password'])}
      state['cfg'] = value
     body = {'config': copy.deepcopy(state['cfg']), 'dirty': False, 'draft_version': len(state['puts']) + 1, 'problems': []}
+   elif path == '/api/ddns/status': body = {'success': True, 'address': '203.0.113.10', 'last_run': 1791972000, 'next_run': 1791972300}
    elif path == '/api/status': body = {'interfaces': [], 'channels': [], 'uptime_seconds': 1}
    elif path.endswith('/clients'): body = []
    await r.fulfill(json=body)
   await page.route('**/*', route)
+  await page.goto('https://netos-ui.test/#services')
+  await expect(page.get_by_label('Провайдер DDNS')).to_be_visible()
+  for width in (1440, 1043, 390):
+   await page.set_viewport_size({'width': width, 'height': 1000})
+   await page.locator('.ddns-grid').scroll_into_view_if_needed()
+   assert await page.locator('.ddns-grid').evaluate("""e => [...e.querySelectorAll('input,select')].every(x => {
+    const r=x.getBoundingClientRect(); return r.width >= 240 && r.right <= innerWidth && r.left >= 0;
+   })"""), f'DDNS fields clipped at {width}'
+   Path('output/playwright').mkdir(parents=True, exist_ok=True)
+   await page.screenshot(path=f'output/playwright/ddns-{width}.png')
+  await page.set_viewport_size({'width': 1280, 'height': 900})
   await page.goto('https://netos-ui.test/#traffic')
+  await expect(page.get_by_role('heading', name='Скорость и QoS', exact=True)).to_be_visible()
+  await expect(page.get_by_label('Провайдер DDNS')).to_have_count(0)
+  await page.goto('https://netos-ui.test/#services')
   password = page.get_by_label('Пароль No-IP', exact=True)
   await expect(password).to_have_attribute('placeholder', '••••••••')
   await expect(password).to_have_value('')
@@ -61,6 +76,16 @@ async def main():
   async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
    await page.get_by_label('Провайдер DDNS').select_option('duckdns')
   await expect(page.get_by_label('API-токен DDNS')).to_have_attribute('placeholder', 'Не задан')
+  async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
+   await page.get_by_label('Провайдер DDNS').select_option('cloudflare')
+  await expect(page.get_by_label('Cloudflare Zone ID')).to_be_visible()
+  await expect(page.get_by_label('Cloudflare Record ID')).to_be_visible()
+  async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
+   await page.get_by_label('Источник адреса DDNS').select_option('interface')
+  await expect(page.get_by_label('Интернет-канал DDNS', exact=True)).to_be_visible()
+  async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
+   await page.get_by_label('Источник адреса DDNS').select_option('web')
+  await expect(page.get_by_label('Интернет-канал DDNS', exact=True)).to_have_count(0)
   await page.goto('https://netos-ui.test/#vpn-servers')
   await expect(page.get_by_label('Закрытый ключ сервера')).to_have_attribute('placeholder', '••••••••')
   peers = page.locator('[data-peers-of="oc"]')
