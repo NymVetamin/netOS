@@ -2398,3 +2398,25 @@ td > select {
   margin-bottom: 16px;
   overflow-wrap: anywhere;
 }
+
+.multiwan-enable {
+  margin-bottom: 20px;
+}
+.multiwan-enable .hint {
+  margin-top: 8px;
+}
+.multiwan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px 24px;
+  max-width: 800px;
+}
+.multiwan-grid .field {
+  min-width: 0;
+  margin-bottom: 0;
+}
+.multiwan-grid .field-control {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}

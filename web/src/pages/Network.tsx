@@ -81,8 +81,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
     <>
     {networkConflicts.map((conflict) => <Notice key={conflict} tone="warn" title="Конфликт сетевой конфигурации">{conflict}: networking.service настраивает интерфейс, которым управляет netOS. Уберите чужое объявление или отключите networking.service.</Notice>)}
     <Card title="Multi-WAN" subtitle="Автоматическое переключение на резервный аплинк">
-      <div className="form-grid">
-        <Field label="Режим">
+      <div className="multiwan-enable">
           <Switch
             checked={!!config.multiwan?.enabled}
             disabled={wans.filter((wan) => wan.enabled).length < 2}
@@ -93,9 +92,11 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
             })}
             label="Включить Multi-WAN"
           />
-        </Field>
+        {wans.filter((wan) => wan.enabled).length < 2 && <div className="hint">Включите минимум два подключения.</div>}
+      </div>
+      <div className="multiwan-grid">
         <Field label="Распределение">
-          <select disabled={!config.multiwan?.enabled} value={config.multiwan?.mode || "failover"} onChange={(e) => patch((draft) => (draft.multiwan.mode = e.target.value))}>
+          <select aria-label="Распределение Multi-WAN" disabled={!config.multiwan?.enabled} value={config.multiwan?.mode || "failover"} onChange={(e) => patch((draft) => (draft.multiwan.mode = e.target.value))}>
             <option value="failover">Резервирование</option>
             <option value="balance">Балансировка по весам</option>
           </select>
@@ -111,7 +112,6 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
           />
         </Field>
       </div>
-      {wans.filter((wan) => wan.enabled).length < 2 && <div className="hint">Включите минимум два подключения.</div>}
     </Card>
     <Card
       tight
