@@ -1,3 +1,4 @@
+import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
 import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
@@ -387,7 +388,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       {protocol === "reality" && <>
       <Field label="Сайт-маскировка" hint="Доступный TLS-сайт с портом"><input className="mono" value={cfg.destination || ""} onChange={(e) => setConfig("destination", e.target.value)} /></Field>
       <Field label="Имена сервера (SNI)" hint="По одному домену в строке"><textarea className="mono" value={(cfg.server_names || []).join("\n")} onChange={(e) => setConfig("server_names", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
-      <Field label="Short ID" hint="Чётное число hex-символов, до 16"><textarea className="mono" value={(cfg.short_ids || []).join("\n")} onChange={(e) => setConfig("short_ids", e.target.value.split(/\s+/).filter(Boolean))} /><button type="button" className="btn ghost sm" onClick={() => { if (!(cfg.short_ids || []).length || window.confirm("Заменить все Short ID? После применения старые ссылки перестанут работать. Передайте клиентам новые ссылки или QR-коды.")) setConfig("short_ids", [randomHex(8)]); }}>Перегенерировать Short ID</button></Field>
+      <Field label="Short ID" hint="Чётное число hex-символов, до 16"><textarea className="mono" value={(cfg.short_ids || []).join("\n")} onChange={(e) => setConfig("short_ids", e.target.value.split(/\s+/).filter(Boolean))} /><button type="button" className="btn ghost sm" onClick={async () => { if (!(cfg.short_ids || []).length || await confirmAction("Заменить все Short ID? После применения старые ссылки перестанут работать. Передайте клиентам новые ссылки или QR-коды.", "Заменить Short ID")) setConfig("short_ids", [randomHex(8)]); }}>Перегенерировать Short ID</button></Field>
       <Field label="Flow"><select value={cfg.flow ?? "xtls-rprx-vision"} onChange={(e) => setConfig("flow", e.target.value)}><option value="xtls-rprx-vision">XTLS Vision</option><option value="">Без flow</option></select></Field>
       <Field label="Диагностика Reality" hint="Показывать отладочные сведения Reality в журнале Xray">
         <Switch checked={!!cfg.show} label="Включить show" onChange={(value) => setConfig("show", value)} />
@@ -555,7 +556,7 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
 
   async function generateServerKey() {
     setError("");
-    if ((server.peers || []).length > 0 && !window.confirm("Перевыпуск ключа сервера отключит все ранее выданные профили. Продолжить?")) return;
+    if ((server.peers || []).length > 0 && !await confirmAction("Перевыпуск ключа сервера отключит все ранее выданные профили.", "Перевыпустить ключ")) return;
     try {
       const pair = await api.wireGuardKeypair();
       setConfig("private_key", pair.private_key);
@@ -671,7 +672,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     } catch (err: any) { setError(err?.message || "Не удалось импортировать профиль"); }
   }
   async function generateClient() {
-    if (!window.confirm("Перевыпуск заменит ключи клиента. После применения прежний профиль перестанет работать. Продолжить?")) return;
+    if (!await confirmAction("Перевыпуск заменит ключи клиента. После применения прежний профиль перестанет работать.", "Перевыпустить профиль")) return;
     setError("");
     try {
       if (!server.config?.public_endpoint) throw new Error("Сначала укажите адрес подключения к VPN-серверу");

@@ -282,12 +282,12 @@ async def scenario(browser, mode):
     await expect(page.get_by_role("button", name="Скачать .conf", exact=True)).to_be_visible()
     if mode in ("reissue", "cancel"):
         button = page.locator(".peer-card").get_by_role("button", name="Перевыпустить", exact=True)
-        page.once("dialog", lambda dialog: dialog.dismiss())
         await button.click()
+        await page.get_by_role("dialog").get_by_role("button", name="Отмена", exact=True).click()
         assert state["keys"] == 0
-        page.once("dialog", lambda dialog: dialog.accept())
         async with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/api/config")):
             await button.click()
+            await page.get_by_role("dialog").get_by_role("button", name="Перевыпустить профиль", exact=True).click()
         assert state["keys"] == 1
         assert state["config"]["vpn_servers"][0]["peers"][0]["credentials"]["private_key"] == NEW_PRIVATE
         await expect(page.get_by_text("Нет данных", exact=True)).to_be_visible()

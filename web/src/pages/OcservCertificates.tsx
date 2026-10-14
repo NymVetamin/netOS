@@ -1,3 +1,4 @@
+import { confirmAction } from "../confirm";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Field, Notice, Switch } from "../ui";
@@ -29,9 +30,9 @@ export function OcservClientCertificate({ server, peer }: { server: any; peer: a
     const link = document.createElement("a"); link.href = url; link.download = "openconnect-client.p12"; link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const change = (action: "revoke" | "reissue") => {
+  const change = async (action: "revoke" | "reissue") => {
     const question = action === "revoke" ? "Отозвать сертификат? Старый P12 больше не будет работать." : "Перевыпустить профиль? Старый P12 будет отозван. Клиенту потребуется новый файл.";
-    if (!window.confirm(`${question} OpenConnect будет перезапущен; подключённые к этому серверу клиенты переподключатся.`)) return;
+    if (!await confirmAction(`${question} OpenConnect будет перезапущен; подключённые к этому серверу клиенты переподключатся.`, action === "revoke" ? "Отозвать сертификат" : "Перевыпустить профиль")) return;
     void run(async () => { setPassword(""); setStatus(await api.ocCertificateAction(server.id, peer.id, action)); });
   };
   return <div className="peer-profile">

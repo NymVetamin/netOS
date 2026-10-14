@@ -1,3 +1,4 @@
+import { confirmAction } from "../confirm";
 import { useEffect, useRef, useState } from "react";
 import { api, formatBytes, formatTime, Session } from "../api";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
@@ -374,8 +375,8 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
               <td><div className="row">
                 <a className="btn ghost sm" href={`/api/backups/${encodeURIComponent(backup.name)}`}>Скачать</a>
                 <button className="btn sm" disabled={busy || running} onClick={() => { setRestoreName(backup.name); setRestoreConfirm(""); }}>Восстановить</button>
-                <button className="btn ghost sm" disabled={busy || running} onClick={() => {
-                  if (window.confirm(`Удалить ${backup.name}?`)) action(() => api.deleteBackup(backup.name), "Резервная копия удалена");
+                <button className="btn ghost sm" disabled={busy || running} onClick={async () => {
+                  if (await confirmAction(`Резервная копия «${backup.name}» будет удалена.`, "Удалить копию")) action(() => api.deleteBackup(backup.name), "Резервная копия удалена");
                 }}>Удалить</button>
               </div></td>
             </tr>)}</tbody>

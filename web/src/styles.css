@@ -2420,3 +2420,20 @@ td > select {
   display: flex;
   align-items: center;
 }
+
+.action-confirm {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  padding: 24px;
+  margin: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px #0006;
+}
+.action-confirm::backdrop { background: #0009; }
+.action-confirm h2 { margin: 0 0 12px; font-size: 20px; }
+.action-confirm p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.action-confirm-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
