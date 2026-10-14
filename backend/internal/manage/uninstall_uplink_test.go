@@ -13,8 +13,10 @@ func TestUninstallSSHProtectionLifecycle(t *testing.T) {
 	for _, tc := range []struct {
 		name                  string
 		failDHCP, failProtect bool
+		dropRoute             bool
 	}{
 		{name: "success"}, {name: "DHCP failure", failDHCP: true}, {name: "protection failure", failProtect: true},
+		{name: "network manager removed temporary route", dropRoute: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, out := testManager()
@@ -43,6 +45,9 @@ func TestUninstallSSHProtectionLifecycle(t *testing.T) {
 				case "ip -o -4 addr show dev eth0":
 					return "2: eth0 inet 192.0.2.10/24 scope global eth0", nil
 				case "ip -j -4 route show table main exact 198.51.100.9/32":
+					if protected {
+						return `[{"dst":"198.51.100.9","gateway":"192.0.2.1","dev":"eth0","metric":42760}]`, nil
+					}
 					return "[]", nil
 				case "ifquery --list":
 					return "lo\neth0\n", nil
@@ -71,9 +76,15 @@ func TestUninstallSSHProtectionLifecycle(t *testing.T) {
 					}
 				case "ifup -a --allow=hotplug":
 					dhcp = !tc.failDHCP
+					if tc.dropRoute {
+						protected = false
+					}
 				case "ip -4 route del 198.51.100.9/32 via 192.0.2.1 dev eth0 proto boot metric 42760":
 					if !dhcp {
 						t.Fatal("protection removed before DHCP restored")
+					}
+					if !protected {
+						return errors.New("RTNETLINK answers: No such process")
 					}
 					protected = false
 					removed = true
@@ -90,7 +101,7 @@ func TestUninstallSSHProtectionLifecycle(t *testing.T) {
 			if tc.failDHCP && (!protected || removed || strings.Contains(out.String(), "netOS удалён.")) {
 				t.Fatal("lost recovery or false success")
 			}
-			if !tc.failProtect && !tc.failDHCP && (!removed || protected) {
+			if !tc.failProtect && !tc.failDHCP && ((!removed && !tc.dropRoute) || protected) {
 				t.Fatal("temporary route left behind")
 			}
 		})

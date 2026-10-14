@@ -116,15 +116,9 @@ func (m *Manager) protectUninstallSSH(ctx context.Context, uplink managementUpli
 			return nil, fmt.Errorf("сохранение пути SSH: %w", err)
 		}
 	}
-	return func() error {
-		if err := m.run(ctx, "ip", route.args("del")...); err != nil {
-			return fmt.Errorf("удаление временного пути SSH: %w", err)
-		}
-		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}, nil
+	// Restoring the OS network manager may already remove this foreign route.
+	// Recheck ownership just as on a retry; absence is successful cleanup.
+	return noop, nil
 }
 
 func (m *Manager) releasePreviousUninstallSSH(ctx context.Context) error {
