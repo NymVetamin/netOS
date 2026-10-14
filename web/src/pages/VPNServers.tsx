@@ -1,4 +1,5 @@
 import { secretInput } from "../secrets";
+import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError } from "../api";
@@ -242,7 +243,9 @@ function OcservServer({ server, config, installed, patch }: any) {
       <Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.routes || []).join("\n")} onChange={(e) => setConfig("routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
       <Field label="Приветствие"><input value={cfg.banner || ""} onChange={(e) => setConfig("banner", e.target.value)} /></Field>
     </div>
-    <Notice tone="info" title="Сертификат сервера">netOS автоматически выпускает отдельный самоподписанный сертификат. После первого применения импортируйте его в доверенные на клиентском устройстве. <VPNCertificate server={server} /></Notice>
+    <Field label="Авторизация клиентов"><select value={cfg.auth_mode || "password"} onChange={(e) => setConfig("auth_mode", e.target.value)}><option value="password">Логин и пароль</option><option value="certificate">Сертификат клиента</option><option value="certificate_password">Сертификат клиента и пароль</option></select></Field>
+    <OcservTLSSettings server={server} setConfig={setConfig} />
+    {(!cfg.tls || !cfg.tls.mode || cfg.tls.mode === "selfsigned") && <Notice tone="info" title="Самоподписанный сертификат">После первого применения импортируйте сертификат в доверенные на клиентском устройстве. <VPNCertificate server={server} /></Notice>}
   </ServerRow>;
 }
 
@@ -262,23 +265,26 @@ function PasswordPeers({ server, config, patch, singleActive, empty }: any) {
   }
   return <PeerGroup server={server} add={<button type="button" className="btn sm" onClick={addPeer}>Добавить пользователя</button>}>
     {(server.peers || []).length === 0 ? <Empty>{empty}</Empty> : (server.peers || []).map((peer: any) =>
-      <OcservPeer key={peer.id} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={!singleActive || peer.enabled || enabledPeers === 0} />)}
+      <OcservPeer key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={!singleActive || peer.enabled || enabledPeers === 0} />)}
   </PeerGroup>;
 }
 
-function OcservPeer({ peer, referenced, channels, update, canEnable = true }: any) {
+function OcservPeer({ server, peer, referenced, channels, update, canEnable = true }: any) {
+  const certAuth = server.type === "ocserv" && ["certificate", "certificate_password"].includes(server.config?.auth_mode);
+  const passwordAuth = !certAuth || server.config?.auth_mode === "certificate_password";
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   return <Row className="peer-card" id={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <Badge tone={peer.enabled ? "ok" : "neutral"}>{peer.enabled ? "разрешён" : "отключён"}</Badge>]}
     toggle={<Switch checked={!!peer.enabled} disabled={!canEnable} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <div className="form-grid">
       <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
-      <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>
-      <Field label="Пароль" hint="Не меньше 8 символов"><input type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = e.target.value; })} /></Field>
+      {!certAuth && <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>}
+      {passwordAuth && <Field label="Пароль" hint="Не меньше 8 символов"><input type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = e.target.value; })} /></Field>}
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
+    {certAuth && <OcservClientCertificate server={server} peer={peer} />}
     <div className="row-actions peer-head"><button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div>
   </Row>;
 }

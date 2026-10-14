@@ -1,0 +1,103 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/netos-router/netos/internal/apply"
+	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/vpnpki"
+)
+
+type ocP12TestRunner struct{}
+
+func (ocP12TestRunner) Run(context.Context, string, ...string) (string, error) { return "", nil }
+func (ocP12TestRunner) RunInput(_ context.Context, _, _ string, args ...string) (string, error) {
+	for i, arg := range args {
+		if arg == "-out" {
+			return "", os.WriteFile(args[i+1], []byte("encrypted-test-container"), 0600)
+		}
+	}
+	return "", nil
+}
+
+func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
+	cfg := config.Default()
+	cfg.Components = []config.Component{{ID: "ocserv", Installed: true}}
+	cfg.VPNServers = []config.VPNServer{{ID: "oc", Index: 1, Type: "ocserv", Name: "OC", Enabled: true, Port: 14443, Subnet: "10.99.0.1/24", DefaultChannel: "direct", Config: map[string]any{"auth_mode": "certificate"}, Peers: []config.VPNPeer{{ID: "phone", Address: "10.99.0.2", Enabled: true}}}}
+	pki := vpnpki.New(t.TempDir(), ocP12TestRunner{})
+	if err := pki.Sync(context.Background(), cfg.VPNServers[0]); err != nil {
+		t.Fatal(err)
+	}
+	engine := apply.NewEngine(&lifecycleLogger{}, false)
+	if _, err := engine.Apply(context.Background(), cfg, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Engine: engine, PKI: pki}
+	call := func(role, action string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/certificate", nil)
+		r.SetPathValue("id", "oc")
+		r.SetPathValue("peer", "phone")
+		r.SetPathValue("action", action)
+		r = r.WithContext(context.WithValue(r.Context(), ctxRole, role))
+		w := httptest.NewRecorder()
+		s.handleOCClientCertificate(w, r)
+		return w
+	}
+	client, _ := pki.Get("oc", "phone")
+	for _, action := range []string{"", "password", "download"} {
+		if w := call("viewer", action); w.Code != 403 {
+			t.Fatalf("viewer read %s", action)
+		}
+	}
+	w := call("admin", "")
+	if w.Code != 200 || strings.Contains(w.Body.String(), client.Password) || strings.Contains(w.Body.String(), "encrypted-test-container") || strings.Contains(w.Body.String(), "PRIVATE KEY") {
+		t.Fatal("metadata leaks secrets")
+	}
+	w = call("admin", "password")
+	var password struct{ Password string }
+	json.Unmarshal(w.Body.Bytes(), &password)
+	if w.Code != 200 || password.Password != client.Password || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("explicit password failed")
+	}
+	w = call("admin", "download")
+	if w.Code != 200 || w.Body.String() != string(client.P12) || w.Header().Get("Content-Type") != "application/x-pkcs12" {
+		t.Fatal("explicit P12 failed")
+	}
+	if err := pki.Revoke(cfg.VPNServers[0], "phone"); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"password", "download"} {
+		if call("admin", action).Code != 409 {
+			t.Fatal("revoked profile exported")
+		}
+	}
+	if err := os.WriteFile(filepath.Join(pki.Dir("oc"), "state.json"), []byte("broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("admin", ""); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
+		t.Fatal("damaged PKI was presented as a pending draft")
+	}
+}
+
+func TestOCUploadedKeyIsRetainedButNeverReturned(t *testing.T) {
+	cfg := config.Default()
+	cfg.VPNServers = []config.VPNServer{{ID: "oc", Type: "ocserv", Config: map[string]any{"tls": map[string]any{"mode": "custom", "private_key": "private-key-sensitive", "cert_pem": "public-certificate"}}}}
+	visible, err := redactAdminConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(visible)
+	if strings.Contains(string(data), "private-key-sensitive") || !visible.VPNServers[0].SecretsSet["tls.private_key"] {
+		t.Fatal("key exposure/presence")
+	}
+	mergeRedactedSecrets(visible, cfg)
+	if visible.VPNServers[0].Config["tls"].(map[string]any)["private_key"] != "private-key-sensitive" {
+		t.Fatal("saving redacted key erased it")
+	}
+}

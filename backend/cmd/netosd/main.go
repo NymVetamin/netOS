@@ -14,10 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/netos-router/netos/internal/api"
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/bootstrap"
+	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/manage"
 	"github.com/netos-router/netos/internal/render"
@@ -40,6 +42,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 	"github.com/netos-router/netos/internal/subsys/wifi"
 	"github.com/netos-router/netos/internal/system"
+	"github.com/netos-router/netos/internal/vpnpki"
 )
 
 // version задаётся релизной сборкой через -ldflags "-X main.version=vX.Y.Z".
@@ -149,7 +152,11 @@ func main() {
 	channelMonitor := channels.New(runner, stateDir, logger)
 	ddnsController := ddns.New(logger)
 	sambaController := samba.New(runner, stateDir)
-	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController, sambaController); err != nil {
+	clientPKI := vpnpki.New(filepath.Join(filepath.Dir(stateDir), "pki"), runner)
+	certificateManager := api.NewCertificateManager(tlsDir)
+	certificateManager.PrepareHTTP = certificates.HTTPBootstrap(runner)
+	defer certificateManager.Close()
+	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController, daemonServices{Samba: sambaController, Certificates: certificateManager, PKI: clientPKI}); err != nil {
 		log.Fatalf("регистрация подсистем: %v", err)
 	}
 
@@ -290,6 +297,30 @@ func main() {
 	traffic := runtime.NewTrafficHistory("/var/lib/netos/traffic-history.json", collector)
 	go traffic.Run(ctx)
 	panel := api.New(st, engine, collector, logger)
+	panel.Certificates = certificateManager
+	panel.PKI = clientPKI
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				err := engine.Maintain(refreshCtx, func(current *config.Config) error {
+					if err := clientPKI.Reconcile(refreshCtx, current); err != nil {
+						return err
+					}
+					return certificateManager.Refresh(refreshCtx, current, stateDir, runner)
+				})
+				cancel()
+				if err != nil {
+					logger.Errorf("обновление сертификатов: %v", err)
+				}
+			}
+		}
+	}()
 	panel.Version = version
 	panel.Traffic = traffic
 	panel.Maintenance = api.NewMaintenance(runner)
@@ -477,7 +508,13 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	return cfg, id, nil
 }
 
-func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller, sambaControllers ...*samba.Subsystem) error {
+type daemonServices struct {
+	Samba        *samba.Subsystem
+	Certificates *certificates.Manager
+	PKI          *vpnpki.Store
+}
+
+func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply.Logger, multiWAN *multiwan.Controller, channelMonitor *channels.Subsystem, ddnsController *ddns.Controller, options ...daemonServices) error {
 	svc := services.NewManager(runner)
 	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
@@ -490,8 +527,13 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	firewallSubsystem := firewall.New(runner, stateDir)
 	firewallSubsystem.MultiWANClassifier = multiWAN.ClassifierRules
 	sambaController := samba.New(runner, stateDir)
-	if len(sambaControllers) > 0 {
-		sambaController = sambaControllers[0]
+	vpnSubsystem := vpnservers.New(runner, stateDir)
+	if len(options) > 0 {
+		if options[0].Samba != nil {
+			sambaController = options[0].Samba
+		}
+		vpnSubsystem.Certificates = options[0].Certificates
+		vpnSubsystem.PKI = options[0].PKI
 	}
 
 	subsystems := []apply.Subsystem{
@@ -508,7 +550,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		networkConfig,
 		routing.New(runner),
 		channelMonitor,
-		vpnservers.New(runner, stateDir),
+		vpnSubsystem,
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
 		sambaController,

@@ -468,29 +468,9 @@ func (c *Config) validateSystem(r *ValidationResult) {
 			r.errf("system.panel.tls.key_file", "сертификат и закрытый ключ должны находиться в разных файлах")
 		}
 	case "acme":
-		domain := strings.TrimSuffix(strings.ToLower(c.System.Panel.TLS.Domain), ".")
+		validateACMESpec(r, "system.panel.tls", c.System.Panel.TLS)
 		if c.System.Panel.Port == 80 {
 			r.errf("system.panel.port", "порт 80 нужен для проверки домена ACME; выберите другой порт панели")
-		}
-		publicSuffix, icannSuffix := publicsuffix.PublicSuffix(domain)
-		if domain == "" || unsafeConfigText(c.System.Panel.TLS.Domain) || net.ParseIP(domain) != nil || !validDNSName(domain) || !strings.Contains(domain, ".") || !icannSuffix || publicSuffix == domain {
-			r.errf("system.panel.tls.domain", "укажите полное публичное DNS-имя")
-		} else {
-			for _, reserved := range []string{"local", "lan", "internal", "localhost", "test", "example", "invalid", "example.com", "example.net", "example.org", "home.arpa"} {
-				if domain == reserved || strings.HasSuffix(domain, "."+reserved) {
-					r.errf("system.panel.tls.domain", "ACME требует публичное DNS-имя, а не зарезервированную зону")
-					break
-				}
-			}
-		}
-		if email := c.System.Panel.TLS.Email; email != "" {
-			address, err := mail.ParseAddress(email)
-			if err != nil || address.Address != email || len(email) > 254 || unsafeConfigText(email) {
-				r.errf("system.panel.tls.email", "укажите обычный адрес электронной почты без имени и управляющих символов")
-			}
-		}
-		if !c.System.Panel.TLS.AcceptTOS {
-			r.errf("system.panel.tls.accept_tos", "подтвердите условия использования центра сертификации")
 		}
 	default:
 		r.errf("system.panel.tls.mode", "неизвестный режим TLS %q", c.System.Panel.TLS.Mode)
@@ -2893,6 +2873,36 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 	if !s.Enabled {
 		return
 	}
+	switch s.OcservAuthMode() {
+	case "password", "certificate", "certificate_password":
+	default:
+		r.errf(path+".config.auth_mode", "неизвестный способ авторизации")
+	}
+	if oc.TLS != nil {
+		switch oc.TLS.Mode {
+		case "", "selfsigned":
+		case "panel":
+			if oc.PublicEndpoint == "" {
+				r.errf(path+".config.public_endpoint", "для общего сертификата укажите публичный адрес VPN")
+			}
+		case "acme":
+			validateACMESpec(r, path+".config.tls", TLS{Domain: oc.TLS.Domain, Email: oc.TLS.Email, AcceptTOS: oc.TLS.AcceptTOS})
+			host, _, _ := net.SplitHostPort(oc.PublicEndpoint)
+			if !strings.EqualFold(strings.TrimSuffix(host, "."), strings.TrimSuffix(oc.TLS.Domain, ".")) {
+				r.errf(path+".config.public_endpoint", "домен подключения должен совпадать с доменом сертификата")
+			}
+			if s.Port == 80 || c.System.Panel.Port == 80 {
+				r.errf(path+".config.tls", "порт 80 нужен для проверки ACME; измените порт VPN или панели")
+			}
+		case "custom":
+			if oc.TLS.CertPEM == "" || oc.TLS.PrivateKey == "" {
+				r.errf(path+".config.tls", "загрузите сертификат и закрытый ключ")
+			}
+		default:
+			r.errf(path+".config.tls.mode", "неизвестный режим сертификата")
+		}
+	}
+
 	if s.Port < 1 || s.Port > 65535 {
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
 	}
@@ -2919,7 +2929,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 	}
 	usernames := map[string]bool{}
 	for i, peer := range s.Peers {
-		username := peer.Credentials["username"]
+		username := s.OcservUsername(peer)
 		if username == "" || !safeAccountName(username) {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя может содержать только буквы, цифры, точку, дефис и подчёркивание")
 		}
@@ -2927,7 +2937,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя уже используется")
 		}
 		usernames[username] = true
-		if peer.Enabled && len(peer.Credentials["password"]) < 8 {
+		if s.OcservAuthMode() != "certificate" && peer.Enabled && len(peer.Credentials["password"]) < 8 {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль должен содержать не меньше 8 символов")
 		}
 		if unsafeConfigText(peer.Credentials["password"]) {
@@ -3454,4 +3464,28 @@ func inPortRange(s string) bool {
 		}
 	}
 	return n >= 1
+}
+
+func validateACMESpec(r *ValidationResult, path string, spec TLS) {
+	domain := strings.TrimSuffix(strings.ToLower(spec.Domain), ".")
+	publicSuffix, icannSuffix := publicsuffix.PublicSuffix(domain)
+	if domain == "" || unsafeConfigText(spec.Domain) || net.ParseIP(domain) != nil || !validDNSName(domain) || !strings.Contains(domain, ".") || !icannSuffix || publicSuffix == domain {
+		r.errf(path+".domain", "укажите полное публичное DNS-имя")
+	} else {
+		for _, reserved := range []string{"local", "lan", "internal", "localhost", "test", "example", "invalid", "example.com", "example.net", "example.org", "home.arpa"} {
+			if domain == reserved || strings.HasSuffix(domain, "."+reserved) {
+				r.errf(path+".domain", "ACME требует публичное DNS-имя, а не зарезервированную зону")
+				break
+			}
+		}
+	}
+	if email := spec.Email; email != "" {
+		address, err := mail.ParseAddress(email)
+		if err != nil || address.Address != email || len(email) > 254 || unsafeConfigText(email) {
+			r.errf(path+".email", "укажите обычный адрес электронной почты без имени и управляющих символов")
+		}
+	}
+	if !spec.AcceptTOS {
+		r.errf(path+".accept_tos", "подтвердите условия использования центра сертификации")
+	}
 }

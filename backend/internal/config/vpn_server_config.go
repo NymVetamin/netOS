@@ -67,12 +67,56 @@ type XrayServerConfig struct {
 // certificate is generated and owned by netOS; per-user passwords live on
 // VPNPeer credentials and are hashed before ocserv sees them.
 type OcservServerConfig struct {
-	UseRouterDNS   bool     `json:"use_router_dns,omitempty"`
-	PublicEndpoint string   `json:"public_endpoint,omitempty"`
-	DNS            []string `json:"dns,omitempty"`
-	Routes         []string `json:"routes,omitempty"`
-	MTU            int      `json:"mtu,omitempty"`
-	Banner         string   `json:"banner,omitempty"`
+	AuthMode       string     `json:"auth_mode,omitempty"` // password | certificate | certificate_password
+	TLS            *OcservTLS `json:"tls,omitempty"`
+	UseRouterDNS   bool       `json:"use_router_dns,omitempty"`
+	PublicEndpoint string     `json:"public_endpoint,omitempty"`
+	DNS            []string   `json:"dns,omitempty"`
+	Routes         []string   `json:"routes,omitempty"`
+	MTU            int        `json:"mtu,omitempty"`
+	Banner         string     `json:"banner,omitempty"`
+}
+
+func (s VPNServer) OcservAuthMode() string {
+	oc, _ := s.OcservConfig()
+	if oc.AuthMode == "" {
+		return "password"
+	}
+	return oc.AuthMode
+}
+
+func (s VPNServer) OcservUsername(peer VPNPeer) string {
+	if s.OcservAuthMode() != "password" {
+		return "netos-" + peer.ID
+	}
+	return peer.Credentials["username"]
+}
+
+// OcservTLS is independent of client authentication. An absent value preserves
+// the existing server certificate. "panel" reuses the panel's certificate only
+// when it covers the VPN endpoint name.
+type OcservTLS struct {
+	Mode       string `json:"mode"` // selfsigned | panel | acme | custom
+	Domain     string `json:"domain,omitempty"`
+	Email      string `json:"email,omitempty"`
+	AcceptTOS  bool   `json:"accept_tos,omitempty"`
+	CertPEM    string `json:"cert_pem,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"`
+}
+
+func (c *Config) UsesACME() bool {
+	if c.System.Panel.TLS.Mode == "acme" {
+		return true
+	}
+	for _, server := range c.VPNServers {
+		if server.Enabled && server.Type == "ocserv" {
+			oc, err := server.OcservConfig()
+			if err == nil && oc.TLS != nil && oc.TLS.Mode == "acme" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // IKEv2ServerConfig describes an IKEv2 road-warrior endpoint. Certificates

@@ -921,7 +921,7 @@ func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if input.Panel.TLS.Mode == "acme" && current.System.Panel.TLS.Mode != "acme" && current.System.Panel.Port != 80 {
+	if input.Panel.TLS.Mode == "acme" && current.System.Panel.TLS.Mode != "acme" && current.System.Panel.Port != 80 && (s.Certificates == nil || !s.Certificates.HTTPActive()) {
 		if err := panelPortAvailable(80); err != nil {
 			writeError(w, http.StatusConflict, "порт 80 для проверки домена ACME уже занят: %v", err)
 			return

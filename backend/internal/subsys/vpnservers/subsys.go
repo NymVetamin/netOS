@@ -14,9 +14,11 @@ import (
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
+	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 	"github.com/netos-router/netos/internal/tlsutil"
+	"github.com/netos-router/netos/internal/vpnpki"
 )
 
 type ownedServer struct {
@@ -127,12 +129,14 @@ func restorePaths(snapshots []pathSnapshot) error {
 }
 
 type Subsystem struct {
-	Runner      system.Runner
-	StateDir    string
-	SysClassNet string
-	ProcSysNet  string
-	UnitDir     string
-	PreUpDir    string
+	Certificates *certificates.Manager
+	PKI          *vpnpki.Store
+	Runner       system.Runner
+	StateDir     string
+	SysClassNet  string
+	ProcSysNet   string
+	UnitDir      string
+	PreUpDir     string
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
@@ -262,6 +266,11 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 }
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
+	if s.PKI != nil {
+		if err := s.PKI.Reconcile(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	wanted := enabledServers(cfg)
 	owned, err := s.readOwned()
 	if err != nil {
@@ -550,7 +559,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			if err := healthyFile(paths.conf, conf, 0o600); err != nil {
 				return err
 			}
-			if err := healthyFile(paths.connect, renderOcservConnect(server, cfg), 0o700); err != nil {
+			if err := healthyFile(paths.connect, renderOcservConnect(server, cfg, s.StateDir), 0o700); err != nil {
 				return err
 			}
 			if err := healthyFile(paths.unit, []byte(renderOcservUnit(server, paths.conf)), 0o644); err != nil {
@@ -559,8 +568,15 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			if err := ocservAuthHealth(paths, server); err != nil {
 				return fmt.Errorf("учётные записи OpenConnect: %w", err)
 			}
-			if _, err := tlsutil.ValidatePairForNames(filepath.Join(paths.tls, "panel.crt"), filepath.Join(paths.tls, "panel.key"), cfg.System.Hostname); err != nil {
-				return fmt.Errorf("TLS OpenConnect: %w", err)
+			oc, _ := server.OcservConfig()
+			if oc.TLS != nil && oc.TLS.Mode != "" && oc.TLS.Mode != "selfsigned" {
+				if _, err := certificates.ReadPair(filepath.Join(paths.tls, "server.pem"), filepath.Join(paths.tls, "server.pem"), ""); err != nil {
+					return fmt.Errorf("TLS OpenConnect: %w", err)
+				}
+			} else {
+				if _, err := tlsutil.ValidatePairForNames(filepath.Join(paths.tls, "panel.crt"), filepath.Join(paths.tls, "panel.key"), cfg.System.Hostname); err != nil {
+					return fmt.Errorf("TLS OpenConnect: %w", err)
+				}
 			}
 			continue
 		}

@@ -18,12 +18,14 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/apply"
+	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/ddns"
 	"github.com/netos-router/netos/internal/system"
 	"github.com/netos-router/netos/internal/tlsutil"
+	"github.com/netos-router/netos/internal/vpnpki"
 )
 
 // webFS содержит собранный интерфейс. Каталог webdist наполняется сборкой
@@ -43,6 +45,8 @@ type ComponentProbe interface {
 
 // Server — веб-панель.
 type Server struct {
+	Certificates  *certificates.Manager
+	PKI           *vpnpki.Store
 	StorageRunner system.Runner
 	Version       string
 	Store         *store.Store
@@ -166,10 +170,20 @@ func (s *Server) Routes() http.Handler {
 
 	auth("POST /api/logout", s.handleLogout)
 	auth("GET /api/session", s.handleSession)
+	auth("GET /api/certificates", func(w http.ResponseWriter, r *http.Request) {
+		if s.Certificates == nil {
+			writeJSON(w, http.StatusOK, []certificates.Status{})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.Certificates.Status())
+	})
 	auth("POST /api/password", s.handleChangePassword)
 	auth("POST /api/wireguard/keypair", s.handleWireGuardKeypair)
 	auth("POST /api/xray/keypair", s.handleXrayKeypair)
 	auth("GET /api/vpn-servers/{id}/certificate", s.handleVPNServerCertificate)
+	auth("GET /api/vpn-servers/{id}/peers/{peer}/certificate", s.handleOCClientCertificate)
+	auth("GET /api/vpn-servers/{id}/peers/{peer}/certificate/{action}", s.handleOCClientCertificate)
+	auth("POST /api/vpn-servers/{id}/peers/{peer}/certificate/{action}", s.handleOCClientCertificate)
 	auth("GET /api/vpn-servers/{id}/peers/{peer}/profile", s.handleVPNClientProfile)
 	auth("GET /api/vpn-servers/{id}/peers/{peer}/reality-profile", s.handleRealityClientProfile)
 	auth("GET /api/vpn-servers/{id}/clients", s.handleVPNClientStatus)
@@ -271,80 +285,96 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 	var challengeErr <-chan error
 	var err error
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-	switch cfg.System.Panel.TLS.Mode {
-	case "custom":
-		certPath = cfg.System.Panel.TLS.CertFile
-		keyPath = cfg.System.Panel.TLS.KeyFile
-		fingerprint, err = customTLSFingerprint(certPath, keyPath)
-		if err != nil {
-			return fmt.Errorf("проверка пользовательского сертификата: %w", err)
+	if s.Certificates != nil {
+		bundle, prepareErr := s.Certificates.Panel(ctx, cfg)
+		if prepareErr != nil {
+			return prepareErr
 		}
-	case "acme":
-		waitDNS := s.ACMEWaitDNS
-		if waitDNS == nil {
-			waitDNS = waitForACMEDNS
+		pair, loadErr := certificates.ReadPair(bundle, bundle, "")
+		if loadErr != nil {
+			return loadErr
 		}
-		if err := waitDNS(ctx, cfg.System.Panel.TLS.Domain); err != nil {
-			return err
+		fingerprint = tlsutil.Fingerprint(pair.Leaf)
+		tlsConfig.GetCertificate = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			pair, err := tls.LoadX509KeyPair(bundle, bundle)
+			return &pair, err
 		}
-		factory := s.ACMEFactory
-		if factory == nil {
-			factory = newProductionACMEManager
-		}
-		manager, factoryErr := factory(acmeCacheDir(tlsDir, cfg.System.Panel.TLS.Email), cfg.System.Panel.TLS.Domain, cfg.System.Panel.TLS.Email)
-		if factoryErr != nil {
-			return fmt.Errorf("подготовка ACME: %w", factoryErr)
-		}
-		acmeManager = manager
-		listen := s.Listen
-		if listen == nil {
-			listen = net.Listen
-		}
-		challengeAddress := s.ACMEHTTPAddress
-		if challengeAddress == "" {
-			challengeAddress = ":80"
-		}
-		challengeListener, listenErr := listen("tcp", challengeAddress)
-		if listenErr != nil {
-			return fmt.Errorf("не удалось занять HTTP-порт проверки ACME %s: %w", challengeAddress, listenErr)
-		}
-		s.challengeServer = &http.Server{
-			Addr: challengeAddress, Handler: manager.HTTPHandler(http.HandlerFunc(acmeFallback)),
-			ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-			WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
-			ErrorLog: log.New(logWriter{s.Logger}, "", 0),
-		}
-		challengeDone := make(chan error, 1)
-		go func() {
-			serveErr := s.challengeServer.Serve(challengeListener)
-			if serveErr == http.ErrServerClosed {
-				serveErr = nil
+	} else {
+		switch cfg.System.Panel.TLS.Mode {
+		case "custom":
+			certPath = cfg.System.Panel.TLS.CertFile
+			keyPath = cfg.System.Panel.TLS.KeyFile
+			fingerprint, err = customTLSFingerprint(certPath, keyPath)
+			if err != nil {
+				return fmt.Errorf("проверка пользовательского сертификата: %w", err)
 			}
-			challengeDone <- serveErr
-		}()
-		challengeErr = challengeDone
-		cert, issueErr := prefetchACMECertificateContext(ctx, manager, cfg.System.Panel.TLS.Domain)
-		if issueErr != nil {
-			_ = s.challengeServer.Close()
-			<-challengeDone
-			return issueErr
+		case "acme":
+			waitDNS := s.ACMEWaitDNS
+			if waitDNS == nil {
+				waitDNS = waitForACMEDNS
+			}
+			if err := waitDNS(ctx, cfg.System.Panel.TLS.Domain); err != nil {
+				return err
+			}
+			factory := s.ACMEFactory
+			if factory == nil {
+				factory = newProductionACMEManager
+			}
+			manager, factoryErr := factory(acmeCacheDir(tlsDir, cfg.System.Panel.TLS.Email), cfg.System.Panel.TLS.Domain, cfg.System.Panel.TLS.Email)
+			if factoryErr != nil {
+				return fmt.Errorf("подготовка ACME: %w", factoryErr)
+			}
+			acmeManager = manager
+			listen := s.Listen
+			if listen == nil {
+				listen = net.Listen
+			}
+			challengeAddress := s.ACMEHTTPAddress
+			if challengeAddress == "" {
+				challengeAddress = ":80"
+			}
+			challengeListener, listenErr := listen("tcp", challengeAddress)
+			if listenErr != nil {
+				return fmt.Errorf("не удалось занять HTTP-порт проверки ACME %s: %w", challengeAddress, listenErr)
+			}
+			s.challengeServer = &http.Server{
+				Addr: challengeAddress, Handler: manager.HTTPHandler(http.HandlerFunc(acmeFallback)),
+				ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+				WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
+				ErrorLog: log.New(logWriter{s.Logger}, "", 0),
+			}
+			challengeDone := make(chan error, 1)
+			go func() {
+				serveErr := s.challengeServer.Serve(challengeListener)
+				if serveErr == http.ErrServerClosed {
+					serveErr = nil
+				}
+				challengeDone <- serveErr
+			}()
+			challengeErr = challengeDone
+			cert, issueErr := prefetchACMECertificateContext(ctx, manager, cfg.System.Panel.TLS.Domain)
+			if issueErr != nil {
+				_ = s.challengeServer.Close()
+				<-challengeDone
+				return issueErr
+			}
+			parsed, parseErr := x509.ParseCertificate(cert.Certificate[0])
+			if parseErr != nil {
+				_ = s.challengeServer.Close()
+				<-challengeDone
+				return fmt.Errorf("разбор сертификата ACME: %w", parseErr)
+			}
+			fingerprint = tlsutil.Fingerprint(parsed)
+			tlsConfig = manager.TLSConfig().Clone()
+			tlsConfig.MinVersion = tls.VersionTLS12
+		case "selfsigned", "":
+			certPath, keyPath, fingerprint, err = tlsutil.EnsureSelfSigned(tlsDir, cfg.System.Hostname)
+			if err != nil {
+				return fmt.Errorf("подготовка сертификата: %w", err)
+			}
+		default:
+			return fmt.Errorf("неизвестный режим TLS %q", cfg.System.Panel.TLS.Mode)
 		}
-		parsed, parseErr := x509.ParseCertificate(cert.Certificate[0])
-		if parseErr != nil {
-			_ = s.challengeServer.Close()
-			<-challengeDone
-			return fmt.Errorf("разбор сертификата ACME: %w", parseErr)
-		}
-		fingerprint = tlsutil.Fingerprint(parsed)
-		tlsConfig = manager.TLSConfig().Clone()
-		tlsConfig.MinVersion = tls.VersionTLS12
-	case "selfsigned", "":
-		certPath, keyPath, fingerprint, err = tlsutil.EnsureSelfSigned(tlsDir, cfg.System.Hostname)
-		if err != nil {
-			return fmt.Errorf("подготовка сертификата: %w", err)
-		}
-	default:
-		return fmt.Errorf("неизвестный режим TLS %q", cfg.System.Panel.TLS.Mode)
 	}
 	s.Logger.Infof("отпечаток сертификата панели: %s", fingerprint)
 

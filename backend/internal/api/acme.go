@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netos-router/netos/internal/certificates"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -169,4 +170,11 @@ func waitForACMEDNS(ctx context.Context, domain string) error {
 		}
 	}
 	return fmt.Errorf("ACME DNS readiness for %s: %w", domain, lastErr)
+}
+
+// NewCertificateManager reuses the existing ACME transport and account cache.
+func NewCertificateManager(dir string) *certificates.Manager {
+	return certificates.New(dir, func(cache, domain, email string) (certificates.ACME, error) {
+		return newProductionACMEManager(cache, domain, email)
+	})
 }

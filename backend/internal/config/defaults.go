@@ -257,7 +257,7 @@ func (c *Config) EnsureSystemRules() {
 	}
 
 	var missing []FirewallRule
-	for _, want := range systemRules(c.System.Panel.Port, c.System.Panel.TLS.Mode == "acme") {
+	for _, want := range systemRules(c.System.Panel.Port, c.UsesACME()) {
 		idx, ok := existing[want.ID]
 		if !ok {
 			missing = append(missing, want)

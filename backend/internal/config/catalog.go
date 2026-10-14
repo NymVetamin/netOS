@@ -153,7 +153,7 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "ocserv", Title: "ocserv", Group: "VPN",
 		Description: "Сервер OpenConnect. Маскируется под обычный HTTPS — помогает там, где режут WireGuard и IPsec.",
-		Packages:    []string{"ocserv"},
+		Packages:    []string{"ocserv", "openssl"},
 		Units:       []string{"ocserv.service"},
 		RunUnits:    []string{"netos-ocserv-srv*.service"},
 		Provides:    []string{"vpn-server"},
