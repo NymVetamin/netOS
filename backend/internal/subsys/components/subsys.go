@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -269,6 +270,12 @@ func desiredComponentState(cfg *config.Config) map[string]bool {
 
 func protectedComponentPackages(desired map[string]bool) map[string]bool {
 	protected := map[string]bool{}
+	// These are dependencies of netOS itself, including OpenSSL used by the
+	// system CA bundle. A partially installed optional component must never
+	// claim them as exclusively its own and purge the router's TLS trust.
+	for _, pkg := range []string{"iptables", "iproute2", "conntrack", "ca-certificates", "openssl", "curl", "busybox", "procps", "kmod", "bash-completion", "systemd-timesyncd"} {
+		protected[pkg] = true
+	}
 	for _, info := range config.Catalog {
 		if !desired[info.ID] && !info.Essential {
 			continue
@@ -497,6 +504,9 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 		// netOS. В частности, iproute2 нельзя удалять вместе с QoS.
 		return nil
 	}
+	if protected == nil {
+		protected = protectedComponentPackages(nil)
+	}
 	for _, unit := range info.Units {
 		if err := s.Systemd.Disable(ctx, unit); err != nil {
 			return fmt.Errorf("disable stock unit %s: %w", unit, err)
@@ -539,7 +549,17 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	// top-level package leaves those binaries behind, so the component does not
 	// really disappear and the attack surface remains. Let apt remove automatic
 	// packages that are no longer needed by anything else.
-	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "purge", "--autoremove", "-y"}, present...)
+	args := []string{"-o", "DPkg::Lock::Timeout=60"}
+	var names []string
+	for pkg := range protected {
+		names = append(names, pkg)
+	}
+	sort.Strings(names)
+	for _, pkg := range names {
+		args = append(args, "-o", "APT::NeverAutoRemove::=^"+regexp.QuoteMeta(pkg)+"$")
+	}
+	args = append(args, "purge", "--autoremove", "-y")
+	args = append(args, present...)
 	if _, err := s.Runner.Run(ctx, "apt-get", args...); err != nil {
 		return err
 	}

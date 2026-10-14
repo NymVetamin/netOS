@@ -66,6 +66,26 @@ func TestComponentStateDistinguishesPartialInstallation(t *testing.T) {
 	}
 }
 
+func TestDisabledOcservCannotClaimSystemOpenSSL(t *testing.T) {
+	s := New(packageStateRunner{"openssl": true}, testLogger{})
+	info, _ := config.ComponentByID("ocserv")
+	if s.componentRemovableFrom(context.Background(), info, protectedComponentPackages(nil), componentLiveSnapshot{packages: map[string]bool{"openssl": true}, disabled: map[string]bool{"ocserv.service": true}}, true) {
+		t.Fatal("disabled ocserv would purge preinstalled OpenSSL and the system CA bundle")
+	}
+}
+
+func TestComponentPurgeProtectsRuntimeAndEnabledDependencies(t *testing.T) {
+	r := &removalFailureRunner{}
+	s := New(r, testLogger{})
+	protected := protectedComponentPackages(map[string]bool{"ocserv": true})
+	_ = s.removeProtected(context.Background(), config.ComponentInfo{ID: "dummy", Packages: []string{"dummy"}}, protected)
+	for _, pkg := range []string{"openssl", "ca-certificates", "ocserv", "iproute2"} {
+		if !containsArgument(r.aptArgs, "APT::NeverAutoRemove::=^"+pkg+"$") {
+			t.Errorf("autoremove can delete %s", pkg)
+		}
+	}
+}
+
 func TestWiFiInstallationRequiresRegulatoryDatabase(t *testing.T) {
 	info, ok := config.ComponentByID("hostapd")
 	if !ok {
