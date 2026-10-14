@@ -56,7 +56,8 @@ type Action struct {
 // и политики маршрутизации ссылаются на интерфейсы, которых до создания
 // каналов не существует, а DHCP-сервер не поднимется на интерфейсе без адреса.
 var Order = []string{
-	// Компоненты идут первыми: без установленных пакетов остальным подсистемам
+	"socks-prepare",
+	// После остановки меняющихся слушателей устанавливаем компоненты: без пакетов остальным подсистемам
 	// нечего запускать.
 	"components",
 	"system",
@@ -85,6 +86,7 @@ var Order = []string{
 	"vpn-servers",
 	"policy",
 	"firewall",
+	"socks",
 	"policy-cleanup",
 	"dhcp",
 	"dns",
@@ -100,6 +102,7 @@ var Order = []string{
 // provisional revision; running the ordinary component-first Apply in that
 // state can fail on DNS/downloads before it ever gets a chance to restore WAN.
 var startupConnectivityOrder = []string{
+	"socks-prepare",
 	"netconf", "interfaces", "ipv6", "networks", "wan", "multiwan", "routing", "firewall",
 }
 

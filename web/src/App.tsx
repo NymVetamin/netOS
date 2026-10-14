@@ -58,7 +58,7 @@ const NAV: { group: string; items: { id: PageID; label: string; icon: IconName }
       { id: "wifi", label: "Wi-Fi", icon: "wifi" },
       { id: "traffic", label: "Скорость и QoS", icon: "traffic" },
       { id: "firewall", label: "Защита сети", icon: "firewall" },
-      { id: "services", label: "Адреса и DNS", icon: "services" },
+      { id: "services", label: "Сетевые службы", icon: "services" },
     ],
   },
   {

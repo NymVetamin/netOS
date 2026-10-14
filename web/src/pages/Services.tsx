@@ -1,3 +1,4 @@
+import { SocksSection } from "./Socks";
 import { DDNSSection } from "./DDNS";
 import { useEffect, useState } from "react";
 import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
@@ -31,15 +32,16 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
   return (
     <>
       <div className="page-head">
-        <h1>Адреса и DNS</h1>
-        <p>Автоматическая настройка устройств и разрешение доменных имён</p>
+        <h1>Сетевые службы</h1>
+        <p>DHCP, DNS, динамические адреса и прокси для клиентов</p>
       </div>
 
-      <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns"]} />
+      <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns", "socks"]} />
 
       <DHCPSection config={config} patch={patch} providers={dhcpProviders} />
       <DNSSection config={config} patch={patch} providers={dnsProviders} />
       <DDNSSection config={config} patch={patch} />
+ <SocksSection config={config} patch={patch} />
     </>
   );
 }

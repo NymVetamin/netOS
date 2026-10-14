@@ -1,0 +1,79 @@
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import { Card, Field, Notice, Switch, Badge } from "../ui";
+import { secretInput } from "../secrets";
+import { confirmAction } from "../confirm";
+import { CopyButton } from "../CopyButton";
+
+const WAN_WARNING = "SOCKS5 не шифрует соединение: логин, пароль и незашифрованные данные могут быть перехвачены. Открытый порт доступен из интернета и может использоваться для подбора пароля и злоупотреблений. Рекомендуется подключаться через VPN и оставить доступ с WAN выключенным.";
+
+export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=>void)=>void }) {
+ const p = config.socks || {};
+ const [ready,setReady]=useState(false), [live,setLive]=useState<any>(null);
+ const [error,setError]=useState(""), [shown,setShown]=useState<string|null>(null);
+ useEffect(()=>{
+  let active=true;
+  const load=async()=>{
+   const [catalog,status]=await Promise.allSettled([api.catalog(),api.socksStatus()]);
+   if(!active)return;
+   setReady(catalog.status==="fulfilled" && !!catalog.value.installed?.xray);
+   setLive(status.status==="fulfilled"?status.value:null);
+  };
+  void load();const timer=window.setInterval(load,5000);return()=>{active=false;clearInterval(timer)};
+ },[]);
+ useEffect(()=>setShown(null),[p.password,p.username,p.secrets_set?.password]);
+ const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values}});
+ const chosen=!!config.components?.some((c:any)=>c.id==="xray"&&c.installed);
+ const defaults=(config.networks||[]).filter((n:any)=>n.enabled).map((n:any)=>n.id);
+ const networks=(config.networks||[]).filter((n:any)=>n.enabled);
+ const vpns=(config.vpn_servers||[]).filter((v:any)=>v.enabled&&v.type!=="xray");
+ const addresses=[...networks.filter((n:any)=>p.networks?.includes(n.id)).map((n:any)=>({name:n.name,address:n.router_address})),
+ ...vpns.filter((v:any)=>p.vpns?.includes(v.id)).map((v:any)=>({name:v.name,address:v.subnet}))];
+ function select(key:string,id:string,on:boolean){const values=p[key]||[];edit({[key]:on?[...values,id]:values.filter((v:string)=>v!==id)})}
+ return <Card title="SOCKS5-прокси" subtitle="Прокси для приложений в локальной сети и VPN · IPv4"
+  actions={<Badge tone={live?.running?"ok":"neutral"}>{live===null?"статус недоступен":live.running?"работает":live.enabled?"не запущен":"отключён"}</Badge>}>
+  <div className="stack">
+  {error&&<Notice tone="danger" title={error}/>}
+  {(!chosen||!ready)&&<Notice tone="info" title="Нужен компонент Xray">
+   {!chosen?<button className="btn" onClick={()=>patch(d=>{d.components=d.components||[];const c=d.components.find((v:any)=>v.id==="xray");if(c)c.installed=true;else d.components.push({id:"xray",installed:true})})}>Установить Xray</button>:<span>Примените установку компонента и дождитесь её завершения.</span>}
+  </Notice>}
+  <Switch label="Включить SOCKS5" checked={!!p.enabled} disabled={!p.enabled&&(!ready||!chosen)} onChange={async enabled=>{
+   if(enabled && p.allow_wan && !(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет")))return;
+   edit({enabled,...(!p.port?{port:1080,auth:true,channel:"direct",networks:defaults}: {})});
+  }}/>
+  <div className="form-grid">
+   <Field label="Порт SOCKS5"><input type="number" min={1024} max={65535} value={p.port||1080} onChange={e=>edit({port:Number(e.target.value)})}/></Field>
+   <Field label="Канал выхода прокси"><select value={p.channel||"direct"} onChange={e=>edit({channel:e.target.value})}>{(config.channels||[]).filter((c:any)=>c.enabled).map((c:any)=><option key={c.id} value={c.id}>{c.name||c.id}</option>)}</select></Field>
+  </div>
+  <p className="hint">Весь трафик прокси использует этот выход и его настройки резервирования. Назначение канала отдельному LAN-клиенту здесь не применяется. IPv6 назначения не поддерживаются.</p>
+  <div className="form-grid">
+   <Field label="Локальные сети">{networks.map((n:any)=><Switch key={n.id} label={n.name||n.id} checked={!!p.networks?.includes(n.id)} onChange={on=>select("networks",n.id,on)}/>)}</Field>
+   <Field label="VPN-сети">{vpns.map((v:any)=><Switch key={v.id} label={v.name||v.id} checked={!!p.vpns?.includes(v.id)} onChange={on=>select("vpns",v.id,on)}/>)}</Field>
+  </div>
+  <Switch label="Логин и пароль SOCKS5" checked={p.auth!==false} disabled={!!p.allow_wan} onChange={auth=>edit({auth})}/>
+  {p.auth!==false&&<div className="form-grid">
+   <Field label="Логин SOCKS5"><input autoComplete="off" value={p.username||""} onChange={e=>edit({username:e.target.value})}/></Field>
+   <Field label="Пароль SOCKS5"><input type="password" autoComplete="new-password" {...secretInput(p,"password")} value={p.password||""} onChange={e=>edit({password:e.target.value})}/></Field>
+  </div>}
+  {p.auth===false&&<Notice tone="warn" title="Без авторизации">Прокси сможет использовать любой клиент выбранных сетей.</Notice>}
+  <details><summary>Дополнительные настройки</summary>
+   <Switch label="UDP через SOCKS5" checked={!!p.udp} onChange={udp=>edit({udp})}/>
+   <p className="hint">Требуется поддержка SOCKS5 UDP в клиентском приложении.</p>
+   <Switch label="Разрешить SOCKS5 с WAN — небезопасно" checked={!!p.allow_wan} onChange={async on=>{
+    if(!on){edit({allow_wan:false});return}
+    if(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет"))edit({allow_wan:true,auth:true});
+   }}/>
+  </details>
+  {p.allow_wan&&<Notice tone="danger" title="ОПАСНО: SOCKS5 открыт со стороны интернета">{WAN_WARNING}</Notice>}
+  <h4>Подключение приложения</h4>
+  {addresses.map((a:any)=><div className="row wrap" key={a.name+a.address}><span>{a.name}: <code>{a.address?.split("/")[0]}:{p.port||1080}</code></span><CopyButton text={a.address?.split("/")[0]+":"+(p.port||1080)} onError={setError}/></div>)}
+  {p.allow_wan&&<p className="hint">Для WAN используйте внешний IPv4-адрес роутера и порт {p.port||1080}. Если роутер за NAT, доступ зависит от настроек вышестоящего устройства.</p>}
+  {p.auth!==false&&<div className="row wrap">
+   <span>Логин: {p.username||"не задан"}</span>
+   <button className="btn" onClick={async()=>{if(shown!==null){setShown(null);return}try{const data=await api.socksCredentials();setShown(p.password||data.password);setError("")}catch(e:any){setError(e.message)}}}>{shown===null?"Показать пароль":"Скрыть пароль"}</button>
+   {shown!==null&&<><code>{shown||"не задан"}</code><CopyButton label="Скопировать пароль" text={shown} onError={setError}/></>}
+  </div>}
+  <p className="hint">Настройки начнут действовать после применения. Для разрешения имён через прокси включите удалённый DNS в приложении.</p>
+ </div>
+ </Card>;
+}

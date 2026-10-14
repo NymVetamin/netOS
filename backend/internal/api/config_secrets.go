@@ -53,6 +53,8 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 			}
 		}
 	}
+	out.Socks.SecretsSet = secretPresence(map[string]any{"password": out.Socks.Password})
+	out.Socks.Password = ""
 	out.DDNS.SecretsSet = secretPresence(map[string]any{"token": out.DDNS.Token, "password": out.DDNS.Password})
 	out.DDNS.Token = ""
 	out.DDNS.Password = ""
@@ -93,6 +95,10 @@ func secretConfigField(path, key string) bool {
 func mergeRedactedSecrets(next, previous *config.Config) {
 	if next == nil {
 		return
+	}
+	next.Socks.SecretsSet = nil
+	if previous != nil && next.Socks.Password == "" {
+		next.Socks.Password = previous.Socks.Password
 	}
 	next.DDNS.SecretsSet = nil
 	for i := range next.WANs {

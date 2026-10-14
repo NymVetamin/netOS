@@ -34,6 +34,7 @@ const maxInterfaceName = 15
 
 // Config — корень дерева конфигурации.
 type Config struct {
+	Socks      Socks       `json:"socks"`
 	Version    int         `json:"version"`
 	System     System      `json:"system"`
 	IPv6       IPv6Policy  `json:"ipv6"`

@@ -691,6 +691,7 @@ func redactConfig(cfg *config.Config) (*config.Config, error) {
 			}
 		}
 	}
+	out.Socks.Password = ""
 	out.DDNS.Token = ""
 	out.DDNS.Password = ""
 	for i := range out.Samba.Users {

@@ -81,6 +81,7 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateQoS(r)
 	c.validateDDNS(r)
 	c.validateSamba(r)
+	c.validateSocks(r)
 
 	return r
 }
@@ -2640,6 +2641,12 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if c.Samba.Discovery && len(c.Samba.Networks) > 0 {
 			claimPort("samba.discovery", "tcp", 3702, "WS-Discovery")
 			claimPort("samba.discovery", "udp", 3702, "WS-Discovery")
+		}
+	}
+	if c.Socks.Enabled {
+		claimPort("socks.port", "tcp", c.Socks.Port, "SOCKS5")
+		if c.Socks.UDP {
+			claimPort("socks.port", "udp", c.Socks.Port, "SOCKS5")
 		}
 	}
 	ids := map[string]bool{}

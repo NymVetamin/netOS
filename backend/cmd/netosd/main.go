@@ -38,6 +38,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/routing"
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
+	"github.com/netos-router/netos/internal/subsys/socks"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 	"github.com/netos-router/netos/internal/subsys/wifi"
@@ -528,6 +529,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	firewallSubsystem.MultiWANClassifier = multiWAN.ClassifierRules
 	sambaController := samba.New(runner, stateDir)
 	vpnSubsystem := vpnservers.New(runner, stateDir)
+	socksSubsystem := socks.New(runner, stateDir)
 	if len(options) > 0 {
 		if options[0].Samba != nil {
 			sambaController = options[0].Samba
@@ -554,7 +556,9 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
 		sambaController,
+		&socks.Preparation{S: socksSubsystem},
 		firewallSubsystem,
+		socksSubsystem,
 		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),

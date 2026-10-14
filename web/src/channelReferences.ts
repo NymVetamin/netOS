@@ -11,6 +11,7 @@ export function channelReferences(config: any, id: string): { owner: any; key: s
     add(s, "default_channel", `VPN-сервер: ${s.name || s.id}`);
     for (const p of s.peers || []) add(p, "channel", `VPN-клиент: ${s.name || s.id} / ${p.name || p.id}`);
   }
+  if (config.socks?.enabled) add(config.socks, "channel", "SOCKS5-прокси");
   return refs;
 }
 
