@@ -52,7 +52,7 @@ export function Clients({
   const [manual, setManual] = useState(false);
   const [vpnTelemetry, setVPNTelemetry] = useState<Record<string, any[]>>({});
   const [vpnError, setVPNError] = useState(false);
-  const vpnIDs = JSON.stringify((config.vpn_servers || []).filter((s: any) => s.type === "wireguard").map((s: any) => s.id));
+  const vpnIDs = JSON.stringify((config.vpn_servers || []).map((s: any) => s.id));
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -158,7 +158,7 @@ export function Clients({
       <Card
         actions={(config.networks || []).length > 0 ? <button className="btn sm" onClick={() => setManual(!manual)}>{manual ? "Закрыть добавление" : "Добавить по MAC"}</button> : undefined}
         title="Клиенты"
-        subtitle={`${devices.length} локальных · ${vpnCount} VPN · ${devices.filter(c => c.online && !loadError).length} локальных в сети · ${vpn.reduce((n, s) => n + s.peers.filter(p => p.state === "recent").length, 0)} VPN недавно на связи`}
+        subtitle={`${devices.length} локальных · ${vpnCount} VPN · ${devices.filter(c => c.online && !loadError).length} локальных в сети · ${vpn.reduce((n, s) => n + s.peers.filter(p => ["recent", "online"].includes(p.state)).length, 0)} VPN на связи`}
         tight
       >
         {loadError && (
@@ -230,12 +230,12 @@ export function Clients({
             key={`vpn:${server.id}:${peer.id}`} id={`vpn:${server.id}:${peer.id}`}
             cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="dim">—</span>,
               <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
-              <Badge tone={peer.state === "recent" ? "ok" : peer.state === "disabled" ? "danger" : "neutral"}>{peer.label}</Badge>]}>
+              <Badge tone={["recent", "online"].includes(peer.state) ? "ok" : peer.state === "disabled" ? "danger" : "neutral"}>{peer.label}</Badge>]}>
             <div className="form-grid">
               <Cap label="VPN-сервер"><span>{server.name}</span></Cap>
               <Cap label="Адрес подключения"><span>{peer.endpoint || "—"}</span></Cap>
-              <Cap label="Последний handshake"><span>{peer.handshake ? formatTime(new Date(peer.handshake * 1000).toISOString()) : "—"}</span></Cap>
-              <Cap label="Получено / отправлено"><span>{peer.handshake ? `${peer.received} / ${peer.sent} байт` : "—"}</span></Cap>
+              <Cap label={server.type === "wireguard" ? "Последний handshake" : "Последний раз замечен онлайн"}><span>{peer.handshake ? formatTime(new Date(peer.handshake * 1000).toISOString()) : "—"}</span></Cap>
+              <Cap label="Получено / отправлено"><span>{peer.trafficKnown ? `${peer.received} / ${peer.sent} байт` : "—"}</span></Cap>
             </div>
             <a className="btn sm" href="#vpn-servers">Настройки VPN-клиента</a>
           </Row>))}

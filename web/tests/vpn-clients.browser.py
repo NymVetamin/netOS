@@ -42,8 +42,14 @@ async def scenario(browser, mode):
             cfg["vpn_servers"].append({"id": kind, "name": kind, "type": kind, "index": i,
                 "enabled": False, "subnet": f"10.{8+i}.0.1/24", "port": 443, "peers": [],
                 "config": {"protocol": "reality"} if kind == "xray" else {}})
+    if mode.startswith("sessions-"):
+        kind = mode.removeprefix("sessions-")
+        cfg["vpn_servers"][0].update(type=kind, config={"protocol": "reality"} if kind == "xray" else {})
+        peer["credentials"] = {"username": "alice"}
+        cfg["components"].append({"id": kind, "installed": True})
     original = copy.deepcopy(cfg)
     state = {"dirty": False, "config": cfg, "telemetry": "recent", "profiles": 0, "keys": 0}
+    if mode.startswith("sessions-"): state["telemetry"] = "online"
     errors = []
     page.on("pageerror", lambda err: errors.append(str(err)))
 
@@ -85,9 +91,11 @@ async def scenario(browser, mode):
         elif path.endswith("/clients"):
             if state["telemetry"] == "error":
                 code, body = 503, {"error": "unavailable"}
+            elif state["telemetry"] == "malformed":
+                body = {"unexpected": "response"}
             else:
                 body = [{"id": "phone", "public_key": PUBLIC, "state": state["telemetry"], "last_handshake": 1791800000,
-                         "endpoint": "192.0.2.5:43210", "received": 1048576, "sent": 2097152}]
+                         "last_seen": 1791800000, "traffic_known": True, "endpoint": "192.0.2.5:43210", "received": 1048576, "sent": 2097152}]
         elif path.endswith("/profile"):
             state["profiles"] += 1
             creds = next(p for p in state["config"]["vpn_servers"][0]["peers"] if p["id"] == path.split("/")[-2])["credentials"]
@@ -109,6 +117,24 @@ async def scenario(browser, mode):
     await expect(page.get_by_role("heading", name="VPN-доступ", exact=True, level=1)).to_be_visible()
     await expect(page.get_by_text("Онлайн", exact=True)).to_be_visible()
     await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+    if mode.startswith("sessions-"):
+        await expect(page.get_by_text("Последний раз замечен онлайн", exact=True)).to_be_visible()
+        state["telemetry"] = "offline"
+        await expect(page.get_by_text("Оффлайн", exact=True)).to_be_visible(timeout=8000)
+        state["telemetry"] = "error"
+        await expect(page.get_by_text("Нет данных", exact=True)).to_be_visible(timeout=8000)
+        await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_have_count(0)
+        state["telemetry"] = "malformed"
+        await page.wait_for_timeout(5500)
+        await expect(page.get_by_text("Нет данных", exact=True)).to_be_visible()
+        state["telemetry"] = "online"
+        await expect(page.get_by_text("Онлайн", exact=True)).to_be_visible(timeout=8000)
+        await page.locator(".peer-card .xsw label.switch").click()
+        await expect(page.locator(".peer-card").get_by_text("Отключён", exact=True)).to_be_visible()
+        assert not errors, errors
+        await page.close()
+        print(mode, "PASS")
+        return
     if mode == "multi":
         await expect(page.locator("form.vpn-server").get_by_text("Отключён", exact=True)).to_have_count(4)
         await expect(page.locator("form.vpn-server").get_by_text("черновик", exact=True)).to_have_count(0)
@@ -311,7 +337,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

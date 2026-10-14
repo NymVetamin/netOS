@@ -24,6 +24,7 @@ async def main():
     if r.request.method=='PUT':state['cfg']=r.request.post_data_json
     body={'config':copy.deepcopy(state['cfg']),'dirty':False,'draft_version':1,'problems':[]}
    elif path=='/api/status':body={'interfaces':[],'channels':[],'uptime_seconds':1}
+   elif path.endswith('/clients'):body=[]
    elif path.endswith('/reality-profile'):
     state['reads']+=1
     sid=state['cfg']['vpn_servers'][0]['config']['short_ids'][0]

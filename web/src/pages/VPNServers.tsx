@@ -21,13 +21,32 @@ function useClientCreator(id: string, create: () => void | Promise<void>) {
   }, [id, registry]);
 }
 
+function useClientStatuses(serverID: string) {
+  const [clientStatus, setClientStatus] = useState<ClientStatus[]>([]);
+  const [statusFailed, setStatusFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const rows = await api.vpnClientStatus(serverID, controller.signal);
+        if (!controller.signal.aborted) { setClientStatus(rows); setStatusFailed(false); }
+      } catch { if (!controller.signal.aborted) { setClientStatus([]); setStatusFailed(true); } }
+      finally { if (!controller.signal.aborted) timer = setTimeout(poll, 5000); }
+    }
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [serverID]);
+  return { clientStatus, statusFailed };
+}
+
 function ClientBadge({ server, peer, status }: any) {
   const state = !peer.enabled || !server.enabled ? "disabled" : status?.state || "unknown";
   const online = state === "recent" || state === "online";
   const label = state === "disabled" || state === "server_disabled" ? "Отключён"
     : online ? "Онлайн" : state === "idle" || state === "never" || state === "offline" ? "Оффлайн" : "Нет данных";
   return <span title={label === "Нет данных" ? "Нет сведений о текущем подключении клиента" : undefined}><Badge tone={online ? "ok" : "neutral"}>{label}</Badge>
-    {state === "idle" && status?.last_handshake > 0 && <small className="faint" style={{ display: "block" }}>Последняя связь: {new Date(status.last_handshake * 1000).toLocaleString("ru-RU")}</small>}
+    {(state === "idle" || state === "offline") && (status?.last_seen || status?.last_handshake) > 0 && <small className="faint" style={{ display: "block" }}>Последняя связь: {new Date((status.last_seen || status.last_handshake) * 1000).toLocaleString("ru-RU")}</small>}
   </span>;
 }
 
@@ -295,6 +314,7 @@ function OcservServer({ server, config, installed, patch }: any) {
 
 // Пользователи с логином и паролем: OpenConnect, IKEv2 и L2TP устроены одинаково.
 function PasswordPeers({ server, config, patch, singleActive, empty }: any) {
+  const { clientStatus } = useClientStatuses(server.id);
   const { channels, update } = serverTools(server, config, patch);
   const enabledPeers = (server.peers || []).filter((item: any) => item.enabled).length;
   function addPeer() {
@@ -310,17 +330,18 @@ function PasswordPeers({ server, config, patch, singleActive, empty }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>{empty}</Empty> : (server.peers || []).map((peer: any) =>
-      <OcservPeer key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={!singleActive || peer.enabled || enabledPeers === 0} />)}
+      <OcservPeer status={clientStatus.find(row => row.id === peer.id)} key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={!singleActive || peer.enabled || enabledPeers === 0} />)}
   </PeerGroup>;
 }
 
-function OcservPeer({ server, peer, referenced, channels, update, canEnable = true }: any) {
+function OcservPeer({ status, server, peer, referenced, channels, update, canEnable = true }: any) {
   const certAuth = server.type === "ocserv" && ["certificate", "certificate_password"].includes(server.config?.auth_mode);
   const passwordAuth = !certAuth || server.config?.auth_mode === "certificate_password";
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   return <Row className="peer-card" id={peer.id}
-    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <ClientBadge server={server} peer={peer} />]}
+    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} disabled={!canEnable} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
+    <ClientConnection status={status} session />
     <div className="form-grid">
       <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       {!certAuth && <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>}
@@ -381,6 +402,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
 }
 
 function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
+  const { clientStatus } = useClientStatuses(server.id);
   const { cfg, channels, update } = serverTools(server, config, patch);
   const protocol = cfg.protocol || "reality";
   const [wgClientKeys, setWGClientKeys] = useState<Record<string, string>>({});
@@ -406,13 +428,13 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   }
 
   useClientCreator(server.id, addPeer);
-  return <PeerGroup server={server}>
+  return <PeerGroup server={server} hint="Онлайн — у клиента есть открытые соединения через Xray; обновление каждые 5 секунд">
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor status={clientStatus.find(row => row.id === peer.id && (!peer.credentials?.public_key || row.public_key === peer.credentials.public_key))} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
 }
 
-function XrayPeerEditor({ beforeRead, server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
+function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   async function downloadClient() {
     setError("");
@@ -474,8 +496,9 @@ function XrayPeerEditor({ beforeRead, server, peer, protocol, wgPrivateKey, issu
     finally { setRealityBusy(false); }
   }
   return <Row className="peer-card" id={peer.id}
-    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, "—", channelName(channels, peer), <ClientBadge server={server} peer={peer} />]}
+    cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
+    <ClientConnection status={status} session />
     <div className="form-grid">
       <Field label="Клиент"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       {(protocol === "reality" || protocol === "vless" || protocol === "vmess") && <Field label="UUID клиента"><div className="row"><input className="mono" {...secretInput(peer, "uuid")} value={peer.credentials?.uuid || ""} onChange={(e) => { const uuid = e.target.value; rememberCredentials({ uuid }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }} /><button type="button" className="btn ghost sm" onClick={() => { const uuid = crypto.randomUUID(); rememberCredentials({ uuid }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }}>Новый</button></div></Field>}
@@ -496,7 +519,7 @@ function XrayPeerEditor({ beforeRead, server, peer, protocol, wgPrivateKey, issu
   </Row>;
 }
 
-type ClientStatus = { id: string; public_key: string; state: string; endpoint: string; last_handshake: number; received: number; sent: number };
+type ClientStatus = { id: string; public_key: string; state: string; endpoint: string; last_handshake: number; last_seen?: number; traffic_known?: boolean; received: number; sent: number };
 
 function ProfileListInput({ label, values, disabled, onChange }: { label: string; values: string[]; disabled?: boolean; onChange: (values: string[]) => void }) {
   const serialized = values.join("\n");
@@ -515,13 +538,15 @@ function ProfileListInput({ label, values, disabled, onChange }: { label: string
 
 // Живое состояние клиента. Сама отметка и внешний адрес стоят в строке
 // устройства; здесь то, что нужно реже.
-function ClientConnection({ status }: { status?: ClientStatus }) {
-  const known = ["recent", "idle", "never"].includes(status?.state || "pending");
+function ClientConnection({ status, session = false }: { status?: ClientStatus; session?: boolean }) {
+  const known = ["recent", "idle", "never", "online", "offline"].includes(status?.state || "pending");
+  const last = session ? status?.last_seen : status?.last_handshake;
+  const trafficKnown = known && (status?.traffic_known ?? !session);
   const traffic = (value: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value / 1024 / 1024) + " МиБ";
   return <div className="client-connection form-grid">
-    <Field label="Последнее рукопожатие"><span>{known ? status?.last_handshake ? new Date(status.last_handshake * 1000).toLocaleString("ru-RU") : "Не было" : "—"}</span></Field>
-    <Field label="Получено от клиента"><span>{known ? traffic(status?.received || 0) : "—"}</span></Field>
-    <Field label="Отправлено клиенту"><span>{known ? traffic(status?.sent || 0) : "—"}</span></Field>
+    <Field label={session ? "Последний раз замечен онлайн" : "Последнее рукопожатие"} hint={session ? "Фоновый опрос каждые 5 секунд; история хранится до перезапуска netOS" : undefined}><span>{last ? new Date(last * 1000).toLocaleString("ru-RU") : "—"}</span></Field>
+    <Field label="Получено от клиента"><span>{trafficKnown ? traffic(status?.received || 0) : "—"}</span></Field>
+    <Field label="Отправлено клиенту"><span>{trafficKnown ? traffic(status?.sent || 0) : "—"}</span></Field>
   </div>;
 }
 
@@ -558,21 +583,7 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
 
 function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setClientSecrets, setError }: any) {
   const { cfg, channels, update } = serverTools(server, config, patch);
-  const [clientStatus, setClientStatus] = useState<ClientStatus[]>([]);
-  const [statusFailed, setStatusFailed] = useState(false);
-  useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      try {
-        const rows = await api.vpnClientStatus(server.id, controller.signal);
-        if (!controller.signal.aborted) { setClientStatus(rows); setStatusFailed(false); }
-      } catch { if (!controller.signal.aborted) { setClientStatus([]); setStatusFailed(true); } }
-      finally { if (!controller.signal.aborted) timer = setTimeout(poll, 5000); }
-    }
-    void poll();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [server.id]);
+  const { clientStatus, statusFailed } = useClientStatuses(server.id);
 
   async function addPeer() {
     setError("");

@@ -20,6 +20,11 @@ func xrayUnitName(server config.VPNServer) string {
 	return fmt.Sprintf("netos-xray-srv%d.service", server.Index)
 }
 
+// XrayStatsSocket is private to this server; no unauthenticated TCP API is exposed.
+func XrayStatsSocket(server config.VPNServer) string {
+	return fmt.Sprintf("/run/netos-xray-srv%d/stats.sock", server.Index)
+}
+
 func (s *Subsystem) xrayPaths(server config.VPNServer) (string, string) {
 	return filepath.Join(s.StateDir, fmt.Sprintf("xray-srv%d.json", server.Index)),
 		filepath.Join(s.UnitDir, xrayUnitName(server))
@@ -135,8 +140,8 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		}
 		rule := map[string]any{"type": "field", "outboundTag": outboundTag(policy.Channel)}
 		if protocol == "socks" || protocol == "http" {
-			// These inbounds authenticate users but do not attach an Xray email
-			// to requests. Validation permits only one enabled peer.
+			// These inbounds identify users by login, not the server/peer email
+			// used above. Validation permits only one enabled peer.
 			rule["inboundTag"] = []string{"xray-in"}
 		} else {
 			rule["user"] = users
@@ -229,6 +234,9 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		return nil, fmt.Errorf("неподдерживаемый серверный протокол Xray %q", protocol)
 	}
 	doc := map[string]any{
+		"api":       map[string]any{"tag": "netos-stats", "listen": XrayStatsSocket(server), "services": []string{"StatsService"}},
+		"stats":     map[string]any{},
+		"policy":    map[string]any{"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true}}},
 		"log":       map[string]any{"loglevel": "warning"},
 		"inbounds":  []any{inbound},
 		"outbounds": outbounds,
@@ -246,6 +254,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+RuntimeDirectory=netos-xray-srv` + fmt.Sprint(server.Index) + `
+RuntimeDirectoryMode=0700
+UMask=0077
 ExecStartPre=/usr/local/bin/xray run -test -config ` + conf + `
 ExecStart=/usr/local/bin/xray run -config ` + conf + `
 Restart=always

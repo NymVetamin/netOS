@@ -86,6 +86,9 @@ type Server struct {
 	loginFails map[string]*failCounter
 	loginSlots chan struct{}
 
+	vpnStatusMu sync.Mutex
+	vpnStatus   map[string]*vpnStatusCache
+
 	httpServer         *http.Server
 	challengeServer    *http.Server
 	Listen             func(network, address string) (net.Listener, error)
@@ -431,6 +434,7 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 	}()
 
 	go s.pruneLoop(ctx)
+	go s.monitorVPNClients(ctx)
 	if acmeManager != nil {
 		go s.monitorACMECertificate(ctx, acmeManager, cfg.System.Panel.TLS.Domain, fingerprint)
 	}

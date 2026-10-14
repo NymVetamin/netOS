@@ -18,7 +18,7 @@ export function MapPage({ config }: { config: any }) {
   const [clients, setClients] = useState<any[]>([]);
   const [vpnTelemetry, setVPNTelemetry] = useState<Record<string, any[]>>({});
   const [vpnError, setVPNError] = useState(false);
-  const vpnIDs = JSON.stringify((config.vpn_servers || []).filter((s: any) => s.type === "wireguard").map((s: any) => s.id));
+  const vpnIDs = JSON.stringify((config.vpn_servers || []).map((s: any) => s.id));
   const [error, setError] = useState(false);
   const [rates, setRates] = useState<Rates>(new Map());
   const [selected, setSelected] = useState<NodeID>("router");
@@ -236,7 +236,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
 
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-lines-${server.id}`}>
           <path className={`edge ${server.enabled ? "idle" : "dead"}`} d={curve(router.x + router.w / 2, cy, 755, y)} />
-          {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${peer.state === "recent" ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
+          {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${["recent", "online"].includes(peer.state) ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
         </g>)}
 
         <g>
@@ -279,7 +279,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
         {segments.map((s, i) => node(`segment:${s.id}`, 840, segY[i], 170, 62, s.name, `${s.address} · ${s.online}/${s.total}`, "ok"))}
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-nodes-${server.id}`}>
           {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.peers.length} клиентов`, server.enabled ? "idle" : "danger")}
-          {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), peer.state === "recent" ? "ok" : "idle"))}
+          {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), ["recent", "online"].includes(peer.state) ? "ok" : "idle"))}
         </g>)}
       </svg>
     </div>
@@ -398,8 +398,8 @@ function NodeDetails({ graph, id, config, status, clients }: {
           <dt>VPN-адрес</dt><dd className="mono">{peer.address || "—"}</dd>
           <dt>Состояние</dt><dd>{peer.label}</dd>
           <dt>Адрес подключения</dt><dd className="mono">{peer.endpoint || "—"}</dd>
-          <dt>Последний handshake</dt><dd>{peer.handshake ? new Date(peer.handshake * 1000).toLocaleString() : "—"}</dd>
-          <dt>Получено / отправлено</dt><dd>{peer.handshake ? `${peer.received.toLocaleString()} / ${peer.sent.toLocaleString()} байт` : "—"}</dd>
+          <dt>{vpnServer.type === "wireguard" ? "Последний handshake" : "Последний раз замечен онлайн"}</dt><dd>{peer.handshake ? new Date(peer.handshake * 1000).toLocaleString() : "—"}</dd>
+          <dt>Получено / отправлено</dt><dd>{peer.trafficKnown ? `${peer.received.toLocaleString()} / ${peer.sent.toLocaleString()} байт` : "—"}</dd>
           <dt>Канал выхода</dt><dd>{channelName}</dd>
         </> : <><dt>Сервер включён</dt><dd>{vpnServer.enabled ? "да" : "нет"}</dd><dt>Клиенты</dt><dd>{vpnServer.peers.length}</dd></>}
       </dl>

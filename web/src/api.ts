@@ -220,7 +220,12 @@ export const api = {
     request<{ privateKey: string; publicKey: string; serverPublicKey: string; presharedKey: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/profile`),
 
   vpnClientStatus: (serverID: string, signal?: AbortSignal) =>
-    request<any[]>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/clients`, undefined, undefined, signal),
+    request<any[]>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/clients`, undefined, undefined, signal).then(rows => {
+      if (!Array.isArray(rows) || rows.some(row => !row || typeof row.id !== "string" || typeof row.state !== "string")) {
+        throw new Error("Не удалось прочитать состояние VPN-клиентов");
+      }
+      return rows;
+    }),
 
   wireGuardServerPublicKey: (serverID: string) =>
     request<{ private_key: string; public_key: string }>("POST", "/api/wireguard/keypair", { server_id: serverID }),

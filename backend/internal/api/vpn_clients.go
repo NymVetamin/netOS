@@ -52,21 +52,24 @@ type vpnClientStatus struct {
 	State         string `json:"state"`
 	Endpoint      string `json:"endpoint"`
 	LastHandshake int64  `json:"last_handshake"`
+	LastSeen      int64  `json:"last_seen"`
+	TrafficKnown  bool   `json:"traffic_known"`
 	Received      uint64 `json:"received"`
 	Sent          uint64 `json:"sent"`
 }
 
 func (s *Server) handleVPNClientStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if roleOf(r) != "admin" {
 		writeError(w, http.StatusForbidden, "доступно только администратору")
 		return
 	}
 	// Use applied configuration: a draft must never masquerade as live state.
 	for _, server := range s.Engine.Current().VPNServers {
-		if server.ID == r.PathValue("id") && server.Type == "wireguard" {
+		if server.ID == r.PathValue("id") {
 			ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 			defer cancel()
-			writeJSON(w, http.StatusOK, s.wireGuardClients(ctx, server, time.Now()))
+			writeJSON(w, http.StatusOK, s.vpnClients(ctx, server))
 			return
 		}
 	}
@@ -135,6 +138,7 @@ func (s *Server) wireGuardClients(ctx context.Context, server config.VPNServer, 
 		case available:
 			if live := rows[row.PublicKey]; live != nil && seen[row.PublicKey] == 7 {
 				row.Endpoint, row.LastHandshake, row.Received, row.Sent = live.Endpoint, live.LastHandshake, live.Received, live.Sent
+				row.TrafficKnown = true
 				row.State = "never"
 				if row.LastHandshake > 0 {
 					row.State = "idle"

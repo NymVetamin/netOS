@@ -41,6 +41,7 @@ async def main():
      state['cfg'] = value
     body = {'config': copy.deepcopy(state['cfg']), 'dirty': False, 'draft_version': len(state['puts']) + 1, 'problems': []}
    elif path == '/api/status': body = {'interfaces': [], 'channels': [], 'uptime_seconds': 1}
+   elif path.endswith('/clients'): body = []
    await r.fulfill(json=body)
   await page.route('**/*', route)
   await page.goto('https://netos-ui.test/#traffic')
