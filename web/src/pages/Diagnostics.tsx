@@ -1,3 +1,4 @@
+import { Logs } from "./Logs";
 import { useEffect, useState, ReactNode } from "react";
 import { api } from "../api";
 import { Card, Empty, Notice, TableWrap } from "../ui";
@@ -158,6 +159,8 @@ export function DiagnosticsPage() {
         <h1>Диагностика</h1>
         <p>Что получилось из настроек на самом деле</p>
       </div>
+
+      <Logs />
 
       <Card title="Проверка соединения">
         <div className="row wrap" style={{ gap: "0.4rem" }}>

@@ -235,6 +235,7 @@ export const api = {
       "POST", "/api/xray/keypair", privateKey ? { private_key: privateKey } : undefined,
     ),
 
+  logs: (kind: string) => request<any>("GET", `/api/logs?kind=${encodeURIComponent(kind)}`),
   firewallLive: () => request<any>("GET", "/api/firewall/live"),
 
   async getConfig() {

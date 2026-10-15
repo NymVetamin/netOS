@@ -408,6 +408,7 @@ function RuleForm({ config, initial, onSubmit, onCancel }: {
 
 
       <Switch checked={!!r.log} label="Записывать срабатывания в журнал" onChange={v => set("log", v)} />
+      <a className="hint" href="#diagnostics?log=firewall">Открыть журнал firewall</a>
     </details>
     {(badInput || badOutput) && <Notice tone="warn" title="Выберите интерфейс заново">Сохранённый интерфейс не относится к выбранной зоне. Выберите подходящий интерфейс или явно укажите «Любой».</Notice>}
     {needsProtocol && <Notice tone="warn" title="Для правила с портом нужен протокол">Выберите TCP или UDP.</Notice>}

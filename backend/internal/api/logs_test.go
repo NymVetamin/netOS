@@ -1,0 +1,117 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLogTimestampAndBoundedFile(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.FixedZone("fixture", 3*3600))
+	if got := dnsLineTime("Dec 31 23:59:59 dnsmasq query", now); got != "2025-12-31T20:59:59Z" {
+		t.Fatal(got)
+	}
+	if got := dnsLineTime("2026/01/01 10:00:00.123456 query", now); got != "2026-01-01T07:00:00.123456Z" {
+		t.Fatal(got)
+	}
+	if dnsLineTime("unknown timestamp", now) != "" {
+		t.Fatal("invented timestamp")
+	}
+	path := filepath.Join(t.TempDir(), "dns.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 300000)+"\n"+strings.Repeat("Jan  1 11:00:00 query\n", 500)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readDNSLog(path, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) > 300 || len(rows) == 0 || strings.Contains(rows[0].Message, "xxxx") {
+		t.Fatal("unbounded or partial record returned")
+	}
+}
+func TestJournalParsingAndInvalidData(t *testing.T) {
+	raw := `{"__REALTIME_TIMESTAMP":"1000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"query fixture.example"}`
+	rows, err := parseJournalEntries(raw, "services")
+	if err != nil || len(rows) != 1 || rows[0].Source != "dns" || rows[0].Time != "1970-01-01T00:00:01Z" {
+		t.Fatal(rows, err)
+	}
+	rows, err = parseJournalEntries(raw, "firewall")
+	if err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+	if _, err = parseJournalEntries("not-json", "dns"); err == nil {
+		t.Fatal("bad journal ignored")
+	}
+}
+
+type logRunner struct{ calls []string }
+
+func (r *logRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	cmd := name + " " + strings.Join(args, " ")
+	r.calls = append(r.calls, cmd)
+	if name != "journalctl" {
+		return "", fmt.Errorf("unexpected command")
+	}
+	if strings.Contains(cmd, "--grep") {
+		return "", fmt.Errorf("kernel unavailable")
+	}
+	if strings.Contains(cmd, "netos-unbound.service") {
+		return `{"__REALTIME_TIMESTAMP":"3000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"query fixture"}`, nil
+	}
+	return `{"__REALTIME_TIMESTAMP":"2000000","_SYSTEMD_UNIT":"netosd.service","MESSAGE":"fixture started"}`, nil
+}
+func (r *logRunner) RunInput(_ context.Context, _ string, _ string, _ ...string) (string, error) {
+	return "", fmt.Errorf("unexpected write")
+}
+func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
+	runner := &logRunner{}
+	s := &Server{StorageRunner: runner}
+	req := httptest.NewRequest("GET", "/api/logs?kind=all", nil)
+	w := httptest.NewRecorder()
+	s.handleLogs(w, req)
+	if w.Code != 403 || len(runner.calls) != 0 {
+		t.Fatal("unauthorized log read")
+	}
+	req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
+	w = httptest.NewRecorder()
+	s.handleLogs(w, req)
+	var data struct {
+		Entries  []logEntry
+		Warnings []string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 3 {
+		t.Fatal(w.Body.String(), runner.calls)
+	}
+	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:02Z" {
+		t.Fatal("merged entries not chronological", data.Entries)
+	}
+	bad := httptest.NewRequest("GET", "/api/logs?kind=/etc/passwd", nil)
+	bad = bad.WithContext(req.Context())
+	w = httptest.NewRecorder()
+	s.handleLogs(w, bad)
+	if w.Code != 400 || len(runner.calls) != 3 {
+		t.Fatal("unvalidated source")
+	}
+}
+
+type journalNoMatch struct{}
+
+func (journalNoMatch) Error() string { return "exit status 1" }
+func (journalNoMatch) ExitCode() int { return 1 }
+func TestEmptyFirewallJournalIsNotReadFailure(t *testing.T) {
+	if !emptyJournalMatch("", fmt.Errorf("journalctl: %w: ", journalNoMatch{})) {
+		t.Fatal("empty match treated as failure")
+	}
+	if emptyJournalMatch("", fmt.Errorf("journalctl: %w: permission denied", journalNoMatch{})) {
+		t.Fatal("read error masked")
+	}
+}

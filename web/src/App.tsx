@@ -276,7 +276,7 @@ function PortStrip({ config, status }: { config: any; status: any }) {
 
 function Shell({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const readPage = useCallback((): PageID => {
-    const id = window.location.hash.slice(1);
+    const id = window.location.hash.slice(1).split("?")[0];
     return NAV.flatMap((group) => group.items).some((item) => item.id === id)
       && (session.role === "admin" || id !== "diagnostics") ? id as PageID : "dashboard";
   }, [session.role]);

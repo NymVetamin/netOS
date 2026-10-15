@@ -208,6 +208,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/storage/devices", s.handleStorageDevices)
 	auth("GET /api/status", s.handleStatus)
 	auth("GET /api/firewall/live", s.handleLiveFirewall)
+	auth("GET /api/logs", s.handleLogs)
 	auth("GET /api/ddns/status", s.handleDDNSStatus)
 	auth("GET /api/statistics", s.handleStatistics)
 	auth("GET /api/maintenance/status", s.handleMaintenanceStatus)
