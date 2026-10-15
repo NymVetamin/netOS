@@ -111,23 +111,12 @@ async def scenario(browser, mode):
     await toggle.scroll_into_view_if_needed()
     Path("output/playwright").mkdir(parents=True,exist_ok=True)
     await page.screenshot(path="output/playwright/socks5-ui.png")
-    await page.goto('https://netos-ui.test/#firewall')
-    rules=page.locator('section').filter(has=page.get_by_role('heading',name='Автоматические правила SOCKS5',exact=True))
-    await expect(rules).to_have_count(1)
-    await expect(rules.get_by_text('WG test',exact=True)).to_be_visible()
-    await expect(rules.get_by_text('IKE test',exact=True)).to_have_count(0)
-    await expect(rules.get_by_text('Все остальные источники',exact=True)).to_be_visible()
-    await expect(rules.get_by_text('Ответы прокси · ESTABLISHED',exact=True)).to_be_visible()
-    await rules.screenshot(path='output/playwright/socks5-firewall.png')
-    await rules.get_by_role('link',name='Настроить SOCKS5',exact=True).click()
+    await page.wait_for_timeout(700)  # Дождаться сохранения последнего переключения WAN.
     before=copy.deepcopy(state['config']['socks'])
     async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
         await toggle.locator('..').click()
     await expect(page.get_by_label('Порт SOCKS5',exact=True)).to_have_count(0)
     expected={**before,'enabled':False};assert state['config']['socks']==expected
-    await page.goto('https://netos-ui.test/#firewall')
-    await expect(page.get_by_role('heading',name='Автоматические правила SOCKS5',exact=True)).to_have_count(0)
-    await page.goto('https://netos-ui.test/#services')
     async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
         await toggle.locator('..').click()
     assert state['config']['socks']==before

@@ -1,4 +1,5 @@
-import { automaticNAT } from "../automaticNAT";
+import { managedWanNAT } from "../wanNAT";
+import { FirewallLive } from "./FirewallLive";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
@@ -76,6 +77,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
   const fw = config.firewall || {};
   const zones: any[] = fw.zones || [];
   const rules: any[] = fw.rules || [];
+  const [showAutomatic, setShowAutomatic] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -117,6 +119,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         <p>Правила доступа и перенаправления портов; проверяются сверху вниз</p>
       </div>
 
+      <label className="row" style={{marginBottom:"1rem"}}><input type="checkbox" checked={showAutomatic} onChange={e => { setShowAutomatic(e.target.checked); drag.end(); }} />Показать автоматические правила</label>
+      {showAutomatic ? <FirewallLive onEdit={() => setShowAutomatic(false)} /> : <>
       <ProblemsFor problems={problems} prefixes={["firewall", "clients"]} />
       {config.samba?.enabled && <Notice tone="info" title="Доступ к дискам Samba">
         {!fw.enabled && <p>Файрволл выключен: описанные ниже сетевые правила не действуют. Ограничения самого Samba по адресам и пользователям сохраняются.</p>}
@@ -199,7 +203,6 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         </Rows>
       </Card>
 
-      <SocksAccessRules config={config} />
 
       <Card
         title="Правила"
@@ -258,39 +261,9 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       </Card>
 
       <NATSection config={config} patch={patch} />
+      </>}
     </>
   );
-}
-
-// Автоматические правила из firewall/socks.go; отображаем текущий черновик.
-function SocksAccessRules({ config }: { config: any }) {
-  const socks = config.socks;
-  if (!socks?.enabled || !config.firewall?.enabled) return null;
-  const iface = (id: string) => (config.interfaces || []).find((i: any) => i.id === id)?.name || id || "интерфейс не задан";
-  const allowed: { id: string; name: string; detail: string }[] = [{ id: "loopback", name: "Сам роутер", detail: "lo" }];
-  for (const n of config.networks || []) {
-    if (n.enabled && socks.networks?.includes(n.id)) allowed.push({ id: `lan-${n.id}`, name: n.name || n.id, detail: `${iface(n.interface)} · подсеть ${n.router_address}` });
-  }
-  for (const v of config.vpn_servers || []) {
-    if (v.enabled && v.type !== "xray" && socks.vpns?.includes(v.id)) {
-      const match = v.type === "ikev2" ? "IPsec" : v.type === "ocserv" ? `vpns${v.index}+` : v.type === "l2tp" ? `ppp-srv${v.index}` : `wg-srv${v.index}`;
-      allowed.push({ id: `vpn-${v.id}`, name: v.name || v.id, detail: `${match} · подсеть ${v.subnet}` });
-    }
-  }
-  if (socks.allow_wan) for (const w of config.wans || []) {
-    if (w.enabled) allowed.push({ id: `wan-${w.id}`, name: `WAN: ${w.name || w.id}`, detail: ["pppoe", "l2tp"].includes(w.proto) ? `ppp-${w.id}` : iface(w.interface) });
-  }
-  return <Card title="Автоматические правила SOCKS5" subtitle="IPv4 · созданы настройками прокси" tight actions={<a className="btn sm" href="#services">Настроить SOCKS5</a>}>
-    <p className="rows-notes hint">По текущим настройкам. Изменения начнут действовать после применения. Доступ к порту SOCKS5 проверяется до обычных правил.</p>
-    <TableWrap><table>
-      <thead><tr><th>Направление</th><th>Источник / условие</th><th>Порт TCP</th><th>Действие</th></tr></thead>
-      <tbody>
-        {allowed.map(r => <tr key={r.id}><td>Input</td><td><strong>{r.name}</strong><div className="hint">{r.detail}</div></td><td>{socks.port || 1080}</td><td><Badge tone="ok">Разрешить</Badge></td></tr>)}
-        <tr><td>Input</td><td>Все остальные источники</td><td>{socks.port || 1080}</td><td><Badge tone="danger">Отбросить</Badge></td></tr>
-        <tr><td>Output</td><td>Ответы прокси · ESTABLISHED</td><td>Источник: {socks.port || 1080}</td><td><Badge tone="ok">Разрешить</Badge></td></tr>
-      </tbody>
-    </table></TableWrap>
-  </Card>;
 }
 
 // ---------------------------------------------------------------------------
@@ -805,8 +778,7 @@ function natInterfaceOptions(config: any): { key: string; name: string; hint?: s
 function NATSection({ config, patch }: { config: any; patch: Patch }) {
   const nat: any[] = config.firewall?.nat || [];
   const interfaces = natInterfaceOptions(config);
-  const automatic = automaticNAT(config);
-  const source = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction !== "destination");
+  const source = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction !== "destination" && !managedWanNAT(config, x.n));
   const dest = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction === "destination");
 
   const addRule = (direction: string) => {
@@ -857,8 +829,8 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
         </button>
       </h3>
       <div className="card-part">
-      <p className="hint">Правила по текущим настройкам, включая автоматический NAT подключений. Изменения черновика попадут в firewall после применения.</p>
-      {source.length + automatic.length === 0 ? (
+      <p className="hint">Ручные правила NAT. Маскарад аплинка настраивается в разделе «Сеть». Изменения попадут в firewall после применения.</p>
+      {source.length === 0 ? (
         <Empty>Правил подмены адреса отправителя в настройках нет</Empty>
       ) : (
         <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]} toggle="Вкл.">
@@ -943,14 +915,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
               )}
             </Row>
           ))}
-          {automatic.map(rule => <Row key={rule.id} id={rule.id} cells={[
-            <strong>{rule.name}</strong>, <span className="mono">{rule.iface}</span>,
-            <span className="dim">кто угодно</span>, <span className="dim">адрес интерфейса</span>,
-            <Badge tone="neutral">{rule.kind === "channel" ? "авто · канал" : "авто · аплинк"}</Badge>,
-          ]}>
-            <p className="hint">netOS создаёт это правило автоматически, пока соответствующее подключение включено. Оно подменяет исходящий адрес на адрес интерфейса подключения.</p>
-            <a className="btn sm" href={rule.kind === "channel" ? "#channels" : "#network"}>{rule.kind === "channel" ? "Настроить интернет-канал" : "Настроить аплинк"}</a>
-          </Row>)}
+
         </Rows>
       )}
       </div>

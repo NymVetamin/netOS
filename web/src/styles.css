@@ -2472,3 +2472,5 @@ td > select {
 .rule-advanced > summary { cursor: pointer; margin-bottom: 12px; }
 .rule-preview { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
 @media (max-width: 700px) { .rule-endpoints { grid-template-columns: 1fr; } }
+.live-firewall-rules { margin: 0; padding: 0 1.2rem 0 3rem; }
+.live-firewall-rules > li { padding: 0.8rem 0.4rem; border-bottom: 1px solid var(--border); }

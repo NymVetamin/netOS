@@ -235,6 +235,8 @@ export const api = {
       "POST", "/api/xray/keypair", privateKey ? { private_key: privateKey } : undefined,
     ),
 
+  firewallLive: () => request<any>("GET", "/api/firewall/live"),
+
   async getConfig() {
     const res = await request<ConfigResponse>("GET", "/api/config");
     draftVersion = res.draft_version;

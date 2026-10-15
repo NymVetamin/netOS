@@ -1,3 +1,4 @@
+import { wanNAT, setWanNAT } from "../wanNAT";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
@@ -187,6 +188,12 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                     </select>
                   </Field>
                 </div>
+                <Field label="NAT аплинка" hint="Нужен, если вышестоящая сеть не знает маршруты к вашим клиентам.">
+                  <Switch label="Подменять адреса клиентов (NAT)" checked={wanNAT(config,w).enabled}
+                    disabled={!wanNAT(config,w).iface || wanNAT(config,w).manual}
+                    onChange={enabled => patch(d => setWanNAT(d,d.wans[idx],enabled))} />
+                  {wanNAT(config,w).manual && <a className="hint" href="#firewall">Маскарад задан ручным правилом — изменить в защите сети</a>}
+                </Field>
                 {config.multiwan?.enabled && (
                   <div className="form-grid">
                     <Field label="Проверка доступности">

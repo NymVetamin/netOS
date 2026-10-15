@@ -1,0 +1,11 @@
+﻿import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {test} from 'node:test';
+import vm from 'node:vm';
+import ts from 'typescript';
+const exports={};vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/wanNAT.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports});
+const {wanNAT,setWanNAT,managedWanNAT}=exports;
+const fixture=()=>({interfaces:[{id:'port',name:'eth0'}],wans:[{id:'uplink',interface:'port',proto:'dhcp',name:'Uplink',enabled:true}],firewall:{nat:[]}});
+test('default automatic NAT, persistent explicit off, no duplicate on repeat',()=>{const c=fixture(),w=c.wans[0];assert.equal(wanNAT(c,w).enabled,true);setWanNAT(c,w,false);assert.equal(wanNAT(c,w).enabled,false);assert.equal(managedWanNAT(c,c.firewall.nat[0]),true);setWanNAT(c,w,true);assert.equal(c.firewall.nat.length,1);assert.equal(wanNAT(c,w).enabled,true)});
+test('legacy disabled system rule preserved, custom rules untouched',()=>{const c=fixture(),w=c.wans[0];c.firewall.nat=[{id:'old',system:true,enabled:false,interface:'eth0',direction:'source'},{id:'custom',enabled:true,interface:'eth0',source:'10.1.0.0/16'}];assert.equal(wanNAT(c,w).enabled,false);setWanNAT(c,w,true);assert.equal(c.firewall.nat[0].id,'old');assert.equal(c.firewall.nat[1].source,'10.1.0.0/16');assert.equal(managedWanNAT(c,c.firewall.nat[1]),false)});
+test('manual catch-all keeps ownership; PPP uses PPP interface',()=>{const c=fixture(),w=c.wans[0];c.firewall.nat=[{id:'manual',system:false,enabled:false,interface:'eth0'}];setWanNAT(c,w,true);assert.equal(wanNAT(c,w).manual,true);assert.equal(c.firewall.nat[0].enabled,false);w.proto='pppoe';assert.equal(wanNAT(c,w).iface,'ppp-uplink');setWanNAT(c,w,false);assert.equal(c.firewall.nat[1].interface,'ppp-uplink')});
