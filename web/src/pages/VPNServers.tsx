@@ -237,12 +237,11 @@ function ServerRow({ server, type, endpoint, installed, referenced, update, patc
   </Row>;
 }
 
-function PeerGroup({ server, hint, children }: any) {
+function PeerGroup({ server, children }: any) {
   const type = server.type === "xray" ? XRAY_NAMES[server.config?.protocol || "reality"] : ({ wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[server.type];
   return <section className="peer-group" data-peers-of={server.id} aria-label={`Клиенты сервера ${server.name || server.id}`}>
     <header className="peer-group-heading"><div><span className="faint">Сервер</span><h3>{server.name || server.id}</h3></div><Badge>{type}</Badge><span className="dim">Клиентов: {(server.peers || []).length}</span></header>
     <Rows cols={["Клиент", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{children}</Rows>
-    {hint && <div className="peer-group-hint hint">{hint}</div>}
   </section>;
 }
 
@@ -436,7 +435,7 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   }
 
   useClientCreator(server.id, addPeer);
-  return <PeerGroup server={server} hint="Онлайн — у клиента есть открытые соединения через Xray; обновление каждые 5 секунд">
+  return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
       <XrayPeerEditor status={clientStatus.find(row => row.id === peer.id && (!peer.credentials?.public_key || row.public_key === peer.credentials.public_key))} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
@@ -552,7 +551,7 @@ function ClientConnection({ status, session = false }: { status?: ClientStatus; 
   const trafficKnown = known && (status?.traffic_known ?? !session);
   const traffic = (value: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value / 1024 / 1024) + " МиБ";
   return <div className="client-connection form-grid">
-    <Field label={session ? "Последний раз замечен онлайн" : "Последнее рукопожатие"} hint={session ? "Фоновый опрос каждые 5 секунд; история хранится до перезапуска netOS" : undefined}><span>{last ? new Date(last * 1000).toLocaleString("ru-RU") : "—"}</span></Field>
+    <Field label={session ? "Последний раз замечен онлайн" : "Последнее рукопожатие"}><span>{last ? new Date(last * 1000).toLocaleString("ru-RU") : "—"}</span></Field>
     <Field label="Получено от клиента"><span>{trafficKnown ? traffic(status?.received || 0) : "—"}</span></Field>
     <Field label="Отправлено клиенту"><span>{trafficKnown ? traffic(status?.sent || 0) : "—"}</span></Field>
   </div>;
@@ -640,7 +639,7 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
   }
 
   useClientCreator(server.id, addPeer);
-  return <PeerGroup server={server} hint="«Онлайн» — рукопожатие за последние 3 минуты, обновление каждые 5 секунд">
+  return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер — netOS сам подготовит всё необходимое.</Empty> : (server.peers || []).map((peer: any) =>
       <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : clientStatus.find((row) => row.id === peer.id && row.public_key === peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
   </PeerGroup>;
