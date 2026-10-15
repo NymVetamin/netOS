@@ -1,3 +1,4 @@
+import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
@@ -181,7 +182,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                       {!w.interface && <option value="">не выбран</option>}
                       {ifaceOptions(config, w.interface).map((i: any) => (
                         <option key={i.id} value={i.id}>
-                          {i.name}
+                          {i.label ? `${i.label} (${i.name})` : i.name}
                           {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
                         </option>
                       ))}
@@ -508,7 +509,7 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                       {!n.interface && <option value="">не выбран</option>}
                       {ifaceOptions(config, n.interface).map((i: any) => (
                         <option key={i.id} value={i.id}>
-                          {i.name}
+                          {i.label ? `${i.label} (${i.name})` : i.name}
                           {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
                         </option>
                       ))}
@@ -745,11 +746,11 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
             <Row
               key={`discovered-${i.name}`}
               cells={[
-                <strong className="mono">{i.name}</strong>,
+                <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="accent">новый порт</Badge>,
                 <span className="dim">не настроен</span>,
                 <span className="mono dim">{i.mac || "—"}</span>,
-                <Badge tone={i.up ? "ok" : "neutral"}>{i.up ? "up" : "down"}</Badge>,
+                <Badge tone={i.up ? "ok" : "neutral"}>{<span title={linkSpeed(i)}>{linkSpeed(i,true) || (i.up ? "Линк есть" : "Нет линка")}</span>}</Badge>,
               ]}
               toggle={<button
                     className="btn sm"
@@ -773,11 +774,11 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
               key={i.id}
               id={i.id}
               cells={[
-                <strong className="mono">{i.name}</strong>,
+                <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="neutral">{typeLabel(i.type)}</Badge>,
                 <span className="dim">{usageOf(config, i) || "свободен"}</span>,
                 <span className="mono">{i.mac || liveInterfaces.find((live: any) => live.name === i.name)?.mac || "—"}</span>,
-                (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?"Линк есть":"Включён, нет линка"}</Badge> : <Badge tone="neutral">Нет в ОС</Badge>; })(),
+                (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?(<span title={linkSpeed(live)}>{linkSpeed(live,true) || "Линк есть"}</span>):"Включён, нет линка"}</Badge> : <Badge tone="neutral">Нет в ОС</Badge>; })(),
               ]}
               toggle={<Switch
                     checked={i.enabled}
@@ -816,6 +817,8 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                   ) : (
                     "—"
                   )}</div></Cap>}
+                <Cap label="Имя для отображения"><input value={i.label || ""} maxLength={64} aria-label={`Имя порта ${i.name}`} placeholder="Например, Кабинет" onChange={e=>patch(d=>{d.interfaces[idx].label=e.target.value})}/></Cap>
+                {i.type==="physical" && <PortLinkSettings iface={i} onChange={v=>patch(d=>{d.interfaces[idx].link_mode=v})}/>}
                 <Cap label="MAC-адрес"><input
                     type="text"
                     className="mono"
@@ -1000,7 +1003,8 @@ export function ProblemsFor({
 }
 
 function ifaceName(config: any, id: string): string {
-  return (config.interfaces || []).find((i: any) => i.id === id)?.name || "не выбран";
+  const iface=(config.interfaces || []).find((i: any) => i.id === id);
+  return iface ? iface.label ? `${iface.label} (${iface.name})` : iface.name : "не выбран";
 }
 
 function hasComponent(config: any, id: string): boolean {

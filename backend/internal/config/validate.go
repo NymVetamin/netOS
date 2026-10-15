@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/netos-router/netos/internal/ethernet"
 	"net"
 	"net/mail"
 	"net/netip"
@@ -623,6 +624,12 @@ func (c *Config) validateInterfaces(r *ValidationResult) {
 			r.errf(path+".type", "неизвестный тип интерфейса %q", iface.Type)
 		}
 
+		if len([]rune(iface.Label)) > 64 || strings.ContainsAny(iface.Label, "\r\n\x00") {
+			r.errf(path+".label", "имя порта должно быть одной строкой до 64 символов")
+		}
+		if !ethernet.ValidMode(iface.LinkMode) || (iface.LinkMode != "" && iface.Type != "physical") {
+			r.errf(path+".link_mode", "режим линка задаётся только для физического порта")
+		}
 		if iface.MTU != 0 && (iface.MTU < 576 || iface.MTU > 9216) {
 			r.errf(path+".mtu", "MTU вне разумного диапазона 576-9216")
 		}

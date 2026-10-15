@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"github.com/netos-router/netos/internal/ethernet"
 	"net"
 	"os"
 	"path/filepath"
@@ -93,7 +94,7 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 				// Переименование рвёт связность так же, как смена типа:
 				// интерфейс со старым именем удаляется целиком.
 				Disruptive: prev.Type != iface.Type || prev.VLANID != iface.VLANID ||
-					prev.Name != iface.Name || prev.Parent != iface.Parent || prev.Enabled != iface.Enabled,
+					prev.Name != iface.Name || prev.Parent != iface.Parent || prev.Enabled != iface.Enabled || prev.LinkMode != iface.LinkMode,
 			})
 		}
 		delete(oldByID, iface.ID)
@@ -162,6 +163,15 @@ func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
 		if err := s.configure(ctx, cfg, iface); err != nil {
 			return err
 		}
+	}
+	modes := map[string]string{}
+	for _, iface := range cfg.Interfaces {
+		if iface.Type == "physical" {
+			modes[iface.Name] = iface.LinkMode
+		}
+	}
+	if err := ethernet.Apply(ctx, s.Runner.Run, s.OwnedPath+".ethernet.json", modes); err != nil {
+		return err
 	}
 	return s.rememberOwned(cfg)
 }

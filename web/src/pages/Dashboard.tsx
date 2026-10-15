@@ -1,3 +1,4 @@
+import { linkSpeed } from "./PortLinkSettings";
 import { useEffect, useState } from "react";
 import { api, formatBitrate, formatBytes, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
@@ -149,6 +150,7 @@ export function Dashboard({ config }: { config: any }) {
               <tr>
                 <th>Интерфейс</th>
                 <th>Состояние</th>
+                <th>Линк</th>
                 <th>MAC</th>
                 <th>MTU</th>
                 <th>Принято</th>
@@ -161,6 +163,7 @@ export function Dashboard({ config }: { config: any }) {
                 <tr key={i.name}>
                   <td>
                     <span className="mono">{i.name}</span>
+                    {(config.interfaces || []).find((p:any)=>p.name===i.name)?.label && <div>{(config.interfaces || []).find((p:any)=>p.name===i.name).label}</div>}
                     {i.name.startsWith("ifb-netos-") && (
                       <div className="faint" style={{ fontSize: 12 }}>Служебный интерфейс QoS: входящий трафик</div>
                     )}
@@ -168,6 +171,7 @@ export function Dashboard({ config }: { config: any }) {
                   <td>
                     <Badge tone={i.up ? "ok" : "neutral"}>{i.up ? "up" : "down"}</Badge>
                   </td>
+                  <td>{linkSpeed(i) || "—"}</td>
                   <td className="mono faint">{i.mac}</td>
                   <td className="mono">{i.mtu}</td>
                   <td className="mono">{formatBytes(i.rx_bytes)}</td>

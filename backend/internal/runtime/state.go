@@ -40,7 +40,9 @@ type ARPEntry struct {
 
 // InterfaceStat — счётчики интерфейса.
 type InterfaceStat struct {
-	Name string `json:"name"`
+	SpeedMbps int64  `json:"speed_mbps,omitempty"`
+	Duplex    string `json:"duplex,omitempty"`
+	Name      string `json:"name"`
 	// Physical distinguishes configurable hardware ports from bridges, VLANs,
 	// tunnels and other runtime-only links. A hot-added NIC must be visible to
 	// the configuration UI without adopting every transient virtual interface.
@@ -320,6 +322,15 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 			TXPackets: readInt(base + "/statistics/tx_packets"),
 			RXErrors:  readInt(base + "/statistics/rx_errors"),
 			TXErrors:  readInt(base + "/statistics/tx_errors"),
+		}
+		if stat.Physical && stat.Up {
+			if speed := readInt(base + "/speed"); speed > 0 && speed < 10000000 {
+				stat.SpeedMbps = speed
+			}
+			duplex := readString(base + "/duplex")
+			if duplex == "full" || duplex == "half" {
+				stat.Duplex = duplex
+			}
 		}
 		out = append(out, stat)
 	}

@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"github.com/netos-router/netos/internal/ethernet"
 	"github.com/netos-router/netos/internal/releaseversion"
 	"io"
 	"os"
@@ -1402,6 +1403,9 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		return fmt.Errorf("удаление Ethernet-фильтра IPv6: %w", err)
 	}
 	m.removeVirtualInterfaces(ctx)
+	if err := ethernet.Apply(ctx, m.Output, filepath.Join(m.StateDir, "owned-links.ethernet.json"), nil); err != nil {
+		return err
+	}
 	if baseline != nil {
 		if err := m.restoreBaselineRouting(ctx, baseline); err != nil {
 			_ = m.run(ctx, "systemctl", "start", "netosd")

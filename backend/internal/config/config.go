@@ -128,9 +128,11 @@ type Component struct {
 
 // Interface — L2-сущность: физический порт, bridge, VLAN или bond.
 type Interface struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"` // physical | bridge | vlan | bond
+	Label    string `json:"label,omitempty"`
+	LinkMode string `json:"link_mode,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // physical | bridge | vlan | bond
 	// Members — идентификаторы портов, включённых в мост или агрегацию.
 	// Именно идентификаторы, а не имена: имя администратор меняет в панели, и
 	// ссылка по имени пережила бы переименование только на бумаге.
