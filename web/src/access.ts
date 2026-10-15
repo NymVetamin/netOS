@@ -1,7 +1,7 @@
 // Итог доступа «кто куда может ходить» для матрицы в «Защите сети».
 //
 // Считается в том же порядке, в каком backend/internal/subsys/firewall
-// строит цепочки: правила без зоны, изоляция сегментов, правила зоны
+// строит цепочки: изоляция сегментов, правила без зоны, правила зоны
 // источника, проброшенные порты, запрет между сегментами по умолчанию,
 // политика зоны. Для новых соединений: правила только для established,
 // related или invalid на итог не влияют. Правило с портами, протоколом,
@@ -26,6 +26,7 @@ export type Entity = {
   ifaces: string[];
   subnet?: Subnet;
   isolated?: boolean;
+  vpn?: boolean;
 };
 
 export type Matrix = {
@@ -51,13 +52,18 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
       subnet: parseCIDR(n.router_address),
       isolated: !!n.isolated,
     }));
+  const vpnSegments: Entity[] = (config.vpn_servers || []).filter((s: any) => s.enabled).map((s: any) => ({
+    id: `vpn:${s.id}`, title: s.name || s.id, kind: "segment" as const, zone: "vpn", vpn: true,
+    ifaces: s.type === "wireguard" ? [`wg-srv${s.index}`] : s.type === "ikev2" ? [`xfrm-srv${s.index}`] : s.type === "ocserv" ? [`vpns${s.index}+`] : s.type === "l2tp" ? [`ppp-srv${s.index}`] : [],
+    subnet: parseCIDR(s.subnet), isolated: !!s.isolated,
+  }));
   const zoneEntity = (name: string): Entity[] => {
     const zone = zones.find((z) => z.name === name);
     if (!zone || !(zoneIfaces[name] || []).length) return [];
     return [{ id: `zone:${name}`, title: zone.title || name, kind: "zone", zone: name, ifaces: zoneIfaces[name] }];
   };
   const internet = zoneEntity("wan");
-  const vpn = zoneEntity("vpn");
+  const vpn = vpnSegments.length ? vpnSegments : zoneEntity("vpn");
   const router: Entity = { id: "router", title: "Роутер", kind: "router", zone: "", ifaces: [] };
 
   const sources = [...segments, ...vpn, ...internet];
@@ -77,9 +83,9 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
   const partial: { accept: boolean; text: string }[] = [];
   if (flow === "in" && config.samba?.enabled) {
     const local = src.kind === "segment" && (config.samba.networks || []).includes(src.id.replace("segment:", ""));
-    const vpn = src.zone === "vpn" && (config.samba.vpns || []).length > 0;
+    const vpn = src.vpn ? (config.samba.vpns || []).includes(src.id.slice(4)) : src.zone === "vpn" && (config.samba.vpns || []).length > 0;
     partial.push({ accept: !!(local || vpn), text: local || vpn ? "Samba: TCP 445, выбранные сети и VPN-серверы, требуется пароль" : "Samba: доступ из этой сети запрещён" });
-    if (vpn) partial.push({ accept: false, text: "Samba: остальные VPN-серверы не имеют доступа" });
+    if (vpn && !src.vpn) partial.push({ accept: false, text: "Samba: остальные VPN-серверы не имеют доступа" });
   }
   const finish = (accept: boolean, reason: string): Access => {
     const exceptions = partial.filter((p) => p.accept !== accept).map((p) => p.text);
@@ -99,15 +105,17 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
     return null;
   };
 
+  if (flow === "forward" && src.kind === "segment" && dst.kind === "segment" && (src.isolated || dst.isolated)) {
+    return finish(false, `изоляция сегмента «${src.isolated ? src.title : dst.title}»`);
+  }
+
   const global = walk(rules.filter((r) => r.zone === "global" && (r.flow === flow || r.flow === "any")));
   if (global) return global;
 
   const zone = (fw.zones || []).find((z: any) => z.name === src.zone);
   if (!zone) return finish(false, `зона «${src.zone}» не описана — ядро отбрасывает`);
 
-  if (flow === "forward" && src.kind === "segment" && dst.kind === "segment" && (src.isolated || dst.isolated)) {
-    return finish(false, `изоляция сегмента «${src.isolated ? src.title : dst.title}»`);
-  }
+
 
   const own = walk(rules.filter((r) => r.zone === src.zone && r.flow === flow));
   if (own) return own;
@@ -126,7 +134,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
     }
   }
 
-  if (flow === "forward" && src.kind === "segment" && dst.kind === "segment") {
+  if (flow === "forward" && src.kind === "segment" && dst.kind === "segment" && !src.vpn && !dst.vpn) {
     return finish(false, "сегменты по умолчанию не видят друг друга");
   }
   return finish(zone.policy === "accept", `политика зоны «${zone.title || zone.name}»`);

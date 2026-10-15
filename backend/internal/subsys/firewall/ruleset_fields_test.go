@@ -148,7 +148,7 @@ func TestPortForwardIsolationAndVPNServerAcceptAllTypes(t *testing.T) {
 	}
 	var b builder
 	b.portForwardAccept(cfg, "FORWARD")
-	b.isolation(cfg, "FORWARD")
+	b.isolation(cfg)
 	b.vpnServerAccept(cfg, "INPUT")
 	text := b.String()
 	for _, part := range []string{"--dport 9000:9010", "-p udp --dport 9000:9010", "--dport 443", "-s 192.0.2.0/24 -d 198.51.100.0/24", "--dport 51820", "-p tcp --dport 443", "-p tcp --dport 4443", "-p udp --dport 4443", "--dport 500", "--dport 4500", "-p esp"} {

@@ -49,7 +49,12 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 	// outbounds used by VLESS servers. Reality here is an authenticated VPN
 	// entry point, so netOS firewall policy is the authority for reachable
 	// destinations, just as it is for WireGuard and the other VPN servers.
-	freedomSettings := map[string]any{"finalRules": []any{map[string]any{"action": "allow"}}}
+	finalRules := []any{}
+	if destinations := cfg.IsolationDestinations(server); len(destinations) > 0 {
+		finalRules = append(finalRules, map[string]any{"action": "block", "ip": destinations, "blockDelay": "0"})
+	}
+	finalRules = append(finalRules, map[string]any{"action": "allow"})
+	freedomSettings := map[string]any{"finalRules": finalRules}
 	outbounds := []any{map[string]any{"tag": "direct", "protocol": "freedom", "settings": freedomSettings}}
 	rules := []any{}
 	channelByID := map[string]config.Channel{}

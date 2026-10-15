@@ -523,7 +523,7 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                 <div className="row wrap" style={{ gap: "1.5rem", marginTop: "0.5rem" }}>
                   <Switch
                     checked={n.isolated}
-                    label="Запретить доступ в другие сегменты"
+                    label="Изолировать от других локальных и VPN-сетей"
                     onChange={(v) => patch((d) => (d.networks[idx].isolated = v))}
                   />
                   <Switch

@@ -599,6 +599,7 @@ type Policy struct {
 }
 
 type VPNServer struct {
+	Isolated   bool            `json:"isolated"`              // Block access to and from other LAN/VPN segments.
 	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
 
 	RealityKeySet  bool           `json:"reality_key_set,omitempty"` // Read response metadata; never a credential.

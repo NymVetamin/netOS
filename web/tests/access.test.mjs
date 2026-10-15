@@ -132,3 +132,16 @@ test("Samba adds LAN and VPN exceptions without opening all router traffic", () 
   cfg.samba.enabled = false;
   assert.ok(!cell(cfg, "Офис", "Роутер").exceptions.some(e => e.includes("Samba")));
 });
+
+test("VPN isolation is bidirectional and precedes global allow", () => {
+ const cfg=config([{name:"allow all",enabled:true,zone:"global",flow:"forward",action:"accept"}]);
+ cfg.firewall.zones.push({name:"vpn",title:"VPN",policy:"accept"});
+ cfg.vpn_servers=[{id:"wg",name:"WG",index:1,type:"wireguard",enabled:true,subnet:"10.9.0.1/24",isolated:true},{id:"oc",name:"OC",index:2,type:"ocserv",enabled:true,subnet:"10.10.0.1/24"}];
+ const m=accessMatrix(cfg,{lan:["br-lan"],vpn:["wg-srv1","vpns2+"],wan:["eth0"]});
+ const cell=(src,dst)=>m.cells[m.sources.findIndex(s=>s.id===src)][m.destinations.findIndex(s=>s.id===dst)];
+ assert.equal(cell("vpn:wg","segment:office").verdict,"n");
+ assert.equal(cell("segment:office","vpn:wg").verdict,"n");
+ assert.equal(cell("vpn:wg","vpn:oc").verdict,"n");
+ assert.equal(cell("vpn:oc","vpn:wg").verdict,"n");
+ assert.equal(cell("vpn:wg","zone:wan").verdict,"y");
+});

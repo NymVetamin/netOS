@@ -230,6 +230,9 @@ function ServerRow({ server, type, endpoint, installed, referenced, update, patc
     cells={[<strong>{server.name}</strong>, type, <span className="mono">{endpoint || "—"}</span>, (server.peers || []).length, <Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "Включён" : "Отключён"}</Badge>]}
     toggle={<Switch checked={!!server.enabled} disabled={!installed} label="" ariaLabel="Включить" onChange={(value) => update((draft: any) => draft.enabled = value)} />}>
     {children}
+    <Field label="Изоляция" hint="Запрещает доступ к другим локальным и VPN-сетям и из них. Выход в интернет сохраняется.">
+      <Switch checked={!!server.isolated} label="Изолировать от других локальных и VPN-сетей" onChange={(value) => update((draft: any) => draft.isolated = value)} />
+    </Field>
     <div className="row-actions server-head"><button type="button" className="btn ghost sm to-right" disabled={server.enabled || referenced} onClick={() => patch((draft: any) => { draft.vpn_servers = draft.vpn_servers.filter((item: any) => item.id !== server.id); })}>Удалить</button></div>
   </Row>;
 }

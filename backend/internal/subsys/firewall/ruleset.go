@@ -233,6 +233,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// Заблокированный клиент не должен сохранить доступ по уже установленному
 	// соединению или обойти запрет статическим IP. Поэтому эти правила стоят
 	// раньше системного ESTABLISHED и дополняют отказ DHCP-сервера в аренде.
+	b.isolation(cfg)
 	b.blockedClients(cfg)
 	b.sambaAccess(cfg)
 	b.socksAccess(cfg)
@@ -284,12 +285,6 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	for _, c := range chains {
 		b.line("# --- %s: %s ---", c.chain, describeChain(c.zone, c.hook))
 
-		// A local segment can be assigned to VPN or a custom zone too.
-		// Its isolation setting must still precede that zone's allow rules.
-		if c.hook.flow == "forward" {
-			b.isolation(cfg, c.chain)
-		}
-
 		for _, r := range cfg.Firewall.Rules {
 			if !r.Enabled || r.Zone != c.zone.Name {
 				continue
@@ -317,7 +312,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			b.vpnServerAccept(cfg, c.chain)
 		}
 		if c.hook.flow == "forward" {
-			b.intersegmentDefault(cfg, c.chain)
+			b.intersegmentDefault(cfg, c.chain, c.zone.Name)
 		}
 
 		// Политика зоны завершает вход и форвард. Для исхода политика общая и
@@ -446,31 +441,50 @@ func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
 	}
 }
 
-func (b *builder) isolation(cfg *config.Config, chain string) {
-	for _, a := range cfg.Networks {
-		if !a.Enabled {
+// Isolate before global ESTABLISHED/allow rules, but never run ordinary zone
+// policies early. Each source enters only its own zone's isolation chain.
+func (b *builder) isolation(cfg *config.Config) {
+	segments := cfg.InternalSegments()
+	declared := map[string]bool{}
+	for _, source := range segments {
+		if source.Proxy {
 			continue
 		}
-		for _, other := range cfg.Networks {
-			if !other.Enabled || other.ID == a.ID || (!a.Isolated && !other.Isolated) {
-				continue
+		chain := ChainName(source.Zone, "ISOLATION")
+		var destinations []config.InternalSegment
+		for _, destination := range segments {
+			if source.ID != destination.ID && (source.Isolated || destination.Isolated) {
+				destinations = append(destinations, destination)
 			}
-			b.line("-A %s -s %s -d %s -m comment --comment %q -j REJECT --reject-with icmp-port-unreachable",
-				chain, subnetOf(a.RouterAddress), subnetOf(other.RouterAddress),
-				"изоляция: "+a.Name)
+		}
+		if len(destinations) == 0 {
+			continue
+		}
+		if !declared[chain] {
+			b.line(":%s - [0:0]", chain)
+			declared[chain] = true
+		}
+		b.line("-A FORWARD -s %s -j %s", source.Subnet, chain)
+		for _, destination := range destinations {
+			isolated := destination.Name
+			if source.Isolated {
+				isolated = source.Name
+			}
+			comment := "изоляция «" + isolated + "»: " + source.Name + " → " + destination.Name
+			b.line("-A %s -s %s -d %s -m comment --comment %q -j REJECT --reject-with icmp-port-unreachable", chain, source.Subnet, destination.Subnet, truncate(comment, 240))
 		}
 	}
 }
 
 // Intersegment traffic needs an explicit firewall rule even when the source
 // zone's ordinary forward policy accepts Internet traffic.
-func (b *builder) intersegmentDefault(cfg *config.Config, chain string) {
+func (b *builder) intersegmentDefault(cfg *config.Config, chain, zone string) {
 	for _, source := range cfg.Networks {
-		if !source.Enabled {
+		if !source.Enabled || source.Zone != zone || source.Isolated {
 			continue
 		}
 		for _, destination := range cfg.Networks {
-			if !destination.Enabled || source.ID == destination.ID {
+			if !destination.Enabled || destination.Isolated || source.ID == destination.ID {
 				continue
 			}
 			b.line("-A %s -s %s -d %s -m comment --comment %q -j REJECT --reject-with icmp-port-unreachable",

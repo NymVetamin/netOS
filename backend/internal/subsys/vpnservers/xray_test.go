@@ -111,3 +111,36 @@ func TestRenderXrayAdditionalInboundProtocols(t *testing.T) {
 		})
 	}
 }
+
+func TestXrayIsolationOnEveryOutbound(t *testing.T) {
+	cfg, server := xrayServerConfig()
+	cfg.Networks = []config.Network{{ID: "lan", Enabled: true, Isolated: true, RouterAddress: "192.168.10.1/24"}, {ID: "other", Enabled: true, RouterAddress: "192.168.20.1/24"}}
+	for _, isolated := range []bool{false, true} {
+		server.Isolated = isolated
+		data, err := RenderXray(server, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		json.Unmarshal(data, &doc)
+		for _, raw := range doc["outbounds"].([]any) {
+			rules := raw.(map[string]any)["settings"].(map[string]any)["finalRules"].([]any)
+			if len(rules) != 2 || rules[0].(map[string]any)["action"] != "block" {
+				t.Fatal("missing final deny")
+			}
+			ips := rules[0].(map[string]any)["ip"].([]any)
+			expected := 1
+			if isolated {
+				expected = 2
+			}
+			if len(ips) != expected {
+				t.Fatal(ips)
+			}
+		}
+	}
+	cfg.Firewall.Enabled = false
+	data, _ := RenderXray(server, cfg)
+	if strings.Contains(string(data), `"action": "block"`) {
+		t.Fatal("disabled firewall still blocks")
+	}
+}

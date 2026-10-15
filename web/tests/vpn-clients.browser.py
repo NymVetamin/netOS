@@ -37,7 +37,7 @@ async def scenario(browser, mode):
            "vpn_servers": [{"id": "srv", "type": "wireguard", "name": "WireGuard", "index": 1, "enabled": True,
                             "subnet": "10.9.0.1/24", "port": 51820, "peers": [peer],
                             "config": {"public_endpoint": "vpn.example.test:51820", "client_dns": ["1.1.1.1"]}}]}
-    if mode == "multi":
+    if mode in ("multi", "isolation"):
         for i, kind in enumerate(("xray", "ocserv", "ikev2", "l2tp"), 2):
             cfg["vpn_servers"].append({"id": kind, "name": kind, "type": kind, "index": i,
                 "enabled": False, "subnet": f"10.{8+i}.0.1/24", "port": 443, "peers": [],
@@ -117,6 +117,26 @@ async def scenario(browser, mode):
     await expect(page.get_by_role("heading", name="VPN-доступ", exact=True, level=1)).to_be_visible()
     await expect(page.get_by_text("Онлайн", exact=True)).to_be_visible()
     await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+    if mode == "isolation":
+        label="Изолировать от других локальных и VPN-сетей"
+        for server in cfg["vpn_servers"]:
+            row=page.locator(f'[data-server-id="{server["id"]}"]')
+            toggle=row.get_by_role("checkbox",name=label,exact=True)
+            await expect(toggle).not_to_be_checked()
+            await toggle.locator("..").click()
+            await expect(toggle).to_be_checked()
+            await page.wait_for_timeout(700)
+            assert next(s for s in state["config"]["vpn_servers"] if s["id"]==server["id"])["isolated"]
+        await page.reload()
+        for server in cfg["vpn_servers"]:
+            await expect(page.locator(f'[data-server-id="{server["id"]}"]').get_by_role("checkbox",name=label,exact=True)).to_be_checked()
+        toggle=page.locator('[data-server-id="srv"]').get_by_role("checkbox",name=label,exact=True)
+        await toggle.locator("..").click()
+        await page.wait_for_timeout(700)
+        assert not state["config"]["vpn_servers"][0]["isolated"]
+        assert all(s["isolated"] for s in state["config"]["vpn_servers"][1:])
+        assert not errors,errors
+        await page.close();print(mode,"PASS");return
     if mode.startswith("sessions-"):
         await expect(page.get_by_text("Последний раз замечен онлайн", exact=True)).to_be_visible()
         state["telemetry"] = "offline"
@@ -135,7 +155,7 @@ async def scenario(browser, mode):
         await page.close()
         print(mode, "PASS")
         return
-    if mode == "multi":
+    if mode in ("multi", "isolation"):
         await expect(page.locator("form.vpn-server").get_by_text("Отключён", exact=True)).to_have_count(4)
         await expect(page.locator("form.vpn-server").get_by_text("черновик", exact=True)).to_have_count(0)
         await expect(page.locator("details.addmenu > summary").filter(has_text="Добавить клиента")).to_have_count(1)
