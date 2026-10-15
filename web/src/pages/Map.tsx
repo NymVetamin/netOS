@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
+import { MapViewport } from "../MapViewport";
 import { vpnMapServers } from "../mapVPN";
 import { interfaceName, wanInterfaceName } from "./Dashboard";
 
@@ -219,8 +220,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
   );
 
   return (
-    <div className="map-canvas">
-      <svg viewBox={`0 0 ${vpn.length ? 1240 : W} ${height}`} role="group" aria-label="Схема сети">
+    <MapViewport width={vpn.length ? 1240 : W} height={height}>
         {wans.map((w, i) => (
           <g key={`e-${w.id}`}>
             <path className={`edge ${edgeState(w.up, w.primary)}`} d={curve(122, cy, 205, wanY[i])} />
@@ -281,8 +281,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
           {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.peers.length} клиентов`, server.enabled ? "idle" : "danger")}
           {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), ["recent", "online"].includes(peer.state) ? "ok" : "idle"))}
         </g>)}
-      </svg>
-    </div>
+    </MapViewport>
   );
 }
 

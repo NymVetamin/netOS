@@ -2073,15 +2073,17 @@ tr.disabled-row td {
 }
 
 .map-canvas {
-  overflow-x: auto;
+  overflow: hidden;
   background: radial-gradient(var(--border) 1px, transparent 1.3px) 0 0 / 16px 16px;
 }
 
 .map-canvas svg {
   display: block;
   width: 100%;
-  min-width: 720px;
   height: auto;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
 }
 
 .map-legend {
@@ -2456,3 +2458,7 @@ td > select {
 .grip svg { pointer-events: none; }
 .grip:active { cursor: grabbing; }
 .grip:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+
+.map-canvas svg.map-dragging, .map-canvas svg.map-dragging * { cursor: grabbing; }
+.map-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.map-toolbar .hint { margin: 0; margin-left: auto; }
