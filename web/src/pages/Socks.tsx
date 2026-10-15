@@ -21,7 +21,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   };
   void load();const timer=window.setInterval(load,5000);return()=>{active=false;clearInterval(timer)};
  },[]);
- useEffect(()=>setShown(null),[p.password,p.username,p.secrets_set?.password]);
+ useEffect(()=>setShown(null),[p.enabled,p.password,p.username,p.secrets_set?.password]);
  const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values,udp:false}});
  const chosen=!!config.components?.some((c:any)=>c.id==="xray"&&c.installed);
  const defaults=(config.networks||[]).filter((n:any)=>n.enabled).map((n:any)=>n.id);
@@ -41,14 +41,15 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
    if(enabled && p.allow_wan && !(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет")))return;
    edit({enabled,...(!p.port?{port:1080,auth:true,channel:"direct",networks:defaults}: {})});
   }}/>
+  {p.enabled && <>
   <div className="form-grid">
    <Field label="Порт SOCKS5"><input type="number" min={1024} max={65535} value={p.port||1080} onChange={e=>edit({port:Number(e.target.value)})}/></Field>
    <Field label="Канал выхода прокси"><select value={p.channel||"direct"} onChange={e=>edit({channel:e.target.value})}>{(config.channels||[]).filter((c:any)=>c.enabled).map((c:any)=><option key={c.id} value={c.id}>{c.name||c.id}</option>)}</select></Field>
   </div>
   <p className="hint">Весь трафик прокси использует этот выход и его настройки резервирования. Назначение канала отдельному LAN-клиенту здесь не применяется. Передача UDP и IPv6 назначения не поддерживаются.</p>
   <div className="form-grid">
-   <Field label="Локальные сети">{networks.map((n:any)=><Switch key={n.id} label={n.name||n.id} checked={!!p.networks?.includes(n.id)} onChange={on=>select("networks",n.id,on)}/>)}</Field>
-   <Field label="VPN-сети">{vpns.map((v:any)=><Switch key={v.id} label={v.name||v.id} checked={!!p.vpns?.includes(v.id)} onChange={on=>select("vpns",v.id,on)}/>)}</Field>
+   <Field label="Локальные сети"><div className="stack">{networks.map((n:any)=><Switch key={n.id} label={n.name||n.id} checked={!!p.networks?.includes(n.id)} onChange={on=>select("networks",n.id,on)}/>)}</div></Field>
+   <Field label="VPN-сети"><div className="stack">{vpns.map((v:any)=><Switch key={v.id} label={v.name||v.id} checked={!!p.vpns?.includes(v.id)} onChange={on=>select("vpns",v.id,on)}/>)}</div></Field>
   </div>
   <Switch label="Логин и пароль SOCKS5" checked={p.auth!==false} disabled={!!p.allow_wan} onChange={auth=>edit({auth})}/>
   {p.auth!==false&&<div className="form-grid">
@@ -64,14 +65,15 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   </details>
   {p.allow_wan&&<Notice tone="danger" title="ОПАСНО: SOCKS5 открыт со стороны интернета">{WAN_WARNING}</Notice>}
   <h4>Подключение приложения</h4>
-  {addresses.map((a:any)=><div className="row wrap" key={a.name+a.address}><span>{a.name}: <code>{a.address?.split("/")[0]}:{p.port||1080}</code></span><CopyButton text={a.address?.split("/")[0]+":"+(p.port||1080)} onError={setError}/></div>)}
+  {addresses.map((a:any)=><div className="row wrap" key={a.name+a.address}><span>{a.name}: <code>{a.address?.split("/")[0]}:{p.port||1080}</code></span><CopyButton iconOnly text={a.address?.split("/")[0]+":"+(p.port||1080)} onError={setError}/></div>)}
   {p.allow_wan&&<p className="hint">Для WAN используйте внешний IPv4-адрес роутера и порт {p.port||1080}. Если роутер за NAT, доступ зависит от настроек вышестоящего устройства.</p>}
   {p.auth!==false&&<div className="row wrap">
    <span>Логин: {p.username||"не задан"}</span>
    <button className="btn" onClick={async()=>{if(shown!==null){setShown(null);return}try{const data=await api.socksCredentials();setShown(p.password||data.password);setError("")}catch(e:any){setError(e.message)}}}>{shown===null?"Показать пароль":"Скрыть пароль"}</button>
-   {shown!==null&&<><code>{shown||"не задан"}</code><CopyButton label="Скопировать пароль" text={shown} onError={setError}/></>}
+   {shown!==null&&<><code>{shown||"не задан"}</code><CopyButton iconOnly label="Скопировать пароль" text={shown} onError={setError}/></>}
   </div>}
   <p className="hint">Настройки начнут действовать после применения. Для разрешения имён через прокси включите удалённый DNS в приложении.</p>
+  </>}
  </div>
  </Card>;
 }

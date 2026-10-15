@@ -199,6 +199,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         </Rows>
       </Card>
 
+      <SocksAccessRules config={config} />
+
       <Card
         title="Правила"
         subtitle={`${rules.filter((r) => r.enabled).length} включено из ${rules.length}`}
@@ -258,6 +260,37 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       <NATSection config={config} patch={patch} />
     </>
   );
+}
+
+// Автоматические правила из firewall/socks.go; отображаем текущий черновик.
+function SocksAccessRules({ config }: { config: any }) {
+  const socks = config.socks;
+  if (!socks?.enabled || !config.firewall?.enabled) return null;
+  const iface = (id: string) => (config.interfaces || []).find((i: any) => i.id === id)?.name || id || "интерфейс не задан";
+  const allowed: { id: string; name: string; detail: string }[] = [{ id: "loopback", name: "Сам роутер", detail: "lo" }];
+  for (const n of config.networks || []) {
+    if (n.enabled && socks.networks?.includes(n.id)) allowed.push({ id: `lan-${n.id}`, name: n.name || n.id, detail: `${iface(n.interface)} · подсеть ${n.router_address}` });
+  }
+  for (const v of config.vpn_servers || []) {
+    if (v.enabled && v.type !== "xray" && socks.vpns?.includes(v.id)) {
+      const match = v.type === "ikev2" ? "IPsec" : v.type === "ocserv" ? `vpns${v.index}+` : v.type === "l2tp" ? `ppp-srv${v.index}` : `wg-srv${v.index}`;
+      allowed.push({ id: `vpn-${v.id}`, name: v.name || v.id, detail: `${match} · подсеть ${v.subnet}` });
+    }
+  }
+  if (socks.allow_wan) for (const w of config.wans || []) {
+    if (w.enabled) allowed.push({ id: `wan-${w.id}`, name: `WAN: ${w.name || w.id}`, detail: ["pppoe", "l2tp"].includes(w.proto) ? `ppp-${w.id}` : iface(w.interface) });
+  }
+  return <Card title="Автоматические правила SOCKS5" subtitle="IPv4 · созданы настройками прокси" tight actions={<a className="btn sm" href="#services">Настроить SOCKS5</a>}>
+    <p className="rows-notes hint">По текущим настройкам. Изменения начнут действовать после применения. Доступ к порту SOCKS5 проверяется до обычных правил.</p>
+    <TableWrap><table>
+      <thead><tr><th>Направление</th><th>Источник / условие</th><th>Порт TCP</th><th>Действие</th></tr></thead>
+      <tbody>
+        {allowed.map(r => <tr key={r.id}><td>Input</td><td><strong>{r.name}</strong><div className="hint">{r.detail}</div></td><td>{socks.port || 1080}</td><td><Badge tone="ok">Разрешить</Badge></td></tr>)}
+        <tr><td>Input</td><td>Все остальные источники</td><td>{socks.port || 1080}</td><td><Badge tone="danger">Отбросить</Badge></td></tr>
+        <tr><td>Output</td><td>Ответы прокси · ESTABLISHED</td><td>Источник: {socks.port || 1080}</td><td><Badge tone="ok">Разрешить</Badge></td></tr>
+      </tbody>
+    </table></TableWrap>
+  </Card>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,7 +1176,7 @@ function interfacesOfZone(config: any, zone: string): string[] {
 
 function describeConditions(r: any, sets: any[]): string {
   const parts: string[] = [];
-  const setName = (id: string) => sets.find((s) => s.id === id)?.name || id;
+  const setName = (id: string) => sets.find((s) => s.id === id)?.name || id || "интерфейс не задан";
   if (r.interface) parts.push(`${r.flow === "out" ? "выход" : "вход"}: ${r.interface}`);
   if (r.out_interface) parts.push(`выход: ${r.out_interface}`);
   if (r.protocol) parts.push(r.protocol.toUpperCase());
