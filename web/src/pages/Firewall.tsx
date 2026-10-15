@@ -555,7 +555,6 @@ function RuleRow({
               onClick={() =>
                 patch(
                   (d) => {
-                    if (rule.system) d.firewall.removed_defaults = [...new Set([...(d.firewall.removed_defaults || []), rule.id])];
                     d.firewall.rules = d.firewall.rules.filter((x: any) => x.id !== rule.id);
                   },
                 )

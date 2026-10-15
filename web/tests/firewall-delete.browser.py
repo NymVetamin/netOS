@@ -29,14 +29,14 @@ async def main():
   await expect(row.locator('button[title="удалить"]')).to_be_visible()
   async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
    await row.locator('button[title="удалить"]').click()
-  assert state['cfg']['firewall']['removed_defaults']==['sys-ssh']
+  assert 'removed_defaults' not in state['cfg']['firewall']
   assert [r['id'] for r in state['cfg']['firewall']['rules']]==['custom']
   await page.reload()
   await expect(page.get_by_text('SSH default',exact=True)).to_have_count(0)
   row=page.locator('tr').filter(has_text='Custom')
   async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
    await row.locator('button[title="удалить"]').click()
-  assert state['cfg']['firewall']['removed_defaults']==['sys-ssh']
+  assert 'removed_defaults' not in state['cfg']['firewall']
   assert not errors,errors
   await browser.close();print('delete default and manual firewall rules PASS')
 asyncio.run(main())

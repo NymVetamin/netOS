@@ -17,6 +17,7 @@ func Default() *Config {
 	// Системные правила — часть работоспособной конфигурации, а не украшение.
 	// Без них применяется набор с политикой DROP и без единого разрешающего
 	// правила, то есть роутер отрезает сам себя от сети.
+	cfg.Firewall.Rules = systemRules(cfg.System.Panel.Port, cfg.UsesACME())
 	cfg.Normalize()
 	return cfg
 }
@@ -231,8 +232,8 @@ func systemRules(panelPort int, acme bool) []FirewallRule {
 	return rules
 }
 
-// EnsureSystemRules достраивает недостающие системные правила и держит в
-// актуальном состоянии те их поля, которыми владеет netOS.
+// EnsureSystemRules синхронизирует существующие системные правила и ACME.
+// Стартовые правила создаются только в Default; удалённые не восстанавливаются.
 //
 // Пользовательские правки сохраняются: выключенное правило останется
 // выключенным, суженный список источников — суженным.
@@ -256,18 +257,13 @@ func (c *Config) EnsureSystemRules() {
 		}
 	}
 
-	removed := map[string]bool{}
-	for _, id := range c.Firewall.RemovedDefaults {
-		removed[id] = true
-	}
 	var missing []FirewallRule
 	for _, want := range systemRules(c.System.Panel.Port, c.UsesACME()) {
 		idx, ok := existing[want.ID]
 		if !ok {
-			if removed[want.ID] && want.ID != RuleACME {
-				continue
+			if want.ID == RuleACME {
+				missing = append(missing, want)
 			}
-			missing = append(missing, want)
 			continue
 		}
 		cur := &c.Firewall.Rules[idx]
@@ -281,8 +277,7 @@ func (c *Config) EnsureSystemRules() {
 		cur.Comment = want.Comment
 	}
 
-	// Системные правила идут первыми: они определяют доступность роутера,
-	// и пользовательское правило не должно случайно оказаться выше.
+	// Автоматическое разрешение HTTP-01 располагается перед пользовательскими правилами.
 	if len(missing) > 0 {
 		c.Firewall.Rules = append(missing, c.Firewall.Rules...)
 	}
