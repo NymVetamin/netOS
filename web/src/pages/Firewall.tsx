@@ -548,13 +548,16 @@ function RuleRow({
           <button className="btn ghost sm" onClick={onToggleExpand}>
             {expanded ? "Свернуть" : "Изменить"}
           </button>
-          {!rule.system && (
+          {rule.id !== "sys-acme" && (
             <button
               className="btn ghost sm"
               title="удалить"
               onClick={() =>
                 patch(
-                  (d) => (d.firewall.rules = d.firewall.rules.filter((x: any) => x.id !== rule.id)),
+                  (d) => {
+                    if (rule.system) d.firewall.removed_defaults = [...new Set([...(d.firewall.removed_defaults || []), rule.id])];
+                    d.firewall.rules = d.firewall.rules.filter((x: any) => x.id !== rule.id);
+                  },
                 )
               }
             >
@@ -574,8 +577,8 @@ function RuleRow({
             )}
             {rule.system && (
               <Notice tone="info" title="Правило создано netOS">
-                Его нельзя удалить, но можно выключить или изменить условия. Порт панели
-                берётся из раздела «Система» и следует за ним автоматически.
+                {rule.id === "sys-acme" ? "Правило управляется настройками сертификата в разделе «Система»." : "Это стартовое правило. Его можно изменить, выключить или удалить; удалённое правило не восстановится автоматически."}
+                {rule.id === "sys-panel" && " Порт панели берётся из раздела «Система»."}
               </Notice>
             )}
             <RuleForm

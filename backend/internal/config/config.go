@@ -341,6 +341,8 @@ type Firewall struct {
 	OutputPolicy string `json:"output_policy"`
 	// Rules — единый упорядоченный список правил.
 	Rules []FirewallRule `json:"rules"`
+	// RemovedDefaults remembers explicit deletion of editable starter rules.
+	RemovedDefaults []string `json:"removed_defaults,omitempty"`
 	// NAT — трансляция адресов: и подмена источника на выходе, и проброс
 	// портов внутрь. Это две стороны одного механизма, и держать их в разных
 	// разделах панели было ошибкой.

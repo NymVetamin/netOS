@@ -256,10 +256,17 @@ func (c *Config) EnsureSystemRules() {
 		}
 	}
 
+	removed := map[string]bool{}
+	for _, id := range c.Firewall.RemovedDefaults {
+		removed[id] = true
+	}
 	var missing []FirewallRule
 	for _, want := range systemRules(c.System.Panel.Port, c.UsesACME()) {
 		idx, ok := existing[want.ID]
 		if !ok {
+			if removed[want.ID] && want.ID != RuleACME {
+				continue
+			}
 			missing = append(missing, want)
 			continue
 		}
