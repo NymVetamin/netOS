@@ -145,3 +145,13 @@ test("VPN isolation is bidirectional and precedes global allow", () => {
  assert.equal(cell("vpn:oc","vpn:wg").verdict,"n");
  assert.equal(cell("vpn:wg","zone:wan").verdict,"y");
 });
+
+test("explicit output interface restricts a destination zone", () => {
+ const cfg=config([{name:"exact exit",enabled:true,zone:"lan",flow:"forward",dst_zone:"lan",out_interface:"eth0.40",action:"accept"}]);
+ cfg.networks.forEach(n=>n.isolated=false);
+ const m=accessMatrix(cfg,{lan:["br-lan","eth0.30","eth0.40"],wan:["eth0"]});
+ const src=m.sources.findIndex(s=>s.id==="segment:office");
+ const to=id=>m.cells[src][m.destinations.findIndex(s=>s.id===id)];
+ assert.equal(to("segment:cams").verdict,"y");
+ assert.equal(to("segment:guest").verdict,"n");
+});

@@ -1425,8 +1425,19 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		default:
 			r.errf(path+".protocol", "неподдерживаемый протокол %q", rule.Protocol)
 		}
-		if rule.Interface != "" && !ValidInterfaceName(rule.Interface) {
+		if rule.Interface != "" && !ValidInterfaceName(strings.TrimSuffix(rule.Interface, "+")) {
 			r.errf(path+".interface", "некорректное имя интерфейса")
+		}
+		if rule.OutInterface != "" {
+			if rule.DstZone != "" && !c.FirewallInterfaceInZone(rule.OutInterface, rule.DstZone) {
+				r.errf(path+".out_interface", "интерфейс не относится к выбранной зоне назначения")
+			}
+			if rule.Flow != "forward" {
+				r.errf(path+".out_interface", "исходящий интерфейс отдельным полем доступен только для Forward")
+			}
+			if !ValidInterfaceName(strings.TrimSuffix(rule.OutInterface, "+")) {
+				r.errf(path+".out_interface", "некорректное имя исходящего интерфейса")
+			}
 		}
 		if rule.ConnState != "" {
 			allowedStates := map[string]bool{"new": true, "established": true, "related": true, "invalid": true}

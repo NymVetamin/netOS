@@ -392,19 +392,20 @@ type FirewallRule struct {
 	DstZone string `json:"dst_zone,omitempty"`
 	Action  string `json:"action"` // accept | drop | reject | continue
 	// Селекторы. Пустое поле означает «любой».
-	Interface string    `json:"interface,omitempty"`
-	Protocol  string    `json:"protocol,omitempty"`
-	SrcIP     string    `json:"src_ip,omitempty"`
-	DstIP     string    `json:"dst_ip,omitempty"`
-	SrcIPSet  string    `json:"src_ipset,omitempty"`
-	DstIPSet  string    `json:"dst_ipset,omitempty"`
-	SrcMAC    string    `json:"src_mac,omitempty"`
-	SrcPort   string    `json:"src_port,omitempty"`
-	DstPort   string    `json:"dst_port,omitempty"`
-	ConnState string    `json:"conn_state,omitempty"` // new,established,related,invalid
-	Schedule  *Schedule `json:"schedule,omitempty"`
-	Log       bool      `json:"log"`
-	Comment   string    `json:"comment,omitempty"`
+	Interface    string    `json:"interface,omitempty"`
+	OutInterface string    `json:"out_interface,omitempty"` // Forward output; Interface remains the input selector.
+	Protocol     string    `json:"protocol,omitempty"`
+	SrcIP        string    `json:"src_ip,omitempty"`
+	DstIP        string    `json:"dst_ip,omitempty"`
+	SrcIPSet     string    `json:"src_ipset,omitempty"`
+	DstIPSet     string    `json:"dst_ipset,omitempty"`
+	SrcMAC       string    `json:"src_mac,omitempty"`
+	SrcPort      string    `json:"src_port,omitempty"`
+	DstPort      string    `json:"dst_port,omitempty"`
+	ConnState    string    `json:"conn_state,omitempty"` // new,established,related,invalid
+	Schedule     *Schedule `json:"schedule,omitempty"`
+	Log          bool      `json:"log"`
+	Comment      string    `json:"comment,omitempty"`
 }
 
 type Schedule struct {

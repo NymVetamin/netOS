@@ -48,9 +48,9 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
 // iptables-save, должен видеть те же слова, что и в панели. Направления «во все
 // сразу» нет намеренно — одно правило попадает ровно в одну цепочку.
 const FLOWS = [
-  { id: "in", title: "Вход", hint: "Пакет адресован самому роутеру", chain: "INPUT" },
-  { id: "out", title: "Выход", hint: "Пакет отправлен самим роутером", chain: "OUTPUT" },
-  { id: "forward", title: "Форвард", hint: "Пакет идёт сквозь роутер", chain: "FORWARD" },
+  { id: "in", title: "Input", hint: "Пакет адресован самому роутеру", chain: "INPUT" },
+  { id: "out", title: "Output", hint: "Пакет отправлен самим роутером", chain: "OUTPUT" },
+  { id: "forward", title: "Forward", hint: "Пакет идёт сквозь роутер", chain: "FORWARD" },
 ];
 
 const ACTIONS = [
@@ -264,232 +264,87 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
 // Форма правила
 // ---------------------------------------------------------------------------
 
-function RuleForm({
-  config,
-  initial,
-  onSubmit,
-  onCancel,
-}: {
-  config: any;
-  initial?: any;
-  onSubmit: (rule: any) => void;
-  onCancel: () => void;
+function RuleForm({ config, initial, onSubmit, onCancel }: {
+  config: any; initial?: any; onSubmit: (rule: any) => void; onCancel: () => void;
 }) {
   const zones: any[] = config.firewall?.zones || [];
-  const [r, setR] = useState<any>(
-    initial || {
-      id: newID("rule"),
-      name: "",
-      enabled: true,
-      system: false,
-      zone: "global",
-      flow: "in",
-      action: "accept",
-      protocol: "",
-      interface: "",
-      src_ip: "",
-      dst_ip: "",
-      src_port: "",
-      dst_port: "",
-      src_mac: "",
-      conn_state: "",
-      schedule: null,
-      dst_zone: "",
-      log: false,
-      comment: "",
-    },
-  );
-
-  const set = (k: string, v: any) => setR({ ...r, [k]: v });
-  const needsProtocol =
-    !!(r.src_port || r.dst_port) && r.protocol !== "tcp" && r.protocol !== "udp";
-  const zoneLabel = r.flow === "out" ? "В какую зону" : "Из какой зоны";
-
-  return (
-    <div className="rule-form">
+  const [r, setR] = useState<any>(() => ({ id: newID("rule"), name: "", enabled: true, system: false,
+    zone: "global", flow: "in", action: "accept", protocol: "", interface: "", out_interface: "",
+    src_ip: "", dst_ip: "", src_port: "", dst_port: "", src_mac: "", conn_state: "",
+    schedule: null, dst_zone: "", log: false, comment: "", ...initial }));
+  const set = (k: string, v: any) => setR((previous: any) => ({ ...previous, [k]: v }));
+  const needsProtocol = !!(r.src_port || r.dst_port) && !["tcp", "udp"].includes(r.protocol);
+  const options = (zone: string): string[] => zone && zone !== "global" ? interfacesOfZone(config, zone) :
+    [...new Set<string>(["lo", ...(config.interfaces || []).map((i: any) => i.name), ...zones.flatMap(z => interfacesOfZone(config, z.name))])];
+  const inputOptions = options(r.zone), outputOptions = options(r.flow === "out" ? r.zone : r.dst_zone);
+  const badInput = r.flow !== "out" && r.interface && !inputOptions.includes(r.interface);
+  const output = r.flow === "out" ? r.interface : r.out_interface;
+  const badOutput = r.flow !== "in" && output && !outputOptions.includes(output);
+  const states = String(r.conn_state || "").toLowerCase().split(",").map((v: string) => v.trim()).filter(Boolean);
+  const zoneSelect = (field: string, label: string) => <Field label={label}>
+    <select aria-label={label} value={r[field] || (field === "zone" ? "global" : "")} onChange={e => set(field, e.target.value)}>
+      <option value={field === "zone" ? "global" : ""}>Любая зона</option>
+      {zones.map(z => <option key={z.name} value={z.name}>{z.title || z.name}</option>)}
+    </select>
+  </Field>;
+  const interfaceSelect = (field: string, label: string, values: string[]) => <Field label={label}>
+    <select aria-label={label} value={r[field] || ""} onChange={e => set(field, e.target.value)}>
+      <option value="">Любой в выбранной зоне</option>
+      {r[field] && !values.includes(r[field]) && <option value={r[field]} disabled>{r[field]} — не относится к выбранной зоне</option>}
+      {values.map(name => <option key={name} value={name}>{name}</option>)}
+    </select>
+  </Field>;
+  const textField = (field: string, label: string, hint?: string) => <Field label={label} hint={hint}>
+    <input aria-label={label} className="mono" value={r[field] || ""} placeholder="любой" onChange={e => set(field, e.target.value)} />
+  </Field>;
+  const zoneName = (value: string) => zones.find(z => z.name === value)?.title || (value && value !== "global" ? value : "любая зона");
+  const from = r.flow === "out" ? "сам роутер" : `${zoneName(r.zone)} / ${r.interface || "любой интерфейс"}`;
+  const to = r.flow === "in" ? "сам роутер" : `${zoneName(r.flow === "out" ? r.zone : r.dst_zone)} / ${output || "любой интерфейс"}`;
+  return <div className="rule-form">
+    <div className="form-grid">
+      <Field label="Название" hint={r.system ? "Название системного правила задаёт netOS" : "Попадёт в комментарий правила в ядре"}>
+        <input aria-label="Название" autoFocus readOnly={!!r.system} value={r.name} onChange={e => set("name", e.target.value)} />
+      </Field>
+      <Field label="Направление" hint={FLOWS.find(f => f.id === r.flow)?.hint}>
+        <select aria-label="Направление" value={r.flow} onChange={e => {
+          const flow = e.target.value;
+          // Preserve the side of a selected interface when changing direction.
+          const incoming = r.flow === "out" ? "" : r.interface;
+          const outgoing = r.flow === "out" ? r.interface : r.out_interface;
+          setR({ ...r, flow, interface: flow === "out" ? outgoing : incoming,
+            out_interface: flow === "forward" ? outgoing : "",
+            zone: flow === "out" ? (r.dst_zone || (r.flow === "out" ? r.zone : "global")) : r.flow === "out" ? "global" : r.zone,
+            dst_zone: flow === "forward" ? (r.flow === "out" && r.zone !== "global" ? r.zone : r.dst_zone) : "" });
+        }}>{FLOWS.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select>
+      </Field>
+      <Field label="Действие"><select aria-label="Действие" value={r.action} onChange={e => set("action", e.target.value)}>{ACTIONS.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></Field>
+      <Field label="Протокол"><select aria-label="Протокол" value={r.protocol || ""} onChange={e => set("protocol", e.target.value)}><option value="">Любой</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></Field>
+    </div>
+    <div className="rule-endpoints">
+      <fieldset><legend>Откуда</legend><div className="form-grid">
+        {r.flow === "out" ? <p className="hint">Сам роутер</p> : <>{zoneSelect("zone", "Из какой зоны")}{interfaceSelect("interface", "Входящий интерфейс", inputOptions)}</>}
+        {textField("src_ip", "Адрес источника", "IP-адрес или подсеть; пусто — любой")}
+        {textField("src_port", "Порт источника", "80, 80,443 или 1000-2000")}
+      </div></fieldset>
+      <fieldset><legend>Куда</legend><div className="form-grid">
+        {r.flow === "in" ? <p className="hint">Сам роутер</p> : <>{zoneSelect(r.flow === "out" ? "zone" : "dst_zone", "В какую зону")}{interfaceSelect(r.flow === "out" ? "interface" : "out_interface", "Исходящий интерфейс", outputOptions)}</>}
+        {textField("dst_ip", "Адрес назначения", "IP-адрес или подсеть; пусто — любой")}
+        {textField("dst_port", "Порт назначения", "80, 80,443 или 1000-2000")}
+      </div></fieldset>
+    </div>
+    <details className="rule-advanced"><summary>Дополнительно</summary>
       <div className="form-grid">
-        {/* Название и комментарий системного правила принадлежат netOS: они
-            восстанавливаются при каждом сохранении конфигурации. Поле,
-            принимающее правку и молча возвращающее прежнее значение после
-            перезагрузки страницы, хуже поля недоступного. */}
-        <Field
-          label="Название"
-          hint={
-            r.system
-              ? "Название системного правила задаёт netOS"
-              : "Попадёт в комментарий правила в ядре"
-          }
-        >
-          <input
-            type="text"
-            autoFocus
-            readOnly={!!r.system}
-            placeholder="Например: доступ к принтеру"
-            value={r.name}
-            onChange={(e) => set("name", e.target.value)}
-          />
+        {(["src_ipset", "dst_ipset"] as const).map(field => <Field key={field} label={field === "src_ipset" ? "Набор адресов источника" : "Набор адресов назначения"} hint="Дополнительное условие: адрес входит в набор">
+          <select aria-label={field === "src_ipset" ? "Набор адресов источника" : "Набор адресов назначения"} value={r[field] || ""} onChange={e => set(field, e.target.value)}><option value="">Любой адрес</option>{(config.firewall?.ipsets || []).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+        </Field>)}
+        {r.flow !== "out" && textField("src_mac", "MAC источника")}
+        <Field label="Состояние соединения" hint="Ничего не выбрано — любое состояние">
+          <div className="rule-states">{["new", "established", "related", "invalid"].map(state => <label key={state}>
+            <input type="checkbox" aria-label={state.toUpperCase()} checked={states.includes(state)} onChange={e => set("conn_state", (e.target.checked ? [...states, state] : states.filter((v: string) => v !== state)).join(","))} />{state.toUpperCase()}
+          </label>)}</div>
         </Field>
-
-        <Field label="Направление">
-          <select
-            value={r.flow}
-            onChange={(e) => {
-              const flow = e.target.value;
-              setR({ ...r, flow, dst_zone: flow === "forward" ? r.dst_zone : "" });
-            }}
-          >
-            {FLOWS.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.title} — {f.hint}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label={zoneLabel}>
-          <select value={r.zone} onChange={(e) => set("zone", e.target.value)}>
-            <option value="global">Любая зона</option>
-            {zones.map((z: any) => (
-              <option key={z.name} value={z.name}>
-                {z.title || z.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        {r.flow === "forward" && (
-          <Field label="В какую зону">
-            <select value={r.dst_zone || ""} onChange={(e) => set("dst_zone", e.target.value)}>
-              <option value="">Любая</option>
-              {zones.map((z: any) => (
-                <option key={z.name} value={z.name}>
-                  {z.title || z.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-
-        <Field label="Действие">
-          <select value={r.action} onChange={(e) => set("action", e.target.value)}>
-            {ACTIONS.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label="Протокол">
-          <select value={r.protocol || ""} onChange={(e) => set("protocol", e.target.value)}>
-            <option value="">любой</option>
-            <option value="tcp">TCP</option>
-            <option value="udp">UDP</option>
-            <option value="icmp">ICMP</option>
-          </select>
-        </Field>
-
-        <Field label="Интерфейс" hint="Имя входящего или исходящего интерфейса; пусто — любой">
-          <input
-            type="text"
-            className="mono"
-            placeholder="любой"
-            list="firewall-interface-names"
-            value={r.interface || ""}
-            onChange={(e) => set("interface", e.target.value)}
-          />
-          <datalist id="firewall-interface-names">
-            {(config.interfaces || []).map((x: any) => (
-              <option key={x.id || x.name} value={x.name} />
-            ))}
-          </datalist>
-        </Field>
-
-        <Field label="Адрес источника" hint="Адрес или подсеть, пусто — любой">
-          <input
-            type="text"
-            className="mono"
-            placeholder="192.168.10.0/24"
-            value={r.src_ip || ""}
-            onChange={(e) => set("src_ip", e.target.value)}
-          />
-        </Field>
-
-        <Field label="Адрес назначения">
-          <input
-            type="text"
-            className="mono"
-            placeholder="любой"
-            value={r.dst_ip || ""}
-            onChange={(e) => set("dst_ip", e.target.value)}
-          />
-        </Field>
-
-        {(["src_ipset", "dst_ipset"] as const).map((field) => (
-          <Field key={field} label={field === "src_ipset" ? "Набор адресов источника" : "Набор адресов назначения"} hint="Дополнительное условие: адрес входит в выбранный набор">
-            <select value={r[field] || ""} onChange={(e) => set(field, e.target.value)}>
-              <option value="">Любой адрес</option>
-              {(config.firewall?.ipsets || []).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </Field>
-        ))}
-
-        <Field label="Порт назначения" hint="80, или 80,443, или 1000-2000">
-          <input
-            type="text"
-            className="mono"
-            placeholder="любой"
-            value={r.dst_port || ""}
-            onChange={(e) => set("dst_port", e.target.value)}
-          />
-        </Field>
-
-        <Field label="Порт источника" hint="80, или 80,443, или 1000-2000">
-          <input
-            type="text"
-            className="mono"
-            placeholder="любой"
-            value={r.src_port || ""}
-            onChange={(e) => set("src_port", e.target.value)}
-          />
-        </Field>
-
-        <Field label="MAC источника">
-          <input
-            type="text"
-            className="mono"
-            placeholder="любой"
-            value={r.src_mac || ""}
-            onChange={(e) => set("src_mac", e.target.value)}
-          />
-        </Field>
-
-        <Field
-          label="Состояние соединения"
-          hint="Через запятую: new, established, related, invalid"
-        >
-          <input
-            type="text"
-            className="mono"
-            placeholder="любое"
-            value={r.conn_state || ""}
-            onChange={(e) => set("conn_state", e.target.value)}
-          />
-        </Field>
-
-        <Field
-          label="Комментарий"
-          hint={r.system ? "Комментарий системного правила задаёт netOS" : "Заметка администратора"}
-        >
-          <input
-            type="text"
-            readOnly={!!r.system}
-            value={r.comment || ""}
-            onChange={(e) => set("comment", e.target.value)}
-          />
-        </Field>
+        <Field label="Комментарий" hint={r.system ? "Комментарий системного правила задаёт netOS" : "Заметка администратора"}><input aria-label="Комментарий" readOnly={!!r.system} value={r.comment || ""} onChange={e => set("comment", e.target.value)} /></Field>
       </div>
-
       <div style={{ marginTop: "0.9rem" }}>
         <Switch
           checked={!!r.schedule}
@@ -545,38 +400,22 @@ function RuleForm({
         )}
       </div>
 
-      {needsProtocol && (
-        <div style={{ marginTop: "0.8rem" }}>
-          <Notice tone="warn" title="Для правила с портом нужен протокол">
-            Выберите TCP или UDP — иначе ядро не примет правило.
-          </Notice>
-        </div>
-      )}
 
-      <div className="row between" style={{ marginTop: "1rem" }}>
-        <Switch
-          checked={r.log}
-          label="Записывать срабатывания в журнал"
-          onChange={(v) => set("log", v)}
-        />
-        <div className="row">
-          <span className="faint mono" style={{ fontSize: 12 }}>
-            попадёт в {targetChain(r)}
-          </span>
-          <button className="btn" onClick={onCancel}>
-            Отмена
-          </button>
-          <button
-            className="btn primary"
-            disabled={!r.name || needsProtocol}
-            onClick={() => onSubmit(r)}
-          >
-            {initial ? "Сохранить" : "Создать"}
-          </button>
-        </div>
-      </div>
+      <Switch checked={!!r.log} label="Записывать срабатывания в журнал" onChange={v => set("log", v)} />
+    </details>
+    {(badInput || badOutput) && <Notice tone="warn" title="Выберите интерфейс заново">Сохранённый интерфейс не относится к выбранной зоне. Выберите подходящий интерфейс или явно укажите «Любой».</Notice>}
+    {needsProtocol && <Notice tone="warn" title="Для правила с портом нужен протокол">Выберите TCP или UDP.</Notice>}
+    <div className="rule-preview" aria-label="Описание правила">
+      <strong>{FLOWS.find(f => f.id === r.flow)?.title} · {ACTIONS.find(a => a.id === r.action)?.title}</strong>
+      <div>Откуда: {from} / {r.src_ip || "любой адрес"}{r.src_port ? ` · порт ${r.src_port}` : ""}</div>
+      <div>Куда: {to} / {r.dst_ip || "любой адрес"}{r.dst_port ? ` · порт ${r.dst_port}` : ""}</div>
+      <div className="hint">Протокол: {r.protocol || "любой"} · Состояние: {states.join(", ") || "любое"} · Цепочка: {targetChain(r)}</div>
     </div>
-  );
+    <div className="row" style={{ justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+      <button className="btn" onClick={onCancel}>Отмена</button>
+      <button className="btn primary" disabled={!r.name.trim() || needsProtocol || !!badInput || !!badOutput} onClick={() => onSubmit(r)}>{initial ? "Сохранить" : "Создать"}</button>
+    </div>
+  </div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,7 +1119,7 @@ function interfacesOfZone(config: any, zone: string): string[] {
   }
   if (zone === "wan") {
     for (const w of config.wans || []) {
-      if (w.enabled) names.push(String(byID.get(w.interface) || ""));
+      if (w.enabled) names.push(w.proto === "pppoe" || w.proto === "l2tp" ? `ppp-${w.id}` : String(byID.get(w.interface) || ""));
     }
   }
 	if (zone === "vpn") {
@@ -1295,17 +1134,18 @@ function interfacesOfZone(config: any, zone: string): string[] {
 			if (!server.enabled) continue;
 			const prefix = server.type === "wireguard" ? "wg-srv" :
 				server.type === "ocserv" ? "vpns" :
-				server.type === "ikev2" ? "xfrm-srv" : "";
-			if (prefix) names.push(`${prefix}${server.index}`);
+				server.type === "ikev2" ? "xfrm-srv" : server.type === "l2tp" ? "ppp-srv" : "";
+			if (prefix) names.push(`${prefix}${server.index}${server.type === "ocserv" ? "+" : ""}`);
 		}
 	}
-  return names.filter(Boolean);
+  return [...new Set(names.filter(Boolean))];
 }
 
 function describeConditions(r: any, sets: any[]): string {
   const parts: string[] = [];
   const setName = (id: string) => sets.find((s) => s.id === id)?.name || id;
-  if (r.interface) parts.push(`на ${r.interface}`);
+  if (r.interface) parts.push(`${r.flow === "out" ? "выход" : "вход"}: ${r.interface}`);
+  if (r.out_interface) parts.push(`выход: ${r.out_interface}`);
   if (r.protocol) parts.push(r.protocol.toUpperCase());
   if (r.src_ip) parts.push(`от ${r.src_ip}`);
   if (r.src_ipset) parts.push(`из набора «${setName(r.src_ipset)}»`);

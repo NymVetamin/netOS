@@ -258,7 +258,12 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			// An empty destination zone must match no interfaces, not all traffic.
 			if h.flow == "forward" && r.DstZone != "" {
 				for _, out := range zones[r.DstZone] {
-					b.emitRule(h.builtin, r, " -o "+out)
+					if r.OutInterface != "" && r.OutInterface != out {
+						continue
+					}
+					copy := r
+					copy.OutInterface = ""
+					b.emitRule(h.builtin, copy, " -o "+out)
 				}
 				continue
 			}
@@ -296,7 +301,12 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			// одно правило панели может дать несколько строк в ядре.
 			if c.hook.flow == "forward" && r.DstZone != "" {
 				for _, out := range zones[r.DstZone] {
-					b.emitRule(c.chain, r, " -o "+out)
+					if r.OutInterface != "" && r.OutInterface != out {
+						continue
+					}
+					copy := r
+					copy.OutInterface = ""
+					b.emitRule(c.chain, copy, " -o "+out)
 				}
 				continue
 			}
@@ -507,6 +517,9 @@ func describeChain(z config.Zone, h hook) string {
 
 func selectors(r config.FirewallRule) string {
 	var s strings.Builder
+	if r.Flow == "forward" && r.OutInterface != "" {
+		fmt.Fprintf(&s, " -o %s", r.OutInterface)
+	}
 
 	if r.Interface != "" {
 		if r.Flow == "out" {

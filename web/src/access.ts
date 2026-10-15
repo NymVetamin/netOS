@@ -157,6 +157,11 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
     if (src.ifaces.length > 1) part = true;
   }
 
+  if (r.out_interface) {
+    if (!dst.ifaces.includes(r.out_interface)) return "none";
+    if (dst.ifaces.length > 1) part = true;
+  }
+
   const from = side(r.src_ip, src);
   if (from === "none") return "none";
   const to = flow === "in" ? (r.dst_ip ? "part" : "full") : side(r.dst_ip, dst, segments);
