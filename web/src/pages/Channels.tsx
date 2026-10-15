@@ -6,7 +6,7 @@ import { channelComponents, channelComponentReady } from "../channelComponents";
 import { newID } from "../id";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
-import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 
 type Props = {
   config: any;
@@ -318,7 +318,6 @@ export function ChannelsPage({ config, patch }: Props) {
         </Live.Provider>
       </Card>
 
-      <SegmentDefaults config={config} patch={patch} />
       <Policies config={config} patch={patch} policies={policies} />
     </>
   );
@@ -569,35 +568,6 @@ function WireGuardEditor({
       </div>
       <div className="hint">Проверка идёт через интерфейс самого туннеля; переключение выполняется только после заданного числа ошибок.</div>
     </ChannelRow>
-  );
-}
-
-function SegmentDefaults({ config, patch }: Props) {
-  const choices = enabledChannels(config);
-  if (!(config.networks || []).length) return null;
-  return (
-    <Card title="Канал сегмента" subtitle="Используется, если нет более точной политики или настройки устройства" tight>
-      <TableWrap>
-        <table>
-          <thead><tr><th>Сегмент</th><th>Подсеть</th><th>Канал по умолчанию</th></tr></thead>
-          <tbody>
-            {config.networks.map((network: any) => (
-              <tr key={network.id}>
-                <td>{network.name}</td>
-                <td className="mono faint">{network.router_address}</td>
-                <td>
-                  <select value={network.default_channel || "direct"} onChange={(e) => patch((draft) => {
-                    draft.networks.find((item: any) => item.id === network.id).default_channel = e.target.value;
-                  })}>
-                    {choices.map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                  </select>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableWrap>
-    </Card>
   );
 }
 

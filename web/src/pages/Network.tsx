@@ -400,6 +400,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
 
 function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
   const networks: any[] = config.networks || [];
+  const channels: any[] = config.channels || [];
 
   return (
     <Card
@@ -504,6 +505,25 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                           {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
                         </option>
                       ))}
+                    </select>
+                  </Field>
+                  <Field
+                    label="Канал выхода"
+                    hint="Выход в интернет по умолчанию для этого сегмента. Политики и отдельные настройки клиентов имеют приоритет."
+                  >
+                    <select
+                      value={n.default_channel || "direct"}
+                      onChange={(e) => patch((d) => (d.networks[idx].default_channel = e.target.value))}
+                    >
+                      <option value="direct">Напрямую</option>
+                      {channels.filter((c) => c.id !== "direct" && (c.enabled || c.id === n.default_channel)).map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name || c.id}{!c.enabled ? " — выключен" : ""}
+                        </option>
+                      ))}
+                      {n.default_channel && n.default_channel !== "direct" && !channels.some((c) => c.id === n.default_channel) && (
+                        <option value={n.default_channel}>{n.default_channel} — недоступен</option>
+                      )}
                     </select>
                   </Field>
                   <Field label="Зона файрволла">
