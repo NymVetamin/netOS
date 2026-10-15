@@ -12,9 +12,6 @@ func (b *builder) socksAccess(c *config.Config) {
 		return
 	}
 	protos := []string{"tcp"}
-	if p.UDP {
-		protos = append(protos, "udp")
-	}
 	allow := func(match string) {
 		for _, proto := range protos {
 			b.line("-A INPUT %s -p %s --dport %d -m comment --comment %q -j ACCEPT", match, proto, p.Port, "SOCKS5: разрешённый доступ")
@@ -60,7 +57,7 @@ func (b *builder) socksAccess(c *config.Config) {
 			}
 		}
 	}
-	for _, proto := range []string{"tcp", "udp"} {
+	for _, proto := range []string{"tcp"} {
 		b.line("-A INPUT -p %s --dport %d -m comment --comment %q -j DROP", proto, p.Port, "SOCKS5: остальные сети запрещены")
 		b.line("-A OUTPUT -p %s --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT", proto, p.Port)
 	}

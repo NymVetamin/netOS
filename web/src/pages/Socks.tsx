@@ -22,7 +22,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   void load();const timer=window.setInterval(load,5000);return()=>{active=false;clearInterval(timer)};
  },[]);
  useEffect(()=>setShown(null),[p.password,p.username,p.secrets_set?.password]);
- const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values}});
+ const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values,udp:false}});
  const chosen=!!config.components?.some((c:any)=>c.id==="xray"&&c.installed);
  const defaults=(config.networks||[]).filter((n:any)=>n.enabled).map((n:any)=>n.id);
  const networks=(config.networks||[]).filter((n:any)=>n.enabled);
@@ -30,7 +30,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
  const addresses=[...networks.filter((n:any)=>p.networks?.includes(n.id)).map((n:any)=>({name:n.name,address:n.router_address})),
  ...vpns.filter((v:any)=>p.vpns?.includes(v.id)).map((v:any)=>({name:v.name,address:v.subnet}))];
  function select(key:string,id:string,on:boolean){const values=p[key]||[];edit({[key]:on?[...values,id]:values.filter((v:string)=>v!==id)})}
- return <Card title="SOCKS5-прокси" subtitle="Прокси для приложений в локальной сети и VPN · IPv4"
+ return <Card title="SOCKS5-прокси" subtitle="Прокси для приложений в локальной сети и VPN · TCP · IPv4"
   actions={<Badge tone={live?.running?"ok":"neutral"}>{live===null?"статус недоступен":live.running?"работает":live.enabled?"не запущен":"отключён"}</Badge>}>
   <div className="stack">
   {error&&<Notice tone="danger" title={error}/>}
@@ -45,7 +45,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
    <Field label="Порт SOCKS5"><input type="number" min={1024} max={65535} value={p.port||1080} onChange={e=>edit({port:Number(e.target.value)})}/></Field>
    <Field label="Канал выхода прокси"><select value={p.channel||"direct"} onChange={e=>edit({channel:e.target.value})}>{(config.channels||[]).filter((c:any)=>c.enabled).map((c:any)=><option key={c.id} value={c.id}>{c.name||c.id}</option>)}</select></Field>
   </div>
-  <p className="hint">Весь трафик прокси использует этот выход и его настройки резервирования. Назначение канала отдельному LAN-клиенту здесь не применяется. IPv6 назначения не поддерживаются.</p>
+  <p className="hint">Весь трафик прокси использует этот выход и его настройки резервирования. Назначение канала отдельному LAN-клиенту здесь не применяется. Передача UDP и IPv6 назначения не поддерживаются.</p>
   <div className="form-grid">
    <Field label="Локальные сети">{networks.map((n:any)=><Switch key={n.id} label={n.name||n.id} checked={!!p.networks?.includes(n.id)} onChange={on=>select("networks",n.id,on)}/>)}</Field>
    <Field label="VPN-сети">{vpns.map((v:any)=><Switch key={v.id} label={v.name||v.id} checked={!!p.vpns?.includes(v.id)} onChange={on=>select("vpns",v.id,on)}/>)}</Field>
@@ -57,8 +57,6 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   </div>}
   {p.auth===false&&<Notice tone="warn" title="Без авторизации">Прокси сможет использовать любой клиент выбранных сетей.</Notice>}
   <details><summary>Дополнительные настройки</summary>
-   <Switch label="UDP через SOCKS5" checked={!!p.udp} onChange={udp=>edit({udp})}/>
-   <p className="hint">Требуется поддержка SOCKS5 UDP в клиентском приложении.</p>
    <Switch label="Разрешить SOCKS5 с WAN — небезопасно" checked={!!p.allow_wan} onChange={async on=>{
     if(!on){edit({allow_wan:false});return}
     if(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет"))edit({allow_wan:true,auth:true});

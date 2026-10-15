@@ -23,7 +23,7 @@ type Subsystem struct {
 }
 
 func New(r system.Runner, stateDir string) *Subsystem {
-	return &Subsystem{r, filepath.Join(stateDir, "generated"), "/etc/systemd/system"}
+	return &Subsystem{r, stateDir, "/etc/systemd/system"}
 }
 func (s *Subsystem) Name() string { return "socks" }
 func (s *Subsystem) paths() (string, string) {
@@ -44,7 +44,7 @@ func Render(c *config.Config) ([]byte, error) {
 	if !found {
 		return nil, fmt.Errorf("выбранный выход SOCKS5 выключен или отсутствует")
 	}
-	settings := map[string]any{"auth": "noauth", "udp": p.UDP}
+	settings := map[string]any{"auth": "noauth", "udp": false}
 	if p.Auth {
 		settings["auth"] = "password"
 		settings["accounts"] = []any{map[string]any{"user": p.Username, "pass": p.Password}}
@@ -129,7 +129,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	if err != nil {
 		return err
 	}
-	candidate := conf + ".candidate"
+	candidate := strings.TrimSuffix(conf, ".json") + ".candidate.json"
 	if _, err = system.WriteFileAtomicIfChanged(candidate, data, 0600); err != nil {
 		return err
 	}

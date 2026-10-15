@@ -21,6 +21,9 @@ func (c *Config) validateSocks(r *ValidationResult) {
 	if !s.Enabled {
 		return
 	}
+	if s.UDP {
+		r.errf("socks.udp", "SOCKS5 поддерживает только TCP; для передачи UDP используйте VPN")
+	}
 	if !c.HasComponent("xray") {
 		r.errf("socks.enabled", "установите компонент Xray")
 	}

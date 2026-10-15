@@ -2645,9 +2645,6 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 	}
 	if c.Socks.Enabled {
 		claimPort("socks.port", "tcp", c.Socks.Port, "SOCKS5")
-		if c.Socks.UDP {
-			claimPort("socks.port", "udp", c.Socks.Port, "SOCKS5")
-		}
 	}
 	ids := map[string]bool{}
 	indexes := map[int]bool{}

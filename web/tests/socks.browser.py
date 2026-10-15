@@ -71,6 +71,7 @@ async def scenario(browser, mode):
     await page.get_by_label("Логин SOCKS5",exact=True).fill("proxy")
     await page.get_by_label("Пароль SOCKS5",exact=True).fill("fixture-password")
     await page.get_by_text("Дополнительные настройки",exact=True).click()
+    await expect(page.get_by_role("checkbox",name="UDP через SOCKS5",exact=True)).to_have_count(0)
     wan = page.get_by_role("checkbox",name="Разрешить SOCKS5 с WAN — небезопасно",exact=True)
     await wan.locator("..").click()
     dialog = page.get_by_role("dialog")

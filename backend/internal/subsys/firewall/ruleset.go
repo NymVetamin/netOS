@@ -1137,6 +1137,11 @@ func buildIPv6(cfg *config.Config) string {
 		b.line(":INPUT ACCEPT [0:0]")
 		b.line(":FORWARD ACCEPT [0:0]")
 		b.line(":OUTPUT ACCEPT [0:0]")
+		// Go/Xray may bind an IPv6 dual-stack wildcard even for 0.0.0.0.
+		// SOCKS access scopes are IPv4-only; never bypass them over IPv6.
+		if cfg.Socks.Enabled {
+			b.line("-A INPUT -p tcp --dport %d -j DROP", cfg.Socks.Port)
+		}
 		b.line("COMMIT")
 		return b.String()
 	}

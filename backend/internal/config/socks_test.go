@@ -19,6 +19,7 @@ func TestSocksValidation(t *testing.T) {
 	for _, change := range []func(*Config){
 		func(c *Config) { c.Socks.AllowWAN = true; c.Socks.Auth = false },
 		func(c *Config) { c.Firewall.Enabled = false },
+		func(c *Config) { c.Socks.UDP = true },
 		func(c *Config) { c.Socks.Channel = "missing" },
 		func(c *Config) { c.Socks.Password = "short" },
 		func(c *Config) { c.Socks.Networks = []string{"missing"} },

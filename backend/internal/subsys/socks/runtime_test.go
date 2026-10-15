@@ -3,7 +3,6 @@ package socks
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,7 +31,6 @@ func TestSocksRealXray(t *testing.T) {
 	listener.Close()
 	c := fixture()
 	c.Socks.Port = port
-	c.Socks.UDP = true
 	data, err := Render(c)
 	if err != nil {
 		t.Fatal(err)
@@ -117,41 +115,44 @@ func TestSocksRealXray(t *testing.T) {
 	if !strings.Contains(string(body), "socks-runtime-ok") {
 		t.Fatal(string(body))
 	}
-	// UDP association and a real echo datagram, with the TCP association held open.
-	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer echo.Close()
-	go func() {
-		b := make([]byte, 512)
-		n, a, e := echo.ReadFromUDP(b)
-		if e == nil {
-			echo.WriteToUDP(b[:n], a)
-		}
-	}()
+	// UDP associate must be explicitly rejected by the actual Xray server.
 	control := auth("test-password")
 	defer control.Close()
 	control.Write([]byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0})
-	if _, err = io.ReadFull(control, reply); err != nil || reply[1] != 0 {
-		t.Fatalf("UDP associate %v %v", reply, err)
+	if _, err = io.ReadFull(control, reply); err != nil || reply[1] == 0 {
+		t.Fatalf("UDP should be unavailable: %v %v", reply, err)
 	}
-	relay := &net.UDPAddr{IP: net.IP(reply[4:8]), Port: int(binary.BigEndian.Uint16(reply[8:10]))}
-	if relay.IP.IsUnspecified() {
-		relay.IP = net.IPv4(127, 0, 0, 1)
+}
+
+// Exercise the actual candidate filename and validation command used by Apply.
+// Only systemctl is substituted; Xray loads the candidate from disk itself.
+type validationRunner struct {
+	fake
+	binary string
+}
+
+func (r *validationRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if name == "/usr/local/bin/xray" {
+		out, err := exec.CommandContext(ctx, r.binary, args...).CombinedOutput()
+		return string(out), err
 	}
-	udp, err := net.DialUDP("udp", nil, relay)
-	if err != nil {
+	return r.fake.Run(ctx, name, args...)
+}
+func TestSocksApplyRealXrayValidation(t *testing.T) {
+	binary := os.Getenv("NETOS_TEST_XRAY")
+	if binary == "" {
+		t.Skip("set NETOS_TEST_XRAY to the pinned Xray executable")
+	}
+	root := t.TempDir()
+	s := New(&validationRunner{binary: binary}, root)
+	s.UnitDir = filepath.Join(root, "units")
+	if err := s.Apply(context.Background(), fixture()); err != nil {
 		t.Fatal(err)
 	}
-	defer udp.Close()
-	udp.SetDeadline(time.Now().Add(5 * time.Second))
-	ep := echo.LocalAddr().(*net.UDPAddr).Port
-	payload := append([]byte{0, 0, 0, 1, 127, 0, 0, 1, byte(ep >> 8), byte(ep)}, []byte("udp-ok")...)
-	udp.Write(payload)
-	buf := make([]byte, 512)
-	n, err := udp.Read(buf)
-	if err != nil || !strings.HasSuffix(string(buf[:n]), "udp-ok") {
-		t.Fatalf("UDP: %q %v", buf[:n], err)
+	if _, err := os.Stat(filepath.Join(root, "socks.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "socks.candidate.json")); !os.IsNotExist(err) {
+		t.Fatal("candidate left behind", err)
 	}
 }
