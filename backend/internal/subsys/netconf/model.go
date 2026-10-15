@@ -25,7 +25,8 @@ type plan struct {
 	Uplink map[string]bool
 	// Names — имя интерфейса по идентификатору. Связи в конфигурации описаны
 	// идентификаторами, а генераторы оперируют именами.
-	Names map[string]string
+	Names   map[string]string
+	Enabled map[string]bool
 	// SuppressIPv6 повторяет политику IPv6 из конфигурации.
 	SuppressIPv6 bool
 }
@@ -37,6 +38,7 @@ func buildPlan(cfg *config.Config) plan {
 		VLANs:        map[string][]config.Interface{},
 		Uplink:       map[string]bool{},
 		Names:        map[string]string{},
+		Enabled:      map[string]bool{},
 		SuppressIPv6: cfg.IPv6.Mode == "off",
 	}
 
@@ -44,6 +46,7 @@ func buildPlan(cfg *config.Config) plan {
 	for _, iface := range cfg.Interfaces {
 		byID[iface.ID] = iface
 		p.Names[iface.ID] = iface.Name
+		p.Enabled[iface.ID] = cfg.InterfaceEnabled(iface.ID)
 	}
 
 	for _, n := range cfg.Networks {
@@ -87,6 +90,7 @@ func buildPlan(cfg *config.Config) plan {
 		var group []config.Interface
 		for _, iface := range cfg.Interfaces {
 			if iface.Type == kind {
+				iface.Enabled = cfg.InterfaceEnabled(iface.ID)
 				group = append(group, iface)
 			}
 		}
@@ -112,6 +116,16 @@ func (p plan) namesOf(ids []string) []string {
 	for _, id := range ids {
 		if n := p.Names[id]; n != "" {
 			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func (p plan) enabledNamesOf(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if p.Enabled[id] && p.Names[id] != "" {
+			out = append(out, p.Names[id])
 		}
 	}
 	return out

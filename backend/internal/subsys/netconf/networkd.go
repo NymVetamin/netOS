@@ -126,7 +126,11 @@ func renderNetwork(p plan, iface config.Interface) string {
 	w("[Link]")
 	// Линк держим поднятым даже без адреса: на аплинке по нему пойдёт разговор
 	// клиента DHCP или PPPoE, а на пустом бридже — трафик каналов.
-	w("ActivationPolicy=up")
+	if iface.Enabled {
+		w("ActivationPolicy=up")
+	} else {
+		w("ActivationPolicy=always-down")
+	}
 	if !iface.Enabled {
 		w("RequiredForOnline=no")
 	} else if _, addressed := p.Address[iface.Name]; addressed {

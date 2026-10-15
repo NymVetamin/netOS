@@ -1,3 +1,4 @@
+import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
 import { api, Problem } from "../api";
@@ -712,7 +713,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
         </div>
       }
     >
-      <Rows cols={["Имя", "Тип", "Используется", "MAC", "Линк"]} toggle="Включён">
+      <Rows cols={["Имя", "Тип", "Используется", "MAC", "Состояние"]} toggle="Включён">
           {discovered.map((i: any) => (
             <Row
               key={`discovered-${i.name}`}
@@ -749,13 +750,21 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                 <Badge tone="neutral">{typeLabel(i.type)}</Badge>,
                 <span className="dim">{usageOf(config, i) || "свободен"}</span>,
                 <span className="mono">{i.mac || liveInterfaces.find((live: any) => live.name === i.name)?.mac || "—"}</span>,
-                liveInterfaces.find((live: any) => live.name === i.name) ? <Badge tone={liveInterfaces.find((live: any) => live.name === i.name).up ? "ok" : "neutral"}>{liveInterfaces.find((live: any) => live.name === i.name).up ? "линк есть" : "нет линка"}</Badge> : "",
+                (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?"Линк есть":"Включён, нет линка"}</Badge> : <Badge tone="neutral">Нет в ОС</Badge>; })(),
               ]}
               toggle={<Switch
                     checked={i.enabled}
                     label=""
                     ariaLabel={`Интерфейс ${i.name || idx + 1} включён`}
-                    onChange={(v) => patch((d) => (d.interfaces[idx].enabled = v))}
+                    onChange={async (v) => {
+                      if (!v) {
+                        const usage = usageOf(config, i);
+                        const children = interfaces.filter((child:any)=>child.parent===i.id).map((child:any)=>child.name);
+                        const detail = [usage, children.length?`VLAN: ${children.join(", ")}`:""].filter(Boolean).join("; ");
+                        if (!(await confirmAction(`Отключить интерфейс ${i.name}? ${detail?`Используется: ${detail}. `:""}Передача через него и зависимые подключения прекратится. Настройки сохранятся. Если доступ к панели пропадёт, не подтверждайте применение — прежняя конфигурация восстановится автоматически.`, "Отключить интерфейс"))) return;
+                      }
+                      patch((d) => (d.interfaces[idx].enabled = v));
+                    }}
                   />}
             >
               <div className="form-grid">

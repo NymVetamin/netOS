@@ -280,7 +280,7 @@ func TestInterfacesHealthUsesFinalWANLinkStateAndMTU(t *testing.T) {
 	})
 	cfg := config.Default()
 	cfg.Interfaces = []config.Interface{{
-		ID: "if", Name: "wan0", Type: "physical", Enabled: false, MTU: 1500,
+		ID: "if", Name: "wan0", Type: "physical", Enabled: true, MTU: 1500,
 	}}
 	cfg.WANs = []config.WAN{{
 		ID: "wan", Name: "WAN", Interface: "if", Proto: "dhcp", Enabled: true, Metric: 100, MTU: 1492,
@@ -289,6 +289,11 @@ func TestInterfacesHealthUsesFinalWANLinkStateAndMTU(t *testing.T) {
 		t.Fatalf("final link state produced by WAN was rejected: %v", err)
 	}
 
+	cfg.Interfaces[0].Enabled = false
+	if err := NewInterfaces(runner).Health(context.Background(), cfg); err == nil {
+		t.Fatal("enabled WAN hid an administratively disabled interface")
+	}
+	cfg.Interfaces[0].Enabled = true
 	cfg.WANs[0].MTU = 1480
 	if err := NewInterfaces(runner).Health(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "MTU") {
 		t.Fatalf("WAN MTU drift passed interface health: %v", err)

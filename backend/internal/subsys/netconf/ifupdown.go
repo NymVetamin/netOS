@@ -71,7 +71,7 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 
 	switch iface.Type {
 	case "bridge":
-		members := p.namesOf(iface.Members)
+		members := p.enabledNamesOf(iface.Members)
 		if len(members) == 0 {
 			// Бридж без портов всё равно должен подняться: в него могут
 			// добавляться интерфейсы каналов и точки доступа.
@@ -88,7 +88,7 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		w("    pre-up test -d /sys/class/net/%s || ip link add link %s name %s type vlan id %d", iface.Name, p.name(iface.Parent), iface.Name, iface.VLANID)
 		w("    vlan-raw-device %s", p.name(iface.Parent))
 	case "bond":
-		if slaves := p.namesOf(iface.Members); len(slaves) > 0 {
+		if slaves := p.enabledNamesOf(iface.Members); len(slaves) > 0 {
 			w("    bond-slaves %s", strings.Join(slaves, " "))
 		}
 		w("    bond-mode %s", config.BondMode)

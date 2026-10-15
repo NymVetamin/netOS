@@ -93,7 +93,7 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 				// Переименование рвёт связность так же, как смена типа:
 				// интерфейс со старым именем удаляется целиком.
 				Disruptive: prev.Type != iface.Type || prev.VLANID != iface.VLANID ||
-					prev.Name != iface.Name || prev.Parent != iface.Parent,
+					prev.Name != iface.Name || prev.Parent != iface.Parent || prev.Enabled != iface.Enabled,
 			})
 		}
 		delete(oldByID, iface.ID)
@@ -434,7 +434,11 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 		if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, "master", iface.Name); err != nil {
 			return fmt.Errorf("добавление %s в %s: %w", member, iface.Name, err)
 		}
-		if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, "up"); err != nil {
+		memberState := "down"
+		if cfg.InterfaceNameEnabled(member) {
+			memberState = "up"
+		}
+		if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, memberState); err != nil {
 			return err
 		}
 	}
@@ -458,7 +462,7 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 	}
 
 	state := "up"
-	if !iface.Enabled {
+	if !cfg.InterfaceEnabled(iface.ID) {
 		state = "down"
 	}
 	if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, state); err != nil {
@@ -759,11 +763,7 @@ func (s *Interfaces) loadOwned() map[string]bool {
 }
 
 func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
-	// WAN is applied after the generic interface layer and may deliberately
-	// bring an otherwise disabled physical port up or override its MTU. Health
-	// must validate the final composed state, not the intermediate state that
-	// Interfaces.Apply produced before WAN.Apply ran.
-	wanEnabled := map[string]bool{}
+	// WAN may override MTU, but must never override administrative DOWN.
 	wanMTU := map[string]int{}
 	// Минимально допустимый MTU физического интерфейса: у PPPoE он обязан быть
 	// больше MTU сессии на заголовок, иначе полезный размер пакета окажется
@@ -773,7 +773,6 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 		if !w.Enabled {
 			continue
 		}
-		wanEnabled[w.Interface] = true
 		if w.MTU <= 0 {
 			continue
 		}
@@ -798,7 +797,7 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("проверка интерфейса %s: %w", iface.Name, err)
 		}
 		up, mtu, mac := parseLinkState(out)
-		expectedUp := iface.Enabled || wanEnabled[iface.ID]
+		expectedUp := cfg.InterfaceEnabled(iface.ID)
 		if up != expectedUp {
 			want := "down"
 			if expectedUp {
@@ -983,8 +982,10 @@ func (s *Networks) Apply(ctx context.Context, cfg *config.Config) error {
 				return fmt.Errorf("назначение адреса %s на %s: %w", addr, iface, err)
 			}
 		}
-		if err := ensureLinkUp(ctx, s.Runner, iface); err != nil {
-			return err
+		if cfg.InterfaceNameEnabled(iface) {
+			if err := ensureLinkUp(ctx, s.Runner, iface); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

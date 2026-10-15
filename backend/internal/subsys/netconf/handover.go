@@ -28,6 +28,7 @@ type addressHandover struct {
 }
 
 type kernelLink struct {
+	Flags    []string `json:"flags"`
 	AddrInfo []struct {
 		Local     string `json:"local"`
 		PrefixLen int    `json:"prefixlen"`
@@ -130,6 +131,19 @@ func (s *Subsystem) protectLANAddresses(ctx context.Context, cfg *config.Config)
 				continue // a newly declared bridge or VLAN is created later by netiface
 			}
 			return nil, err
+		}
+		// A DOWN link has no working path to preserve. Adding a temporary
+		// route through it fails before the interface subsystem can enable it.
+		up := false
+		for _, link := range links {
+			for _, flag := range link.Flags {
+				if flag == "UP" {
+					up = true
+				}
+			}
+		}
+		if !up {
+			continue
 		}
 		address := prefix.Addr().String()
 		if !containsIPv4(links, address, prefix.Bits()) {

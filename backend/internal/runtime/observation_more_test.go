@@ -60,7 +60,7 @@ func TestInterfaceStatsReadsEveryFieldAndSkipsLoopback(t *testing.T) {
 	if err != nil || len(stats) != 1 {
 		t.Fatalf("stats=%+v err=%v", stats, err)
 	}
-	want := InterfaceStat{Name: "eth0", Physical: true, Up: true, MAC: "02:00:00:00:00:01", MTU: 1500, RXBytes: 101, TXBytes: 202, RXPackets: 11, TXPackets: 22, RXErrors: 1, TXErrors: 2}
+	want := InterfaceStat{Name: "eth0", Physical: true, Up: true, AdminUp: true, MAC: "02:00:00:00:00:01", MTU: 1500, RXBytes: 101, TXBytes: 202, RXPackets: 11, TXPackets: 22, RXErrors: 1, TXErrors: 2}
 	if !reflect.DeepEqual(stats[0], want) {
 		t.Fatalf("stat=%+v want=%+v", stats[0], want)
 	}

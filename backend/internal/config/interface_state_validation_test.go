@@ -2,12 +2,12 @@ package config
 
 import "testing"
 
-func TestEnabledLANRejectsDisabledInterface(t *testing.T) {
+func TestEnabledLANWarnsAboutDisabledInterface(t *testing.T) {
 	cfg := Default()
 	cfg.Interfaces = []Interface{{ID: "lan-port", Name: "eth1", Type: "physical"}}
 	cfg.Networks = []Network{{ID: "lan", Name: "LAN", Enabled: true, Interface: "lan-port", RouterAddress: "192.0.2.1/24", Zone: "lan"}}
-	if !hasRemainingProblem(cfg, "networks[0].interface", "error") {
-		t.Fatal("enabled LAN accepted on a disabled port; Apply will raise it again and fail interface health")
+	if hasRemainingProblem(cfg, "networks[0].interface", "error") || !hasRemainingProblem(cfg, "networks[0].interface", "warning") {
+		t.Fatal("disabled port must suspend LAN with a warning and retain its settings")
 	}
 	cfg.Networks[0].Enabled = false
 	if hasRemainingProblem(cfg, "networks[0].interface", "error") {

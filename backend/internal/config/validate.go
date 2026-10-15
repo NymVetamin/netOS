@@ -821,8 +821,8 @@ func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]stri
 				iface.Name, own)
 		}
 		if n.Enabled {
-			if !iface.Enabled {
-				r.errf(path+".interface", "интерфейс %q выключен: включите его либо сначала выключите или перенесите сегмент %q", iface.Name, n.Name)
+			if !c.InterfaceEnabled(iface.ID) {
+				r.warnf(path+".interface", "интерфейс %q выключен: передача через сегмент %q приостановлена, настройки сохранены", iface.Name, n.Name)
 			}
 			claim(path, n.Interface, use{"network", "сегмент «" + n.Name + "»"})
 		}

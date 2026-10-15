@@ -266,6 +266,7 @@ func (e *Engine) RecoverStartupConnectivity(ctx context.Context, cfg *config.Con
 	}
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
+	cfg = cfg.RuntimeNetworkConfig()
 	var failures []string
 	for _, name := range startupConnectivityOrder {
 		s, ok := e.subsystems[name]
@@ -319,6 +320,7 @@ func (e *Engine) PlanFromContext(ctx context.Context, old, new *config.Config) (
 		return nil, err
 	}
 
+	old, new = old.RuntimeNetworkConfig(), new.RuntimeNetworkConfig()
 	var actions []Action
 	for _, name := range Order {
 		s, ok := e.subsystems[name]
@@ -603,6 +605,7 @@ func (e *Engine) restore(ctx context.Context, cfg *config.Config) error {
 }
 
 func (e *Engine) run(ctx context.Context, cfg *config.Config) error {
+	cfg = cfg.RuntimeNetworkConfig()
 	for _, name := range Order {
 		s, ok := e.subsystems[name]
 		if !ok {
@@ -622,6 +625,7 @@ func (e *Engine) run(ctx context.Context, cfg *config.Config) error {
 }
 
 func (e *Engine) health(ctx context.Context, cfg *config.Config) error {
+	cfg = cfg.RuntimeNetworkConfig()
 	if e.dryRun {
 		return nil
 	}

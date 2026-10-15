@@ -46,6 +46,7 @@ type InterfaceStat struct {
 	// the configuration UI without adopting every transient virtual interface.
 	Physical  bool   `json:"physical"`
 	Up        bool   `json:"up"`
+	AdminUp   bool   `json:"admin_up"`
 	MAC       string `json:"mac"`
 	MTU       int    `json:"mtu"`
 	RXBytes   int64  `json:"rx_bytes"`
@@ -309,6 +310,7 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 		stat := InterfaceStat{
 			Name:      name,
 			Physical:  pathExists(filepath.Join(base, "device")),
+			AdminUp:   interfaceAdminUp(readString(base + "/flags")),
 			MAC:       readString(base + "/address"),
 			MTU:       int(readInt(base + "/mtu")),
 			Up:        interfaceIsUp(readString(base+"/operstate"), readString(base+"/flags")),
@@ -556,4 +558,9 @@ func readInt(path string) int64 {
 		return 0
 	}
 	return v
+}
+
+func interfaceAdminUp(flags string) bool {
+	value, err := strconv.ParseUint(strings.TrimSpace(flags), 0, 64)
+	return err == nil && value&1 != 0
 }

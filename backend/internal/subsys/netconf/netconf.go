@@ -800,7 +800,11 @@ func renderPassive(iface config.Interface, suppressIPv6 bool) string {
 	w("")
 	w("[Link]")
 	// Линк держим поднятым: по нему пойдёт разговор клиента DHCP или PPPoE.
-	w("ActivationPolicy=up")
+	if iface.Enabled {
+		w("ActivationPolicy=up")
+	} else {
+		w("ActivationPolicy=always-down")
+	}
 	if !iface.Enabled {
 		// Выключенный интерфейс не получит даже несущей, и ожидание сети при
 		// загрузке упёрлось бы в таймаут из-за него.
