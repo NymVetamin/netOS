@@ -14,7 +14,7 @@ import (
 
 func (s *Server) handleOCClientCertificate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if roleOf(r) != "admin" {
+	if !may(r, "vpn-servers", true) {
 		writeError(w, http.StatusForbidden, "доступно только администратору")
 		return
 	}

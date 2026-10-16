@@ -50,11 +50,11 @@ func realityClientLink(server config.VPNServer, peer config.VPNPeer) (string, er
 
 func (s *Server) handleRealityClientProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if roleOf(r) != "admin" {
+	if !may(r, "vpn-servers", true) {
 		writeError(w, http.StatusForbidden, "Доступно только администратору")
 		return
 	}
-	for _, server := range s.currentDraft().VPNServers {
+	for _, server := range s.requestConfig(r).VPNServers {
 		if server.ID != r.PathValue("id") || server.Type != "xray" {
 			continue
 		}

@@ -15,11 +15,11 @@ import (
 // or monitoring responses. Existing clients without a retained key stay valid.
 func (s *Server) handleVPNClientProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if roleOf(r) != "admin" {
+	if !may(r, "vpn-servers", true) {
 		writeError(w, http.StatusForbidden, "доступно только администратору")
 		return
 	}
-	for _, server := range s.currentDraft().VPNServers {
+	for _, server := range s.requestConfig(r).VPNServers {
 		if server.ID != r.PathValue("id") || server.Type != "wireguard" {
 			continue
 		}
@@ -60,7 +60,7 @@ type vpnClientStatus struct {
 
 func (s *Server) handleVPNClientStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if roleOf(r) != "admin" {
+	if !anySection(r, false, "clients", "map", "vpn-servers", "dashboard") {
 		writeError(w, http.StatusForbidden, "доступно только администратору")
 		return
 	}

@@ -1,3 +1,4 @@
+import { SectionLink } from "../permissions";
 import { channelReferences, canReplaceChannel } from "../channelReferences";
 import { secretInput } from "../secrets";
 import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
@@ -241,7 +242,7 @@ export function ChannelsPage({ config, patch }: Props) {
         <div className="rows-notes">
         {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed === null ?
           <div className="hint" role="status">Проверяем установленные VPN-компоненты…</div> : missing.length > 0 &&
-          <Notice tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <a href="#components">«Компоненты»</a>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
+          <Notice tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <SectionLink section="components">«Компоненты»</SectionLink>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
         {liveChannels === null && <div className="hint" role="status">{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</div>}
         </div>
@@ -251,7 +252,7 @@ export function ChannelsPage({ config, patch }: Props) {
           {installed !== null && channelComponents.some(item => item.type === channel.type) && !ready(channel.type) &&
             <Notice tone="warn" title={`${channel.name}: включение недоступно`}>
               {`Для этого канала нужен установленный и выбранный компонент ${channelComponents.find(item => item.type === channel.type)?.title}.`}
-              {" "}<a href="#components">Открыть «Компоненты»</a>. Настройки канала сохранены.
+              {" "}<SectionLink section="components">Раздел «Компоненты»</SectionLink>. Настройки канала сохранены.
             </Notice>}
           {channel.type === "direct" ? (
             <Row key={channel.id} cells={[<strong>{channel.name}</strong>, <span className="dim">через провайдера</span>, "—", "—", <Badge tone="ok">активен</Badge>]} />

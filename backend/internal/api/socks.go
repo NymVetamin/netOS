@@ -10,11 +10,11 @@ import (
 
 func (s *Server) handleSocksCredentials(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if roleOf(r) != "admin" {
+	if !may(r, "services", true) {
 		writeError(w, http.StatusForbidden, "доступно только администратору")
 		return
 	}
-	p := s.currentDraft().Socks
+	p := s.requestConfig(r).Socks
 	writeJSON(w, http.StatusOK, map[string]string{"username": p.Username, "password": p.Password})
 }
 func (s *Server) handleSocksStatus(w http.ResponseWriter, r *http.Request) {

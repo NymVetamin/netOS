@@ -28,8 +28,9 @@ async def main():
         elif path=='/api/config':
           if req.method=='PUT': cfg=req.post_data_json
           body={'config':cfg,'dirty':False,'draft_version':1,'problems':[]}
+        elif path=='/api/panel-users': body=[]
         elif path=='/api/status': body={'interfaces':[],'channels':[]}
-        await route.fulfill(json=body)
+        await route.fulfill(json=body,content_type="application/json")
       await page.route('**/*',route_request)
       await page.goto('https://netos-ui.test/#system')
       field=page.get_by_role('combobox',name='Часовой пояс',exact=True)

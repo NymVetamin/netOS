@@ -1,3 +1,4 @@
+import { PanelUsers } from "../PanelUsers";
 import { TimezoneInput } from "../TimezoneInput";
 import { Updates } from "../Updates";
 import { confirmAction } from "../confirm";
@@ -288,6 +289,7 @@ export function SystemPage({
         </div>
       </Card>
 
+      {session.role === "admin" && <PanelUsers />}
       {session.role === "admin" && <MaintenancePanel onConfigReplaced={onConfigReplaced} />}
       <ChangePassword username={session.username} onSessionEnded={onSessionEnded} />
     </>

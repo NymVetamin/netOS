@@ -74,6 +74,7 @@ export type RouteEntry = {
 };
 
 export type Session = {
+  permissions?: Record<string, string>;
   username: string;
   role: string;
   last_login?: string;
@@ -179,6 +180,9 @@ export const api = {
   vpnServerCertificate: (id: string) =>
     request<string>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificate`),
   hasToken: () => csrfToken !== null,
+  panelUsers: () => request<any[]>("GET", "/api/panel-users"),
+  savePanelUser: (user: any, create: boolean) => request(create ? "POST" : "PUT", "/api/panel-users", user),
+  deletePanelUser: (username: string) => request("DELETE", `/api/panel-users/${encodeURIComponent(username)}`),
 
   async login(username: string, password: string) {
     const res = await request<{ csrf_token: string } & Session>("POST", "/api/login", {

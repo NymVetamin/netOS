@@ -1,3 +1,4 @@
+import { useAccess } from "../permissions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
@@ -307,6 +308,7 @@ function NodeDetails({ graph, id, config, status, clients }: {
   status: any;
   clients: any[];
 }) {
+  const can = useAccess();
   const [kind, key] = id.split(":");
   let title = "";
   let body: React.ReactNode = null;
@@ -405,7 +407,7 @@ function NodeDetails({ graph, id, config, status, clients }: {
         </> : <><dt>Сервер включён</dt><dd>{vpnServer.enabled ? "да" : "нет"}</dd><dt>Клиенты</dt><dd>{vpnServer.peers.length}</dd></>}
       </dl>
       {vpnServer.type === "wireguard" && <p className="hint">Недавний handshake подтверждает обмен с клиентом, но не непрерывное подключение.</p>}
-      <a href="#vpn-servers">Открыть VPN-серверы</a>
+      {can("vpn-servers") && <a href="#vpn-servers">Открыть VPN-серверы</a>}
     </>;
   }
 

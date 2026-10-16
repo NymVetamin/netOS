@@ -1,3 +1,4 @@
+import { useAccess } from "../permissions";
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
 import { localDevices } from "../deviceList";
@@ -26,6 +27,7 @@ export function Clients({
   config: any;
   patch: (mutate: (draft: any) => void) => void;
 }) {
+  const can = useAccess();
   const [clients, setClients] = useState<any[]>([]);
   const [leases, setLeases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,12 +236,12 @@ export function Clients({
                 })}
           {vpn.flatMap(server => server.peers.map(peer => <Row
             key={`vpn:${server.id}:${peer.id}`} id={`vpn:${server.id}:${peer.id}`}
-            toggle={<a className="btn client-settings-icon" href="#vpn-servers" title="Настройки VPN-клиента" aria-label="Настройки VPN-клиента">
+            toggle={can("vpn-servers") ? <a className="btn client-settings-icon" href="#vpn-servers" title="Настройки VPN-клиента" aria-label="Настройки VPN-клиента">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="m9.5 3-.5 2-2 1-2-.5-2 3 1.5 1.5v3L3 14.5l2 3 2-.5 2 1 .5 3h5l.5-3 2-1 2 .5 2-3-1.5-1.5v-3L21 8.5l-2-3-2 .5-2-1-.5-2z" />
                 <circle cx="12" cy="12" r="3" />
               </svg>
-            </a>}
+            </a> : undefined}
             cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>,
               <ClientChannel config={config} value={peer.peer.channel || ""} inherited={server.server.default_channel || "direct"}
                 source="По серверу" label={`Канал VPN-клиента ${server.name} / ${peer.name}`}

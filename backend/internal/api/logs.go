@@ -155,7 +155,7 @@ func readDNSLog(path string, now time.Time) ([]logEntry, error) {
 }
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if roleOf(r) != "admin" {
+	if !may(r, "diagnostics", false) {
 		writeError(w, http.StatusForbidden, "журналы доступны только администратору")
 		return
 	}

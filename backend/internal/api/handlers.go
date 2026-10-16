@@ -62,11 +62,11 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 	privateKey, publicKey, err := "", "", error(nil)
 	responsePrivate := ""
 	if input.ServerID != "" {
-		if roleOf(r) != "admin" || input.PrivateKey != "" {
+		if !may(r, "vpn-servers", true) || input.PrivateKey != "" {
 			writeError(w, http.StatusForbidden, "доступно только администратору")
 			return
 		}
-		cfg := s.currentDraft()
+		cfg := s.requestConfig(r)
 		if cfg != nil {
 			for _, server := range cfg.VPNServers {
 				if server.ID == input.ServerID {
@@ -239,7 +239,13 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 			writeError(w, http.StatusUnauthorized, "пользователь не найден")
 			return
 		}
-		if user.Role != "admin" && (user.Role != "viewer" || !viewerAllowed(r)) {
+		access, err := s.Store.PanelAccess(username)
+		if err != nil || !access.Enabled {
+			writeError(w, http.StatusUnauthorized, "учётная запись недоступна")
+			return
+		}
+		r = withPanelAccess(r, user.Role, access)
+		if user.Role != "admin" && !((user.Role == "viewer" && viewerAllowed(r)) || (user.Role == "limited" && limitedEndpoint(r))) {
 			writeError(w, http.StatusForbidden, "недостаточно прав")
 			return
 		}
@@ -311,9 +317,10 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Username  string `json:"username"`
-	Role      string `json:"role"`
-	CSRFToken string `json:"csrf_token"`
+	Permissions map[string]string `json:"permissions,omitempty"`
+	Username    string            `json:"username"`
+	Role        string            `json:"role"`
+	CSRFToken   string            `json:"csrf_token"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -351,6 +358,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	valid := false
 	if err == nil {
 		valid = VerifyPassword(req.Password, user.PasswordHash)
+		access, accessErr := s.Store.PanelAccess(req.Username)
+		valid = valid && accessErr == nil && access.Enabled
 	} else {
 		_ = VerifyPassword(req.Password, "$argon2id$v=19$m=65536,t=2,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 	}
@@ -412,9 +421,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.Audit(store.AuditEntry{User: user.Username, Action: "login", SourceIP: ip, Success: true})
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Username:  user.Username,
-		Role:      user.Role,
-		CSRFToken: csrf,
+		Permissions: s.userPermissions(user.Username),
+		Username:    user.Username,
+		Role:        user.Role,
+		CSRFToken:   csrf,
 	})
 }
 
@@ -457,10 +467,11 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"username":   user.Username,
-		"role":       user.Role,
-		"csrf_token": csrf,
-		"last_login": user.LastLogin,
+		"username":    user.Username,
+		"permissions": s.userPermissions(user.Username),
+		"role":        user.Role,
+		"csrf_token":  csrf,
+		"last_login":  user.LastLogin,
 	})
 }
 
@@ -631,6 +642,10 @@ type configResponse struct {
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if roleOf(r) == "limited" {
+		s.handlePrivateConfig(w, r)
+		return
+	}
 	cfg, dirty, version := s.draftSnapshot()
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация ещё не загружена")
@@ -1016,6 +1031,10 @@ func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, ope
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:
 // администратор должен видеть план до того, как что-то изменится.
 func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
+	if roleOf(r) == "limited" {
+		s.handlePrivateConfig(w, r)
+		return
+	}
 	var cfg config.Config
 	if err := readJSON(r, &cfg); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректная конфигурация: %v", err)
@@ -1101,6 +1120,10 @@ func sameConfig(a, b *config.Config) bool {
 }
 
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
+	if roleOf(r) == "limited" {
+		s.handlePrivateConfig(w, r)
+		return
+	}
 	expected, ok := draftPrecondition(w, r)
 	if !ok {
 		return
@@ -1124,6 +1147,10 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
+	if roleOf(r) == "limited" {
+		s.handlePrivateConfig(w, r)
+		return
+	}
 	var cfg config.Config
 	if err := readJSON(r, &cfg); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректная конфигурация")
@@ -1138,7 +1165,11 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
-	cfg := s.currentDraft()
+	if roleOf(r) == "limited" {
+		s.handlePrivateConfig(w, r)
+		return
+	}
+	cfg := s.requestConfig(r)
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
 		return
@@ -1166,6 +1197,11 @@ type applyRequest struct {
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
+	if !s.configOpMu.TryLock() {
+		writeError(w, 409, "операция применения уже выполняется")
+		return
+	}
+	defer s.configOpMu.Unlock()
 	var req applyRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный запрос: %v", err)
@@ -1187,14 +1223,50 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.DraftVersion != s.draftVersion {
-		s.draftMu.Unlock()
-		writeError(w, http.StatusConflict, "черновик уже изменён в другой вкладке; обновите страницу")
-		return
-	}
 	cfg := s.draft
-	if cfg == nil {
-		cfg = s.Engine.Current()
+	if roleOf(r) == "limited" {
+		currentAccess, err := s.Store.PanelAccess(userOf(r))
+		currentUser, userErr := s.Store.UserByName(userOf(r))
+		if err != nil || userErr != nil || !currentAccess.Enabled || currentUser.Role != "limited" {
+			s.draftMu.Unlock()
+			writeError(w, 403, "права доступа изменились; войдите снова")
+			return
+		}
+		r = withPanelAccess(r, currentUser.Role, currentAccess)
+		d := s.privateDraftLocked(userOf(r))
+		if req.DraftVersion != d.Version || !sameConfig(d.Base, s.Engine.Current()) || s.draft != nil {
+			s.draftMu.Unlock()
+			writeError(w, 409, "конфигурация или общий черновик изменены другим пользователем; завершите предыдущие изменения")
+			return
+		}
+		if d.Config == nil {
+			s.draftMu.Unlock()
+			writeError(w, 409, "нет изменений для применения")
+			return
+		}
+		// Recheck current permissions against the complete private diff.
+		shown, err := scopedConfig(r, d.Config)
+		if err != nil {
+			s.draftMu.Unlock()
+			writeError(w, 500, "не удалось проверить настройки")
+			return
+		}
+		checked, err := mergeScopedConfig(r, d.Base, shown)
+		if err != nil || !sameConfig(checked, d.Config) {
+			s.draftMu.Unlock()
+			writeError(w, 403, "права на изменения изменились; пересоздайте черновик")
+			return
+		}
+		cfg = d.Config
+	} else {
+		if req.DraftVersion != s.draftVersion {
+			s.draftMu.Unlock()
+			writeError(w, 409, "черновик уже изменён в другой вкладке; обновите страницу")
+			return
+		}
+		if cfg == nil {
+			cfg = s.Engine.Current()
+		}
 	}
 	s.draftApplying = true
 	s.draftMu.Unlock()
@@ -1261,6 +1333,9 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.draftMu.Lock()
+	s.pendingOwner = username
+	s.draftMu.Unlock()
 	if !result.NeedsConfirm {
 		if err := s.Store.MarkActive(revID); err != nil {
 			s.Logger.Warnf("не удалось пометить ревизию активной: %v", err)
@@ -1268,6 +1343,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		s.draftMu.Lock()
 		s.draft = nil
 		s.draftVersion++
+		s.clearPrivateDraftLocked(username)
+		s.pendingOwner = ""
 		s.draftMu.Unlock()
 	}
 
@@ -1279,6 +1356,19 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
+	if !s.configOpMu.TryLock() {
+		writeError(w, 409, "операция применения уже выполняется")
+		return
+	}
+	defer s.configOpMu.Unlock()
+	s.draftMu.Lock()
+	s.draftApplying = true
+	s.draftMu.Unlock()
+	defer func() { s.draftMu.Lock(); s.draftApplying = false; s.draftMu.Unlock() }()
+	if !s.ownsPending(r) {
+		writeError(w, 403, "нет права подтверждать чужое применение")
+		return
+	}
 	revision, err := s.Engine.Confirm(s.Store.MarkActive)
 	if err != nil {
 		writeError(w, http.StatusConflict, "%v", err)
@@ -1288,6 +1378,8 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	s.draftMu.Lock()
 	s.draft = nil
 	s.draftVersion++
+	s.clearPrivateDraftLocked(s.pendingOwner)
+	s.pendingOwner = ""
 	s.draftMu.Unlock()
 
 	_ = s.Store.Audit(store.AuditEntry{
@@ -1298,6 +1390,19 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
+	if !s.configOpMu.TryLock() {
+		writeError(w, 409, "операция применения уже выполняется")
+		return
+	}
+	defer s.configOpMu.Unlock()
+	s.draftMu.Lock()
+	s.draftApplying = true
+	s.draftMu.Unlock()
+	defer func() { s.draftMu.Lock(); s.draftApplying = false; s.draftMu.Unlock() }()
+	if !s.ownsPending(r) {
+		writeError(w, 403, "нет права подтверждать чужое применение")
+		return
+	}
 	// Restoring the previous network can terminate the very HTTP connection
 	// that requested the rollback. The system transaction must outlive it.
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -1493,6 +1598,39 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if rb := s.Engine.LastRollback(); rb != nil {
 		resp["rollback"] = rb
 	}
+	if roleOf(r) == "limited" {
+		delete(resp, "rollback")
+		if !s.ownsPending(r) {
+			resp["pending_confirm"] = false
+			delete(resp, "confirm_deadline")
+		}
+		if !anySection(r, false, "dashboard", "map", "clients") {
+			delete(resp, "clients_total")
+			delete(resp, "clients_online")
+			delete(resp, "conntrack_count")
+		}
+		if !anySection(r, false, "dashboard", "map", "network", "channels", "firewall", "routing", "traffic", "wifi") {
+			delete(resp, "interfaces")
+		}
+		if !anySection(r, false, "dashboard", "map", "network", "channels") {
+			delete(resp, "wans")
+			delete(resp, "channels")
+		}
+		if !may(r, "network", false) {
+			delete(resp, "network_conflicts")
+		}
+		if !anySection(r, false, "dashboard", "services") {
+			for _, key := range []string{"dns_provider", "dns_enabled", "dhcp_provider", "dhcp_enabled"} {
+				delete(resp, key)
+			}
+		}
+		if !anySection(r, false, "dashboard", "firewall") {
+			delete(resp, "firewall_enabled")
+		}
+		if !anySection(r, false, "dashboard", "network") {
+			delete(resp, "ipv6_mode")
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -1640,7 +1778,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 // важно видеть настоящие правила, а не верить на слово, что форма их составила
 // правильно.
 func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
-	cfg := s.currentDraft()
+	cfg := s.requestConfig(r)
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
 		return
@@ -1674,7 +1812,7 @@ func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
 // работает. Зашитый список показывал dnsmasq даже там, где выбраны unbound и
 // ISC DHCP, а самих unbound и ISC не показывал вовсе.
 func (s *Server) handleRenderList(w http.ResponseWriter, r *http.Request) {
-	cfg := s.currentDraft()
+	cfg := s.requestConfig(r)
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
 		return

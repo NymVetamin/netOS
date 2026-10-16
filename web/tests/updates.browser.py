@@ -37,6 +37,7 @@ async def scenario(browser, mode):
         body, status = {}, 200
         if path == "/api/session":
             body = {"username": "admin", "role": "admin", "csrf_token": "test"}
+        elif path == "/api/panel-users": body = []
         elif path == "/api/catalog":
             body = {"components": [], "installed": {cid: state["ready"] for _, cid, _ in TYPES}}
             if state["error"]:
@@ -56,7 +57,7 @@ async def scenario(browser, mode):
                 state["config"] = req.post_data_json
                 state["version"] += 1
             body = config()
-        await route.fulfill(status=status, json=body)
+        await route.fulfill(status=status, json=body,content_type="application/json")
 
     await page.add_init_script(OPEN_ROWS)
     await page.route("**/*", route_request)

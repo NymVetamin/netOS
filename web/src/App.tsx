@@ -1,3 +1,4 @@
+import { PermissionContext, canAccess } from "./permissions";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, ConfigResponse, formatUptime, PlanAction, Problem, Session } from "./api";
 import { Notice, Spinner } from "./ui";
@@ -145,7 +146,7 @@ export default function App() {
     return <Login onSuccess={onLogin} sessionEnded={sessionEnded} />;
   }
 
-  return <Shell session={session} onLogout={onLogout} />;
+  return <PermissionContext.Provider value={session}><Shell session={session} onLogout={onLogout} /></PermissionContext.Provider>;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,8 +279,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const readPage = useCallback((): PageID => {
     const id = window.location.hash.slice(1).split("?")[0];
     return NAV.flatMap((group) => group.items).some((item) => item.id === id)
-      && (session.role === "admin" || id !== "diagnostics") ? id as PageID : "dashboard";
-  }, [session.role]);
+      ? id as PageID : (NAV.flatMap(group => group.items).find(item => canAccess(session, item.id))?.id || "dashboard");
+  }, [session]);
   const [page, setPage] = useState<PageID>(readPage);
   useEffect(() => {
     const navigate = () => { setPage(readPage()); setMobileNavOpen(false); };
@@ -328,7 +329,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, [session.role]);
+  }, [session]);
 
   // Прокручивается только область содержимого, поэтому при смене раздела
   // возвращаем наверх её, а не окно.
@@ -466,7 +467,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   // текущего дерева, изменения сразу видны в интерфейсе.
   const patch = useCallback(
     (mutate: (draft: any) => void) => {
-      if (session.role !== "admin" || discardInProgress.current) return;
+      if (!canAccess(session, page, true) || discardInProgress.current) return;
       setCfg((current: any) => {
         if (!current) return current;
         const next = structuredClone(current);
@@ -479,7 +480,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         return next;
       });
     },
-    [flush, session.role],
+    [flush, session, page],
   );
 
   // Перед применением сбрасываем то, что ещё не ушло на сервер.
@@ -536,7 +537,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             // Rendered service configurations can contain private keys and
             // credentials. The API correctly keeps them admin-only, so do not
             // offer a viewer a page that can only end in 403.
-            items: group.items.filter((item) => session.role === "admin" || item.id !== "diagnostics"),
+            items: group.items.filter((item) => canAccess(session, item.id)),
           })).filter((group) => group.items.length > 0).map((group) => (
             <div key={group.group}>
               <div className="nav-group-title">{group.group}</div>
@@ -578,9 +579,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
       <main className="main" ref={mainRef}>
         <div className="page">
-          {session.role !== "admin" && (
+          {canAccess(session, page) && !canAccess(session, page, true) && (
             <Notice tone="info" title="Режим просмотра">
-              Изменение конфигурации для этой учётной записи запрещено.
+              В этом разделе доступен только просмотр.
             </Notice>
           )}
 
@@ -609,10 +610,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             <button className="btn" disabled={loading} onClick={() => void reload()}>Повторить</button>
           </Notice>}
 
-          {!cfg ? (loadError ? null :
+          {!canAccess(session, page) ? <Notice tone="warn" title="Нет доступа к разделу" /> : !cfg ? (loadError ? null :
             <Spinner />
           ) : (
-            <fieldset disabled={discarding} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <fieldset disabled={discarding || (!canAccess(session, page, true) && !["dashboard", "map", "history", "diagnostics"].includes(page))} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
               {page === "dashboard" && <Dashboard config={cfg} />}
               {page === "map" && <MapPage config={cfg} />}
               {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} />}
@@ -623,7 +624,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "channels" && <ChannelsPage key={configGeneration} config={cfg} patch={patch} />}
               {page === "vpn-servers" && <VPNServersPage key={configGeneration} config={cfg} patch={patch} beforeRead={flushNow} />}
               {page === "wifi" && <WiFiPage config={cfg} patch={patch} />}
-              {page === "storage" && <StoragePage config={cfg} patch={patch} admin={session.role === "admin"} />}
+              {page === "storage" && <StoragePage config={cfg} patch={patch} admin={canAccess(session, "storage", true)} />}
               {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}
               {page === "services" && <ServicesPage config={cfg} patch={patch} problems={problems} />}
               {page === "firewall" && <FirewallPage config={cfg} patch={patch} problems={problems} />}
@@ -632,14 +633,14 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} onConfigReplaced={reload} />
               )}
               {page === "history" && <HistoryPage onRestored={reload} />}
-              {page === "diagnostics" && session.role === "admin" && <DiagnosticsPage />}
+              {page === "diagnostics" && <DiagnosticsPage admin={session.role === "admin"} />}
             </fieldset>
           )}
         </div>
       </main>
       </div>
 
-      {session.role === "admin" && (
+      {(session.role === "admin" || Object.values(session.permissions || {}).includes("manage")) && (
         <ApplyBar
           dirty={dirty}
           pending={pending}

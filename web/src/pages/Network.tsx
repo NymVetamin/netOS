@@ -1,3 +1,4 @@
+import { SectionLink } from "../permissions";
 import { interfaceDisplay } from "../interfaceDisplay";
 import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
@@ -194,7 +195,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                   <Switch label="Подменять адреса клиентов (NAT)" checked={wanNAT(config,w).enabled}
                     disabled={!wanNAT(config,w).iface || wanNAT(config,w).manual}
                     onChange={enabled => patch(d => setWanNAT(d,d.wans[idx],enabled))} />
-                  {wanNAT(config,w).manual && <a className="hint" href="#firewall">Маскарад задан ручным правилом — изменить в защите сети</a>}
+                  {wanNAT(config,w).manual && <SectionLink className="hint" section="firewall">Маскарад задан ручным правилом — изменить в защите сети</SectionLink>}
                 </Field>
                 {config.multiwan?.enabled && (
                   <div className="form-grid">

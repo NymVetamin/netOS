@@ -28,7 +28,7 @@ const (
 	StateSuperseded = "superseded"
 	// schemaVersion describes SQLite tables, not the independently versioned
 	// JSON document stored inside revisions.
-	schemaVersion = 2
+	schemaVersion = 3
 )
 
 var ErrNotFound = errors.New("не найдено")
@@ -144,6 +144,15 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at DESC);
 
+CREATE TABLE IF NOT EXISTS panel_access (
+    username TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    permissions TEXT NOT NULL DEFAULT '{}'
+);
+INSERT OR IGNORE INTO panel_access(username) SELECT username FROM users;
+CREATE TRIGGER IF NOT EXISTS users_panel_access AFTER INSERT ON users
+BEGIN INSERT OR IGNORE INTO panel_access(username) VALUES(NEW.username); END;
+
 CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
     username   TEXT NOT NULL,
@@ -178,7 +187,8 @@ CREATE TABLE IF NOT EXISTS devices (
 		_, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion)
 		return err
 	}
-	return nil
+	_, err := s.db.Exec(`UPDATE schema_version SET version = ? WHERE version < ?`, schemaVersion, schemaVersion)
+	return err
 }
 
 // ---------------------------------------------------------------------------

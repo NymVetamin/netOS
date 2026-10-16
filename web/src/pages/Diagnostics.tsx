@@ -1,3 +1,4 @@
+import { useAccess } from "../permissions";
 import { Logs } from "./Logs";
 import { useEffect, useState, ReactNode } from "react";
 import { api } from "../api";
@@ -14,7 +15,8 @@ import { Card, Empty, Notice, TableWrap } from "../ui";
 const ROUTES = "netos:routes";
 const NEIGHBORS = "netos:neighbors";
 
-export function DiagnosticsPage() {
+export function DiagnosticsPage({ admin = true }: { admin?: boolean }) {
+  const can = useAccess();
   const [artifacts, setArtifacts] = useState<{ id: string; title: string }[]>([]);
   // Вкладка пуста, пока не пришёл список: открывать что-то до него значило бы
   // сходить на сервер дважды и показать не то, что откроется в итоге.
@@ -51,7 +53,7 @@ export function DiagnosticsPage() {
     setListError("");
     (async () => {
       try {
-        const list = await api.renderList();
+        const list = admin ? await api.renderList() : [];
         if (cancelled) return;
         setArtifacts(list);
         // Первым открывается первый же артефакт — им всегда оказывается то, что
@@ -69,7 +71,7 @@ export function DiagnosticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [listAttempt]);
+  }, [listAttempt, admin]);
 
   useEffect(() => {
     if (!tab) return;
@@ -165,8 +167,8 @@ export function DiagnosticsPage() {
       <Card title="Проверка соединения">
         <div className="row wrap" style={{ gap: "0.4rem" }}>
           <input aria-label="Адрес для проверки" value={probeHost} onChange={(event) => setProbeHost(event.target.value)} placeholder="IP-адрес или имя узла" />
-          <button className="btn sm" disabled={probeRunning} onClick={() => runProbe("ping")}>Ping</button>
-          <button className="btn sm" disabled={probeRunning} onClick={() => runProbe("traceroute")}>Traceroute</button>
+          <button className="btn sm" disabled={!can("diagnostics", true) || probeRunning} onClick={() => runProbe("ping")}>Ping</button>
+          <button className="btn sm" disabled={!can("diagnostics", true) || probeRunning} onClick={() => runProbe("traceroute")}>Traceroute</button>
         </div>
         {probeResult && <pre className="output">{probeResult}</pre>}
       </Card>

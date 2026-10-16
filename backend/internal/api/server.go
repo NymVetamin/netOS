@@ -70,12 +70,15 @@ type Server struct {
 
 	// draft — конфигурация, которую администратор редактирует, но ещё не
 	// применил.
-	draftMu sync.RWMutex
-	draft   *config.Config
+	draftMu    sync.RWMutex
+	configOpMu sync.Mutex
+	draft      *config.Config
 	// draftVersion реализует optimistic locking для вкладок и нескольких
 	// администраторов. Любая смена черновика увеличивает номер.
 	draftVersion  uint64
 	draftApplying bool
+	privateDrafts map[string]*privateDraft
+	pendingOwner  string
 
 	// csrfTokens связывает сессию с её токеном защиты от подделки запросов.
 	csrfMu     sync.RWMutex
@@ -151,6 +154,8 @@ func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, lo
 // its exact contents as an immediately re-applicable draft is unsafe.
 func (s *Server) discardDraft() {
 	s.draftMu.Lock()
+	s.clearPrivateDraftLocked(s.pendingOwner)
+	s.pendingOwner = ""
 	if s.draft != nil {
 		s.draft = nil
 		s.draftVersion++
@@ -173,6 +178,10 @@ func (s *Server) Routes() http.Handler {
 
 	auth("POST /api/logout", s.handleLogout)
 	auth("GET /api/session", s.handleSession)
+	auth("GET /api/panel-users", s.handlePanelUsers)
+	auth("POST /api/panel-users", s.handlePanelUsers)
+	auth("PUT /api/panel-users", s.handlePanelUsers)
+	auth("DELETE /api/panel-users/{username}", s.handlePanelUsers)
 	auth("GET /api/certificates", func(w http.ResponseWriter, r *http.Request) {
 		if s.Certificates == nil {
 			writeJSON(w, http.StatusOK, []certificates.Status{})

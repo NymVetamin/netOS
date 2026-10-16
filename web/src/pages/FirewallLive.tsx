@@ -1,3 +1,4 @@
+import { SectionLink } from "../permissions";
 import { interfaceDisplay } from "../interfaceDisplay";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -46,7 +47,7 @@ function LiveRule({line,comment,sources,config,onEdit}:{line:string;comment:stri
   <tr>
    <td className="live-rule-number" aria-hidden="true">•</td>
    <td><div>{title}</div><div className="faint live-rule-conditions">{rule.conditions}</div>
-    <small className="hint">{source ? source[1] ? <a href={`#${source[1]}`} onClick={()=>{if(source[1]==="firewall")onEdit()}}>{source[0]}</a> : source[0] : "Системное правило или правило вне netOS"}</small>
+    <small className="hint">{source ? source[1] ? <SectionLink section={source[1]} onClick={()=>{if(source[1]==="firewall")onEdit()}}>{source[0]}</SectionLink> : source[0] : "Системное правило или правило вне netOS"}</small>
    </td>
    <td><Badge tone={rule.target==="ACCEPT"?"ok":["DROP","REJECT"].includes(rule.target)?"danger":"neutral"}>{rule.action}</Badge></td>
    <td className="live-rule-button"><button className="btn ghost sm" aria-expanded={open} onClick={()=>setOpen(!open)}>{open?"Свернуть":"Подробности"}</button></td>
