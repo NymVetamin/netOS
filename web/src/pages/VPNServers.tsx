@@ -213,7 +213,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         server.type === "l2tp" ? <L2TPServer key={server.id} server={server} config={config} installed={l2tpInstalled} patch={patch} /> :
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}</Rows>}</div>
       {servers.length > 0 && <><div className="card-sub"><h3>Клиенты</h3><span className="sub">Профили и пользователи каждого сервера</span><AddMenu label={addingTo ? "Создаём клиента…" : "Добавить клиента"} items={clientItems} /></div>
-      <div className="card-part vpn-client-groups">{servers.map((server: any) =>
+      <div className="vpn-client-groups">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
