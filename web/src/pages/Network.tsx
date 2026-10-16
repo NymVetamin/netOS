@@ -1,3 +1,4 @@
+import { interfaceDisplay } from "../interfaceDisplay";
 import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
 import { confirmAction } from "../confirm";
@@ -886,11 +887,11 @@ function VLANPicker({
         {!iface.parent && <option value="">не выбран</option>}
         {orphan && <option value={iface.parent}>интерфейс удалён</option>}
         {current && !parents.some((p: any) => p.id === current.id) && (
-          <option value={current.id}>{current.name} (занят)</option>
+          <option value={current.id}>{interfaceDisplay(config, current.name)} (занят)</option>
         )}
         {parents.map((x: any) => (
           <option key={x.id} value={x.id}>
-            {x.name}
+            {interfaceDisplay(config, x.name)}
           </option>
         ))}
       </select>
@@ -959,7 +960,7 @@ function MemberPicker({
               }
             />
             <span className="mono" style={blocker ? { opacity: 0.45 } : undefined}>
-              {c.name}
+              {interfaceDisplay(config, c.name)}
             </span>
             {blocker && (
               <span className="faint" style={{ fontSize: 11.5 }}>

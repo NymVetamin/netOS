@@ -1,3 +1,4 @@
+import { interfaceDisplay } from "../interfaceDisplay";
 import { managedWanNAT } from "../wanNAT";
 import { FirewallLive } from "./FirewallLive";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -169,7 +170,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
                 cells={[
                   <strong>{z.title || z.name}</strong>,
                   <code className="faint">{z.name.toUpperCase()}-*</code>,
-                  ifaces.length > 0 ? <span className="mono">{ifaces.join(", ")}</span> : <Badge tone="warn">нет интерфейсов</Badge>,
+                  ifaces.length > 0 ? <span className="mono">{ifaces.map(name => interfaceDisplay(config, name)).join(", ")}</span> : <Badge tone="warn">нет интерфейсов</Badge>,
                   ZONE_POLICY[z.policy] || z.policy,
                   <span className="dim">{z.mss_clamp ? "подгоняется" : "не меняется"}</span>,
                 ]}
@@ -294,16 +295,16 @@ function RuleForm({ config, initial, onSubmit, onCancel }: {
   const interfaceSelect = (field: string, label: string, values: string[]) => <Field label={label}>
     <select aria-label={label} value={r[field] || ""} onChange={e => set(field, e.target.value)}>
       <option value="">Любой в выбранной зоне</option>
-      {r[field] && !values.includes(r[field]) && <option value={r[field]} disabled>{r[field]} — не относится к выбранной зоне</option>}
-      {values.map(name => <option key={name} value={name}>{name}</option>)}
+      {r[field] && !values.includes(r[field]) && <option value={r[field]} disabled>{interfaceDisplay(config, r[field])} — не относится к выбранной зоне</option>}
+      {values.map(name => <option key={name} value={name}>{interfaceDisplay(config, name)}</option>)}
     </select>
   </Field>;
   const textField = (field: string, label: string, hint?: string) => <Field label={label} hint={hint}>
     <input aria-label={label} className="mono" value={r[field] || ""} placeholder="любой" onChange={e => set(field, e.target.value)} />
   </Field>;
   const zoneName = (value: string) => zones.find(z => z.name === value)?.title || (value && value !== "global" ? value : "любая зона");
-  const from = r.flow === "out" ? "сам роутер" : `${zoneName(r.zone)} / ${r.interface || "любой интерфейс"}`;
-  const to = r.flow === "in" ? "сам роутер" : `${zoneName(r.flow === "out" ? r.zone : r.dst_zone)} / ${output || "любой интерфейс"}`;
+  const from = r.flow === "out" ? "сам роутер" : `${zoneName(r.zone)} / ${r.interface ? interfaceDisplay(config, r.interface) : "любой интерфейс"}`;
+  const to = r.flow === "in" ? "сам роутер" : `${zoneName(r.flow === "out" ? r.zone : r.dst_zone)} / ${output ? interfaceDisplay(config, output) : "любой интерфейс"}`;
   return <div className="rule-form">
     <div className="form-grid">
       <Field label="Название" hint={r.system ? "Название системного правила задаёт netOS" : "Попадёт в комментарий правила в ядре"}>
@@ -530,7 +531,7 @@ function RuleRow({
           <div className="row" style={{ gap: "0.35rem", marginTop: 2 }}>
             {rule.system && <Badge tone="neutral">создано netOS</Badge>}
             <span className="mono faint" style={{ fontSize: 12 }}>
-              {describeConditions(rule, config.firewall?.ipsets || []) || "любой трафик"}
+              {describeConditions(rule, config) || "любой трафик"}
             </span>
           </div>
         </td>
@@ -841,7 +842,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
               id={n.id}
               cells={[
                 <strong>{n.name}</strong>,
-                <span className="mono">{n.interface || "—"}</span>,
+                <span className="mono">{interfaceDisplay(config, n.interface) || "—"}</span>,
                 n.source ? <span className="mono">{n.source}</span> : <span className="dim">кто угодно</span>,
                 n.to_source ? <span className="mono">{n.to_source}</span> : <span className="dim">адрес интерфейса</span>,
                 n.system ? <Badge tone="neutral">создано netOS</Badge> : <span className="dim">{n.comment}</span>,
@@ -880,7 +881,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       <option value="">— выберите —</option>
                       {interfaces.map((x) => (
                         <option key={x.key} value={x.name}>
-                          {x.hint ? `${x.name} — ${x.hint}` : x.name}
+                          {x.hint ? `${interfaceDisplay(config, x.name)} — ${x.hint}` : interfaceDisplay(config, x.name)}
                         </option>
                       ))}
                     </select>
@@ -939,7 +940,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
               id={n.id}
               cells={[
                 <strong>{n.name}</strong>,
-                n.interface ? <span className="mono">{n.interface}</span> : <span className="dim">любой</span>,
+                n.interface ? <span className="mono">{interfaceDisplay(config, n.interface)}</span> : <span className="dim">любой</span>,
                 <span className="mono">{NAT_PROTO[n.protocol || "tcp"]} {n.ext_port || "—"}</span>,
                 <span className="mono">{n.dest_ip || "—"}:{n.dest_port || n.ext_port || "—"}</span>,
                 n.allow_from ? <span className="mono">{n.allow_from}</span> : <span className="dim">с любых</span>,
@@ -978,7 +979,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
                       <option value="">любой</option>
                       {interfaces.map((x) => (
                         <option key={x.key} value={x.name}>
-                          {x.hint ? `${x.name} — ${x.hint}` : x.name}
+                          {x.hint ? `${interfaceDisplay(config, x.name)} — ${x.hint}` : interfaceDisplay(config, x.name)}
                         </option>
                       ))}
                     </select>
@@ -1140,11 +1141,12 @@ function interfacesOfZone(config: any, zone: string): string[] {
   return [...new Set(names.filter(Boolean))];
 }
 
-function describeConditions(r: any, sets: any[]): string {
+function describeConditions(r: any, config: any): string {
+  const sets: any[] = config.firewall?.ipsets || [];
   const parts: string[] = [];
   const setName = (id: string) => sets.find((s) => s.id === id)?.name || id || "интерфейс не задан";
-  if (r.interface) parts.push(`${r.flow === "out" ? "выход" : "вход"}: ${r.interface}`);
-  if (r.out_interface) parts.push(`выход: ${r.out_interface}`);
+  if (r.interface) parts.push(`${r.flow === "out" ? "выход" : "вход"}: ${interfaceDisplay(config, r.interface)}`);
+  if (r.out_interface) parts.push(`выход: ${interfaceDisplay(config, r.out_interface)}`);
   if (r.protocol) parts.push(r.protocol.toUpperCase());
   if (r.src_ip) parts.push(`от ${r.src_ip}`);
   if (r.src_ipset) parts.push(`из набора «${setName(r.src_ipset)}»`);

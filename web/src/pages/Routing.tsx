@@ -1,3 +1,4 @@
+import { interfaceDisplay } from "../interfaceDisplay";
 import { useEffect, useState } from "react";
 import { api, RouteEntry } from "../api";
 import { canonicalTable, observedTables, tableDetails } from "../routingTables";
@@ -95,7 +96,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 key={r.id}
                 id={r.id}
                 cells={[<strong>{r.name}</strong>, <span className="mono">{r.destination || "—"}</span>,
-                  r.type && r.type !== "unicast" ? <span className="dim">{ROUTE_TYPE[r.type] || r.type}</span> : <span className="mono">{r.gateway || r.interface || "—"}</span>,
+                  r.type && r.type !== "unicast" ? <span className="dim">{ROUTE_TYPE[r.type] || r.type}</span> : <span className="mono">{r.gateway || interfaceDisplay(config, r.interface) || "—"}</span>,
                   <span className="mono">{r.table || "основная"}</span>]}
                 toggle={<Switch
                         checked={r.enabled}
@@ -476,7 +477,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td className="mono">{canonicalTable(r.table || "main")}</td>
                     <td className="mono">{r.type && r.type !== "unicast" ? `${r.type} ${r.destination}` : r.destination}</td>
                     <td className="mono">{r.gateway || <span className="faint">напрямую</span>}</td>
-                    <td className="mono">{r.interface}</td>
+                    <td className="mono">{interfaceDisplay(config, r.interface)}</td>
                     <td className="mono">{r.metric || <span className="faint">—</span>}</td>
                     <td>{originBadge(r.origin)}</td>
                   </tr>

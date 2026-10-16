@@ -10,10 +10,11 @@ async def main():
   page=await browser.new_page(viewport={"width":1440,"height":1000})
   cfg={"system":{"hostname":"qa"},"interfaces":[{"id":"a","name":"br-lan"},{"id":"b","name":"br1"},{"id":"w","name":"eth0"}],"networks":[{"id":"a","enabled":True,"interface":"a","zone":"lan","router_address":"192.168.10.1/24"},{"id":"b","enabled":True,"interface":"b","zone":"lan","router_address":"192.168.20.1/24"}],"wans":[{"id":"wan","enabled":True,"interface":"w","proto":"static"}],"channels":[],"policies":[],"firewall":{"enabled":True,"zones":[{"name":"lan","title":"LAN","policy":"accept"},{"name":"wan","title":"WAN","policy":"drop"}],"nat":[],"rules":[{"id":"rule","name":"Allow s1 to s2","enabled":True,"zone":"lan","dst_zone":"lan","flow":"forward","action":"accept","interface":"br-lan","dst_ip":"192.168.20.0/24","conn_state":"new,established","log":True,"comment":"keep this","schedule":{"days":["Mon"],"time_start":"10:00","time_stop":"18:00"}}]}}
   cfg['wans'][0]['name']='Uplink'
+  cfg['interfaces'][2]['label']='WAN'
   cfg['firewall']['nat']=[{'id':'old-nat','name':'Old NAT','system':True,'enabled':False,'direction':'source','interface':'eth0'}]
-  live={'captured_at':'2026-10-15T10:00:00Z','sources':{},'comments':{'-A LAN-FWD -s 192.0.2.0/24 -j REJECT':'intersegment default'},'families':[{'family':'IPv4','tables':[{'name':'filter','chains':[{'name':'WAN-IN','policy':'-','counters':'[0:0]','rules':['-A WAN-IN -p udp --dport 51820 -j ACCEPT']},{'name':'LAN-FWD','policy':'-','counters':'[0:0]','rules':['-A LAN-FWD -s 192.0.2.0/24 -j REJECT']},{'name':'FOREIGN','policy':'-','counters':'[0:0]','rules':[]}]}]},{'family':'IPv6','tables':[],'error':'fixture IPv6 unavailable'}]}
+  live={'captured_at':'2026-10-15T10:00:00Z','sources':{},'comments':{'-A LAN-FWD -s 192.0.2.0/24 -j REJECT':'intersegment default'},'families':[{'family':'IPv4','tables':[{'name':'filter','chains':[{'name':'WAN-IN','policy':'-','counters':'[0:0]','rules':['-A WAN-IN -i eth0 -p udp --dport 51820 -j ACCEPT']},{'name':'LAN-FWD','policy':'-','counters':'[0:0]','rules':['-A LAN-FWD -s 192.0.2.0/24 -j REJECT']},{'name':'FOREIGN','policy':'-','counters':'[0:0]','rules':[]}]}]},{'family':'IPv6','tables':[],'error':'fixture IPv6 unavailable'}]}
   state={"cfg":cfg};errors=[];page.on("pageerror",lambda e:errors.append(str(e)))
-  live['comments']['-A WAN-IN -p udp --dport 51820 -j ACCEPT']='VPN-сервер «QA»'
+  live['comments']['-A WAN-IN -i eth0 -p udp --dport 51820 -j ACCEPT']='VPN-сервер «QA»'
   isolation='-A LAN-FWD -s 192.0.2.0/24 -d 198.51.100.0/24 -j REJECT'
   live['families'][0]['tables'][0]['chains'][1]['rules'].append(isolation)
   live['comments'][isolation]='изоляция «QA»: QA → VPN'
@@ -34,6 +35,7 @@ async def main():
   await page.goto('https://netos-ui.test/#firewall')
   await page.get_by_role('checkbox',name='Показать автоматические правила',exact=True).check()
   await expect(page.get_by_text('WAN-IN',exact=True)).to_be_visible()
+  await expect(page.locator('.live-rule-conditions').filter(has_text='WAN (eth0)')).to_be_visible()
   await expect(page.get_by_role('heading',name='Зоны и политики',exact=True)).to_be_visible()
   await expect(page.get_by_role('heading',name='Наборы адресов',exact=True)).to_be_visible()
   await expect(page.get_by_role('heading',name='Трансляция адресов',exact=True)).to_be_visible()

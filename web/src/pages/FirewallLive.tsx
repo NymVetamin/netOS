@@ -1,3 +1,4 @@
+import { interfaceDisplay } from "../interfaceDisplay";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Badge, Notice, Empty, TableWrap } from "../ui";
@@ -28,7 +29,7 @@ function chainTitle(name:string, config:any):string {
 function describe(line:string, config:any) {
  const tokens=(line.match(/"(?:\\.|[^"\\])*"|\S+/g)||[]).map(v=>{try{return v.startsWith('"')?JSON.parse(v):v}catch{return v}});
  const value=(flag:string)=>{const i=tokens.indexOf(flag);return i<0?"":`${tokens[i-1]==="!"?"не ":""}${tokens[i+1] || ""}`};
- const iface=(name:string)=>{const i=(config.interfaces||[]).find((i:any)=>i.name===name);return i?.label?`${i.label} (${name})`:name};
+ const iface=(name:string)=>name.startsWith("не ") ? `не ${interfaceDisplay(config,name.slice(3))}` : interfaceDisplay(config,name);
  const parts:string[]=[];
  for(const [flag,label] of [["-i","вход"],["-o","выход"],["-s","от"],["-d","к"],["-p","протокол"],["--sport","порт источника"],["--sports","порты источника"],["--dport","порт назначения"],["--dports","порты назначения"],["--ctstate","состояние"],["--state","состояние"],["--mac-source","MAC"],["--set-mss","MSS"],["--mark","метка"],["--to-destination","перенаправить на"],["--to-source","адрес источника"],["--to-ports","на порт"]]) {
   const v=value(flag);if(v)parts.push(`${label}: ${flag==="-i"||flag==="-o"?iface(v):v}`);

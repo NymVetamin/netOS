@@ -9,6 +9,9 @@ async def main():
   browser=await p.chromium.launch()
   page=await browser.new_page(viewport={"width":1440,"height":1000})
   cfg={"system":{"hostname":"qa"},"interfaces":[{"id":"a","name":"br-lan"},{"id":"b","name":"br1"},{"id":"w","name":"eth0"}],"networks":[{"id":"a","enabled":True,"interface":"a","zone":"lan","router_address":"192.168.10.1/24"},{"id":"b","enabled":True,"interface":"b","zone":"lan","router_address":"192.168.20.1/24"}],"wans":[{"id":"wan","enabled":True,"interface":"w","proto":"static"}],"channels":[],"policies":[],"firewall":{"enabled":True,"zones":[{"name":"lan","title":"LAN","policy":"accept"},{"name":"wan","title":"WAN","policy":"drop"}],"nat":[],"rules":[{"id":"rule","name":"Allow s1 to s2","enabled":True,"zone":"lan","dst_zone":"lan","flow":"forward","action":"accept","interface":"br-lan","dst_ip":"192.168.20.0/24","conn_state":"new,established","log":True,"comment":"keep this","schedule":{"days":["Mon"],"time_start":"10:00","time_stop":"18:00"}}]}}
+  cfg['interfaces'][0]['label']='Office'
+  cfg['interfaces'][2]['label']='WAN'
+  cfg['firewall']['nat']=[{'id':'nat-test','name':'Test NAT','direction':'source','interface':'eth0','enabled':True,'system':False}]
   state={"cfg":cfg};errors=[];page.on("pageerror",lambda e:errors.append(str(e)))
   async def route(r):
    path=urlparse(r.request.url).path
@@ -28,6 +31,7 @@ async def main():
   form=page.locator('.rule-form')
   await expect(form.get_by_label('Направление',exact=True)).to_have_value('forward')
   await expect(form.get_by_label('Входящий интерфейс',exact=True)).to_have_value('br-lan')
+  await expect(form.get_by_label('Входящий интерфейс',exact=True).locator('option[value="br-lan"]')).to_have_text('Office (br-lan)')
   outgoing=form.get_by_label('Исходящий интерфейс',exact=True)
   assert await outgoing.locator('option').evaluate_all('(els)=>els.map(e=>e.value)')==['','br-lan','br1']
   await outgoing.select_option('br1')
@@ -49,6 +53,7 @@ async def main():
   await form.get_by_label('В какую зону',exact=True).select_option('wan')
   await expect(form.get_by_role('button',name='Сохранить',exact=True)).to_be_disabled()
   await expect(form.get_by_text('Выберите интерфейс заново',exact=True)).to_be_visible()
+  await expect(form.get_by_label('Исходящий интерфейс',exact=True).locator('option[value="eth0"]')).to_have_text('WAN (eth0)')
   await form.get_by_label('Исходящий интерфейс',exact=True).select_option('eth0')
   await expect(form.get_by_role('button',name='Сохранить',exact=True)).to_be_enabled()
   await form.get_by_label('Направление',exact=True).select_option('out')
@@ -64,6 +69,13 @@ async def main():
   await page.set_viewport_size({'width':390,'height':844})
   await page.screenshot(path='output/playwright/firewall-form-mobile.png',full_page=True)
   assert await form.evaluate('e=>e.scrollWidth<=e.clientWidth+1'), 'form overflows mobile width'
+  await page.set_viewport_size({'width':1440,'height':1000})
+  await page.locator('summary.xsum').filter(has_text='Test NAT').click()
+  nat=page.get_by_label('Исходящий интерфейс правила NAT',exact=True)
+  await expect(nat.locator('option[value="eth0"]')).to_have_text('WAN (eth0)')
+  async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
+   await nat.select_option('br-lan')
+  assert state['cfg']['firewall']['nat'][0]['interface']=='br-lan'
   assert not errors,errors
   await browser.close();print('firewall form PASS')
 asyncio.run(main())
