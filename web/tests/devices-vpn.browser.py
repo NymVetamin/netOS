@@ -70,7 +70,7 @@ async def scenario(browser, mode):
             await expect(settings.locator("svg")).to_have_count(1)
             await page.get_by_text("Phone",exact=True).click()
             await expect(page.get_by_text("192.0.2.10:4567",exact=True)).to_be_visible()
-            await expect(page.get_by_role("link",name="Настройки VPN-клиента").first).to_have_attribute("href","#vpn-servers")
+            await expect(page.get_by_role("link",name="Настройки VPN-клиента").first).to_have_attribute("href","#vpn-servers?server=wg1&client=phone")
             telemetry_error=True
             await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
             await expect(page.get_by_text("недавно на связи",exact=True)).to_have_count(0)
@@ -98,6 +98,21 @@ async def scenario(browser, mode):
         await page.reload()
         await expect(lan).to_have_value("direct")
         await page.screenshot(path="output/playwright/client-channels.png")
+    if mode in ('healthy','many'):
+        target_server='wg2' if mode=='many' else 'wg1'
+        settings=page.get_by_role('link',name='Настройки VPN-клиента').last if mode=='many' else page.get_by_role('link',name='Настройки VPN-клиента').first
+        await settings.click()
+        target=page.locator(f'.peer-card[data-vpn-server="{target_server}"][data-vpn-client="phone"] > details')
+        await expect(target).to_have_attribute('open','')
+        await expect(target.locator(':scope > summary')).to_be_focused()
+        box=await target.locator(':scope > summary').bounding_box()
+        assert box['y']>50 and box['y']+box['height']<1000,box
+        if mode=='many':
+            await expect(page.locator('.peer-card[data-vpn-server="wg1"][data-vpn-client="phone"] > details')).not_to_have_attribute('open','')
+        await page.reload()
+        await expect(target).to_have_attribute('open','')
+        await expect(target.locator(':scope > summary')).to_be_focused()
+        await page.goto('http://netos-ui.test/#clients')
     await page.get_by_role("button",name="Добавить по MAC",exact=True).click()
     await expect(page.get_by_text("Добавить устройство по MAC",exact=True)).to_be_visible()
     await page.get_by_role("button",name="Закрыть добавление",exact=True).click()

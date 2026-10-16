@@ -138,6 +138,31 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
 	const l2tpInstalled = (config.components || []).some((item: any) => item.id === "l2tp" && item.installed);
   const [clientSecrets, setClientSecrets] = useState<Record<string, ClientSecret>>({});
   const [error, setError] = useState("");
+  useEffect(() => {
+    let frame = 0;
+    const reveal = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const [page, query] = window.location.hash.slice(1).split("?");
+        if (page !== "vpn-servers") return;
+        const params = new URLSearchParams(query);
+        const server = params.get("server"), client = params.get("client");
+        if (!server || !client) return;
+        const row = Array.from(document.querySelectorAll<HTMLElement>(".peer-card[data-vpn-server][data-vpn-client]"))
+          .find(item => item.dataset.vpnServer === server && item.dataset.vpnClient === client);
+        const details = row?.querySelector<HTMLDetailsElement>("details.xd");
+        if (!details) { setError("Этот VPN-клиент больше не найден. Возможно, он был удалён."); return; }
+        details.open = true;
+        const summary = details.querySelector<HTMLElement>("summary");
+        summary?.focus({ preventScroll: true });
+        summary?.scrollIntoView({ block: "center", behavior: "instant" });
+      });
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
+  }, []);
+
   async function addServer(type: "wireguard" | "xray" | "ocserv" | "ikev2" | "l2tp", protocol = "reality") {
     setError("");
     let generatedWireGuardKey = "";
@@ -345,7 +370,7 @@ function OcservPeer({ status, server, peer, referenced, channels, update, canEna
   const certAuth = server.type === "ocserv" && ["certificate", "certificate_password"].includes(server.config?.auth_mode);
   const passwordAuth = !certAuth || server.config?.auth_mode === "certificate_password";
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
-  return <Row className="peer-card" id={peer.id}
+  return <Row className="peer-card" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} disabled={!canEnable} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} session />
@@ -502,7 +527,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
     } catch (err: any) { setError(err?.message || "Не удалось создать ссылку подключения"); }
     finally { setRealityBusy(false); }
   }
-  return <Row className="peer-card" id={peer.id}
+  return <Row className="peer-card" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} session />
@@ -710,7 +735,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
   }
   const state = status?.state || "pending";
   const known = ["recent", "idle", "never"].includes(state);
-  return <Row className="peer-card" id={peer.id}
+  return <Row className="peer-card" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{known ? status?.endpoint || "Неизвестен" : "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} />
