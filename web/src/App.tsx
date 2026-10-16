@@ -633,7 +633,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} onConfigReplaced={reload} />
               )}
               {page === "history" && <HistoryPage onRestored={reload} />}
-              {page === "diagnostics" && <DiagnosticsPage admin={session.role === "admin"} />}
+              {page === "diagnostics" && <DiagnosticsPage admin={session.role === "admin"} dnsLogging={!!cfg.dns?.query_log} />}
             </fieldset>
           )}
         </div>

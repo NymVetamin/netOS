@@ -234,3 +234,25 @@ func TestFirewallPreviewPermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagnosticsDNSLoggingFlag(t *testing.T) {
+	cfg := config.Default()
+	cfg.DNS.QueryLog = true
+	r := limitedRequest(map[string]string{"diagnostics": "view"})
+	shown, err := scopedConfig(r, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !shown.DNS.QueryLog {
+		t.Fatal("missing DNS logging flag")
+	}
+	shown.DNS.QueryLog = false
+	raw, _ := json.Marshal(shown.DNS)
+	empty, _ := json.Marshal(config.DNS{})
+	if !bytes.Equal(raw, empty) {
+		t.Fatalf("DNS settings leaked: %s", raw)
+	}
+	if _, err := mergeScopedConfig(r, cfg, shown); err == nil {
+		t.Fatal("read-only DNS flag changed")
+	}
+}

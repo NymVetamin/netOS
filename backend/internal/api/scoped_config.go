@@ -68,6 +68,9 @@ func scopedConfig(r *http.Request, cfg *config.Config) (*config.Config, error) {
 			visible[key] = full[key]
 		}
 	}
+	if may(r, "diagnostics", false) && !may(r, "services", false) {
+		visible["dns"] = selectFields(full["dns"], "query_log")
+	}
 	// Cross-section selectors get only labels and topology, not service settings.
 	if anySection(r, false, "dashboard", "map", "clients", "network", "routing", "channels", "vpn-servers", "wifi", "traffic", "firewall", "services", "storage") {
 		if !may(r, "network", false) {

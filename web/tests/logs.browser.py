@@ -9,9 +9,11 @@ async def main():
   browser=await p.chromium.launch()
   page=await browser.new_page(viewport={"width":1440,"height":1000})
   cfg={"system":{"hostname":"qa"},"interfaces":[{"id":"a","name":"br-lan"},{"id":"b","name":"br1"},{"id":"w","name":"eth0"}],"networks":[{"id":"a","enabled":True,"interface":"a","zone":"lan","router_address":"192.168.10.1/24"},{"id":"b","enabled":True,"interface":"b","zone":"lan","router_address":"192.168.20.1/24"}],"wans":[{"id":"wan","enabled":True,"interface":"w","proto":"static"}],"channels":[],"policies":[],"firewall":{"enabled":True,"zones":[{"name":"lan","title":"LAN","policy":"accept"},{"name":"wan","title":"WAN","policy":"drop"}],"nat":[],"rules":[{"id":"rule","name":"Allow s1 to s2","enabled":True,"zone":"lan","dst_zone":"lan","flow":"forward","action":"accept","interface":"br-lan","dst_ip":"192.168.20.0/24","conn_state":"new,established","log":True,"comment":"keep this","schedule":{"days":["Mon"],"time_start":"10:00","time_stop":"18:00"}}]}}
+  cfg["dns"]={"query_log":True}
   state={"cfg":cfg};errors=[];page.on("pageerror",lambda e:errors.append(str(e)))
   state['fail']=False
   state['log_reads']=0
+  state['kinds']=[]
   async def route(r):
    path=urlparse(r.request.url).path
    if not path.startswith('/api/'):
@@ -26,6 +28,7 @@ async def main():
     if state['fail']:
      await r.fulfill(status=503,json={'error':'fixture unavailable'});return
     kind=parse_qs(urlparse(r.request.url).query).get('kind',['all'])[0]
+    state['kinds'].append(kind)
     entries=[{'time':'2026-10-15T10:00:00Z','source':v,'unit':v,'message':v+' fixture.example <script>safe</script>'} for v in ['dns','firewall','services'] if kind=='all' or kind==v]
     body={'kind':kind,'entries':entries,'warnings':['fixture partial source warning'],'captured_at':'2026-10-15T10:00:01Z'}
    elif path=='/api/session':body={'username':'admin','role':'admin','csrf_token':'qa'}
@@ -61,6 +64,15 @@ async def main():
   await page.screenshot(path='output/playwright/logs.png')
   await page.locator('.logs-section > summary').click()
   await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_count(0)
+  state['cfg']['dns']['query_log']=False
+  await page.goto('https://netos-ui.test/#diagnostics?log=dns')
+  await page.reload()
+  state['kinds'].clear()
+  await page.locator('.logs-section > summary').click()
+  await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_count(0)
+  await expect(page.get_by_role('tab',name='Общий',exact=True)).to_have_attribute('aria-selected','true')
+  await expect(page.get_by_text('services fixture.example <script>safe</script>',exact=True)).to_be_visible()
+  assert state['kinds']==['all'], state['kinds']
   await page.goto('https://netos-ui.test/#firewall')
   await page.get_by_role('button',name='Изменить',exact=True).click()
   await page.get_by_text('Дополнительно',exact=True).click()

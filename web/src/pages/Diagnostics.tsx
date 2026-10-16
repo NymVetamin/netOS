@@ -15,7 +15,7 @@ import { Card, Empty, Notice, TableWrap } from "../ui";
 const ROUTES = "netos:routes";
 const NEIGHBORS = "netos:neighbors";
 
-export function DiagnosticsPage({ admin = true }: { admin?: boolean }) {
+export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: boolean; dnsLogging?: boolean }) {
   const can = useAccess();
   const [artifacts, setArtifacts] = useState<{ id: string; title: string }[]>([]);
   // Вкладка пуста, пока не пришёл список: открывать что-то до него значило бы
@@ -162,7 +162,7 @@ export function DiagnosticsPage({ admin = true }: { admin?: boolean }) {
         <p>Что получилось из настроек на самом деле</p>
       </div>
 
-      <Logs />
+      <Logs dnsLogging={dnsLogging} />
 
       <Card title="Проверка соединения">
         <div className="row wrap" style={{ gap: "0.4rem" }}>
