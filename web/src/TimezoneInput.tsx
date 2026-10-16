@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-// IANA suggestions exported from Node Intl.supportedValuesOf("timeZone"), plus UTC.
+// IANA zone.tab names from Debian 13 tzdata, plus UTC (no tzdata-legacy required).
 // Keep free input for aliases and zones supported by the router but absent here.
 import timezones from "./timezones.json";
 

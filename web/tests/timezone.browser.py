@@ -61,6 +61,12 @@ async def main():
       await field.press('ArrowUp')
       await field.press('Enter')
       await expect(field).to_have_value('UTC')
+      for city, zone in [('kol', 'Asia/Kolkata'), ('kyiv', 'Europe/Kyiv')]:
+        await field.fill(city)
+        await page.get_by_role('option',name=zone,exact=True).click()
+        await expect(field).to_have_value(zone)
+      await field.fill('Asia/Calcutta')
+      await expect(options).to_have_count(0)
       await page.set_viewport_size({'width':390,'height':900})
       await field.fill('a')
       await expect(options).to_have_count(10)
