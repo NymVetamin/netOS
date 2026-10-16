@@ -1,6 +1,6 @@
 import { useAccess } from "../permissions";
 import { useEffect, useState } from "react";
-import { api, formatTime } from "../api";
+import { api, formatMiB, formatTime } from "../api";
 import { localDevices } from "../deviceList";
 import { vpnMapServers } from "../mapVPN";
 import { newID } from "../id";
@@ -255,7 +255,7 @@ export function Clients({
               <Cap label="VPN-сервер"><span>{server.name}</span></Cap>
               <Cap label="Адрес подключения"><span>{peer.endpoint || "—"}</span></Cap>
               <Cap label={server.type === "wireguard" ? "Последний handshake" : "Последний раз замечен онлайн"}><span>{peer.handshake ? formatTime(new Date(peer.handshake * 1000).toISOString()) : "—"}</span></Cap>
-              <Cap label="Получено / отправлено"><span>{peer.trafficKnown ? `${peer.received} / ${peer.sent} байт` : "—"}</span></Cap>
+              <Cap label="Получено / отправлено"><span>{peer.trafficKnown ? `${formatMiB(peer.received)} / ${formatMiB(peer.sent)}` : "—"}</span></Cap>
             </div>
           </Row>))}
         </Rows>

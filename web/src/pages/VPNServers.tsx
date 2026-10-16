@@ -5,7 +5,7 @@ import { secretInput } from "../secrets";
 import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { api, ApiError } from "../api";
+import { api, ApiError, formatMiB } from "../api";
 import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
 import { newID } from "../id";
 import { AddMenu, Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
@@ -574,11 +574,10 @@ function ClientConnection({ status, session = false }: { status?: ClientStatus; 
   const known = ["recent", "idle", "never", "online", "offline"].includes(status?.state || "pending");
   const last = session ? status?.last_seen : status?.last_handshake;
   const trafficKnown = known && (status?.traffic_known ?? !session);
-  const traffic = (value: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value / 1024 / 1024) + " МиБ";
   return <div className="client-connection form-grid">
     <Field label={session ? "Последний раз замечен онлайн" : "Последнее рукопожатие"}><span>{last ? new Date(last * 1000).toLocaleString("ru-RU") : "—"}</span></Field>
-    <Field label="Получено от клиента"><span>{trafficKnown ? traffic(status?.received || 0) : "—"}</span></Field>
-    <Field label="Отправлено клиенту"><span>{trafficKnown ? traffic(status?.sent || 0) : "—"}</span></Field>
+    <Field label="Получено от клиента"><span>{trafficKnown ? formatMiB(status?.received || 0) : "—"}</span></Field>
+    <Field label="Отправлено клиенту"><span>{trafficKnown ? formatMiB(status?.sent || 0) : "—"}</span></Field>
   </div>;
 }
 

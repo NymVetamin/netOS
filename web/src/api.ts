@@ -376,6 +376,10 @@ export const api = {
 
 // --- форматирование ---
 
+export function formatMiB(value: number): string {
+  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value / 1024 / 1024) + " МиБ";
+}
+
 export function formatBytes(n: number): string {
   if (!n) return "0 Б";
   const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];

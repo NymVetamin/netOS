@@ -43,7 +43,7 @@ async def scenario(browser, mode):
         elif path=="/api/status":body={"interfaces":[],"wans":[],"channels":[],"uptime_seconds":100}
         elif path=="/api/clients":body={"clients":[]}
         elif path.endswith("/clients") and path.startswith("/api/vpn-servers/"):
-            body=[{"id":"phone","state":"recent","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":1234,"sent":5678},
+            body=[{"id":"phone","state":"recent","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":47789705,"sent":77695569},
                   {"id":"tablet","state":"never"}]
             if telemetry_error:status,body=503,{"error":"unavailable"}
         await route.fulfill(status=status,json=body)
@@ -70,6 +70,7 @@ async def scenario(browser, mode):
             await expect(settings.locator("svg")).to_have_count(1)
             await page.get_by_text("Phone",exact=True).click()
             await expect(page.get_by_text("192.0.2.10:4567",exact=True)).to_be_visible()
+            await expect(page.get_by_text("45,6 МиБ / 74,1 МиБ",exact=True)).to_be_visible()
             await expect(page.get_by_role("link",name="Настройки VPN-клиента").first).to_have_attribute("href","#vpn-servers?server=wg1&client=phone")
             telemetry_error=True
             await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
