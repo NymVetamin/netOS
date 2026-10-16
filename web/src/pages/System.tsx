@@ -106,19 +106,32 @@ export function SystemPage({
             onChange={(enabled) => patch((d) => (d.system.ntp.enabled = enabled))}
           />
         </div>
-        <div className="form-grid" style={{ marginTop: "0.8rem" }}>
-          <Field wide label="Серверы времени" hint="До 8 DNS-имён или IP-адресов, через запятую">
-            <input
-              type="text"
-              disabled={!config.system?.ntp?.enabled}
-              value={(config.system?.ntp?.servers || []).join(", ")}
-              placeholder="0.pool.ntp.org, 1.pool.ntp.org"
-              onChange={(e) => patch((d) => {
-                d.system.ntp.servers = e.target.value.split(/[\s,]+/).filter(Boolean);
-              })}
-            />
-          </Field>
-        </div>
+        <details className="ntp-servers">
+          <summary>Серверы времени</summary>
+          <div className="stack">
+            <span className="hint">До 8 DNS-имён или IP-адресов — по одному в строке.</span>
+            {(config.system?.ntp?.servers || []).map((server: string, index: number) => (
+              <div className="ntp-server-row" key={index}>
+                <input
+                  type="text"
+                  aria-label={`Сервер времени ${index + 1}`}
+                  disabled={!config.system?.ntp?.enabled}
+                  value={server}
+                  placeholder="0.pool.ntp.org"
+                  onChange={e => patch(d => { d.system.ntp.servers[index] = e.target.value.trim(); })}
+                />
+                <button className="btn sm" disabled={!config.system?.ntp?.enabled}
+                  aria-label={`Удалить сервер времени ${index + 1}`}
+                  onClick={() => patch(d => { d.system.ntp.servers.splice(index, 1); })}>Удалить</button>
+              </div>
+            ))}
+            <div><button className="btn sm"
+              disabled={!config.system?.ntp?.enabled || (config.system?.ntp?.servers || []).length >= 8}
+              onClick={() => patch(d => { d.system.ntp.servers = [...(d.system.ntp.servers || []), ""]; })}>
+              + Добавить сервер
+            </button></div>
+          </div>
+        </details>
       </Card>
 
       <Card

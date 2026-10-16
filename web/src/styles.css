@@ -2534,3 +2534,9 @@ td > select {
 .storage-server-grid .field { min-width: 0; margin: 0; }
 .storage-server-grid .switch { max-width: 100%; }
 .storage-server-grid input:not([type="checkbox"]) { max-width: 280px; }
+
+.ntp-servers { margin-top: 16px; }
+.ntp-servers > summary { margin-bottom: 12px; }
+.ntp-server-row { display: flex; align-items: center; gap: 8px; max-width: 480px; }
+.ntp-server-row input { flex: 1; min-width: 0; }
+.ntp-server-row button { flex-shrink: 0; }
