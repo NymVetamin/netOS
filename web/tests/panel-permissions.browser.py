@@ -92,8 +92,21 @@ async def users_scenario(browser):
     await page.get_by_role("button",name="Добавить пользователя панели",exact=True).click()
     await page.get_by_label("Логин пользователя панели",exact=True).fill("operator")
     await page.get_by_label("Пароль пользователя панели",exact=True).fill("temporary-test-password")
-    await page.get_by_label("Доступ: Клиенты",exact=True).select_option("manage")
-    await page.get_by_label("Доступ: Карта сети",exact=True).select_option("view")
+    await page.get_by_label("Управление: Клиенты",exact=True).check()
+    await expect(page.get_by_label("Просмотр: Клиенты",exact=True)).to_be_checked()
+    await page.get_by_label("Просмотр: Клиенты",exact=True).uncheck()
+    await expect(page.get_by_label("Управление: Клиенты",exact=True)).not_to_be_checked()
+    await page.get_by_label("Управление: Клиенты",exact=True).check()
+    await expect(page.get_by_label("Управление: Карта сети",exact=True)).to_have_count(0)
+    await page.get_by_label("Просмотр: Карта сети",exact=True).check()
+    Path("output/playwright").mkdir(parents=True, exist_ok=True)
+    matrix=page.get_by_role("table",name="Права по страницам")
+    await matrix.screenshot(path="output/playwright/permissions-table.png")
+    await page.set_viewport_size({"width":390,"height":800})
+    box=await matrix.bounding_box()
+    assert box["x"]>=0 and box["x"]+box["width"]<=390,box
+    assert await matrix.evaluate("el => el.scrollWidth <= el.clientWidth"), "table overflows on mobile"
+    await matrix.screenshot(path="output/playwright/permissions-mobile.png")
     await page.get_by_role("button",name="Сохранить пользователя",exact=True).click()
     await expect(page.get_by_text("operator",exact=True)).to_be_visible()
     assert users[-1]["permissions"]=={"clients":"manage","map":"view"}

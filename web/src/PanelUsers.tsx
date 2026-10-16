@@ -52,12 +52,18 @@ export function PanelUsers() {
         <Field label="Права"><select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="limited">По разделам</option><option value="admin">Администратор</option></select></Field>
         <label><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} /> Пользователь включён</label>
       </div>
-      {form.role !== "admin" && <div className="form-grid">{Object.entries(PANEL_SECTIONS).map(([key, title]) => <Field key={key} label={title}>
-        <select aria-label={`Доступ: ${title}`} value={form.permissions[key] || "none"} onChange={e => setForm({ ...form, permissions: { ...form.permissions, [key]: e.target.value } })}>
-          <option value="none">Нет доступа</option><option value="view">Просмотр</option>
-          {!["dashboard", "map", "history"].includes(key) && <option value="manage">Управление</option>}
-        </select>
-      </Field>)}</div>}
+      {form.role !== "admin" && <table className="permission-table" aria-label="Права по страницам">
+        <thead><tr><th scope="col">Страница</th><th scope="col">Просмотр</th><th scope="col">Управление</th></tr></thead>
+        <tbody>{Object.entries(PANEL_SECTIONS).map(([key, title]) => {
+          const level = form.permissions[key] || "none";
+          const editable = !["dashboard", "map", "history"].includes(key);
+          const change = (value: string) => setForm({ ...form, permissions: { ...form.permissions, [key]: value } });
+          return <tr key={key}><th scope="row">{title}</th>
+            <td><input type="checkbox" aria-label={`Просмотр: ${title}`} checked={level === "view" || level === "manage"} onChange={e => change(e.target.checked ? "view" : "none")} /></td>
+            <td>{editable ? <input type="checkbox" aria-label={`Управление: ${title}`} checked={level === "manage"} onChange={e => change(e.target.checked ? "manage" : "view")} /> : <span className="faint" title="На этой странице нет настроек для изменения">—</span>}</td>
+          </tr>;
+        })}</tbody>
+      </table>}
       <p className="hint">Изменение прав или пароля завершит все сессии этого пользователя. Управление пользователями, резервные копии и обновление доступны только администратору.</p>
       <div className="row-actions"><button className="btn" onClick={() => setForm(null)}>Отмена</button><button className="btn primary" disabled={!form.username || (creating && form.password.length < 12)} onClick={() => void save()}>Сохранить пользователя</button></div>
     </fieldset>}

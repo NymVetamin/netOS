@@ -368,7 +368,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
       split
       title="Резервные копии и обновление"
       subtitle="Операции выполняются отдельно от панели и продолжаются после перезапуска службы"
-      actions={<Badge tone={running ? "warn" : failed ? "danger" : "neutral"}>{running ? "выполняется" : failed ? "последняя операция завершилась ошибкой" : "готово"}</Badge>}
+      actions={<Badge tone={running || busy ? "warn" : failed ? "danger" : "neutral"}>{running || busy ? "выполняется" : failed ? "последняя операция завершилась ошибкой" : "готово"}</Badge>}
     >
       <div className="card-part pad">
       {message && <Notice tone="info" title={message} />}
@@ -414,7 +414,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
       </div>}
 
       </div>
-      <Updates current={installedVersion} disabled={busy || running} action={action} />
+      <Updates current={installedVersion} disabled={busy || running} onBusyChange={setBusy} onInstalled={setInstalledVersion} />
     </Card>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Notice, Field } from "./ui";
 
@@ -24,49 +24,111 @@ function ReleaseNotes({ release }: { release: Release }) {
   </section>;
 }
 
-export function Updates({ current, disabled, action }: {
-  current: string; disabled: boolean; action: (run: () => Promise<any>, message: string) => Promise<void>;
+const UPDATE_KEY = "netos-pending-update";
+type PendingUpdate = { target: string; started: number };
+function savedUpdate(): PendingUpdate | null {
+  try { const v = JSON.parse(sessionStorage.getItem(UPDATE_KEY) || "null"); return v && typeof v.target === "string" && typeof v.started === "number" ? v : null; } catch { return null; }
+}
+
+function UpdateConfirmation({release, busy, onCancel, onConfirm}: {release: Release; busy: boolean; onCancel: () => void; onConfirm: (backup: boolean) => void}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [backup, setBackup] = useState("");
+  useEffect(() => { const el = dialog.current!; el.showModal(); return () => el.close(); }, []);
+  return <dialog ref={dialog} className="action-confirm update-confirm" aria-labelledby="update-confirm-title" onCancel={e => {e.preventDefault(); if (!busy) onCancel();}}>
+    <h2 id="update-confirm-title">Установить {release.tag_name}?</h2>
+    <p>Настройки и пользователи сохранятся. Панель временно отключится во время установки.</p>
+    <Field label="Резервная копия перед обновлением"><select autoFocus aria-label="Резервная копия перед установкой" disabled={busy} value={backup} onChange={e => setBackup(e.target.value)}>
+      <option value="">Выберите действие</option><option value="yes">Создать резервную копию</option><option value="no">Продолжить без копии</option>
+    </select></Field>
+    <div className="action-confirm-buttons"><button className="btn" disabled={busy} onClick={onCancel}>Отмена</button>
+      <button className="btn primary" disabled={busy || !backup} onClick={() => onConfirm(backup === "yes")}>{busy ? "Запускаем…" : "Подтвердить установку"}</button></div>
+  </dialog>;
+}
+
+export function Updates({ current, disabled, onBusyChange, onInstalled }: {
+  current: string; disabled: boolean; onBusyChange: (busy: boolean) => void; onInstalled: (version: string) => void;
 }) {
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<Release | null>(null);
-  const [backup, setBackup] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [operation, setOperation] = useState<PendingUpdate | null>(savedUpdate);
+  const [message, setMessage] = useState("");
+  const [complete, setComplete] = useState(false);
+  const progress = useRef<HTMLDivElement>(null);
   const latest = releases?.[0];
   const newer = latest && compareVersions(latest.tag_name, current);
+  const active = !!operation || submitting;
+  useEffect(() => { onBusyChange(active); return () => onBusyChange(false); }, [active, onBusyChange]);
+  useEffect(() => {
+    if (!operation) return;
+    let cancelled = false, polling = false;
+    let observedRunning = false;
+    progress.current?.scrollIntoView({block: "nearest"});
+    const finish = (text: string, failed: boolean) => {
+      sessionStorage.removeItem(UPDATE_KEY); setOperation(null); setComplete(!failed);
+      if (failed) {setError(text); setMessage("");} else {setMessage(text); setError("");}
+    };
+    const poll = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const [status, router] = await Promise.all([api.maintenanceStatus(), api.status()]);
+        if (cancelled) return;
+        const running = status.state === "active" || status.state === "activating";
+        observedRunning ||= running;
+        const elapsed = Date.now() - operation.started;
+        if (status.failed && (observedRunning || elapsed > 8000)) {
+          finish("Обновление завершилось ошибкой. Проверьте журнал службы netos-maintenance.", true);
+        } else if (!running && compareVersions(router.version || "", operation.target) === 0) {
+          onInstalled(router.version);
+          finish(`Обновление завершено. Установлена ${operation.target}.`, false);
+        } else if (!running && (observedRunning || elapsed > 30000)) {
+          finish(`Обновление не подтверждено: роутер сообщает версию ${router.version || "неизвестно"}, ожидалась ${operation.target}.`, true);
+        } else {
+          setMessage(status.state === "activating" ? "Обновление ожидает запуска…" : `Устанавливается ${operation.target}. Дождитесь завершения.`);
+        }
+      } catch {
+        if (!cancelled) setMessage("Связь с панелью прервана. Ожидаем её возвращения после обновления…");
+      } finally { polling = false; }
+    };
+    void poll(); const timer = window.setInterval(poll, 2000);
+    return () => {cancelled = true; window.clearInterval(timer);};
+  }, [operation]);
   async function check() {
     setChecking(true); setError(""); setPending(null); setReleases(null);
     try { const result = await api.releases(); setReleases(result.releases || []); }
     catch (e: any) { setError(e.message || "Не удалось проверить обновления"); }
     finally { setChecking(false); }
   }
-  const ask = (r: Release) => { setPending(r); setBackup(""); };
+  async function install(backup: boolean) {
+    if (!pending || active) return;
+    setSubmitting(true); setError(""); setMessage(""); setComplete(false);
+    try {
+      await api.updateSystem(pending.tag_name, "UPDATE", backup);
+      const next = {target: pending.tag_name, started: Date.now()};
+      sessionStorage.setItem(UPDATE_KEY, JSON.stringify(next));
+      setPending(null); setOperation(next); setMessage("Обновление ожидает запуска…");
+    } catch (e: any) { setPending(null); setError(e.message || "Не удалось запустить обновление"); }
+    finally {setSubmitting(false);}
+  }
   return <>
     <h3 className="card-sub">Обновление netOS<span className="sub">Установлена версия: {current || "неизвестна"}</span></h3>
-    <div className="card-part pad">
-      <div className="row wrap">
-        <button className="btn" disabled={disabled || checking} onClick={check}>{checking ? "Проверяем…" : "Проверить обновления"}</button>
+    <div className="card-part pad update-panel">
+      <div className="update-toolbar">
+        <button className="btn" disabled={disabled || active || checking} onClick={check}>{checking ? "Проверяем…" : "Проверить обновления"}</button>
+        {latest && <span>{newer === 1 ? `Доступна версия ${latest.tag_name}` : newer === null ? "Не удалось сравнить установленную версию с релизом." : "Новых обновлений нет."}</span>}
+        {newer === 1 && <button className="btn primary" disabled={disabled || active} onClick={() => setPending(latest!)}>Обновить</button>}
       </div>
-      {error && <Notice tone="danger" title={error} />}
-      {latest && <>
-        <p>{newer === 1 ? `Доступна версия ${latest.tag_name}` : newer === null ? "Не удалось сравнить установленную версию с релизом." : "Новых обновлений нет."}</p>
-        {newer === 1 && <button className="btn primary" disabled={disabled} onClick={() => ask(latest)}>Обновить</button>}
-        <ReleaseNotes release={latest} />
-      </>}
-      {pending && <Notice tone="warn" title={`Установить ${pending.tag_name}?`}>
-        <p>Настройки и пользователи сохранятся. Панель временно отключится во время установки. Создать резервную копию перед обновлением?</p>
-        <Field label="Резервная копия"><select aria-label="Резервная копия перед установкой" value={backup} onChange={e => setBackup(e.target.value)}>
-          <option value="">Выберите действие</option><option value="yes">Создать резервную копию</option><option value="no">Продолжить без копии</option>
-        </select></Field>
-        <div className="row wrap">
-          <button className="btn primary" disabled={disabled || !backup} onClick={async () => {
-            const target = pending.tag_name, makeBackup = backup === "yes";
-            setPending(null);
-            await action(() => api.updateSystem(target, "UPDATE", makeBackup), `Установка ${target} запланирована`);
-          }}>Подтвердить установку</button>
-          <button className="btn ghost" onClick={() => setPending(null)}>Отмена</button>
-        </div>
-      </Notice>}
+      <div ref={progress} className="update-status" aria-live="polite">
+        {error && <Notice tone="danger" title={error} />}
+        {(active || message) && <><p role="status">{message || "Запускаем обновление…"}</p>
+          {(active || complete) && <progress aria-label="Прогресс обновления" {...(complete ? {value: 1, max: 1} : {})} />}
+        </>}
+      </div>
+      {latest && <ReleaseNotes release={latest} />}
+      {pending && <UpdateConfirmation release={pending} busy={submitting} onCancel={() => setPending(null)} onConfirm={backup => void install(backup)} />}
     </div>
   </>;
 }

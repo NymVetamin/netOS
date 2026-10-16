@@ -20,7 +20,7 @@ OPEN_ROWS = """new MutationObserver(() => document.querySelectorAll('details.xd:
 async def scenario(browser, mode):
     page = await browser.new_page()
     cfg = {"system": {"hostname": "test"}, "interfaces": [], "networks": [], "policies": [], "channels": []}
-    state = {"config": cfg, "version": 1, "ready": True, "error": False, "posts": [], "current": "v0.09"}
+    state = {"config": cfg, "version": 1, "ready": True, "error": False, "posts": [], "current": "v0.09", "maintenance": "idle", "unavailable": False, "start_error": False}
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
 
@@ -35,6 +35,8 @@ async def scenario(browser, mode):
             await route.fulfill(body=file.read_bytes(), content_type=mimetypes.guess_type(str(file))[0] or "application/octet-stream")
             return
         body, status = {}, 200
+        if state["unavailable"] and path in ("/api/status", "/api/maintenance/status"):
+            await route.abort(); return
         if path == "/api/session":
             body = {"username": "admin", "role": "admin", "csrf_token": "test"}
         elif path == "/api/panel-users": body = []
@@ -46,11 +48,14 @@ async def scenario(browser, mode):
             body = {"interfaces": [], "channels": [], "uptime_seconds": 1, "version": state["current"]}
         elif path == "/api/maintenance/releases":
             if state["error"]: status, body = 502, {"error": "GitHub временно недоступен"}
-            else: body = {"releases": [{"tag_name": "v0.10", "name": "Релиз 0.10", "body": "## Исправления\n- Исправлена сеть", "published_at": "2026-10-14T00:00:00Z"}]}
+            else: body = {"releases": [{"tag_name": "v0.10", "name": "Релиз 0.10", "body": "## Исправления\n- Исправлена сеть\n" + "Подробное описание изменений.\n" * 100, "published_at": "2026-10-14T00:00:00Z"}]}
         elif path == "/api/maintenance/update":
             state["posts"].append(req.post_data_json)
+            if state["start_error"]:
+                await route.fulfill(status=500,json={"error":"Не удалось запустить установщик"});return
+            state["maintenance"] = "activating"
             body = {"scheduled": True}
-        elif path == "/api/maintenance/status": body = {"state": "idle", "failed": False}
+        elif path == "/api/maintenance/status": body = {"state": state["maintenance"], "failed": state["maintenance"] == "failed"}
         elif path == "/api/backups": body = {"backups": []}
         elif path == "/api/config":
             if req.method == "PUT":
@@ -73,20 +78,67 @@ async def scenario(browser, mode):
     await update.click()
     confirm = page.get_by_role("button", name="Подтвердить установку", exact=True)
     await expect(confirm).to_be_disabled()
-    await confirm.scroll_into_view_if_needed()
+    dialog = page.get_by_role("dialog")
+    box = await dialog.bounding_box()
+    viewport = page.viewport_size
+    assert box and box["y"] >= 0 and box["y"] + box["height"] <= viewport["height"], (box, viewport)
+    # Long release notes must not put the confirmation below the viewport.
+    assert await confirm.is_visible()
+    await page.set_viewport_size({"width": 390, "height": 740})
+    box = await dialog.bounding_box()
+    assert box["y"] >= 0 and box["y"] + box["height"] <= 740, box
     Path("output/playwright").mkdir(parents=True, exist_ok=True)
     await page.screenshot(path="output/playwright/updates-confirmation.png")
     await page.get_by_role("button", name="Отмена", exact=True).click()
     assert not state["posts"]
+    await page.set_viewport_size({"width": 1280, "height": 900})
     for choice in ("yes", "no"):
+        state["current"] = "v0.09"
+        await page.reload()
+        await check.click()
         await update.click()
         await page.get_by_label("Резервная копия перед установкой").select_option(choice)
         await confirm.click()
-        await page.wait_for_timeout(200)
+        bar = page.get_by_role("progressbar", name="Прогресс обновления")
+        await expect(bar).to_be_visible()
+        assert await bar.get_attribute("value") is None, "fake percentage"
+        await page.locator(".update-toolbar").scroll_into_view_if_needed()
+        await page.screenshot(path="output/playwright/update-running.png")
         assert state["posts"][-1] == {"version": "v0.10", "confirm": "UPDATE", "backup": choice == "yes"}
+        await expect(page.get_by_role("button", name="Создать копию",exact=True)).to_be_disabled()
+        state["maintenance"] = "active"
         await page.reload()
-        await check.click()
-        await expect(update).to_be_visible()
+        await expect(bar).to_be_visible()
+        state["unavailable"] = True
+        await expect(page.get_by_role("status").filter(has_text="Связь с панелью прервана")).to_be_visible(timeout=10000)
+        state["unavailable"] = False
+        state["maintenance"] = "idle"
+        state["current"] = "v0.10"
+        await expect(page.get_by_role("status").filter(has_text="Обновление завершено")).to_be_visible(timeout=10000)
+        await expect(bar).to_have_attribute("value", "1")
+        assert await page.evaluate("sessionStorage.getItem('netos-pending-update')") is None
+    # Failed systemd operation must not turn into a completed progress bar.
+    state["current"] = "v0.09"
+    await page.reload(); await check.click(); await update.click()
+    await page.get_by_label("Резервная копия перед установкой").select_option("no")
+    await confirm.click()
+    await expect(page.get_by_role("status").filter(has_text="ожидает запуска")).to_be_visible()
+    state["maintenance"] = "active"
+    await expect(page.get_by_role("status").filter(has_text="Устанавливается")).to_be_visible(timeout=10000)
+    state["maintenance"] = "failed"
+    await expect(page.get_by_text("Обновление завершилось ошибкой. Проверьте журнал службы netos-maintenance.",exact=True)).to_be_visible(timeout=10000)
+    await expect(page.get_by_role("progressbar", name="Прогресс обновления")).to_have_count(0)
+    state["maintenance"] = "idle"
+    await page.reload(); await check.click(); await update.click()
+    await page.keyboard.press("Escape")
+    await expect(page.get_by_role("dialog")).to_have_count(0)
+    state["start_error"] = True
+    await update.click()
+    await page.get_by_label("Резервная копия перед установкой").select_option("yes")
+    await confirm.click()
+    await expect(page.locator(".update-panel").get_by_text("Не удалось запустить установщик",exact=True)).to_be_visible()
+    await expect(page.get_by_role("button", name="Создать копию",exact=True)).to_be_enabled()
+    state["start_error"] = False
     for current in ("v0.10", "v0.11", "dev"):
         state["current"] = current
         await page.reload()

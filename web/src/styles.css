@@ -2570,3 +2570,24 @@ td > select {
 .monitor-domains>div {display:grid;grid-template-columns:minmax(120px,260px) 1fr 60px;align-items:center;gap:12px}
 .monitor-domains span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .monitor-domains i {display:block;height:12px;min-width:2px;border-radius:3px;background:var(--accent-fill)}
+
+/* Compact access matrix and update workflow. */
+.permission-table { width: min(100%, 560px); margin-top: 16px; table-layout: fixed; }
+.permission-table th:first-child { width: 52%; }
+.permission-table th, .permission-table td { padding: 6px 10px; }
+.permission-table th[scope="row"] { font-weight: 400; }
+.permission-table th:not(:first-child), .permission-table td { text-align: center; }
+.permission-table input[type="checkbox"] { margin: 0; width: 16px; height: 16px; cursor: pointer; }
+.update-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.update-panel .release-notes { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.update-confirm .field { margin-top: 20px; }
+.update-status:not(:empty) { margin-top: 16px; }
+.update-status p { margin: 0 0 10px; }
+.update-status progress { display: block; width: 100%; height: 12px; accent-color: var(--accent); }
+
+.permission-table th[scope="row"] { color: var(--text); }
+@media (max-width: 600px) {
+  .permission-table th:first-child { width: 44%; }
+  .permission-table th, .permission-table td { padding: 6px 4px; }
+  .permission-table thead th { font-size: 11px; }
+}
