@@ -563,7 +563,7 @@ func (m *Manager) removeOwnedAddressesExcept(ctx context.Context, keepInterface,
 			}
 			if err := m.run(ctx, "ip", family, "addr", "del", item.Address, "dev", item.Interface); err != nil {
 				text := strings.ToLower(err.Error())
-				if !strings.Contains(text, "cannot assign requested address") && !strings.Contains(text, "cannot find device") && !strings.Contains(text, "no such") {
+				if !strings.Contains(text, "cannot assign requested address") && !strings.Contains(text, "ipv4: address not found") && !strings.Contains(text, "ipv6: address not found") && !strings.Contains(text, "cannot find device") && !strings.Contains(text, "no such") {
 					return err
 				}
 			}

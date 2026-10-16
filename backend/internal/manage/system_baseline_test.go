@@ -17,6 +17,33 @@ type baselineRunner struct {
 	fail    bool
 }
 
+func TestOwnedAddressCleanupAbsentAddressAndPermissionFailure(t *testing.T) {
+	for _, tc := range []struct {
+		message string
+		fails   bool
+	}{
+		{"Error: ipv4: Address not found.", false},
+		{"Error: ipv6: address not found.", false},
+		{"RTNETLINK answers: Operation not permitted", true},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			path := filepath.Join(m.StateDir, "generated", "owned-network-addresses.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(`[{"interface":"eth2","address":"192.168.78.1/24"}]`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			m.Run = func(context.Context, command) error { return errors.New(tc.message) }
+			if err := m.removeOwnedAddresses(context.Background()); (err != nil) != tc.fails {
+				t.Fatalf("unexpected cleanup result: %v", err)
+			}
+		})
+	}
+}
+
 func (r *baselineRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	key := name + " " + strings.Join(args, " ")
 	r.calls = append(r.calls, strings.TrimSpace(key))

@@ -1465,7 +1465,7 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		// Release the generated configuration before restoring its original
 		// stanzas; otherwise ifup's state cache can skip starting DHCP.
 		if err := m.run(ctx, "systemctl", "stop", "networking.service"); err != nil {
-			return m.networkRestoreFailure(ctx, savedRoutes, err)
+			return m.networkRestoreFailure(ctx, savedRoutes, uplink, err)
 		}
 	}
 
@@ -1536,7 +1536,7 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		return fmt.Errorf("восстановление исходной конфигурации networking: %w", err)
 	}
 	fmt.Fprintln(m.Out, "Возвращаем управление сетью ОС и проверяем шлюз…")
-	if err := m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes, baseline, needDefault); err != nil {
+	if err := m.restoreNetworking(ctx, links, ifupdownMode, savedRoutes, baseline, needDefault, uplink); err != nil {
 		return err
 	}
 	if baseline != nil {
@@ -1561,7 +1561,7 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		return fmt.Errorf("удаление пакетов netOS: %w", err)
 	}
 	if needDefault && !m.waitDefaultRoute(ctx, 3) {
-		return m.networkRestoreFailure(ctx, savedRoutes, fmt.Errorf("шлюз пропал после удаления пакетов"))
+		return m.networkRestoreFailure(ctx, savedRoutes, uplink, fmt.Errorf("шлюз пропал после удаления пакетов"))
 	}
 	if err := releaseSSH(); err != nil {
 		return err
@@ -1758,11 +1758,11 @@ func (m *Manager) captureDefaultRoutes(ctx context.Context) []defaultRoute {
 
 // restoreNetworking returns both persistent ownership and live connectivity.
 // A failed handover must retain the binary, database and baseline for retry.
-func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdownMode bool, saved []defaultRoute, baseline *systemBaseline, needDefault bool) error {
+func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdownMode bool, saved []defaultRoute, baseline *systemBaseline, needDefault bool, uplink managementUplink) error {
 	m.quiet(ctx, "networkctl", "reload")
 	restored, err := m.restoreOriginalNetworkServices(ctx, baseline)
 	if err != nil {
-		return m.networkRestoreFailure(ctx, saved, err)
+		return m.networkRestoreFailure(ctx, saved, uplink, err)
 	}
 	// Do not reactivate networkd through its socket after restoring an
 	// originally inactive service, or let it race the restored ifupdown owner.
@@ -1777,16 +1777,22 @@ func (m *Manager) restoreNetworking(ctx context.Context, links []string, ifupdow
 	}
 	if ifupdownMode && !restored {
 		if err := m.run(ctx, "systemctl", "restart", "networking"); err != nil {
-			return m.networkRestoreFailure(ctx, saved, err)
+			return m.networkRestoreFailure(ctx, saved, uplink, err)
 		}
 	}
 	if !needDefault || m.waitDefaultRoute(ctx, 20) {
 		return nil
 	}
-	return m.networkRestoreFailure(ctx, saved, fmt.Errorf("штатный менеджер сети не вернул шлюз по умолчанию"))
+	return m.networkRestoreFailure(ctx, saved, uplink, fmt.Errorf("штатный менеджер сети не вернул шлюз по умолчанию"))
 }
 
-func (m *Manager) networkRestoreFailure(ctx context.Context, saved []defaultRoute, cause error) error {
+func (m *Manager) networkRestoreFailure(ctx context.Context, saved []defaultRoute, uplink managementUplink, cause error) error {
+	// ifdown may remove the address as well as routes. A gateway alone cannot
+	// recover management connectivity without a connected source network.
+	if uplink.device != "" && uplink.address != "" {
+		m.bestEffort(ctx, "ip", "link", "set", "dev", uplink.device, "up")
+		m.bestEffort(ctx, "ip", "-4", "addr", "replace", uplink.address, "dev", uplink.device)
+	}
 	// Keep a temporary escape route, but never call that a successful return
 	// to persistent OS networking or delete recovery data afterwards.
 	if !m.waitDefaultRoute(ctx, 0) {

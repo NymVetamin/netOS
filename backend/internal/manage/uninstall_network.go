@@ -47,6 +47,16 @@ func (m *Manager) restoreOriginalNetworkServices(ctx context.Context, b *systemB
 	}
 
 	fmt.Fprintln(m.Out, "Восстанавливаем исходные службы управления сетью…")
+	// Starting the socket also requires its service to be loadable. Remove
+	// masks from all original units before starting either dependency.
+	for _, unit := range networkBaselineUnits {
+		state, exists := b.NetworkServices[unit]
+		if exists && state.Enabled != "masked" && state.Enabled != "masked-runtime" && state.Enabled != "not-found" {
+			if err := m.run(ctx, "systemctl", "unmask", unit); err != nil {
+				return true, err
+			}
+		}
+	}
 	// Release former owners before starting the original one.
 	for _, active := range []bool{false, true} {
 		for _, unit := range networkBaselineUnits {
@@ -62,10 +72,10 @@ func (m *Manager) restoreOriginalNetworkServices(ctx context.Context, b *systemB
 				if strings.TrimSpace(load) == "not-found" && !active {
 					continue
 				}
-				if err := m.run(ctx, "systemctl", "unmask", unit); err != nil {
-					return true, err
-				}
 				if state.Enabled == "not-found" {
+					if err := m.run(ctx, "systemctl", "unmask", unit); err != nil {
+						return true, err
+					}
 					state.Enabled = "disabled"
 				}
 			}

@@ -131,8 +131,16 @@ func TestRestoreNetworkdUnmasksBeforeStartingAndDoesNotStartIfupdown(t *testing.
 		"systemd-networkd.socket":  {Enabled: "enabled", Active: "active"},
 	}}
 	var commands []string
+	maskedService := true
 	m.Run = func(_ context.Context, c command) error {
-		commands = append(commands, c.name+" "+strings.Join(c.args, " "))
+		cmd := c.name + " " + strings.Join(c.args, " ")
+		commands = append(commands, cmd)
+		if cmd == "systemctl unmask systemd-networkd.service" {
+			maskedService = false
+		}
+		if cmd == "systemctl start systemd-networkd.socket" && maskedService {
+			return errors.New("socket service is masked, refusing")
+		}
 		return nil
 	}
 	if _, err := m.restoreOriginalNetworkServices(context.Background(), baseline); err != nil {
@@ -147,6 +155,36 @@ func TestRestoreNetworkdUnmasksBeforeStartingAndDoesNotStartIfupdown(t *testing.
 	}
 	if strings.Index(joined, "stop networking.service") > strings.Index(joined, "start systemd-networkd.socket") {
 		t.Fatal("old owner still active")
+	}
+}
+
+func TestNetworkRestoreFailureRecoversAddressBeforeGateway(t *testing.T) {
+	m, out := testManager()
+	linkUp, addressed, routed := false, false, false
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		if routed {
+			return "default via 192.0.2.1 dev eth0", nil
+		}
+		return "", nil
+	}
+	m.Run = func(_ context.Context, c command) error {
+		switch c.name + " " + strings.Join(c.args, " ") {
+		case "ip link set dev eth0 up":
+			linkUp = true
+		case "ip -4 addr replace 192.0.2.10/24 dev eth0":
+			addressed = linkUp
+		case "ip -4 route add default via 192.0.2.1 dev eth0":
+			if !addressed {
+				return errors.New("Nexthop has invalid gateway")
+			}
+			routed = true
+		}
+		return nil
+	}
+	cause := errors.New("original manager failed")
+	err := m.networkRestoreFailure(context.Background(), []defaultRoute{{via: "192.0.2.1", dev: "eth0"}}, managementUplink{device: "eth0", address: "192.0.2.10/24"}, cause)
+	if !errors.Is(err, cause) || !routed || strings.Contains(out.String(), "netOS удалён.") {
+		t.Fatalf("failed handover must remain an error with recovered connectivity: %v, routed=%v", err, routed)
 	}
 }
 
