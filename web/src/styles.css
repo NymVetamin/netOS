@@ -2472,8 +2472,6 @@ td > select {
 .rule-advanced > summary { cursor: pointer; margin-bottom: 12px; }
 .rule-preview { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
 @media (max-width: 700px) { .rule-endpoints { grid-template-columns: 1fr; } }
-.live-firewall-rules { margin: 0; padding: 0 1.2rem 0 3rem; }
-.live-firewall-rules > li { padding: 0.8rem 0.4rem; border-bottom: 1px solid var(--border); }
 
 /* Ethernet gets its own row: controls stay aligned, diagnostics are optional. */
 .port-link-settings { margin-top: 14px; max-width: 720px; min-width: 0; }
@@ -2483,3 +2481,21 @@ td > select {
 .port-link-details { margin-top: 8px; }
 .port-link-details summary { cursor: pointer; color: var(--text-dim); font-size: 12px; }
 .port-link-details .hint { overflow-wrap: anywhere; }
+
+.firewall-rule-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.firewall-rule-actions label { font-size: 12px; }
+.live-rule-conditions { font-size: 12px; margin: 3px 0; overflow-wrap: anywhere; }
+.live-rule-number { width: 24px; color: var(--text-faint); }
+.live-rule-button { width: 110px; text-align: right; }
+.live-rule-command { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: 12px; }
+
+@media (max-width: 700px) {
+  table.live-rules { min-width: 0; width: 100%; }
+  table.live-rules tbody { display: block; }
+  table.live-rules tr { display: flex; flex-wrap: wrap; padding: 12px; border-bottom: 1px solid var(--border); gap: 8px; }
+  table.live-rules td { display: block; padding: 0; border: 0; min-width: 0; }
+  table.live-rules td.live-rule-number { display: none; }
+  table.live-rules td:nth-child(2), table.live-rules td[colspan] { width: 100%; }
+  table.live-rules td.live-rule-button { width: auto; margin-left: auto; }
+  .firewall-live .chain-header { flex-wrap: wrap; }
+}

@@ -119,8 +119,6 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         <p>Правила доступа и перенаправления портов; проверяются сверху вниз</p>
       </div>
 
-      <label className="row" style={{marginBottom:"1rem"}}><input type="checkbox" checked={showAutomatic} onChange={e => { setShowAutomatic(e.target.checked); drag.end(); }} />Показать автоматические правила</label>
-      {showAutomatic ? <FirewallLive onEdit={() => setShowAutomatic(false)} /> : <>
       <ProblemsFor problems={problems} prefixes={["firewall", "clients"]} />
       {config.samba?.enabled && <Notice tone="info" title="Доступ к дискам Samba">
         {!fw.enabled && <p>Файрволл выключен: описанные ниже сетевые правила не действуют. Ограничения самого Samba по адресам и пользователям сохраняются.</p>}
@@ -206,11 +204,12 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
 
       <Card
         title="Правила"
-        subtitle={`${rules.filter((r) => r.enabled).length} включено из ${rules.length}`}
+        subtitle={showAutomatic ? "Действующие правила, включая автоматические" : `${rules.filter((r) => r.enabled).length} включено из ${rules.length}`}
         actions={
-          <button className="btn sm primary" onClick={() => setAdding(true)}>
-            Создать правило
-          </button>
+          <div className="firewall-rule-actions">
+            <label className="row"><input type="checkbox" checked={showAutomatic} disabled={adding || editing !== null} title={adding || editing !== null ? "Завершите редактирование правила" : undefined} onChange={e => { setShowAutomatic(e.target.checked); drag.end(); }} />Показать автоматические правила</label>
+            {!showAutomatic && <button className="btn sm primary" onClick={() => setAdding(true)}>Создать правило</button>}
+          </div>
         }
         tight
       >
@@ -227,7 +226,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
           </div>
         )}
 
-        {groups.length === 0 ? (
+        {showAutomatic ? <FirewallLive config={config} onEdit={() => setShowAutomatic(false)} /> : groups.length === 0 ? (
           <Empty>Правил нет</Empty>
         ) : (
           groups.map((g) => (
@@ -261,7 +260,6 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       </Card>
 
       <NATSection config={config} patch={patch} />
-      </>}
     </>
   );
 }
