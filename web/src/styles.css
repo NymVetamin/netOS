@@ -808,6 +808,14 @@ summary.xsum:hover,
 }
 
 /* Редко нужная часть настроек записи. */
+/* Текстовые спойлеры раскрываются только по заголовку и стрелке.
+   xsum — полноценная раскрываемая строка таблицы. */
+summary:not(.xsum) {
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+}
+
 .more {
   margin-top: 14px;
 }

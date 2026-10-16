@@ -8,6 +8,25 @@ from playwright.async_api import async_playwright, expect
 DIST = Path(__file__).resolve().parents[2] / "backend/internal/api/webdist"
 
 
+async def check_hit_area(page, block):
+    summary = block.locator(':scope > summary')
+    await summary.scroll_into_view_if_needed()
+    bounds = await block.bounding_box()
+    title = await summary.bounding_box()
+    # Click empty space at the right of the heading, closed and open.
+    for opened in (False, True):
+        await block.evaluate('(el, opened) => el.open = opened', opened)
+        await page.mouse.click(bounds['x'] + bounds['width'] - 8, title['y'] + title['height'] / 2)
+        assert await block.evaluate('(el) => el.open') == opened, 'Empty space toggled disclosure'
+        await summary.click()
+        assert await block.evaluate('(el) => el.open') != opened
+    await summary.focus()
+    await page.keyboard.press('Enter')
+    assert await block.evaluate('(el) => el.open')
+    await page.keyboard.press('Space')
+    assert not await block.evaluate('(el) => el.open')
+
+
 async def main():
     cfg = {"system": {"hostname": "test", "ntp": {"enabled": True,
            "servers": ["0.debian.pool.ntp.org", "1.debian.pool.ntp.org"]}},
@@ -37,6 +56,7 @@ async def main():
       await expect(block).to_be_visible()
       await expect(block.locator('input')).to_have_count(2)
       await expect(block.locator('input').first).not_to_be_visible()
+      await check_hit_area(page, block)
       await block.locator('summary').click()
       await expect(page.get_by_label('Сервер времени 1',exact=True)).to_have_value('0.debian.pool.ntp.org')
       add=page.get_by_role('button',name='+ Добавить сервер',exact=True)
@@ -61,6 +81,21 @@ async def main():
       await expect(add).to_be_disabled()
       await expect(block.locator('input').first).to_be_disabled()
       await expect(block.get_by_role('button').first).to_be_disabled()
+      # All disclosure styles found in the UI, using the built stylesheet.
+      for width in [1440, 390]:
+        await page.set_viewport_size({'width':width,'height':1000})
+        await block.evaluate('(el) => el.open = false')
+        await check_hit_area(page, block)
+        for kind in ['more', 'advanced', 'action-error-details', 'port-link-details',
+                     'socks-advanced', 'rule-advanced', 'logs-section', 'addmenu']:
+          await page.evaluate("""kind => {
+            const host = document.createElement('div'); host.id = 'disclosure-test';
+            host.style.cssText = 'position:fixed;inset:0;background:var(--surface);padding:20px;z-index:99999';
+            host.innerHTML = `<details class="${kind}"><summary>Дополнительные настройки</summary><div>Содержимое</div></details>`;
+            document.body.append(host);
+          }""", kind)
+          await check_hit_area(page, page.locator('#disclosure-test details'))
+          await page.locator('#disclosure-test').evaluate('(el) => el.remove()')
       assert not errors, errors
       await browser.close()
       print('PASS: NTP rows, limit, deletion, reload, disabled state, desktop/mobile')
