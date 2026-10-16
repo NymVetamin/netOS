@@ -2499,3 +2499,18 @@ td > select {
   table.live-rules td.live-rule-button { width: auto; margin-left: auto; }
   .firewall-live .chain-header { flex-wrap: wrap; }
 }
+
+.socks-advanced > summary { cursor: pointer; margin-bottom: 8px; }
+.socks-connection { border-top: 1px solid var(--border); padding-top: 16px; }
+.socks-connection h4 { margin: 0 0 12px; }
+.socks-connection-list { display: grid; gap: 10px; margin: 0; max-width: 760px; }
+.socks-connection-row { display: grid; grid-template-columns: minmax(100px, 180px) minmax(0, 1fr); gap: 12px; align-items: center; }
+.socks-connection-row dt { color: var(--text-dim); overflow-wrap: anywhere; }
+.socks-connection-row dd { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.socks-connection-row code { overflow-wrap: anywhere; min-width: 0; }
+.socks-connection .copy-icon { width: 28px; height: 28px; min-height: 28px; padding: 4px; flex: 0 0 28px; border-color: transparent; background: transparent; }
+.socks-connection .copy-icon:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.socks-connection .copy-icon svg { width: 14px; height: 14px; }
+@media (max-width: 520px) {
+ .socks-connection-row { grid-template-columns: 1fr; gap: 4px; }
+}

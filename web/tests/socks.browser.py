@@ -87,6 +87,8 @@ async def scenario(browser, mode):
         a=await page.get_by_role('checkbox',name=first,exact=True).locator('..').bounding_box()
         b=await page.get_by_role('checkbox',name=second,exact=True).locator('..').bounding_box()
         assert b['y'] >= a['y']+a['height'] and abs(b['x']-a['x'])<2
+    await expect(page.get_by_role('button',name='Показать пароль',exact=True)).to_have_count(0)
+    await expect(page.get_by_role('button',name='Скопировать пароль',exact=True)).to_have_count(0)
     copy_button=page.get_by_role('button',name='Скопировать',exact=True).first
     await expect(copy_button.locator('svg')).to_have_count(1)
     await copy_button.click()
@@ -115,9 +117,18 @@ async def scenario(browser, mode):
     await expect(page.get_by_text("ОПАСНО: SOCKS5 открыт со стороны интернета",exact=True)).to_have_count(0)
     await page.get_by_role("button",name="Показать пароль",exact=True).click()
     await expect(page.locator("code").filter(has_text="fixture-password")).to_be_visible()
+    await page.get_by_role('button',name='Скопировать пароль',exact=True).click()
+    assert await page.evaluate('window.copiedText')=='fixture-password'
     await toggle.scroll_into_view_if_needed()
     Path("output/playwright").mkdir(parents=True,exist_ok=True)
-    await page.screenshot(path="output/playwright/socks5-ui.png")
+    await page.evaluate("document.documentElement.dataset.theme='dark'")
+    for width in (1280,390):
+        await page.set_viewport_size({'width':width,'height':900})
+        await page.locator('.socks-connection').screenshot(path=f'output/playwright/socks5-connection-{width}.png')
+        assert await page.locator('.socks-connection').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
+    await page.set_viewport_size({'width':1280,'height':900})
+    await page.get_by_role('button',name='Скрыть пароль',exact=True).click()
+    await expect(page.locator('.socks-connection code').filter(has_text='fixture-password')).to_have_count(0)
     await page.wait_for_timeout(700)  # Дождаться сохранения последнего переключения WAN.
     before=copy.deepcopy(state['config']['socks'])
     async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):

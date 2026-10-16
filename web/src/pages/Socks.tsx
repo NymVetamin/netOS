@@ -61,21 +61,30 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
    <Field label="Пароль SOCKS5"><input type="password" autoComplete="new-password" {...secretInput(p,"password")} value={p.password||""} onChange={e=>edit({password:e.target.value})}/></Field>
   </div>}
   {p.auth===false&&<Notice tone="warn" title="Без авторизации">Прокси сможет использовать любой клиент выбранных сетей.</Notice>}
-  <details><summary>Дополнительные настройки</summary>
+  <details className="socks-advanced"><summary>Дополнительные настройки</summary>
    <Switch label="Разрешить SOCKS5 с WAN — небезопасно" checked={!!p.allow_wan} onChange={async on=>{
     if(!on){edit({allow_wan:false});return}
     if(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет"))edit({allow_wan:true,auth:true});
    }}/>
   </details>
   {p.allow_wan&&<Notice tone="danger" title="ОПАСНО: SOCKS5 открыт со стороны интернета">{WAN_WARNING}</Notice>}
+  <section className="socks-connection" aria-label="Подключение приложения">
   <h4>Подключение приложения</h4>
-  {addresses.map((a:any)=><div className="row wrap" key={a.name+a.address}><span>{a.name}: <code>{a.address?.split("/")[0]}:{p.port||1080}</code></span><CopyButton iconOnly text={a.address?.split("/")[0]+":"+(p.port||1080)} onError={setError}/></div>)}
+  <dl className="socks-connection-list">
+  {addresses.map((a:any)=><div className="socks-connection-row" key={a.name+a.address}>
+   <dt>{a.name}</dt><dd><code>{a.address?.split("/")[0]}:{p.port||1080}</code><CopyButton iconOnly text={a.address?.split("/")[0]+":"+(p.port||1080)} onError={setError}/></dd>
+  </div>)}
+  {p.auth!==false&&<>
+   <div className="socks-connection-row"><dt>Логин</dt><dd>{p.username?<code>{p.username}</code>:<span className="faint">Не задан</span>}</dd></div>
+   <div className="socks-connection-row"><dt>Пароль</dt><dd>
+    <code>{shown!==null?(shown||"Не задан"):(p.password||p.secrets_set?.password)?"••••••••":"Не задан"}</code>
+    {(p.password||p.secrets_set?.password)&&<button type="button" className="btn ghost sm" onClick={async()=>{if(shown!==null){setShown(null);return}try{const data=await api.socksCredentials();setShown(p.password||data.password);setError("")}catch(e:any){setError(e.message)}}}>{shown===null?"Показать пароль":"Скрыть пароль"}</button>}
+    {shown&&<CopyButton iconOnly label="Скопировать пароль" text={shown} onError={setError}/>}
+   </dd></div>
+  </>}
+  </dl>
   {p.allow_wan&&<p className="hint">Для WAN используйте внешний IPv4-адрес роутера и порт {p.port||1080}. Если роутер за NAT, доступ зависит от настроек вышестоящего устройства.</p>}
-  {p.auth!==false&&<div className="row wrap">
-   <span>Логин: {p.username||"не задан"}</span>
-   <button className="btn" onClick={async()=>{if(shown!==null){setShown(null);return}try{const data=await api.socksCredentials();setShown(p.password||data.password);setError("")}catch(e:any){setError(e.message)}}}>{shown===null?"Показать пароль":"Скрыть пароль"}</button>
-   {shown!==null&&<><code>{shown||"не задан"}</code><CopyButton iconOnly label="Скопировать пароль" text={shown} onError={setError}/></>}
-  </div>}
+  </section>
   <p className="hint">Настройки начнут действовать после применения. Для разрешения имён через прокси включите удалённый DNS в приложении.</p>
   </>}
  </div>
