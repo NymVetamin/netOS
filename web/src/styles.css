@@ -2474,3 +2474,12 @@ td > select {
 @media (max-width: 700px) { .rule-endpoints { grid-template-columns: 1fr; } }
 .live-firewall-rules { margin: 0; padding: 0 1.2rem 0 3rem; }
 .live-firewall-rules > li { padding: 0.8rem 0.4rem; border-bottom: 1px solid var(--border); }
+
+/* Ethernet gets its own row: controls stay aligned, diagnostics are optional. */
+.port-link-settings { margin-top: 14px; max-width: 720px; min-width: 0; }
+.port-link-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.port-link-controls select { flex: 1 1 280px; min-width: 0; width: 100%; }
+.port-link-controls .btn { flex: 0 0 auto; }
+.port-link-details { margin-top: 8px; }
+.port-link-details summary { cursor: pointer; color: var(--text-dim); font-size: 12px; }
+.port-link-details .hint { overflow-wrap: anywhere; }

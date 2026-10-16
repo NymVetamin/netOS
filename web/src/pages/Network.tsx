@@ -818,7 +818,6 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                     "—"
                   )}</div></Cap>}
                 <Cap label="Имя для отображения"><input value={i.label || ""} maxLength={64} aria-label={`Имя порта ${i.name}`} placeholder="Например, Кабинет" onChange={e=>patch(d=>{d.interfaces[idx].label=e.target.value})}/></Cap>
-                {i.type==="physical" && <PortLinkSettings iface={i} onChange={v=>patch(d=>{d.interfaces[idx].link_mode=v})}/>}
                 <Cap label="MAC-адрес"><input
                     type="text"
                     className="mono"
@@ -837,6 +836,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                     onChange={(e) => patch((d) => (d.interfaces[idx].mtu = Number(e.target.value)))}
                   /></Cap>
               </div>
+              {i.type==="physical" && <PortLinkSettings iface={i} onChange={v=>patch(d=>{d.interfaces[idx].link_mode=v})}/>}
               <div className="row-actions end">{i.type !== "physical" && (
                     <button
                       className="btn ghost sm"
