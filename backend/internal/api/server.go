@@ -53,6 +53,7 @@ type Server struct {
 	Engine        *apply.Engine
 	Collector     *runtime.Collector
 	Traffic       *runtime.TrafficHistory
+	ClientHistory *runtime.ClientHistory
 	Maintenance   *Maintenance
 	Logger        Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
@@ -220,6 +221,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/logs", s.handleLogs)
 	auth("GET /api/ddns/status", s.handleDDNSStatus)
 	auth("GET /api/statistics", s.handleStatistics)
+	auth("GET /api/statistics/clients", s.handleClientStatistics)
 	auth("GET /api/maintenance/status", s.handleMaintenanceStatus)
 	auth("GET /api/backups", s.handleBackups)
 	auth("GET /api/backups/{name}", s.handleBackupDownload)

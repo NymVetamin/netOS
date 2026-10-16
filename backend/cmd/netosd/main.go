@@ -30,6 +30,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/ddns"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/hostsettings"
+	"github.com/netos-router/netos/internal/subsys/monitor"
 	"github.com/netos-router/netos/internal/subsys/multiwan"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/netiface"
@@ -324,6 +325,15 @@ func main() {
 	}()
 	panel.Version = version
 	panel.Traffic = traffic
+	clientHistory, historyErr := runtime.NewClientHistory("/var/lib/netos/client-history.sqlite", runner, collector, engine.Current)
+	if historyErr != nil {
+		logger.Errorf("история клиентов: %v", historyErr)
+	} else {
+		defer clientHistory.Close()
+		panel.ClientHistory = clientHistory
+		clientHistory.Extra = panel.ProxyClientCounters
+		go clientHistory.Run(ctx)
+	}
 	panel.Maintenance = api.NewMaintenance(runner)
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
@@ -558,6 +568,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		sambaController,
 		&socks.Preparation{S: socksSubsystem},
 		firewallSubsystem,
+		&monitor.Subsystem{Runner: runner},
 		socksSubsystem,
 		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),

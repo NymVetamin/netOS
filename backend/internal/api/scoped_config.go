@@ -11,7 +11,8 @@ import (
 
 // Roots edited by each page. Shared selectors are handled explicitly below.
 var rootSections = map[string][]string{
-	"system": {"system"}, "ipv6": {"system"}, "interfaces": {"network"}, "networks": {"network"},
+	"traffic_monitor": {"system", "dashboard"},
+	"system":          {"system"}, "ipv6": {"system"}, "interfaces": {"network"}, "networks": {"network"},
 	"wans": {"network"}, "multiwan": {"network"}, "routing": {"routing"}, "firewall": {"firewall"},
 	"dhcp": {"services"}, "dns": {"services"}, "socks": {"services"}, "clients": {"clients"},
 	"channels": {"channels"}, "policies": {"channels"}, "vpn_servers": {"vpn-servers"},

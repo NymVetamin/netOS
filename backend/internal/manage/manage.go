@@ -28,6 +28,7 @@ import (
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
+	"github.com/netos-router/netos/internal/subsys/monitor"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/policy"
 	"github.com/netos-router/netos/internal/subsys/samba"
@@ -1290,6 +1291,9 @@ const emptyFirewall4 = "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OU
 const emptyFirewall6 = "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n"
 
 func (m *Manager) clearNetOSFirewall(ctx context.Context) error {
+	if err := monitor.Clear(ctx, m.Output); err != nil {
+		return err
+	}
 	if err := m.Run(ctx, command{name: "iptables-restore", stdin: emptyFirewall4, feedStdin: true}); err != nil {
 		return fmt.Errorf("очистка IPv4 firewall: %w", err)
 	}
@@ -1397,6 +1401,9 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	}
 	m.removePolicyRules(ctx)
 	if err := m.removeOwnedQoS(ctx); err != nil {
+		return err
+	}
+	if err := monitor.Clear(ctx, m.Output); err != nil {
 		return err
 	}
 	if err := firewall.ClearBridgeIPv6(ctx, m.Output); err != nil && !m.uninstallFirewallAlreadyRestored(ctx, baseline, err) {

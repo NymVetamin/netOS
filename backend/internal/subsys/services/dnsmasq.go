@@ -243,9 +243,16 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 		// Клиент, получивший AAAA, попытается пойти по IPv6 мимо каналов.
 		w("filter-AAAA")
 	}
-	if cfg.DNS.QueryLog {
+	if cfg.DNS.QueryLog || cfg.TrafficMonitor.Enabled {
 		w("log-queries")
-		w("log-facility=/var/log/netos/dns.log")
+		if cfg.DNS.QueryLog {
+			w("log-facility=/var/log/netos/dns.log")
+		} else {
+			w("log-facility=-")
+		}
+		if cfg.TrafficMonitor.Enabled {
+			w("log-async=100")
+		}
 	}
 	if hasEnabledBlocklists(cfg) && cfg.DNS.Provider == "dnsmasq" {
 		w("conf-file=%s", dnsmasqBlocklistPath)

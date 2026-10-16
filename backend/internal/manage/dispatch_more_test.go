@@ -177,7 +177,12 @@ func TestBackupNowWaitsForFreshDaemonReadiness(t *testing.T) {
 		}
 		return nil
 	}
-	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
+	m.Output = func(_ context.Context, name string, _ ...string) (string, error) {
+		if name == "nft" {
+			return "", nil
+		}
+		return "active\n", nil
+	}
 	sleeps := 0
 	m.Sleep = func(time.Duration) {
 		sleeps++
@@ -322,7 +327,12 @@ func TestRestoreRollbackIgnoresCancelledCallerContext(t *testing.T) {
 		}
 		return nil
 	}
-	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
+	m.Output = func(_ context.Context, name string, _ ...string) (string, error) {
+		if name == "nft" {
+			return "", nil
+		}
+		return "active\n", nil
+	}
 	m.Sleep = func(time.Duration) {
 		if err := os.MkdirAll(filepath.Dir(m.sys(runtimeReadyPath)), 0o755); err != nil {
 			t.Fatal(err)

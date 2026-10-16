@@ -2554,3 +2554,19 @@ td > select {
 
 .client-settings-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; }
 .client-settings-icon svg { width: 16px; height: 16px; }
+
+/* Bounded traffic history; graph drawing stays in the browser. */
+.monitor-toolbar,.monitor-range {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.monitor-toolbar select {max-width:220px}
+.monitor-range label {display:flex;align-items:center;gap:8px}
+.monitor-clients {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px 18px;max-height:180px;overflow:auto;margin:14px 0}
+.monitor-clients label {display:flex;align-items:center;gap:8px;min-width:0}
+.monitor-clients input {flex:0 0 auto}
+.monitor-clients small {display:block}
+.monitor-axis {display:flex;justify-content:space-between;gap:12px;color:var(--text-muted);font-size:11px}
+.monitor-hover {display:flex;flex-wrap:wrap;gap:8px 16px;min-height:36px;padding:10px 0;font-size:12px}
+.monitor-details {margin-top:22px;border-top:1px solid var(--border);padding-top:12px}
+.monitor-domains {display:grid;gap:10px;margin:20px 0}
+.monitor-domains>div {display:grid;grid-template-columns:minmax(120px,260px) 1fr 60px;align-items:center;gap:12px}
+.monitor-domains span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.monitor-domains i {display:block;height:12px;min-width:2px;border-radius:3px;background:var(--accent-fill)}

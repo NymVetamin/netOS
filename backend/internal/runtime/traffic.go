@@ -121,6 +121,60 @@ func (h *TrafficHistory) Points(since time.Time, names []string) []TrafficPoint 
 	return result
 }
 
+// Window bounds the response independently of the selected history length.
+// Rates are averaged within a time bucket, never added across time.
+func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) []TrafficPoint {
+	points := h.Points(from, names)
+	out := []TrafficPoint{}
+	if limit < 2 {
+		limit = 2
+	}
+	step := to.Sub(from) / time.Duration(limit)
+	if step < h.Interval {
+		step = h.Interval
+	}
+	if step <= 0 {
+		step = 30 * time.Second
+	}
+	var bucket int64 = -1
+	var count int64
+	flush := func() {
+		if count == 0 {
+			return
+		}
+		p := &out[len(out)-1]
+		for name, v := range p.Interfaces {
+			v.RXBPS /= count
+			v.TXBPS /= count
+			p.Interfaces[name] = v
+		}
+	}
+	for _, p := range points {
+		if p.At.After(to) {
+			break
+		}
+		key := int64(p.At.Sub(from) / step)
+		if key != bucket {
+			flush()
+			bucket = key
+			count = 0
+			out = append(out, TrafficPoint{At: p.At, Interfaces: map[string]TrafficRate{}})
+		}
+		count++
+		target := &out[len(out)-1]
+		for name, v := range p.Interfaces {
+			old := target.Interfaces[name]
+			old.RXBPS += v.RXBPS
+			old.TXBPS += v.TXBPS
+			old.RXBytes = v.RXBytes
+			old.TXBytes = v.TXBytes
+			target.Interfaces[name] = old
+		}
+	}
+	flush()
+	return out
+}
+
 func (h *TrafficHistory) pruneLocked(before time.Time) {
 	index := sort.Search(len(h.points), func(i int) bool { return !h.points[i].At.Before(before) })
 	if index > 0 {

@@ -34,27 +34,33 @@ const maxInterfaceName = 15
 
 // Config — корень дерева конфигурации.
 type Config struct {
-	Socks      Socks       `json:"socks"`
-	Version    int         `json:"version"`
-	System     System      `json:"system"`
-	IPv6       IPv6Policy  `json:"ipv6"`
-	Components []Component `json:"components"`
-	Interfaces []Interface `json:"interfaces"`
-	Networks   []Network   `json:"networks"`
-	WANs       []WAN       `json:"wans"`
-	MultiWAN   MultiWAN    `json:"multiwan"`
-	Routing    Routing     `json:"routing"`
-	Firewall   Firewall    `json:"firewall"`
-	DHCP       DHCP        `json:"dhcp"`
-	DNS        DNS         `json:"dns"`
-	Clients    []Client    `json:"clients"`
-	Channels   []Channel   `json:"channels"`
-	Policies   []Policy    `json:"policies"`
-	VPNServers []VPNServer `json:"vpn_servers"`
-	WiFi       []WiFiRadio `json:"wifi"`
-	QoS        QoS         `json:"qos"`
-	DDNS       DDNS        `json:"ddns"`
-	Samba      Samba       `json:"samba"`
+	TrafficMonitor TrafficMonitor `json:"traffic_monitor"`
+	Socks          Socks          `json:"socks"`
+	Version        int            `json:"version"`
+	System         System         `json:"system"`
+	IPv6           IPv6Policy     `json:"ipv6"`
+	Components     []Component    `json:"components"`
+	Interfaces     []Interface    `json:"interfaces"`
+	Networks       []Network      `json:"networks"`
+	WANs           []WAN          `json:"wans"`
+	MultiWAN       MultiWAN       `json:"multiwan"`
+	Routing        Routing        `json:"routing"`
+	Firewall       Firewall       `json:"firewall"`
+	DHCP           DHCP           `json:"dhcp"`
+	DNS            DNS            `json:"dns"`
+	Clients        []Client       `json:"clients"`
+	Channels       []Channel      `json:"channels"`
+	Policies       []Policy       `json:"policies"`
+	VPNServers     []VPNServer    `json:"vpn_servers"`
+	WiFi           []WiFiRadio    `json:"wifi"`
+	QoS            QoS            `json:"qos"`
+	DDNS           DDNS           `json:"ddns"`
+	Samba          Samba          `json:"samba"`
+}
+
+// TrafficMonitor is opt-in; disabling stops collection without erasing history.
+type TrafficMonitor struct {
+	Enabled bool `json:"enabled"`
 }
 
 // ---------------------------------------------------------------------------

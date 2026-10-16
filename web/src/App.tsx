@@ -614,7 +614,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             <Spinner />
           ) : (
             <fieldset disabled={discarding || (!canAccess(session, page, true) && !["dashboard", "map", "history", "diagnostics"].includes(page))} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-              {page === "dashboard" && <Dashboard config={cfg} />}
+              {page === "dashboard" && <Dashboard config={cfg} patch={patch} />}
               {page === "map" && <MapPage config={cfg} />}
               {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} />}
               {page === "network" && (

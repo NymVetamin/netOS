@@ -20,6 +20,11 @@ func dnsFrontendNeeded(cfg *config.Config) bool {
 	if hasKernelDomainPolicies(cfg) {
 		return true
 	}
+	// dnsproxy verbose output does not provide a compact per-client query event.
+	// Reuse the existing dnsmasq frontend, retaining encrypted upstream handling.
+	if cfg.TrafficMonitor.Enabled && cfg.DNS.Provider == "dnsproxy" {
+		return true
+	}
 	for _, server := range cfg.VPNServers {
 		if server.Enabled && server.Type == "ocserv" {
 			return true

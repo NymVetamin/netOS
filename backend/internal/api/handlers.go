@@ -751,17 +751,9 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"points": []any{}})
 		return
 	}
-	hours := 24
-	if raw := r.URL.Query().Get("hours"); raw != "" {
-		var err error
-		hours, err = strconv.Atoi(raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "диапазон должен быть целым числом часов")
-			return
-		}
-	}
-	if hours < 1 || hours > 168 {
-		writeError(w, http.StatusBadRequest, "диапазон должен быть от 1 до 168 часов")
+	from, to, err := statisticsRange(r)
+	if err != nil {
+		writeError(w, 400, "%v", err)
 		return
 	}
 	var names []string
@@ -776,7 +768,7 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 		}
 		names = append(names, name)
 	}
-	points := s.Traffic.Points(time.Now().UTC().Add(-time.Duration(hours)*time.Hour), names)
+	points := s.Traffic.Window(from, to, names, 600)
 	writeJSON(w, http.StatusOK, map[string]any{"points": points, "interval_seconds": int(s.Traffic.Interval.Seconds())})
 }
 

@@ -133,9 +133,11 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	if cfg.DNS.DNSSEC {
 		w("    auto-trust-anchor-file: \"%s\"", unboundAnchorPath)
 	}
-	if cfg.DNS.QueryLog && !policyBackend {
+	if (cfg.DNS.QueryLog || cfg.TrafficMonitor.Enabled) && !policyBackend {
 		w("    log-queries: yes")
-		w("    log-replies: yes")
+		if cfg.DNS.QueryLog {
+			w("    log-replies: yes")
+		}
 	}
 	if cfg.DNS.RebindProtection {
 		// Ответ из публичного DNS, указывающий внутрь локальной сети, — это

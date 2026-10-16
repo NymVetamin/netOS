@@ -86,6 +86,7 @@ var Order = []string{
 	"vpn-servers",
 	"policy",
 	"firewall",
+	"traffic-monitor",
 	"socks",
 	"policy-cleanup",
 	"dhcp",

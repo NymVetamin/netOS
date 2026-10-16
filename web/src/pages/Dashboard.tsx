@@ -1,17 +1,15 @@
+import { TrafficMonitor } from "./TrafficMonitor";
 import { linkSpeed } from "./PortLinkSettings";
 import { useEffect, useState } from "react";
-import { api, formatBitrate, formatBytes, formatUptime } from "../api";
+import { api, formatBytes, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
 
 // Сводка: то, на что администратор смотрит первым делом, когда что-то не
 // работает. Поэтому здесь состояние аплинка, клиенты и счётчики интерфейсов,
 // а не декоративные графики.
-export function Dashboard({ config }: { config: any }) {
+export function Dashboard({ config, patch }: { config: any; patch: (change: (draft: any) => void) => void }) {
   const [status, setStatus] = useState<any>(null);
-  const [statistics, setStatistics] = useState<any[]>([]);
-  const [statisticsLoaded, setStatisticsLoaded] = useState(false);
   const [statusError, setStatusError] = useState(false);
-  const [statisticsError, setStatisticsError] = useState(false);
 
   const wanInterfaces = (config.wans || [])
     .filter((w: any) => w.enabled)
@@ -20,8 +18,6 @@ export function Dashboard({ config }: { config: any }) {
   useEffect(() => {
     let cancelled = false;
     let busy = false;
-    setStatisticsLoaded(false);
-    setStatisticsError(false);
     const load = async () => {
       if (busy) return;
       busy = true;
@@ -29,9 +25,7 @@ export function Dashboard({ config }: { config: any }) {
         api.status().then((result) => {
           if (!cancelled) { setStatus(result); setStatusError(false); }
         }).catch(() => { if (!cancelled) setStatusError(true); }),
-        api.statistics(24, wanInterfaces).then((result) => {
-          if (!cancelled) { setStatistics(result.points || []); setStatisticsLoaded(true); setStatisticsError(false); }
-        }).catch(() => { if (!cancelled) setStatisticsError(true); }),
+
       ]);
       busy = false;
     };
@@ -137,11 +131,7 @@ export function Dashboard({ config }: { config: any }) {
         </div>
       </Card>
 
-      <Card title="Скорость интернета" subtitle="Фактический трафик всех включённых интернет-каналов за 24 часа">
-        {statisticsError ? <Empty>Не удалось обновить статистику. Повторная попытка выполняется автоматически.</Empty> :
-          !statisticsLoaded ? <Empty>Загрузка статистики…</Empty> :
-            <TrafficChart points={statistics} interfaces={wanInterfaces} />}
-      </Card>
+      <TrafficMonitor config={config} patch={patch} interfaces={wanInterfaces} />
 
       <Card title="Интерфейсы" subtitle="Счётчики с момента запуска системы" tight>
         <TableWrap>
@@ -246,42 +236,4 @@ export function interfaceName(config: any, id: string): string {
 export function wanInterfaceName(config: any, wan: any): string {
   if (wan.proto === "pppoe" || wan.proto === "l2tp") return `ppp-${wan.id}`;
   return interfaceName(config, wan.interface);
-}
-
-function TrafficChart({ points, interfaces }: { points: any[]; interfaces: string[] }) {
-  const series = points.map((point) => {
-    let down = 0;
-    let up = 0;
-    for (const name of interfaces) {
-      down += point.interfaces?.[name]?.rx_bps || 0;
-      up += point.interfaces?.[name]?.tx_bps || 0;
-    }
-    return { at: point.at, down, up };
-  });
-  if (series.length < 2) return <Empty>История появится после двух замеров — примерно через 30 секунд</Empty>;
-  const width = 720;
-  const height = 190;
-  const pad = 14;
-  const peak = Math.max(1, ...series.flatMap((item) => [item.down, item.up]));
-  const path = (key: "down" | "up") => series.map((item, index) => {
-    const x = pad + (index / Math.max(1, series.length - 1)) * (width - pad * 2);
-    const y = height - pad - (item[key] / peak) * (height - pad * 2);
-    return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const last = series[series.length - 1];
-  return (
-    <div>
-      <div className="chart-legend">
-        <span className="down">↓ входящий · <b className="mono">{formatBitrate(last.down)}</b></span>
-        <span className="up">↑ исходящий · <b className="mono">{formatBitrate(last.up)}</b></span>
-        <span className="faint">пик {formatBitrate(peak)}</span>
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="График входящей и исходящей скорости" style={{ width: "100%", height: 190, display: "block" }}>
-        {[0.25, 0.5, 0.75, 1].map((part) => <line key={part} x1={pad} x2={width - pad} y1={height - pad - part * (height - pad * 2)} y2={height - pad - part * (height - pad * 2)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" />)}
-        <path d={`${path("down")} L${width - pad},${height - pad} L${pad},${height - pad} Z`} fill="var(--ok)" opacity="0.14" />
-        <path d={path("down")} fill="none" stroke="var(--ok)" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-        <path d={path("up")} fill="none" stroke="var(--accent-fill)" strokeWidth="1.6" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      </svg>
-    </div>
-  );
 }

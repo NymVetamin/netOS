@@ -170,6 +170,9 @@ func TestUninstallRetryAfterPackagePurge(t *testing.T) {
 				return "", exec.ErrNotFound
 			}
 			if name == "nft" {
+				if len(args) > 0 && args[0] == "list" {
+					return "", exec.ErrNotFound
+				}
 				if blocked {
 					return `{"nftables":[{"chain":{"policy":"drop"}}]}`, nil
 				}
