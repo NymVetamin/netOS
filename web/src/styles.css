@@ -2546,11 +2546,12 @@ td > select {
 .monitor-toolbar,.monitor-range {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .monitor-toolbar select {max-width:220px}
 .monitor-range label {display:flex;align-items:center;gap:8px}
-.monitor-clients {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px 18px;max-height:180px;overflow:auto;margin:14px 0}
-.monitor-clients label {display:flex;align-items:center;gap:8px;min-width:0}
+.monitor-clients {display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px 20px;max-height:180px;overflow:auto;margin:14px 0}
+.monitor-clients label {display:flex;align-items:center;gap:8px;flex:0 1 240px;min-width:0}
+.monitor-clients label>span {overflow-wrap:anywhere}
 .monitor-clients input {flex:0 0 auto}
 .monitor-clients small {display:block}
-.monitor-axis {display:flex;justify-content:space-between;gap:12px;color:var(--text-muted);font-size:11px}
+.monitor-axis {display:flex;justify-content:space-between;gap:12px;color:var(--text-dim);font-size:11px}
 .monitor-hover {display:flex;flex-wrap:wrap;gap:8px 16px;min-height:36px;padding:10px 0;font-size:12px}
 .monitor-details {margin-top:22px;border-top:1px solid var(--border);padding-top:12px}
 .monitor-domains {display:grid;gap:10px;margin:20px 0}
@@ -2584,3 +2585,7 @@ td > select {
 .rule-metadata { gap: .35rem; margin-top: 2px; flex-wrap: wrap; }
 .rule-metadata .mono { font-size: 12px; }
 .rules .grip:disabled { cursor: default; opacity: .3; }
+
+.monitor-plot {position:relative;cursor:crosshair}
+.monitor-tooltip {width:max-content;position:absolute;top:12px;pointer-events:none;z-index:1;background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow-lg);border-radius:6px;padding:9px 12px;display:grid;gap:5px;font-size:12px;max-width:min(280px,45%);overflow-wrap:anywhere}
+.monitor-crosshair {pointer-events:none}

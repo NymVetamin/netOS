@@ -40,21 +40,25 @@ type DNSCount struct {
 	Last   int64  `json:"last"`
 }
 type ClientHistory struct {
-	Runner     system.Runner
-	Collector  *Collector
-	Current    func() *config.Config
-	Extra      func(context.Context, *config.Config) []ClientCounter
-	db         *sql.DB
-	mu         sync.Mutex
-	addresses  map[string]ClientCounter
-	baseline   map[string]clientBaseline
-	dns        map[string]*DNSCount
-	enabled    bool
-	problem    string
-	dnsProblem string
-	limited    bool
-	dnsCancel  context.CancelFunc
-	lastPrune  time.Time
+	Runner       system.Runner
+	Collector    *Collector
+	Current      func() *config.Config
+	Extra        func(context.Context, *config.Config) []ClientCounter
+	db           *sql.DB
+	mu           sync.Mutex
+	addresses    map[string]ClientCounter
+	baseline     map[string]clientBaseline
+	dns          map[string]*DNSCount
+	enabled      bool
+	problem      string
+	dnsProblem   string
+	limited      bool
+	dnsCancel    context.CancelFunc
+	lastPrune    time.Time
+	lastPersist  time.Time
+	liveUntil    time.Time
+	liveBaseline map[string]clientBaseline
+	liveSnapshot ClientLive
 }
 
 func NewClientHistory(path string, r system.Runner, c *Collector, current func() *config.Config) (*ClientHistory, error) {
@@ -87,9 +91,13 @@ func (h *ClientHistory) Run(ctx context.Context) {
 	var sampled time.Time
 	for {
 		current := h.Current()
-		if current != last || (current != nil && current.TrafficMonitor.Enabled && time.Since(sampled) >= HistoryInterval) {
-			h.sample(ctx)
+		due := sampled.Add(h.sampleInterval(time.Now()))
+		if !h.lastPersist.IsZero() && h.lastPersist.Add(HistoryInterval).Before(due) {
+			due = h.lastPersist.Add(HistoryInterval)
+		}
+		if current != last || (current != nil && current.TrafficMonitor.Enabled && !time.Now().Add(50*time.Millisecond).Before(due)) {
 			sampled = time.Now()
+			h.sample(ctx)
 			last = current
 		}
 		select {
@@ -243,6 +251,10 @@ func (h *ClientHistory) sample(parent context.Context) {
 		h.stopDNS()
 		h.mu.Lock()
 		h.baseline = map[string]clientBaseline{}
+		h.liveBaseline = nil
+		h.liveSnapshot = ClientLive{}
+		h.liveUntil = time.Time{}
+		h.lastPersist = time.Time{}
 		h.dns = map[string]*DNSCount{}
 		h.addresses = map[string]ClientCounter{}
 		h.problem = ""
@@ -289,7 +301,13 @@ func (h *ClientHistory) sample(parent context.Context) {
 	if h.Extra != nil {
 		samples = append(samples, h.Extra(ctx, cfg)...)
 	}
-	if err = h.persist(time.Now().UTC(), samples); err != nil {
+	now := time.Now().UTC()
+	h.publishLive(now, samples)
+	if !h.lastPersist.IsZero() && now.Sub(h.lastPersist) < HistoryInterval {
+		return
+	}
+	h.lastPersist = now
+	if err = h.persist(now, samples); err != nil {
 		h.setProblem("Не удалось сохранить историю: " + err.Error())
 	} else {
 		h.setProblem("")

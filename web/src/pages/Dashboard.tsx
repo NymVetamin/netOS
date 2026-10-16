@@ -131,7 +131,7 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
         </div>
       </Card>
 
-      <TrafficMonitor config={config} patch={patch} interfaces={wanInterfaces} />
+      <TrafficMonitor config={config} patch={patch} interfaces={wanInterfaces} status={status} />
 
       <Card title="Интерфейсы" subtitle="Счётчики с момента запуска системы" tight>
         <TableWrap>

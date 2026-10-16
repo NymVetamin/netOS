@@ -95,3 +95,12 @@ func (s *Server) ProxyClientCounters(ctx context.Context, cfg *config.Config) []
 	}
 	return out
 }
+
+func (s *Server) handleClientLive(w http.ResponseWriter, r *http.Request) {
+	if s.ClientHistory == nil {
+		writeError(w, 503, "сборщик истории недоступен")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, s.ClientHistory.Live())
+}
