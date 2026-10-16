@@ -23,6 +23,7 @@ async def scenario(browser, mode):
                     {"id":"denied","name":"Denied","address":"10.9.0.4","enabled":False}]}]
     if mode=="many":
         cfg["vpn_servers"].append({"id":"wg2","name":"Other server","type":"wireguard","enabled":False,"peers":[{"id":"phone","name":"Other phone","enabled":True}]})
+    cfg['channels']=[{'id':f'ch{i}','name':f'Exit {i}','type':'xray','enabled':True} for i in range(5 if mode=='many' else 2)]
     telemetry_error=mode=="error"
     async def route_request(route):
         req,path=route.request,urlparse(route.request.url).path
@@ -44,6 +45,20 @@ async def scenario(browser, mode):
     await page.goto("http://netos-ui.test/#map")
     graph=page.get_by_role("group",name="Схема сети")
     await expect(graph.get_by_role("button",name="LAN:",exact=False)).to_be_visible()
+    await expect(graph.get_by_role('button',name='Exit 0:',exact=False)).to_be_visible()
+    await expect(graph.get_by_role('button',name='Exit 1:',exact=False)).to_be_visible()
+    if mode!='no-vpn':
+        await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd ok')
+    box=await graph.bounding_box()
+    assert box['y']+box['height']<1000
+    assert await graph.evaluate('(e)=>e.getAnimations({subtree:true}).length')==0
+    if mode=='many':
+        await expect(graph.get_by_role('button',name='Other server:',exact=False).locator('circle')).to_have_class('nd idle')
+        nodes=await graph.get_by_role('button',name=re.compile(r'^Exit ')).all()
+        boxes=[await n.bounding_box() for n in nodes]
+        for i,a in enumerate(boxes):
+            for b in boxes[i+1:]:
+                assert a['x']+a['width']<=b['x'] or b['x']+b['width']<=a['x'] or a['y']+a['height']<=b['y'] or b['y']+b['height']<=a['y']
     if mode=="healthy":
         # Navigation must preserve selection, cursor anchor and live polling.
         canvas=graph.locator(":scope > g")
@@ -80,9 +95,9 @@ async def scenario(browser, mode):
         await graph.get_by_role("button",name="Роутер router",exact=True).focus()
         await page.keyboard.press("Enter")
         await expect(node).to_have_attribute("aria-pressed","false")
-        for _ in range(12):
-            plus=page.get_by_role("button",name="Увеличить карту",exact=True)
-            if not await plus.is_disabled(): await plus.click()
+        for percent in [125,156,195,244,305,381,400]:
+            await page.get_by_role("button",name="Увеличить карту",exact=True).click()
+            await expect(page.get_by_label("Масштаб карты",exact=True)).to_have_text(f'{percent}%')
         await expect(page.get_by_role("button",name="Увеличить карту",exact=True)).to_be_disabled()
         await page.get_by_role("button",name="Показать всю карту",exact=True).click()
     if mode=="no-vpn":

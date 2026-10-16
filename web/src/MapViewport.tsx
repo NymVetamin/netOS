@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const MIN = 0.5, MAX = 4;
 const initial = { x: 0, y: 0, scale: 1 };
@@ -6,6 +6,28 @@ const initial = { x: 0, y: 0, scale: 1 };
 export function MapViewport({ width, height, children }: { width: number; height: number; children: ReactNode }) {
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState(initial);
+  const canvas = useRef<HTMLDivElement>(null);
+  const [canvasHeight,setCanvasHeight]=useState(320);
+  const pending = useRef(initial);
+  const frame = useRef<number>();
+  const updateView = (next: typeof initial) => {
+    pending.current=next;
+    if(frame.current===undefined) frame.current=requestAnimationFrame(()=>{frame.current=undefined;setView(pending.current)});
+  };
+  useEffect(()=>()=>{if(frame.current!==undefined)cancelAnimationFrame(frame.current)},[]);
+  useLayoutEffect(()=>{
+    const el=canvas.current;if(!el)return;
+    const fit=()=>{
+      const rect=el.getBoundingClientRect();
+      const scale=el.clientWidth>0?rect.width/el.clientWidth:1;
+      const available=(window.innerHeight-rect.top-24)/(scale || 1);
+      setCanvasHeight(Math.max(160,Math.min(el.clientWidth*height/width,available)));
+    };
+    fit();const observer=new ResizeObserver(fit);
+    observer.observe(el.parentElement || el);
+    window.addEventListener("resize",fit);
+    return()=>{observer.disconnect();window.removeEventListener("resize",fit)};
+  },[width,height]);
   const [dragging, setDragging] = useState(false);
   const gesture = useRef<{ id: number; x: number; y: number; lastX: number; lastY: number; moved: boolean }>();
   const suppressClick = useRef(false);
@@ -13,11 +35,12 @@ export function MapViewport({ width, height, children }: { width: number; height
     const matrix = svg.current?.getScreenCTM();
     return matrix ? new DOMPoint(x, y).matrixTransform(matrix.inverse()) : null;
   };
-  const zoom = (factor: number, x: number, y: number) => setView(v => {
+  const zoom = (factor: number, x: number, y: number) => {
+    const v=pending.current;
     const scale = Math.max(MIN, Math.min(MAX, v.scale * factor));
     const ratio = scale / v.scale;
-    return { scale, x: x - (x - v.x) * ratio, y: y - (y - v.y) * ratio };
-  });
+    updateView({ scale, x: x - (x - v.x) * ratio, y: y - (y - v.y) * ratio });
+  };
   useEffect(() => {
     const el = svg.current;
     if (!el) return;
@@ -40,10 +63,10 @@ export function MapViewport({ width, height, children }: { width: number; height
       <button className="btn" type="button" aria-label="Уменьшить карту" disabled={view.scale <= MIN} onClick={() => zoom(1 / 1.25, width / 2, height / 2)}>−</button>
       <span className="mono" aria-label="Масштаб карты">{Math.round(view.scale * 100)}%</span>
       <button className="btn" type="button" aria-label="Увеличить карту" disabled={view.scale >= MAX} onClick={() => zoom(1.25, width / 2, height / 2)}>+</button>
-      <button className="btn" type="button" onClick={() => setView(initial)}>Показать всю карту</button>
+      <button className="btn" type="button" onClick={() => updateView(initial)}>Показать всю карту</button>
       <span className="hint">Колёсико — масштаб · Потяните карту для перемещения</span>
     </div>
-    <div className="map-canvas">
+    <div ref={canvas} className="map-canvas" style={{height:canvasHeight}}>
       <svg ref={svg} viewBox={`0 0 ${width} ${height}`} role="group" aria-label="Схема сети"
         className={dragging ? "map-dragging" : undefined}
         onPointerDown={e => {
@@ -61,7 +84,8 @@ export function MapViewport({ width, height, children }: { width: number; height
           suppressClick.current = true;
           e.currentTarget.setPointerCapture(e.pointerId);
           setDragging(true);
-          setView(v => ({ ...v, x: v.x + after.x - before.x, y: v.y + after.y - before.y }));
+          const v=pending.current;
+          updateView({ ...v, x: v.x + after.x - before.x, y: v.y + after.y - before.y });
           g.lastX = e.clientX; g.lastY = e.clientY;
         }}
         onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish}

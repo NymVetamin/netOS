@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
 import { MapViewport } from "../MapViewport";
@@ -78,7 +78,7 @@ export function MapPage({ config }: { config: any }) {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [vpnIDs]);
 
-  const graph = buildGraph(config, status, clients, rates, vpnTelemetry);
+  const graph = useMemo(() => buildGraph(config, status, clients, rates, vpnTelemetry), [config,status,clients,rates,vpnTelemetry]);
 
   return (
     <>
@@ -180,7 +180,8 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
   status: any;
 }) {
   const { wans, channels, segments, vpn } = graph;
-  const top = channels.length > 0 ? 130 : 40;
+  const channelRows = Math.ceil(channels.length / 3);
+  const top = channelRows > 0 ? channelRows * 85 + 45 : 40;
   const rightRows = segments.length + vpn.reduce((sum, server) => sum + Math.max(1, server.peers.length), 0);
   const rows = Math.max(wans.length, rightRows, 2);
   const height = top + rows * ROW;
@@ -197,7 +198,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
     nextRow += positions.length;
     return { server, positions, y: (positions[0] + positions[positions.length - 1]) / 2 };
   });
-  const chX = spread(channels.length, 360, 700);
+  const chPos = channels.map((_,i)=>({x:spread(Math.min(3,channels.length-Math.floor(i/3)*3),300,800)[i%3],y:52+Math.floor(i/3)*85}));
   const live = new Map<string, any>((status?.interfaces || []).map((i: any) => [i.name, i]));
   const ports = (config.interfaces || []).filter((i: any) => i.type === "physical").slice(0, 6);
 
@@ -212,6 +213,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
       onClick={() => onSelect(id)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(id); } }}
     >
+      <title>{title}: {sub}</title>
       <rect className="nb" x={x - w / 2} y={y - h / 2} width={w} height={h} rx={6} />
       <circle cx={x - w / 2 + 16} cy={y - 8} r={4.5} className={`nd ${tone}`} />
       <text className="nt" x={x - w / 2 + 28} y={y - 3}>{clip(title, 18)}</text>
@@ -231,11 +233,11 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
           <path key={`e-${s.id}`} className="edge live" d={curve(router.x + router.w / 2, cy, 755, segY[i])} />
         ))}
         {channels.map((c, i) => (
-          <path key={`e-${c.id}`} className={`edge ${c.up ? "live" : "dead"}`} d={`M${chX[i]},78 C${chX[i]},${top - 10} ${router.x},${top - 10} ${router.x},${router.y - router.h / 2}`} />
+          <path key={`e-${c.id}`} className={`edge ${c.up ? "live" : "dead"}`} d={`M${chPos[i].x},${chPos[i].y+30} C${chPos[i].x},${top - 10} ${router.x},${top - 10} ${router.x},${router.y - router.h / 2}`} />
         ))}
 
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-lines-${server.id}`}>
-          <path className={`edge ${server.enabled ? "idle" : "dead"}`} d={curve(router.x + router.w / 2, cy, 755, y)} />
+          <path className={`edge ${!server.enabled ? "dead" : server.peers.some(p=>["recent","online"].includes(p.state)) ? "live" : "idle"}`} d={curve(router.x + router.w / 2, cy, 755, y)} />
           {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${["recent", "online"].includes(peer.state) ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
         </g>)}
 
@@ -249,7 +251,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
           !w.up ? "нет связи" : w.primary ? (w.rate ? `↓ ${formatBitrate(w.rate.down)}` : w.iface) : `${w.iface} · резерв`,
           !w.up ? "danger" : w.primary ? "ok" : "idle",
         ))}
-        {channels.map((c, i) => node(`channel:${c.id}`, chX[i], 52, 140, 52, c.type, c.up ? "на связи" : "нет связи", c.up ? "ok" : "danger"))}
+        {channels.map((c, i) => node(`channel:${c.id}`, chPos[i].x, chPos[i].y, 220, 60, c.name, `${c.type} · ${c.up ? "на связи" : "нет связи"}`, c.up ? "ok" : "danger"))}
 
         <g
           className={`node ${selected === "router" ? "sel" : ""}`}
@@ -278,7 +280,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
 
         {segments.map((s, i) => node(`segment:${s.id}`, 840, segY[i], 170, 62, s.name, `${s.address} · ${s.online}/${s.total}`, "ok"))}
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-nodes-${server.id}`}>
-          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.peers.length} клиентов`, server.enabled ? "idle" : "danger")}
+          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.enabled ? "включён" : "отключён"}`, server.enabled ? "ok" : "idle")}
           {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), ["recent", "online"].includes(peer.state) ? "ok" : "idle"))}
         </g>)}
     </MapViewport>
