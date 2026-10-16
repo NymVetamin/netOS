@@ -24,7 +24,7 @@ func TestLogTimestampAndBoundedFile(t *testing.T) {
 		t.Fatal("invented timestamp")
 	}
 	path := filepath.Join(t.TempDir(), "dns.log")
-	if err := os.WriteFile(path, []byte(strings.Repeat("x", 300000)+"\n"+strings.Repeat("Jan  1 11:00:00 query\n", 500)), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 300000)+"\n"+strings.Repeat("Jan  1 11:00:00 dnsmasq[1]: query[A] fixture.example from 192.0.2.1\n", 500)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := readDNSLog(path, now)
@@ -36,8 +36,8 @@ func TestLogTimestampAndBoundedFile(t *testing.T) {
 	}
 }
 func TestJournalParsingAndInvalidData(t *testing.T) {
-	raw := `{"__REALTIME_TIMESTAMP":"1000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"query fixture.example"}`
-	rows, err := parseJournalEntries(raw, "services")
+	raw := `{"__REALTIME_TIMESTAMP":"1000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 fixture.example. A IN"}`
+	rows, err := parseJournalEntries(raw, "dns")
 	if err != nil || len(rows) != 1 || rows[0].Source != "dns" || rows[0].Time != "1970-01-01T00:00:01Z" {
 		t.Fatal(rows, err)
 	}
@@ -62,7 +62,7 @@ func (r *logRunner) Run(_ context.Context, name string, args ...string) (string,
 		return "", fmt.Errorf("kernel unavailable")
 	}
 	if strings.Contains(cmd, "netos-unbound.service") {
-		return `{"__REALTIME_TIMESTAMP":"3000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"query fixture"}`, nil
+		return `{"__REALTIME_TIMESTAMP":"3000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 fixture.example. A IN"}`, nil
 	}
 	return `{"__REALTIME_TIMESTAMP":"2000000","_SYSTEMD_UNIT":"netosd.service","MESSAGE":"fixture started"}`, nil
 }
@@ -113,5 +113,45 @@ func TestEmptyFirewallJournalIsNotReadFailure(t *testing.T) {
 	}
 	if emptyJournalMatch("", fmt.Errorf("journalctl: %w: permission denied", journalNoMatch{})) {
 		t.Fatal("read error masked")
+	}
+}
+
+func TestDNSQueryFiltering(t *testing.T) {
+	for _, message := range []string{
+		"dnsmasq[1]: query[A] example.org from 192.0.2.10",
+		"[1791969615] unbound[1:0] info: 192.0.2.10 example.org. AAAA IN",
+		"unbound[1:0] query: 2001:db8::1 example.org. TYPE65 IN",
+		`time=2026-10-16T00:00:00Z level=DEBUG msg=in prefix=proxy line_num=7 line=";example.org.\tIN\t A"`,
+		"[debug] in: ;example.org. IN A",
+	} {
+		if !isDNSQuery(message) {
+			t.Errorf("query lost: %s", message)
+		}
+	}
+	for _, message := range []string{
+		"Started netos-unbound.service", "info: start of service (unbound 1.26.1).", "info: service stopped (unbound 1.26.1).",
+		"dnsmasq[1]: read /etc/hosts - 4 names", "dnsmasq[1]: reply example.org is 192.0.2.2",
+		"info: 192.0.2.10 example.org. A IN NOERROR 0.01 1 100", "info: not-an-ip example.org A IN",
+		`level=DEBUG msg=out line_num=7 line=";example.org.\tIN\t A"`, "query logging enabled",
+	} {
+		if isDNSQuery(message) {
+			t.Errorf("service/reply misclassified: %s", message)
+		}
+	}
+	raw := `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: start of service (unbound 1.26.1)."}` + "\n" + `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 example.org. A IN"}`
+	for _, source := range []string{"dns", "services"} {
+		rows, err := parseJournalEntries(raw, source)
+		if err != nil || len(rows) != 1 || rows[0].Source != source {
+			t.Fatal(source, rows, err)
+		}
+		if (source == "dns") != isDNSQuery(rows[0].Message) {
+			t.Fatal(source, rows)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "dns.log")
+	os.WriteFile(path, []byte("started dnsmasq\nquery[A] example.org from 192.0.2.1\nreply example.org is 192.0.2.2\n"), 0600)
+	rows, err := readDNSLog(path, time.Now())
+	if err != nil || len(rows) != 1 {
+		t.Fatal(rows, err)
 	}
 }

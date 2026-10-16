@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"github.com/netos-router/netos/internal/system"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +22,36 @@ type logEntry struct {
 	Source  string `json:"source"`
 	Unit    string `json:"unit"`
 	Message string `json:"message"`
+}
+
+// Query records only: service lifecycle, resolver statistics and replies are not queries.
+var dnsmasqQuery = regexp.MustCompile(`\bquery\[[^\]]+\]\s+\S+\s+from\s+\S+`)
+var unboundQuery = regexp.MustCompile(`(?:info:|query:)\s+(\S+)\s+\S+\s+[A-Z0-9]+\s+(?:IN|CH|HS|CLASS[0-9]+)\s*$`)
+var dnsproxyQuestion = regexp.MustCompile(`^;[^;\s]+\s+(?:IN|CH|HS|CLASS[0-9]+)\s+[A-Z0-9]+\s*$`)
+var dnsproxyLine = regexp.MustCompile(`\bline=("(?:\\.|[^"\\])*"|\S+)`)
+
+func isDNSQuery(message string) bool {
+	if dnsmasqQuery.MatchString(message) {
+		return true
+	}
+	if m := unboundQuery.FindStringSubmatch(message); len(m) > 1 && net.ParseIP(m[1]) != nil {
+		return true
+	}
+	// dnsproxy emits the DNS packet as structured, numbered lines. Keep its incoming question only.
+	if strings.Contains(message, "msg=in ") || strings.Contains(message, "msg=\"in\" ") || strings.Contains(message, " in line_num=") {
+		m := dnsproxyLine.FindStringSubmatch(message)
+		if len(m) > 1 {
+			line := m[1]
+			if strings.HasPrefix(line, "\"") {
+				line, _ = strconv.Unquote(line)
+			}
+			return dnsproxyQuestion.MatchString(line)
+		}
+	}
+	if i := strings.Index(message, "in: "); i >= 0 {
+		return dnsproxyQuestion.MatchString(strings.TrimSpace(message[i+4:]))
+	}
+	return false
 }
 
 func parseJournalEntries(raw, source string) ([]logEntry, error) {
@@ -50,11 +82,11 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 		if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
 			ts = time.UnixMicro(us).UTC().Format(time.RFC3339Nano)
 		}
-		actual := source
-		if strings.Contains(unit, "unbound") || strings.Contains(unit, "dnsmasq") || strings.Contains(unit, "dnsproxy") {
-			actual = "dns"
+		query := isDNSQuery(message)
+		if source == "dns" && !query || source == "services" && query {
+			continue
 		}
-		result = append(result, logEntry{Time: ts, Source: actual, Unit: unit, Message: message})
+		result = append(result, logEntry{Time: ts, Source: source, Unit: unit, Message: message})
 	}
 	return result, scanner.Err()
 }
@@ -115,7 +147,7 @@ func readDNSLog(path string, now time.Time) ([]logEntry, error) {
 	}
 	result := []logEntry{}
 	for _, line := range lines {
-		if strings.TrimSpace(line) != "" {
+		if isDNSQuery(line) {
 			result = append(result, logEntry{Time: dnsLineTime(line, now), Source: "dns", Unit: "dns.log", Message: line})
 		}
 	}
@@ -167,18 +199,11 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			if parseErr != nil {
 				warnings = append(warnings, src+": "+parseErr.Error())
 			}
-			for _, e := range rows {
-				if kind == "all" && src == "services" && e.Source == "dns" {
-					continue
-				}
-				entries = append(entries, e)
-			}
+			entries = append(entries, rows...)
 		}
 		if src == "dns" {
 			rows, err := readDNSLog("/var/log/netos/dns.log", now)
-			if os.IsNotExist(err) {
-				warnings = append(warnings, "Файл DNS ещё не создан. Проверьте включение журнала запросов; Unbound пишет в журнал службы.")
-			} else if err != nil {
+			if err != nil && !os.IsNotExist(err) {
 				warnings = append(warnings, "Не удалось прочитать dns.log: "+err.Error())
 			} else {
 				entries = append(entries, rows...)

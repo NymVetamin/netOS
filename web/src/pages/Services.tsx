@@ -316,7 +316,6 @@ function DNSSection({
             label="Журнал запросов"
             onChange={(v) => patch((d) => (d.dns.query_log = v))}
           />
-          <a className="hint" href="#diagnostics?log=dns">Открыть журнал DNS</a>
           {provider !== "dnsmasq" && (
             <Switch
               checked={config.dns?.dnssec}
