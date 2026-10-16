@@ -64,9 +64,13 @@ async def scenario(browser, mode):
             await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible()
         else:
             await expect(page.get_by_text("недавно на связи",exact=True)).to_be_visible()
+            settings=page.get_by_role("link",name="Настройки VPN-клиента").first
+            await expect(settings).to_be_visible()
+            await expect(settings).to_have_attribute("title", "Настройки VPN-клиента")
+            await expect(settings.locator("svg")).to_have_count(1)
             await page.get_by_text("Phone",exact=True).click()
             await expect(page.get_by_text("192.0.2.10:4567",exact=True)).to_be_visible()
-            await expect(page.get_by_role("link",name="Настройки VPN-клиента")).to_have_attribute("href","#vpn-servers")
+            await expect(page.get_by_role("link",name="Настройки VPN-клиента").first).to_have_attribute("href","#vpn-servers")
             telemetry_error=True
             await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
             await expect(page.get_by_text("недавно на связи",exact=True)).to_have_count(0)

@@ -2551,3 +2551,6 @@ td > select {
 }
 .timezone-options li { padding: 6px 8px; cursor: pointer; overflow-wrap: anywhere; }
 .timezone-options li:hover, .timezone-options li[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+
+.client-settings-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; }
+.client-settings-icon svg { width: 16px; height: 16px; }
