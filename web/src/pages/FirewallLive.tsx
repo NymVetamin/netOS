@@ -6,10 +6,10 @@ function origin(comment: string, sources: Record<string,string>): [string,string
  if (comment.startsWith("NAT аплинка")) return ["Аплинк → NAT", "network"];
  if (comment.startsWith("NAT канала")) return ["Интернет-канал → NAT", "channels"];
  if (comment.startsWith("SOCKS5:")) return ["SOCKS5 → Доступ", "services"];
- if (comment.startsWith("VPN-сервер")) return ["VPN → Настройки сервера", "vpn"];
+ if (comment.startsWith("VPN-сервер")) return ["VPN → Настройки сервера", "vpn-servers"];
  if (comment === "intersegment default") return ["Защита сети → Обмен между сегментами", "firewall"];
  if (comment === "политика зоны") return ["Защита сети → Политика зоны", "firewall"];
- if (comment.startsWith("изоляция:")) return ["Изоляция локальной или VPN-сети", ""];
+ if (comment.startsWith("изоляция:") || comment.startsWith("изоляция «")) return ["Изоляция локальной или VPN-сети", ""];
  if (sources[comment] === "network") return ["Аплинк → NAT", "network"];
  if (sources[comment]) return ["Сохранённое правило", sources[comment]];
  return null;

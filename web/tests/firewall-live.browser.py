@@ -13,6 +13,10 @@ async def main():
   cfg['firewall']['nat']=[{'id':'old-nat','name':'Old NAT','system':True,'enabled':False,'direction':'source','interface':'eth0'}]
   live={'captured_at':'2026-10-15T10:00:00Z','sources':{},'comments':{'-A LAN-FWD -s 192.0.2.0/24 -j REJECT':'intersegment default'},'families':[{'family':'IPv4','tables':[{'name':'filter','chains':[{'name':'WAN-IN','policy':'-','counters':'[0:0]','rules':['-A WAN-IN -p udp --dport 51820 -j ACCEPT']},{'name':'LAN-FWD','policy':'-','counters':'[0:0]','rules':['-A LAN-FWD -s 192.0.2.0/24 -j REJECT']},{'name':'FOREIGN','policy':'-','counters':'[0:0]','rules':[]}]}]},{'family':'IPv6','tables':[],'error':'fixture IPv6 unavailable'}]}
   state={"cfg":cfg};errors=[];page.on("pageerror",lambda e:errors.append(str(e)))
+  live['comments']['-A WAN-IN -p udp --dport 51820 -j ACCEPT']='VPN-сервер «QA»'
+  isolation='-A LAN-FWD -s 192.0.2.0/24 -d 198.51.100.0/24 -j REJECT'
+  live['families'][0]['tables'][0]['chains'][1]['rules'].append(isolation)
+  live['comments'][isolation]='изоляция «QA»: QA → VPN'
   async def route(r):
    path=urlparse(r.request.url).path
    if not path.startswith('/api/'):
@@ -33,6 +37,11 @@ async def main():
   await expect(page.get_by_text('FOREIGN',exact=True)).to_be_visible()
   await expect(page.get_by_text('Запрет между локальными сегментами',exact=True)).to_be_visible()
   await expect(page.get_by_text('fixture IPv6 unavailable',exact=True)).to_be_visible()
+  await expect(page.get_by_text('Изоляция локальной или VPN-сети',exact=True)).to_be_visible()
+  await page.get_by_role('link',name='VPN → Настройки сервера',exact=True).click()
+  await expect(page.get_by_role('heading',name='VPN-доступ',exact=True,level=1)).to_be_visible()
+  await page.goto('https://netos-ui.test/#firewall')
+  await page.get_by_role('checkbox',name='Показать автоматические правила',exact=True).check()
   await expect(page.locator('[draggable="true"]')).to_have_count(0)
   await expect(page.get_by_role('button',name='Создать правило',exact=True)).to_have_count(0)
   await page.get_by_role('button',name='Обновить правила',exact=True).click()

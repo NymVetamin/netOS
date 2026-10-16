@@ -132,7 +132,7 @@ func (s *Server) handleLiveFirewall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		for _, server := range cfg.VPNServers {
-			sources["VPN-сервер «"+server.Name+"»"] = "vpn"
+			sources["VPN-сервер «"+server.Name+"»"] = "vpn-servers"
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"families": families, "sources": sources, "comments": comments, "captured_at": time.Now().UTC().Format(time.RFC3339)})
