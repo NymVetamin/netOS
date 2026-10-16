@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/system"
 	"net/http"
 	"regexp"
@@ -136,4 +138,36 @@ func (s *Server) handleLiveFirewall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"families": families, "sources": sources, "comments": comments, "captured_at": time.Now().UTC().Format(time.RFC3339)})
+}
+
+// Preview uses the same generator as Apply, but never saves or executes anything.
+func (s *Server) handleFirewallPreview(w http.ResponseWriter, r *http.Request) {
+	var cfg config.Config
+	if err := readJSON(r, &cfg); err != nil {
+		writeError(w, 400, "не удалось прочитать конфигурацию")
+		return
+	}
+	if roleOf(r) == "limited" {
+		previous := s.requestConfig(r)
+		if previous == nil {
+			writeError(w, 503, "конфигурация недоступна")
+			return
+		}
+		merged, err := mergeScopedConfig(r, previous, &cfg)
+		if err != nil {
+			writeError(w, 403, "%v", err)
+			return
+		}
+		cfg = *merged
+	}
+	rules, err := firewall.Build(&cfg)
+	if err != nil {
+		writeError(w, 400, "%v", err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"families": []liveFirewallFamily{
+		{Family: "IPv4", Tables: parseLiveFirewall(rules.IPv4)},
+		{Family: "IPv6", Tables: parseLiveFirewall(rules.IPv6)},
+	}, "rule_ids": rules.RuleIDs})
 }

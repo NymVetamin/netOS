@@ -79,3 +79,21 @@ func TestLiveFirewallCapturedSnapshot(t *testing.T) {
 	}
 	t.Logf("preserved %d rules across %d tables", count, len(tables))
 }
+
+func TestFirewallPreviewDoesNotExecuteOrSave(t *testing.T) {
+	runner := &liveFirewallRunner{}
+	s := &Server{StorageRunner: runner}
+	w := httptest.NewRecorder()
+	s.handleFirewallPreview(w, httptest.NewRequest("POST", "/api/firewall/preview", strings.NewReader(`{"firewall":{"enabled":true,"rules":[{"id":"qa","name":"test","enabled":true,"zone":"global","flow":"in","action":"accept"}]}}`)))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"rule_ids"`) || !strings.Contains(w.Body.String(), `"qa"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(runner.commands) != 0 {
+		t.Fatal(runner.commands)
+	}
+	w = httptest.NewRecorder()
+	s.handleFirewallPreview(w, httptest.NewRequest("POST", "/api/firewall/preview", strings.NewReader("invalid")))
+	if w.Code != 400 {
+		t.Fatal(w.Code)
+	}
+}

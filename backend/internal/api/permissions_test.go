@@ -223,3 +223,14 @@ func TestNetworkPermissionOnlyChangesUplinkNAT(t *testing.T) {
 		t.Fatal("channel permission allowed WAN mutation")
 	}
 }
+
+func TestFirewallPreviewPermissions(t *testing.T) {
+	for _, level := range []string{"", "view", "manage"} {
+		r := limitedRequest(map[string]string{"firewall": level})
+		r.Method = "POST"
+		r.URL.Path = "/api/firewall/preview"
+		if limitedEndpoint(r) != (level != "") {
+			t.Fatalf("preview permission %q", level)
+		}
+	}
+}

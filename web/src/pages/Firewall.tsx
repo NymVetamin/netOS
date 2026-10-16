@@ -1,11 +1,11 @@
 import { interfaceDisplay } from "../interfaceDisplay";
 import { managedWanNAT } from "../wanNAT";
-import { FirewallLive } from "./FirewallLive";
+import { AutomaticRuleRow, includeAutomatic, RuleGroup } from "./FirewallRules";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
-import { Problem } from "../api";
+import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -111,7 +111,18 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
     end: () => { dragSource.current = null; setDragging(null); setOver(null); },
   };
 
-  const groups = buildGroups(config, rules);
+  const [automatic, setAutomatic] = useState<{config:any;data:any} | null>(null);
+  const [automaticError, setAutomaticError] = useState("");
+  useEffect(() => {
+    if (!showAutomatic) return;
+    let alive = true;
+    setAutomaticError("");
+    api.firewallPreview(config).then(data => { if (alive) setAutomatic({config,data}); })
+      .catch(error => { if (alive) setAutomaticError(error.message); });
+    return () => { alive = false; };
+  }, [showAutomatic, config]);
+  const baseGroups = buildGroups(config, rules);
+  const groups = showAutomatic && automatic && automatic.config === config ? includeAutomatic(baseGroups, automatic.data, config) : baseGroups;
 
   return (
     <>
@@ -205,11 +216,11 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
 
       <Card
         title="Правила"
-        subtitle={showAutomatic ? "Действующие правила, включая автоматические" : `${rules.filter((r) => r.enabled).length} включено из ${rules.length}`}
+        subtitle={`${rules.filter((r) => r.enabled).length} включено из ${rules.length}`}
         actions={
           <div className="firewall-rule-actions">
             <label className="row"><input type="checkbox" checked={showAutomatic} disabled={adding || editing !== null} title={adding || editing !== null ? "Завершите редактирование правила" : undefined} onChange={e => { setShowAutomatic(e.target.checked); drag.end(); }} />Показать автоматические правила</label>
-            {!showAutomatic && <button className="btn sm primary" onClick={() => setAdding(true)}>Создать правило</button>}
+            <button className="btn sm primary" onClick={() => setAdding(true)}>Создать правило</button>
           </div>
         }
         tight
@@ -227,7 +238,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
           </div>
         )}
 
-        {showAutomatic ? <FirewallLive config={config} onEdit={() => setShowAutomatic(false)} /> : groups.length === 0 ? (
+        {showAutomatic && automaticError && <Notice tone="danger" title="Не удалось получить автоматические правила">{automaticError}</Notice>}
+        {groups.length === 0 ? (
           <Empty>Правил нет</Empty>
         ) : (
           groups.map((g) => (
@@ -239,7 +251,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
               <TableWrap>
                 <table className="rules">
                   <tbody>
-                    {g.items.map(({ r, i }) => (
+                    {g.items.map(({ r, i, automatic }) => automatic ? <AutomaticRuleRow key={r.id} rule={r} config={config} /> : (
                       <RuleRow
                         key={r.id}
                         rule={r}
@@ -248,6 +260,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
                         patch={patch}
                         onMove={move}
                         drag={drag}
+                        reorderDisabled={showAutomatic}
                         expanded={editing === r.id}
                         onToggleExpand={() => setEditing(editing === r.id ? null : r.id)}
                       />
@@ -434,8 +447,10 @@ function RuleRow({
   drag,
   expanded,
   onToggleExpand,
+  reorderDisabled,
 }: {
   rule: any;
+  reorderDisabled: boolean;
   index: number;
   config: any;
   patch: Patch;
@@ -476,6 +491,7 @@ function RuleRow({
           <button
             type="button"
             className="grip"
+            disabled={reorderDisabled}
             aria-label={`Переместить правило ${rule.name}`}
             title="Перетащите, чтобы поменять порядок"
             onDragStart={e => e.preventDefault()}
@@ -538,10 +554,10 @@ function RuleRow({
           <Badge tone={action?.tone || "neutral"}>{action?.title || rule.action}</Badge>
         </td>
         <td style={{ width: 210, textAlign: "right", whiteSpace: "nowrap" }}>
-          <button className="btn ghost sm" title="выше" onClick={() => onMove(index, -1)}>
+          <button className="btn ghost sm" disabled={reorderDisabled} title="выше" onClick={() => onMove(index, -1)}>
             ↑
           </button>
-          <button className="btn ghost sm" title="ниже" onClick={() => onMove(index, 1)}>
+          <button className="btn ghost sm" disabled={reorderDisabled} title="ниже" onClick={() => onMove(index, 1)}>
             ↓
           </button>
           <button className="btn ghost sm" onClick={onToggleExpand}>
@@ -1061,12 +1077,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
 // генератор: панель должна показывать ту же структуру, что окажется в ядре.
 function buildGroups(config: any, rules: any[]) {
   const zones: any[] = config.firewall?.zones || [];
-  const groups: {
-    key: string;
-    chain: string;
-    description: string;
-    items: { r: any; i: number }[];
-  }[] = [];
+  const groups: RuleGroup[] = [];
 
   const add = (key: string, chain: string, description: string, r: any, i: number) => {
     let g = groups.find((x) => x.key === key);

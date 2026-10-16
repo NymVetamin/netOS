@@ -76,6 +76,8 @@ func limitedEndpoint(r *http.Request) bool {
 		return !write && may(r, "services", false)
 	case "/api/socks/credentials":
 		return may(r, "services", true)
+	case "/api/firewall/preview":
+		return may(r, "firewall", false) // Pure preview, including for viewers.
 	case "/api/firewall/live":
 		return !write && may(r, "firewall", false)
 	case "/api/logs":

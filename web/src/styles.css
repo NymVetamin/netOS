@@ -2484,22 +2484,6 @@ td > select {
 
 .firewall-rule-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .firewall-rule-actions label { font-size: 12px; }
-.live-rule-conditions { font-size: 12px; margin: 3px 0; overflow-wrap: anywhere; }
-.live-rule-number { width: 24px; color: var(--text-faint); }
-.live-rule-button { width: 110px; text-align: right; }
-.live-rule-command { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: 12px; }
-
-@media (max-width: 700px) {
-  table.live-rules { min-width: 0; width: 100%; }
-  table.live-rules tbody { display: block; }
-  table.live-rules tr { display: flex; flex-wrap: wrap; padding: 12px; border-bottom: 1px solid var(--border); gap: 8px; }
-  table.live-rules td { display: block; padding: 0; border: 0; min-width: 0; }
-  table.live-rules td.live-rule-number { display: none; }
-  table.live-rules td:nth-child(2), table.live-rules td[colspan] { width: 100%; }
-  table.live-rules td.live-rule-button { width: auto; margin-left: auto; }
-  .firewall-live .chain-header { flex-wrap: wrap; }
-}
-
 .socks-advanced > summary { cursor: pointer; margin-bottom: 8px; }
 .socks-connection { border-top: 1px solid var(--border); padding-top: 16px; }
 .socks-connection h4 { margin: 0 0 12px; }
@@ -2591,3 +2575,9 @@ td > select {
   .permission-table th, .permission-table td { padding: 6px 4px; }
   .permission-table thead th { font-size: 11px; }
 }
+
+/* Automatic entries use the same five columns as editable firewall rules. */
+.automatic-rule .switch input:checked + .track { background: var(--border-strong); border-color: var(--border-strong); opacity: .65; }
+.rule-metadata { gap: .35rem; margin-top: 2px; flex-wrap: wrap; }
+.rule-metadata .mono { font-size: 12px; }
+.rules .grip:disabled { cursor: default; opacity: .3; }

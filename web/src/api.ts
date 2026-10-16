@@ -241,6 +241,7 @@ export const api = {
 
   portModes: (name: string) => request<any>("GET", `/api/interfaces/${encodeURIComponent(name)}/modes`),
   logs: (kind: string) => request<any>("GET", `/api/logs?kind=${encodeURIComponent(kind)}`),
+  firewallPreview: (config: any) => request<any>("POST", "/api/firewall/preview", config),
   firewallLive: () => request<any>("GET", "/api/firewall/live"),
 
   async getConfig() {

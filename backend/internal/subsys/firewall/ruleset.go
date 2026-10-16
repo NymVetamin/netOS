@@ -34,6 +34,8 @@ import (
 type Ruleset struct {
 	IPv4 string
 	IPv6 string
+	// RuleIDs links generated IPv4 lines to saved rules without changing commands.
+	RuleIDs map[string][]string
 }
 
 type zoneMap map[string][]string
@@ -61,7 +63,7 @@ func Build(cfg *config.Config) (*Ruleset, error) {
 	b.nat(cfg, zones)
 	b.filter(cfg, zones)
 
-	return &Ruleset{IPv4: b.String(), IPv6: buildIPv6(cfg)}, nil
+	return &Ruleset{IPv4: b.String(), IPv6: buildIPv6(cfg), RuleIDs: b.ruleIDs}, nil
 }
 
 // buildZoneMap раскладывает интерфейсы по зонам.
@@ -149,12 +151,23 @@ func serverInterface(s config.VPNServer) string {
 	return ""
 }
 
-type builder struct{ sb strings.Builder }
+type builder struct {
+	sb      strings.Builder
+	ruleIDs map[string][]string
+	ruleID  string
+}
 
 func (b *builder) String() string { return b.sb.String() }
 
 func (b *builder) line(format string, args ...any) {
-	fmt.Fprintf(&b.sb, format+"\n", args...)
+	line := fmt.Sprintf(format, args...)
+	b.sb.WriteString(line + "\n")
+	if b.ruleID != "" {
+		if b.ruleIDs == nil {
+			b.ruleIDs = map[string][]string{}
+		}
+		b.ruleIDs[line] = append(b.ruleIDs[line], b.ruleID)
+	}
 }
 
 // ChainName возвращает имя цепочки для зоны и направления: WAN-IN, LAN-FWD.
@@ -413,6 +426,8 @@ func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
 		// action below after this rule's log allowance is exhausted.
 		b.line("-A %s%s -m limit --limit 5/sec --limit-burst 10 -j LOG --log-prefix %q --log-level 4", chain, sel, truncate("netos "+r.Name+": ", 28))
 	}
+	b.ruleID = r.ID
+	defer func() { b.ruleID = "" }()
 	if r.Action == "continue" {
 		// «Передать дальше по списку» — это правило без перехода: пакет
 		// считается счётчиком и проверяется следующей строкой. RETURN здесь не
