@@ -31,6 +31,7 @@ async def scenario(browser, mode):
     cfg['vpn_servers']=[{'id':'wg','name':'WG test','type':'wireguard','enabled':True,'index':1,'subnet':'10.9.0.1/24'}, {'id':'ike','name':'IKE test','type':'ikev2','enabled':True,'index':2,'subnet':'10.10.0.1/24'}]
     cfg['firewall']={'enabled':True,'zones':[],'rules':[],'nat':[]}
     state = {"config": cfg, "ready": True, "error": False, "version": 1}
+    catalog_gate = asyncio.Event()
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
 
@@ -48,6 +49,7 @@ async def scenario(browser, mode):
         if path == "/api/session":
             body = {"username": "admin", "role": "admin", "csrf_token": "test"}
         elif path == "/api/catalog":
+            await catalog_gate.wait()
             body = {"components": [], "installed": {cid: state["ready"] for _, cid, _ in TYPES}}
             if state["error"]:
                 status, body = 503, {"error": "unavailable"}
@@ -68,6 +70,11 @@ async def scenario(browser, mode):
     await page.goto("https://netos-ui.test/#services")
     await expect(page.get_by_role("heading",name="Сетевые службы",exact=True)).to_be_visible()
     toggle = page.get_by_role("checkbox",name="Включить SOCKS5",exact=True)
+    await expect(toggle.locator('..')).to_be_visible()
+    await expect(toggle).to_be_disabled()
+    await expect(page.get_by_text("Нужен компонент Xray",exact=True)).to_have_count(0)
+    await expect(page.get_by_text("проверка состояния…",exact=True)).to_be_visible()
+    catalog_gate.set()
     await expect(toggle).to_be_enabled()
     await expect(page.get_by_label("Порт SOCKS5",exact=True)).to_have_count(0)
     await toggle.locator("..").click()
@@ -121,6 +128,13 @@ async def scenario(browser, mode):
         await toggle.locator('..').click()
     assert state['config']['socks']==before
     await expect(page.get_by_label('Порт SOCKS5',exact=True)).to_be_visible()
+    state["error"] = True
+    await page.reload()
+    await expect(page.get_by_text("Не удалось проверить компонент Xray",exact=True)).to_be_visible()
+    await expect(page.get_by_text("Нужен компонент Xray",exact=True)).to_have_count(0)
+    state["error"], state["ready"] = False, False
+    await page.reload()
+    await expect(page.get_by_text("Нужен компонент Xray",exact=True)).to_be_visible()
     assert not errors, errors
     await page.close()
     print(mode, "PASS")

@@ -9,15 +9,18 @@ const WAN_WARNING = "SOCKS5 не шифрует соединение: логин
 
 export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=>void)=>void }) {
  const p = config.socks || {};
- const [ready,setReady]=useState(false), [live,setLive]=useState<any>(null);
+ const [ready,setReady]=useState<boolean|null>(null), [live,setLive]=useState<any>(null);
+ const [loaded,setLoaded]=useState(false), [catalogError,setCatalogError]=useState(false);
  const [error,setError]=useState(""), [shown,setShown]=useState<string|null>(null);
  useEffect(()=>{
   let active=true;
   const load=async()=>{
    const [catalog,status]=await Promise.allSettled([api.catalog(),api.socksStatus()]);
    if(!active)return;
-   setReady(catalog.status==="fulfilled" && !!catalog.value.installed?.xray);
+   setReady(catalog.status==="fulfilled" ? !!catalog.value.installed?.xray : null);
+   setCatalogError(catalog.status==="rejected");
    setLive(status.status==="fulfilled"?status.value:null);
+   setLoaded(true);
   };
   void load();const timer=window.setInterval(load,5000);return()=>{active=false;clearInterval(timer)};
  },[]);
@@ -31,10 +34,11 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
  ...vpns.filter((v:any)=>p.vpns?.includes(v.id)).map((v:any)=>({name:v.name,address:v.subnet}))];
  function select(key:string,id:string,on:boolean){const values=p[key]||[];edit({[key]:on?[...values,id]:values.filter((v:string)=>v!==id)})}
  return <Card title="SOCKS5-прокси" subtitle="Прокси для приложений в локальной сети и VPN · TCP · IPv4"
-  actions={<Badge tone={live?.running?"ok":"neutral"}>{live===null?"статус недоступен":live.running?"работает":live.enabled?"не запущен":"отключён"}</Badge>}>
+  actions={<Badge tone={live?.running?"ok":"neutral"}>{!loaded?"проверка состояния…":live===null?"статус недоступен":live.running?"работает":live.enabled?"не запущен":"отключён"}</Badge>}>
   <div className="stack">
   {error&&<Notice tone="danger" title={error}/>}
-  {(!chosen||!ready)&&<Notice tone="info" title="Нужен компонент Xray">
+  {catalogError&&<Notice tone="warn" title="Не удалось проверить компонент Xray">Повторная проверка выполняется автоматически.</Notice>}
+  {(!chosen||ready===false)&&<Notice tone="info" title="Нужен компонент Xray">
    {!chosen?<button className="btn" onClick={()=>patch(d=>{d.components=d.components||[];const c=d.components.find((v:any)=>v.id==="xray");if(c)c.installed=true;else d.components.push({id:"xray",installed:true})})}>Установить Xray</button>:<span>Примените установку компонента и дождитесь её завершения.</span>}
   </Notice>}
   <Switch label="Включить SOCKS5" checked={!!p.enabled} disabled={!p.enabled&&(!ready||!chosen)} onChange={async enabled=>{
