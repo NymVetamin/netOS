@@ -51,7 +51,17 @@ async def scenario(browser, mode):
         await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd ok')
     box=await graph.bounding_box()
     assert box['y']+box['height']<1000
-    assert await graph.evaluate('(e)=>e.getAnimations({subtree:true}).length')==0
+    live=graph.locator('.edge.live').first
+    await expect(live).to_have_css('animation-name','flow')
+    offset=await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')
+    await page.wait_for_timeout(180)
+    assert await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')!=offset
+    for edge in await graph.locator('.edge.idle, .edge.dead').all():
+        await expect(edge).to_have_css('animation-name','none')
+    await page.emulate_media(reduced_motion='reduce')
+    await expect(live).to_have_css('animation-name','none')
+    await page.emulate_media(reduced_motion='no-preference')
+    await expect(live).to_have_css('animation-name','flow')
     if mode=='many':
         await expect(graph.get_by_role('button',name='Other server:',exact=False).locator('circle')).to_have_class('nd idle')
         nodes=await graph.get_by_role('button',name=re.compile(r'^Exit ')).all()
