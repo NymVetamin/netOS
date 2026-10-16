@@ -2540,3 +2540,14 @@ td > select {
 .ntp-server-row { display: flex; align-items: center; gap: 8px; max-width: 480px; }
 .ntp-server-row input { flex: 1; min-width: 0; }
 .ntp-server-row button { flex-shrink: 0; }
+
+.timezone-input { position: relative; }
+.timezone-options {
+  position: absolute; top: 100%; left: 0; z-index: 20;
+  width: max-content; min-width: 100%; max-width: min(340px, 80vw);
+  margin: 4px 0 0; padding: 4px; list-style: none;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: 0 6px 18px #0003;
+}
+.timezone-options li { padding: 6px 8px; cursor: pointer; overflow-wrap: anywhere; }
+.timezone-options li:hover, .timezone-options li[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }

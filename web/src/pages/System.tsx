@@ -1,3 +1,4 @@
+import { TimezoneInput } from "../TimezoneInput";
 import { Updates } from "../Updates";
 import { confirmAction } from "../confirm";
 import { useEffect, useRef, useState } from "react";
@@ -92,11 +93,8 @@ export function SystemPage({
             />
           </Field>
           <Field label="Часовой пояс" hint="Влияет на время в журналах. Расписания правил задаются в UTC.">
-            <input
-              type="text"
-              value={config.system?.timezone || ""}
-              onChange={(e) => patch((d) => (d.system.timezone = e.target.value))}
-            />
+            <TimezoneInput value={config.system?.timezone || ""}
+              onChange={value => patch(d => { d.system.timezone = value; })} />
           </Field>
         </div>
         <div style={{ marginTop: "0.8rem" }}>
