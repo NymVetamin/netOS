@@ -2518,3 +2518,19 @@ td > select {
 .logs-section { margin-bottom: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .logs-section > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; }
 .logs-content { padding: 0 16px 16px; }
+
+/* Samba settings: separate service controls and vertical access lists. */
+.storage-server {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.storage-server-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 20px 28px;
+  max-width: 900px;
+}
+.storage-server-grid .field { min-width: 0; margin: 0; }
+.storage-server-grid .switch { max-width: 100%; }
+.storage-server-grid input:not([type="checkbox"]) { max-width: 280px; }

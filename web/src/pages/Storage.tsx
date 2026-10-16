@@ -36,13 +36,17 @@ export function StoragePage({ config, patch, admin }: Props) {
     <Notice tone="info" title="Как подключиться">После применения настроек откройте <span className="mono">{`\\\\${server}`}</span> в Проводнике Windows или <span className="mono">{`smb://${server}`}</span> в файловом менеджере. Используйте отдельный логин Samba. Можно просматривать и скачивать файлы, а при разрешённой записи — загружать, переименовывать и удалять их. Для VPN в маршруты клиента должен входить адрес роутера; обнаружение в сетевом окружении работает в LAN.</Notice>
     <fieldset className="storage-settings" disabled={!admin} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <Card title="Файловый сервер">
-        <div className="form-grid">
-          <Field label="Samba"><Switch checked={!!s.enabled} disabled={!installed} label="Включить доступ к файлам" onChange={v => edit(d => d.enabled = v)} /></Field>
-          <Field label="Рабочая группа"><input value={s.workgroup || ""} placeholder="WORKGROUP" maxLength={15} onChange={e => edit(d => d.workgroup = e.target.value)} /></Field>
-          <Field label="Сетевое окружение"><Switch checked={!!s.discovery} label="Обнаружение Windows (WS-Discovery)" onChange={v => edit(d => d.discovery = v)} /></Field>
+        <div className="storage-server">
+          <Switch checked={!!s.enabled} disabled={!installed} label="Включить доступ к файлам" onChange={v => edit(d => d.enabled = v)} />
+          <div className="storage-server-grid">
+            <Field label="Рабочая группа"><input value={s.workgroup || ""} placeholder="WORKGROUP" maxLength={15} onChange={e => edit(d => d.workgroup = e.target.value)} /></Field>
+            <Field label="Сетевое окружение"><Switch checked={!!s.discovery} label="Обнаружение Windows (WS-Discovery)" onChange={v => edit(d => d.discovery = v)} /></Field>
+          </div>
+          <div className="storage-server-grid">
+            <Field label="Локальные сети с доступом"><div className="stack">{networks.length ? networks.map((n: any) => <Switch key={n.id} label={`${n.name} (${n.router_address})`} checked={(s.networks || []).includes(n.id)} onChange={v => toggle("networks", n.id, v)} />) : <Empty>Нет подходящих локальных сетей.</Empty>}</div></Field>
+            <Field label="VPN-серверы с доступом" hint="WireGuard, OpenConnect, IKEv2 и L2TP. Права Samba действуют и для VPN-клиентов."><div className="stack">{vpns.length ? vpns.map((v: any) => <Switch key={v.id} label={`${v.name} (${v.type}, ${v.subnet})`} checked={(s.vpns || []).includes(v.id)} onChange={on => toggle("vpns", v.id, on)} />) : <Empty>Сначала включите VPN-сервер в разделе «VPN-доступ».</Empty>}</div></Field>
+          </div>
         </div>
-        <Field label="Локальные сети с доступом">{networks.length ? networks.map((n: any) => <Switch key={n.id} label={`${n.name} (${n.router_address})`} checked={(s.networks || []).includes(n.id)} onChange={v => toggle("networks", n.id, v)} />) : <Empty>Нет подходящих локальных сетей.</Empty>}</Field>
-        <Field label="VPN-серверы с доступом" hint="WireGuard, OpenConnect, IKEv2 и L2TP. Права Samba действуют и для VPN-клиентов.">{vpns.length ? vpns.map((v: any) => <Switch key={v.id} label={`${v.name} (${v.type}, ${v.subnet})`} checked={(s.vpns || []).includes(v.id)} onChange={on => toggle("vpns", v.id, on)} />) : <Empty>Сначала включите VPN-сервер в разделе «VPN-доступ».</Empty>}</Field>
       </Card>
       <Card tight title="Накопители" subtitle="Настройка сохраняется по UUID и действует после повторного подключения" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
         <div className="rows-notes">{error && <Notice tone="danger" title="Список дисков недоступен">{error}</Notice>}</div>
