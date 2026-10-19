@@ -851,7 +851,7 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
         </button>
       </h3>
       <div className="card-part">
-      <p className="hint">Маскарад аплинка настраивается в разделе «Сеть». Изменения попадут в firewall после применения.</p>
+      <p className="hint" style={{ margin: 0, padding: "var(--pad)" }}>Маскарад аплинка настраивается в разделе «Сеть». Изменения попадут в firewall после применения.</p>
       {source.length === 0 ? (
         <Empty>Правил подмены адреса отправителя в настройках нет</Empty>
       ) : (
