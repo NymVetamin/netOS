@@ -1571,7 +1571,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp["hostname"] = cfg.System.Hostname
 		resp["wans"], resp["channels"] = s.liveLinks(r.Context(), cfg, stats)
 		if s.NetworkConflicts != nil {
-			resp["network_conflicts"] = s.NetworkConflicts.IfupdownConflicts(r.Context(), cfg)
+			resp["network_conflicts"] = s.networkConflictsSnapshot(r.Context(), cfg)
 		}
 		// Здесь и ниже — применённая конфигурация, а не черновик: карточка
 		// «Службы» описывает то, что работает сейчас. Пока она строилась из

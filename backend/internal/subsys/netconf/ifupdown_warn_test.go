@@ -108,3 +108,54 @@ func TestIfupdownWarningIsNotRepeated(t *testing.T) {
 		t.Fatalf("предупреждение повторено %d раз: %v", len(logger.warnings), logger.warnings)
 	}
 }
+
+func TestIfupdownQueriesServicesOnlyForPotentialConflicts(t *testing.T) {
+	conflictingIfupdown(t)
+	foreign := filepath.Join(ifupdownDir, "eth0")
+	if err := os.Remove(foreign); err != nil {
+		t.Fatal(err)
+	}
+	oldOwn := ifupdownPath
+	ifupdownPath = filepath.Join(ifupdownDir, "netos")
+	t.Cleanup(func() { ifupdownPath = oldOwn })
+	if err := os.WriteFile(ifupdownPath, []byte("auto eth0\niface eth0 inet dhcp\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ifupdownMain, []byte("auto lo eth0.100\niface eth0.100 inet dhcp\n# auto eth0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r := &backendUnitRunner{active: map[string]bool{}, enabled: map[string]bool{}}
+	s := New(r, nil)
+	check := func(want int) {
+		t.Helper()
+		if got := s.IfupdownConflicts(context.Background(), routerConfig()); len(got) != want {
+			t.Fatalf("conflicts=%v, want %d", got, want)
+		}
+	}
+	check(0)
+	if len(r.commands) != 0 {
+		t.Fatalf("no potential conflict but executed %v", r.commands)
+	}
+	if err := os.WriteFile(foreign, []byte("auto eth0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(0)
+	if len(r.commands) != 2 {
+		t.Fatalf("potential conflict must check active/enabled: %v", r.commands)
+	}
+	r.enabled["networking.service"] = true
+	check(1)
+	r.enabled["networking.service"] = false
+	r.active["networking.service"] = true
+	check(1)
+	r.active["networking.service"] = false
+	check(0)
+	if err := os.Remove(foreign); err != nil {
+		t.Fatal(err)
+	}
+	r.commands = nil
+	check(0)
+	if len(r.commands) != 0 {
+		t.Fatalf("removed declaration still queried services: %v", r.commands)
+	}
+}

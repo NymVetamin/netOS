@@ -703,7 +703,7 @@ func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 
 // IfupdownConflicts returns active foreign declarations for the panel.
 func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) []string {
-	if cfg == nil || (!s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service")) {
+	if cfg == nil {
 		return nil
 	}
 
@@ -727,6 +727,11 @@ func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) [
 		}
 	}
 
+	// Without matching foreign declarations, service state cannot create a
+	// conflict. Avoid starting systemctl for those panel requests.
+	if len(conflicts) == 0 || (!s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service")) {
+		return nil
+	}
 	return conflicts
 }
 

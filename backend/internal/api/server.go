@@ -90,8 +90,9 @@ type Server struct {
 	loginFails map[string]*failCounter
 	loginSlots chan struct{}
 
-	vpnStatusMu sync.Mutex
-	vpnStatus   map[string]*vpnStatusCache
+	networkConflictStatus networkConflictCache
+	vpnStatusMu           sync.Mutex
+	vpnStatus             map[string]*vpnStatusCache
 
 	httpServer         *http.Server
 	challengeServer    *http.Server
