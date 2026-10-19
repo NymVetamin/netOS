@@ -155,3 +155,41 @@ func TestDNSQueryFiltering(t *testing.T) {
 		t.Fatal(rows, err)
 	}
 }
+
+func TestXrayDNSJournal(t *testing.T) {
+	messages := []string{
+		"2026/10/19 06:48:04.055871 DOH//dns.google got answer: www.youtube.com -> [142.251.156.4] 24ms",
+		"2026/10/19 06:48:04.130508 UDP:127.0.0.1 cache HIT: www.cloudflare.com. -> [104.16.124.96]",
+		"TCP:127.0.0.1 cache OPTIMISTE: example.com -> [2001:db8::1]",
+		"from 192.0.2.1:12345 accepted tcp:192.0.2.2:443 [in >> direct] email: s/p",
+		"[Info] proxy/vless/inbound: firstLen = 1186",
+	}
+	var lines []string
+	for _, message := range messages {
+		row, _ := json.Marshal(map[string]string{"_SYSTEMD_UNIT": "netos-xray-srv1.service", "MESSAGE": message, "__REALTIME_TIMESTAMP": "1000000"})
+		lines = append(lines, string(row))
+	}
+	raw := strings.Join(lines, "\n")
+	dns, err := parseJournalEntries(raw, "dns")
+	if err != nil || len(dns) != 3 {
+		t.Fatal(dns, err)
+	}
+	services, err := parseJournalEntries(raw, "services")
+	if err != nil || len(services) != 2 {
+		t.Fatal(services, err)
+	}
+	unrelated := strings.ReplaceAll(raw, "netos-xray-srv1.service", "netos-xray-client1.service")
+	dns, err = parseJournalEntries(unrelated, "dns")
+	if err != nil || len(dns) != 0 {
+		t.Fatal("unrelated DNS source included", dns, err)
+	}
+	runner := &logRunner{}
+	s := &Server{StorageRunner: runner}
+	req := httptest.NewRequest("GET", "/api/logs?kind=dns", nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
+	w := httptest.NewRecorder()
+	s.handleLogs(w, req)
+	if w.Code != 200 || len(runner.calls) != 1 || !strings.Contains(runner.calls[0], "-u netos-xray-srv*.service") {
+		t.Fatal(w.Body.String(), runner.calls)
+	}
+}

@@ -247,7 +247,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		delete(previous, server.ID)
 		kind := "create"
 		if exists {
-			if reflect.DeepEqual(before, server) && (server.Type != "xray" || (old.TrafficMonitor.Enabled == next.TrafficMonitor.Enabled && reflect.DeepEqual(old.IsolationDestinations(before), next.IsolationDestinations(server)))) {
+			if reflect.DeepEqual(before, server) && (server.Type != "xray" || (old.TrafficMonitor.Enabled == next.TrafficMonitor.Enabled && old.DNS.QueryLog == next.DNS.QueryLog && reflect.DeepEqual(old.IsolationDestinations(before), next.IsolationDestinations(server)))) {
 				continue
 			}
 			kind = "update"

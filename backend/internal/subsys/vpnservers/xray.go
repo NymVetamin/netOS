@@ -239,7 +239,7 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		return nil, fmt.Errorf("неподдерживаемый серверный протокол Xray %q", protocol)
 	}
 	logConfig := map[string]any{"loglevel": "warning", "access": "none"}
-	if cfg.TrafficMonitor.Enabled {
+	if cfg.TrafficMonitor.Enabled || cfg.DNS.QueryLog {
 		// Console access and DNS events are consumed through the bounded system journal.
 		logConfig["access"] = ""
 		logConfig["dnsLog"] = true
