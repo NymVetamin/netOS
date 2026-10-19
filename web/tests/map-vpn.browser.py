@@ -130,6 +130,17 @@ async def scenario(browser, mode):
             else:
                 artifact=Path("output/playwright/map-vpn.png");artifact.parent.mkdir(parents=True,exist_ok=True)
                 await page.screenshot(path=str(artifact),full_page=True)
+                card=page.locator('.map-layout > .card').last
+                for width in [1920,1366,1110,1024,768,390,320]:
+                    await page.set_viewport_size({'width':width,'height':1000})
+                    for text in ['10.9.0.2','192.0.2.10:4567','10.9.0.1/24']:
+                        value=card.get_by_text(text,exact=True)
+                        await expect(value).to_be_visible()
+                        assert await value.evaluate("e=>{const r=document.createRange();r.selectNodeContents(e);return r.getClientRects().length===1}"), (width,text)
+                    assert await card.evaluate('e=>e.scrollWidth<=e.clientWidth'), width
+                await card.screenshot(path='output/playwright/map-node-mobile.png')
+                await page.set_viewport_size({'width':1366,'height':1000})
+                await card.screenshot(path='output/playwright/map-node-desktop.png')
                 telemetry_error=True
                 await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
                 await expect(page.get_by_text("состояние неизвестно",exact=True)).to_be_visible()
