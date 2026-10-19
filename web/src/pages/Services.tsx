@@ -38,10 +38,22 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
 
       <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns", "socks"]} />
 
-      <DHCPSection config={config} patch={patch} providers={dhcpProviders} />
-      <DNSSection config={config} patch={patch} providers={dnsProviders} />
-      <DDNSSection config={config} patch={patch} />
- <SocksSection config={config} patch={patch} />
+      <section className="service-group" aria-labelledby="service-dhcp">
+        <header className="service-group-head"><h2 id="service-dhcp">DHCP</h2><span>Выдача IP-адресов</span></header>
+        <div className="service-group-content"><DHCPSection config={config} patch={patch} providers={dhcpProviders} /></div>
+      </section>
+      <section className="service-group" aria-labelledby="service-dns">
+        <header className="service-group-head"><h2 id="service-dns">DNS</h2><span>Разрешение имён и фильтрация</span></header>
+        <div className="service-group-content"><DNSSection config={config} patch={patch} providers={dnsProviders} /></div>
+      </section>
+      <section className="service-group" aria-labelledby="service-ddns">
+        <header className="service-group-head"><h2 id="service-ddns">DDNS</h2><span>Обновление внешнего адреса в доменном имени</span></header>
+        <div className="service-group-content"><DDNSSection config={config} patch={patch} /></div>
+      </section>
+      <section className="service-group" aria-labelledby="service-socks">
+        <header className="service-group-head"><h2 id="service-socks">SOCKS5</h2><span>Прокси для приложений</span></header>
+        <div className="service-group-content"><SocksSection config={config} patch={patch} /></div>
+      </section>
     </>
   );
 }

@@ -25,6 +25,8 @@ async def scenario(browser, mode):
            "components": [{"id":"xray","installed":True}],
            "channels": [{"id":"direct","enabled":True,"name":"Напрямую","type":"direct"}],
            "socks":{"enabled":False,"port":0,"auth":False}}
+    cfg['components'].append({'id':'unbound','installed':True})
+    cfg['dns']={'enabled':True,'provider':'unbound','upstreams':[],'records':[],'split_rules':[],'blocklists':[]}
     cfg['interfaces']=[{'id':'br','name':'br-lan','kind':'bridge','enabled':True},{'id':'br2','name':'br-guests','kind':'bridge','enabled':True}]
     cfg['networks'][0]['interface']='br'
     cfg['networks'].append({'id':'guest','name':'Guests','interface':'br2','enabled':True,'router_address':'192.0.3.1/24'})
@@ -76,6 +78,19 @@ async def scenario(browser, mode):
     await expect(page.get_by_text("проверка состояния…",exact=True)).to_be_visible()
     catalog_gate.set()
     await expect(toggle).to_be_enabled()
+    for name in ['DHCP','DNS','DDNS','SOCKS5']:
+        await expect(page.get_by_role('region',name=name,exact=True)).to_have_count(1)
+    dns=page.get_by_role('region',name='DNS',exact=True)
+    await expect(dns.get_by_role('heading',name='Локальные DNS-записи',exact=True)).to_have_count(1)
+    await expect(dns.get_by_role('heading',name='DNS blocklists',exact=True)).to_have_count(1)
+    await expect(page.get_by_role('region',name='SOCKS5',exact=True).get_by_role('checkbox',name='Включить SOCKS5',exact=True)).to_have_count(1)
+    for width in [1440,390]:
+        await page.set_viewport_size({'width':width,'height':900})
+        for group in await page.locator('.service-group').all():
+            assert await group.evaluate('e=>e.scrollWidth<=e.clientWidth'), width
+        Path('output/playwright').mkdir(parents=True,exist_ok=True)
+        await page.screenshot(path=f'output/playwright/services-groups-{width}.png',full_page=True)
+    await page.set_viewport_size({'width':1280,'height':900})
     await expect(page.get_by_label("Порт SOCKS5",exact=True)).to_have_count(0)
     await toggle.locator("..").click()
     await expect(toggle).to_be_checked()
