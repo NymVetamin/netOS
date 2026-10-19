@@ -1,4 +1,4 @@
-import { DomainChart } from "./DomainChart";
+import { DomainChart, domainCountsByClient } from "./DomainChart";
 import { useEffect, useRef, useState } from "react";
 import { api, formatBitrate, formatBytes } from "../api";
 import { Card, Empty, Switch, Notice, TableWrap } from "../ui";
@@ -65,6 +65,8 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
   if(valid.length!==selected.length)setSelected(valid);
  },[clients,selected.join(","),totals.map(c=>c.id).join(",")]);
  const chosen=selected.filter(id=>active.has(id));const ids=chosen.length?chosen:totals.slice(0,5).map(c=>c.id);
+ const domainRecords=(clients?.domains||[]).filter((r:any)=>ids.includes(r.client));
+ const domainCounts=domainCountsByClient(domainRecords);
  const lines:Line[]=ids.map((id,index)=>{
   const fresh=recent.flatMap(batch=>(batch.points||[]).filter((p:any)=>p.id===id));
   const points=[...(clients?.points||[]).filter((p:any)=>p.id===id&&(!fresh.length||p.at<fresh[0].at)),...fresh];
@@ -92,9 +94,9 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
     </>}
     <button type="button" className="btn sm" aria-expanded={details} onClick={()=>setDetails(!details)}>{details?"Скрыть подробности":"Подробнее"}</button>
     {details&&<div className="monitor-details">
-     <p className="faint">Учитывается маршрутизируемый IP-трафик, включая обмен между сегментами. Обмен внутри одного сегмента и трафик к службам роутера (Samba, SOCKS5) здесь не видны. После запуска сбора и смены адреса первый интервал может отсутствовать.</p><h3>Клиенты за выбранный период</h3><TableWrap><table><thead><tr><th>Клиент</th><th>Скачано</th><th>Отправлено</th><th>DNS-запросов</th><th>Соединений Xray</th></tr></thead><tbody>{totals.filter(c=>ids.includes(c.id)).map(c=><tr key={c.id}><td>{c.name}</td><td>{formatBytes(c.rx)}</td><td>{formatBytes(c.tx)}</td><td>{c.queries||0}</td><td>{c.connections||0}</td></tr>)}</tbody></table></TableWrap>
+     <p className="faint">Учитывается маршрутизируемый IP-трафик, включая обмен между сегментами. Обмен внутри одного сегмента и трафик к службам роутера (Samba, SOCKS5) здесь не видны. После запуска сбора и смены адреса первый интервал может отсутствовать.</p><h3>Клиенты за выбранный период</h3><TableWrap><table><thead><tr><th>Клиент</th><th>Скачано</th><th>Отправлено</th><th>Обращений к доменам</th><th>Соединений Xray</th></tr></thead><tbody>{totals.filter(c=>ids.includes(c.id)).map(c=><tr key={c.id}><td>{c.name}</td><td>{formatBytes(c.rx)}</td><td>{formatBytes(c.tx)}</td><td>{domainCounts.get(c.id)||0}</td><td>{c.connections||0}</td></tr>)}</tbody></table></TableWrap>
      <h3>Запрашиваемые домены</h3><p className="faint">Поддомены объединены. Доли по числу DNS-запросов и соединений Xray с определённым доменом, не по объёму трафика. Только загруженная выборка за период.</p>
-     <DomainChart records={clients.domains || []}/>
+     <DomainChart records={domainRecords}/>
 
     </div>}
    </>}

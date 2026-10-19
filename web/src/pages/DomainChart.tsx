@@ -3,14 +3,22 @@ import { getDomain } from "tldts";
 import { Empty } from "../ui";
 
 const colors=["#55d395","#ffbb3c","#69adff","#de8fff","#ff8397","#71dfdf","#b6d56b","#df9c6e","#9cacf4","#e3ce7b","#87939f"];
+export function domainForRecord(r:any):string|null {
+ if(r.source==="xray-ip" || !Number.isFinite(r.count) || r.count<=0)return null;
+ const host=String(r.domain || "").toLowerCase().replace(/\.$/, "");
+ if(host.includes(":") || host.endsWith(".arpa"))return null;
+ return getDomain(host,{extractHostname:false});
+}
+export function domainCountsByClient(records:any[]):Map<string,number> {
+ const counts=new Map<string,number>();
+ for(const r of records)if(domainForRecord(r))counts.set(r.client,(counts.get(r.client)||0)+r.count);
+ return counts;
+}
 export function DomainChart({records}:{records:any[]}) {
  const entries=useMemo(()=>{
   const totals=new Map<string,number>();
   for(const r of records){
-   if(r.source==="xray-ip" || !Number.isFinite(r.count) || r.count<=0)continue;
-   const host=String(r.domain || "").toLowerCase().replace(/\.$/, "");
-   if(host.includes(":") || host.endsWith(".arpa"))continue;
-   const domain=getDomain(host,{extractHostname:false});
+   const domain=domainForRecord(r);
    if(domain)totals.set(domain,(totals.get(domain)||0)+r.count);
   }
   const sorted=[...totals.entries()].sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
