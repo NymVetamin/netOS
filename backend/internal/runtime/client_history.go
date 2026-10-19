@@ -22,12 +22,22 @@ import (
 const HistoryInterval = 30 * time.Second
 
 type ClientCounter struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Address string `json:"address"`
-	RX      uint64 `json:"rx"`
-	TX      uint64 `json:"tx"`
+	// SampledAt is internal: cached proxy counters retain their observation time.
+	SampledAt time.Time `json:"-"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Address   string    `json:"address"`
+	RX        uint64    `json:"rx"`
+	TX        uint64    `json:"tx"`
 }
+
+func (v ClientCounter) sampleTime(fallback time.Time) time.Time {
+	if !v.SampledAt.IsZero() {
+		return v.SampledAt
+	}
+	return fallback
+}
+
 type clientBaseline struct {
 	ClientCounter
 	At time.Time
@@ -338,8 +348,13 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 	for _, v := range values {
 		key := v.Address + "|" + v.ID
 		old, ok := h.baseline[key]
-		next[key] = clientBaseline{v, now}
-		if !ok || now.Sub(old.At) > 2*HistoryInterval {
+		at := v.sampleTime(now)
+		next[key] = clientBaseline{v, at}
+		if ok && !at.After(old.At) {
+			next[key] = old
+			continue
+		}
+		if !ok || at.Sub(old.At) > 2*HistoryInterval {
 			continue
 		}
 		if v.RX < old.RX || v.TX < old.TX {
@@ -352,7 +367,7 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 		d.Address = v.Address
 		d.RX += rx
 		d.TX += txBytes
-		if seconds := now.Sub(old.At).Seconds(); seconds > d.Seconds {
+		if seconds := at.Sub(old.At).Seconds(); seconds > d.Seconds {
 			d.Seconds = seconds
 		}
 		deltas[v.ID] = d

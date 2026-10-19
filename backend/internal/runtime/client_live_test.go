@@ -79,3 +79,51 @@ func TestLiveResetOwnerAndMultipleAddresses(t *testing.T) {
 		t.Fatal("gap presented as live", h.liveSnapshot)
 	}
 }
+
+func TestCachedProxyCountersUseObservationTime(t *testing.T) {
+	h, err := NewClientHistory(filepath.Join(t.TempDir(), "history.db"), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	start := time.Now().UTC().Truncate(time.Second)
+	v := ClientCounter{ID: "vpn:s:p", Address: "xray:s:p", RX: 100, SampledAt: start}
+	h.publishLive(start, []ClientCounter{v})
+	if err = h.persist(start, []ClientCounter{v}); err != nil {
+		t.Fatal(err)
+	}
+	v.RX = 600
+	v.SampledAt = start.Add(5 * time.Second)
+	h.publishLive(start.Add(8*time.Second), []ClientCounter{v})
+	first := h.liveSnapshot.Points[0]
+	if first.RX != 800 || first.At != v.SampledAt.Unix() {
+		t.Fatalf("incorrect sample interval: %+v", first)
+	}
+	h.publishLive(start.Add(10*time.Second), []ClientCounter{v})
+	if len(h.liveSnapshot.Points) != 1 || h.liveSnapshot.Points[0] != first {
+		t.Fatal("repeated sample fabricated new point")
+	}
+	if err = h.persist(start.Add(30*time.Second), []ClientCounter{v}); err != nil {
+		t.Fatal(err)
+	}
+	if err = h.persist(start.Add(31*time.Second), []ClientCounter{v}); err != nil {
+		t.Fatal(err)
+	}
+	v.RX = 1100
+	v.SampledAt = start.Add(10 * time.Second)
+	h.publishLive(start.Add(13*time.Second), []ClientCounter{v})
+	if h.liveSnapshot.Points[0].RX != 800 {
+		t.Fatal("repeat moved baseline")
+	}
+	if err = h.persist(start.Add(35*time.Second), []ClientCounter{v}); err != nil {
+		t.Fatal(err)
+	}
+	var n, rx int
+	var seconds float64
+	if err = h.db.QueryRow("SELECT count(*),sum(rx),sum(seconds) FROM traffic").Scan(&n, &rx, &seconds); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || rx != 1000 || seconds != 10 {
+		t.Fatalf("duplicate/lost history: %d %d %v", n, rx, seconds)
+	}
+}

@@ -42,11 +42,36 @@ func (h *ClientHistory) publishLive(now time.Time, values []ClientCounter) {
 	next := map[string]clientBaseline{}
 	totals := map[string]ClientCounter{}
 	rates := map[string]ClientPoint{}
+	var previousTotals map[string]ClientCounter
+	var previousRates map[string]ClientPoint
 	for _, v := range values {
 		key := v.Address + "|" + v.ID
 		old, ok := h.liveBaseline[key]
-		next[key] = clientBaseline{v, now}
-		seconds := now.Sub(old.At).Seconds()
+		at := v.sampleTime(now)
+		next[key] = clientBaseline{v, at}
+		if ok && !at.After(old.At) {
+			next[key] = old
+			// Keep the previous point at its original time, never fabricate a
+			// zero-rate point from a second read of the same observation.
+			if previousTotals == nil {
+				previousTotals = make(map[string]ClientCounter, len(h.liveSnapshot.Clients))
+				previousRates = make(map[string]ClientPoint, len(h.liveSnapshot.Points))
+				for _, item := range h.liveSnapshot.Clients {
+					previousTotals[item.ID] = item
+				}
+				for _, point := range h.liveSnapshot.Points {
+					previousRates[point.ID] = point
+				}
+			}
+			if item, found := previousTotals[v.ID]; found {
+				totals[v.ID] = item
+			}
+			if point, found := previousRates[v.ID]; found {
+				rates[v.ID] = point
+			}
+			continue
+		}
+		seconds := at.Sub(old.At).Seconds()
 		if !ok || seconds <= 0 || seconds > 2*HistoryInterval.Seconds() || v.RX < old.RX || v.TX < old.TX {
 			continue
 		}
@@ -59,7 +84,7 @@ func (h *ClientHistory) publishLive(now time.Time, values []ClientCounter) {
 		totals[v.ID] = item
 		point := rates[v.ID]
 		point.ID = v.ID
-		point.At = now.Unix()
+		point.At = at.Unix()
 		point.RX += float64(v.RX-old.RX) * 8 / seconds
 		point.TX += float64(v.TX-old.TX) * 8 / seconds
 		rates[v.ID] = point

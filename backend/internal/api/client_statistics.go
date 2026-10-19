@@ -81,14 +81,14 @@ func (s *Server) ProxyClientCounters(ctx context.Context, cfg *config.Config) []
 		if !server.Enabled || server.Type != "xray" {
 			continue
 		}
-		rows := s.vpnClients(ctx, server)
+		rows, sampledAt := s.vpnClientSnapshot(ctx, server, time.Time{})
 		for _, r := range rows {
 			if !r.TrafficKnown {
 				continue
 			}
 			for _, p := range server.Peers {
 				if p.ID == r.ID {
-					out = append(out, netosruntime.ClientCounter{ID: "vpn:" + server.ID + ":" + p.ID, Name: p.Name + " · " + server.Name, Address: "xray:" + server.ID + ":" + p.ID, RX: r.Sent, TX: r.Received})
+					out = append(out, netosruntime.ClientCounter{ID: "vpn:" + server.ID + ":" + p.ID, Name: p.Name + " · " + server.Name, Address: "xray:" + server.ID + ":" + p.ID, RX: r.Sent, TX: r.Received, SampledAt: sampledAt})
 				}
 			}
 		}

@@ -26,7 +26,10 @@ type vpnStatusCache struct {
 // Keep the last observed connection while the daemon runs, including when no
 // browser is open. This is observation time, not a fabricated disconnect time.
 func (s *Server) monitorVPNClients(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
+		cycleStarted := time.Now()
 		if s.Engine != nil {
 			servers := s.Engine.Current().VPNServers
 			keep := map[string]bool{}
@@ -43,7 +46,7 @@ func (s *Server) monitorVPNClients(ctx context.Context) {
 				go func(server config.VPNServer) {
 					defer wg.Done()
 					defer func() { <-slots }()
-					s.vpnClients(ctx, server)
+					s.vpnClientSnapshot(ctx, server, cycleStarted)
 				}(server)
 			}
 			wg.Wait()
@@ -58,12 +61,19 @@ func (s *Server) monitorVPNClients(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-ticker.C:
 		}
 	}
 }
 
 func (s *Server) vpnClients(ctx context.Context, server config.VPNServer) []vpnClientStatus {
+	rows, _ := s.vpnClientSnapshot(ctx, server, time.Time{})
+	return rows
+}
+
+// Only the monitor refreshes a warm snapshot. Cold/configuration-changed reads
+// are coalesced under the same lock. A concurrent cold read can satisfy a cycle.
+func (s *Server) vpnClientSnapshot(ctx context.Context, server config.VPNServer, refreshAfter time.Time) ([]vpnClientStatus, time.Time) {
 	s.vpnStatusMu.Lock()
 	if s.vpnStatus == nil {
 		s.vpnStatus = map[string]*vpnStatusCache{}
@@ -83,9 +93,10 @@ func (s *Server) vpnClients(ctx context.Context, server config.VPNServer) []vpnC
 		cache.at = time.Time{}
 		cache.fingerprint = fingerprint
 	}
-	if time.Since(cache.at) < 2*time.Second {
-		return append([]vpnClientStatus{}, cache.rows...)
+	if !cache.at.IsZero() && (refreshAfter.IsZero() || !cache.at.Before(refreshAfter)) {
+		return append([]vpnClientStatus{}, cache.rows...), cache.at
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	now := time.Now()
@@ -109,8 +120,11 @@ func (s *Server) vpnClients(ctx context.Context, server config.VPNServer) []vpnC
 			row.LastSeen = now.Unix()
 		}
 	}
+	if caller.Err() != nil {
+		return rows, time.Time{}
+	}
 	cache.rows, cache.at = rows, time.Now()
-	return append([]vpnClientStatus{}, rows...)
+	return append([]vpnClientStatus{}, rows...), cache.at
 }
 
 func (s *Server) sessionClients(ctx context.Context, server config.VPNServer) []vpnClientStatus {

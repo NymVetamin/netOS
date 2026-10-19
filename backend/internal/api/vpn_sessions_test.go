@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,5 +130,50 @@ func TestOpenConnectCertificateIdentityIsScopedToServerSocket(t *testing.T) {
 	rows := s.sessionClients(context.Background(), server)
 	if rows[0].State != "online" || rows[0].Endpoint != "192.0.2.9" || rows[1].State != "offline" || !strings.Contains(runner.calls[0], "/run/netos-ocserv-srv7/occtl.socket") {
 		t.Fatal("certificate CN or server identity incorrectly matched", rows)
+	}
+}
+
+func TestVPNReadersShareMonitorSnapshot(t *testing.T) {
+	runner := &sessionRunner{out: `{}`}
+	s := &Server{Collector: &runtime.Collector{Runner: runner}}
+	server := config.VPNServer{ID: "srv", Type: "xray", Enabled: true}
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.vpnClients(context.Background(), server) }()
+	}
+	wg.Wait()
+	if len(runner.calls) != 1 {
+		t.Fatalf("cold reads spawned %d commands", len(runner.calls))
+	}
+	cache := s.vpnStatus[server.ID]
+	cache.at = time.Now().Add(-4 * time.Second)
+	for range 32 {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.vpnClients(context.Background(), server) }()
+	}
+	wg.Wait()
+	if len(runner.calls) != 1 {
+		t.Fatal("readers refreshed a warm monitor snapshot")
+	}
+	cycle := time.Now()
+	_, at := s.vpnClientSnapshot(context.Background(), server, cycle)
+	if len(runner.calls) != 2 || at.Before(cycle) {
+		t.Fatal("monitor did not refresh")
+	}
+	s.vpnClientSnapshot(context.Background(), server, cycle)
+	if len(runner.calls) != 2 {
+		t.Fatal("same cycle duplicated a completed sample")
+	}
+	server.Peers = []config.VPNPeer{{ID: "new", Enabled: true}}
+	if rows := s.vpnClients(context.Background(), server); len(rows) != 1 || rows[0].ID != "new" || len(runner.calls) != 3 {
+		t.Fatal("config change did not invalidate")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	previous := cache.at
+	s.vpnClientSnapshot(ctx, server, time.Now())
+	if !cache.at.Equal(previous) {
+		t.Fatal("cancelled caller poisoned shared cache")
 	}
 }
