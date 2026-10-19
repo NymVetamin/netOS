@@ -14,6 +14,7 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
+	"github.com/netos-router/netos/internal/system"
 )
 
 type vpnStatusCache struct {
@@ -152,7 +153,7 @@ func (s *Server) sessionClients(ctx context.Context, server config.VPNServer) []
 				live, available = pppSessions(out, fmt.Sprintf("ppp-srv%d", server.Index))
 			}
 		case "xray":
-			out, err = run(ctx, "/usr/local/bin/xray", "api", "statsonlineiplist", "--server=unix://"+vpnservers.XrayStatsSocket(server), "--timeout=3", "-all", "-include-traffic")
+			out, err = system.XrayUserStats(ctx, s.Collector.Runner, vpnservers.XrayStatsSocket(server))
 			if err == nil {
 				live, available = xraySessions(out)
 			}
