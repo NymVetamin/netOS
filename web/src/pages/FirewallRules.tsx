@@ -1,8 +1,9 @@
 import { SectionLink } from "../permissions";
+import { managedWanNAT } from "../wanNAT";
 import { interfaceDisplay } from "../interfaceDisplay";
 
 
-import { Badge, Switch } from "../ui";
+import { Badge, Switch, Row } from "../ui";
 
 function origin(comment: string, sources: Record<string,string>): [string,string] | null {
  if (comment.startsWith("NAT аплинка")) return ["Аплинк → NAT", "network"];
@@ -40,18 +41,19 @@ function describe(line:string, config:any) {
  }
  if(tokens.includes("--clamp-mss-to-pmtu"))parts.push("MSS по MTU пути");
  const target=value("-j") || value("-g");
- return {target,conditions:parts.join(" · ") || "Условия — в подсказке при наведении",action:actions[target] || (target?`Перейти в ${target}`:"Продолжить проверку")};
+ return {target,value,conditions:parts.join(" · ") || "Условия — в подсказке при наведении",action:actions[target] || (target?`Перейти в ${target}`:"Продолжить проверку")};
 }
 
 export type RuleGroup = {key:string; chain:string; description:string; items:{r:any;i:number;automatic?:boolean}[]};
 
 // Match by generator IDs, never by comments/names. Keep disabled and draft-only
 // rows in place, and retain the same group/row keys when the checkbox changes.
-export function includeAutomatic(groups:RuleGroup[], data:any, config:any):RuleGroup[] {
+export function includeAutomatic(groups:RuleGroup[], data:any, config:any, scope: "rules" | "nat" = "rules"):RuleGroup[] {
  const result=groups.map(g=>({...g,items:[...g.items]}));
  const ids:Record<string,string[]> = Object.fromEntries(Object.entries(data.rule_ids || {}).map(([line,values])=>[line,[...(values as string[])]]));
  for(const family of data.families || []) for(const table of family.tables || []) for(const chain of table.chains || []) {
-  const primary=family.family==='IPv4' && table.name==='filter';
+  if(scope === "nat" ? table.name !== "nat" : table.name === "nat" || ["PREROUTING","POSTROUTING"].includes(chain.name)) continue;
+  const primary=family.family==='IPv4' && table.name===(scope === "nat" ? "nat" : "filter");
   let group=primary ? result.find(g=>g.chain===chain.name) : undefined;
   if(!group) {
    if(!chain.rules.length)continue;
@@ -62,6 +64,8 @@ export function includeAutomatic(groups:RuleGroup[], data:any, config:any):RuleG
   const seen=new Set<string>();
   chain.rules.forEach((line:string,index:number)=>{
    const id=family.family==='IPv4' ? ids[line]?.shift() : undefined;
+   const target=describe(line,config).target;
+   if(scope === "rules" && table.chains.some((c:any)=>c.name===target) && /-(IN|FWD|OUT)$/.test(target)) return;
    if(id && group!.items.some(item=>!item.automatic && item.r.id===id)) {
     if(!seen.has(id)) {
      const at=group!.items.findIndex(item=>!item.automatic && item.r.id===id);
@@ -72,11 +76,11 @@ export function includeAutomatic(groups:RuleGroup[], data:any, config:any):RuleG
    const match=line.match(/--comment\s+("(?:\\.|[^"\\])*"|\S+)/);
    let comment=match?.[1] || '';
    if(comment.startsWith('"')) {try{comment=JSON.parse(comment)}catch{}}
-   pending.push({i:-1,automatic:true,r:{id:`auto:${family.family}:${table.name}:${chain.name}:${index}`,line,comment}});
+   pending.push({i:-1,automatic:true,r:{id:`auto:${family.family}:${table.name}:${chain.name}:${index}`,line,comment,savedID:id}});
   });
   group.items.push(...pending);
  }
- return result;
+ return result.filter(g=>g.items.length);
 }
 
 export function AutomaticRuleRow({rule,config}:{rule:any;config:any}) {
@@ -92,4 +96,19 @@ export function AutomaticRuleRow({rule,config}:{rule:any;config:any}) {
   <td style={{width:170}}><Badge tone={detail.target==='ACCEPT'?'ok':['DROP','REJECT'].includes(detail.target)?'danger':'neutral'}>{detail.action}</Badge></td>
   <td style={{width:210}} />
  </tr>;
+}
+
+// NAT uses the same columns as saved rules; generated rows have no editor.
+export function AutomaticNATRow({rule,config,destination}:{rule:any;config:any;destination:boolean}) {
+ const {value,target}=describe(rule.line,config);
+ const title=rule.comment || actions[target] || "Трансляция адресов";
+ const saved=(config.firewall?.nat || []).find((n:any)=>n.id===rule.savedID);
+ const source=saved && managedWanNAT(config,saved) ? ["Аплинк → NAT","network"] : origin(rule.comment,{});
+ return <Row className="automatic-rule automatic-nat" title={rule.line} cells={[
+  <><strong>{title}</strong><div><small className="faint">{source?.[1] ? <SectionLink section={source[1]}>{source[0]}</SectionLink> : source?.[0] || "Сформировано netOS из настроек сети"}</small></div></>,
+  <span className="mono">{interfaceDisplay(config,value(destination ? "-i" : "-o")) || "любой"}</span>,
+  destination ? <span className="mono">{value("-p").toUpperCase()} {value("--dport") || "любой порт"}</span> : <span className="mono">{value("-s") || "кто угодно"}</span>,
+  <span className="mono">{destination ? value("--to-destination") || `роутер:${value("--to-ports") || value("--dport")}` : value("--to-source") || "адрес интерфейса"}</span>,
+  destination ? <span className="mono">{value("-s") || "с любых"}{value("-d") && ` · к: ${value("-d")}`}</span> : <Badge tone="neutral">автоматически</Badge>,
+ ]} toggle={<Switch checked disabled label="" ariaLabel={`Автоматическое правило NAT ${title}`} onChange={()=>{}} />} />;
 }

@@ -667,6 +667,8 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 
 // natSource — подмена адреса отправителя на выходе.
 func (b *builder) natSource(n config.NATRule) {
+	b.ruleID = n.ID
+	defer func() { b.ruleID = "" }()
 	if n.Interface == "" {
 		return
 	}
@@ -688,6 +690,8 @@ func (b *builder) natSource(n config.NATRule) {
 
 // natDestination — проброс обращения снаружи внутрь сети.
 func (b *builder) natDestination(n config.NATRule) {
+	b.ruleID = n.ID
+	defer func() { b.ruleID = "" }()
 	if n.DestIP == "" || n.ExtPort == "" {
 		return
 	}

@@ -37,3 +37,32 @@ func TestPreviewSavedRuleIdentity(t *testing.T) {
 	}
 	t.Fatal("identical command occurrences lost their IDs")
 }
+
+func TestPreviewNATIdentity(t *testing.T) {
+	var cfg config.Config
+	cfg.Firewall.Enabled = true
+	cfg.Firewall.NAT = []config.NATRule{
+		{ID: "snat", Name: "same", Enabled: true, Direction: "source", Interface: "eth0"},
+		{ID: "dnat", Name: "same", Enabled: true, Direction: "destination", Protocol: "tcpudp", ExtPort: "8080", DestIP: "192.0.2.2"},
+		{ID: "disabled", Name: "same", Direction: "source", Interface: "eth0"},
+	}
+	rules, err := Build(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for line, ids := range rules.RuleIDs {
+		if !strings.Contains(rules.IPv4, line+"\n") {
+			t.Fatalf("metadata altered command: %s", line)
+		}
+		for _, id := range ids {
+			counts[id]++
+			if id == "snat" && !strings.HasPrefix(line, "-A POSTROUTING ") || id == "dnat" && !strings.HasPrefix(line, "-A PREROUTING ") {
+				t.Fatalf("wrong NAT metadata: %s %s", id, line)
+			}
+		}
+	}
+	if counts["snat"] != 1 || counts["dnat"] != 2 || counts["disabled"] != 0 {
+		t.Fatal(counts)
+	}
+}

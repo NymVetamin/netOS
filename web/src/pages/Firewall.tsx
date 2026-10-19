@@ -1,6 +1,6 @@
 import { interfaceDisplay } from "../interfaceDisplay";
 import { managedWanNAT } from "../wanNAT";
-import { AutomaticRuleRow, includeAutomatic, RuleGroup } from "./FirewallRules";
+import { AutomaticRuleRow, AutomaticNATRow, includeAutomatic, RuleGroup } from "./FirewallRules";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
@@ -273,7 +273,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         )}
       </Card>
 
-      <NATSection config={config} patch={patch} />
+      <NATSection config={config} patch={patch} automatic={showAutomatic && automatic?.config === config ? automatic?.data : null} />
     </>
   );
 }
@@ -792,11 +792,16 @@ function natInterfaceOptions(config: any): { key: string; name: string; hint?: s
   return options;
 }
 
-function NATSection({ config, patch }: { config: any; patch: Patch }) {
+function NATSection({ config, patch, automatic }: { config: any; patch: Patch; automatic: any }) {
   const nat: any[] = config.firewall?.nat || [];
   const interfaces = natInterfaceOptions(config);
-  const source = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction !== "destination" && !managedWanNAT(config, x.n));
-  const dest = nat.map((n, i) => ({ n, i })).filter((x) => x.n.direction === "destination");
+  const base: RuleGroup[] = [
+    {key:"source",chain:"POSTROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction !== "destination" && !managedWanNAT(config,r))},
+    {key:"destination",chain:"PREROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction === "destination")},
+  ];
+  const groups = automatic ? includeAutomatic(base,automatic,config,"nat") : base;
+  const items = (chain:string) => groups.filter(g=>g.chain===chain).flatMap(g=>g.items).map(({r,i,automatic})=>({n:r,i,automatic}));
+  const source=items("POSTROUTING"), dest=items("PREROUTING");
 
   const addRule = (direction: string) => {
     const id = newID("nat");
@@ -846,12 +851,12 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
         </button>
       </h3>
       <div className="card-part">
-      <p className="hint">Ручные правила NAT. Маскарад аплинка настраивается в разделе «Сеть». Изменения попадут в firewall после применения.</p>
+      <p className="hint">Маскарад аплинка настраивается в разделе «Сеть». Изменения попадут в firewall после применения.</p>
       {source.length === 0 ? (
         <Empty>Правил подмены адреса отправителя в настройках нет</Empty>
       ) : (
         <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]} toggle="Вкл.">
-          {source.map(({ n, i }) => (
+          {source.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} destination={false} /> : (
             <Row
               key={n.id}
               id={n.id}
@@ -949,7 +954,7 @@ function NATSection({ config, patch }: { config: any; patch: Patch }) {
         <Empty>Проброшенных портов нет</Empty>
       ) : (
         <Rows cols={["Название", "Приходит на", "Внешний порт", "Куда", "Только с адресов"]} toggle="Вкл.">
-          {dest.map(({ n, i }) => (
+          {dest.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} destination /> : (
             <Row
               key={n.id}
               id={n.id}

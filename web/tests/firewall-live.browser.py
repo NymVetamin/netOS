@@ -26,6 +26,27 @@ async def main():
    for table in family['tables']:
     for chain in table['chains']:
      chain['rules']=[line.replace(' -j ', ' -m comment --comment "'+live['comments'][line]+'" -j ') if line in live['comments'] else line for line in chain['rules']]
+  cfg['interfaces'].append({'id':'w2','name':'eth1','label':'Backup WAN'})
+  cfg['wans'].append({'id':'wan2','name':'Backup','enabled':True,'interface':'w2','proto':'static'})
+  cfg['firewall']['nat'].extend([
+   {'id':'managed','name':'Legacy uplink NAT','system':True,'enabled':True,'direction':'source','interface':'eth1'},
+   {'id':'manual','name':'Manual SNAT','enabled':True,'direction':'source','interface':'br1','to_source':'192.0.2.2'},
+   {'id':'forward','name':'Manual forward','enabled':True,'direction':'destination','interface':'eth0','protocol':'tcpudp','ext_port':'8080','dest_ip':'192.168.10.2','dest_port':'80'},
+   {'id':'disabled-nat','name':'Disabled NAT','enabled':False,'direction':'source','interface':'br1'},
+  ])
+  snat='-A POSTROUTING -o br1 -m comment --comment "Manual SNAT" -j SNAT --to-source 192.0.2.2'
+  forwards=[f'-A PREROUTING -i eth0 -p {proto} --dport 8080 -m comment --comment "Manual forward" -j DNAT --to-destination 192.168.10.2:80' for proto in ['tcp','udp']]
+  managed='-A POSTROUTING -o eth1 -m comment --comment "Legacy uplink NAT" -j MASQUERADE'
+  live['rule_ids'][managed]=['managed']
+  live['rule_ids'].update({snat:['manual'],**{line:['forward'] for line in forwards}})
+  live['families'][0]['tables'].extend([
+   {'name':'nat','chains':[
+    {'name':'POSTROUTING','rules':[snat,managed,'-A POSTROUTING -o tun-ch1 -m comment --comment "NAT канала «Riga»" -j MASQUERADE']},
+    {'name':'PREROUTING','rules':['-A PREROUTING -s 192.168.10.0/24 ! -d 192.168.10.1/32 -p udp --dport 53 -m comment --comment "Перехват DNS" -j DNAT --to-destination 192.168.10.1:53',*forwards]},
+   ]},
+   {'name':'mangle','chains':[{'name':'PREROUTING','rules':['-A PREROUTING -j MARK --set-mark 1']},{'name':'FORWARD','rules':['-A FORWARD -o tun-ch1 -p tcp -j TCPMSS --set-mss 1200']}]},
+  ])
+  live['families'][0]['tables'][0]['chains'].append({'name':'INPUT','rules':['-A INPUT -i eth0 -j WAN-IN']})
   async def route(r):
    path=urlparse(r.request.url).path
    if not path.startswith('/api/'):
@@ -50,6 +71,20 @@ async def main():
   await saved.evaluate('(e)=>e.dataset.preserved="yes"')
   before=await saved.locator('td').evaluate_all('(cells)=>cells.map(e=>e.getBoundingClientRect().width)')
   await checkbox.check()
+  await expect(page.locator('.automatic-nat')).to_have_count(3)
+  await expect(page.get_by_text('NAT канала «Riga»',exact=True)).to_be_visible()
+  await expect(page.get_by_text('Перехват DNS',exact=True)).to_be_visible()
+  await expect(page.get_by_text('Legacy uplink NAT',exact=True)).to_have_count(1)
+  await expect(page.locator('.automatic-nat').filter(has_text='Legacy uplink NAT').get_by_text('Аплинк → NAT',exact=True)).to_be_visible()
+  for name in ['Manual SNAT','Manual forward','Disabled NAT']:
+   await expect(page.get_by_text(name,exact=True)).to_have_count(1)
+  for chain_name in ['PREROUTING','POSTROUTING','INPUT']:
+   await expect(page.locator('.chain-header').filter(has_text=chain_name)).to_have_count(0)
+  await expect(page.get_by_text('Перейти в WAN-IN',exact=True)).to_have_count(0)
+  await expect(page.get_by_text('Ограничить MSS',exact=True).first).to_be_visible()
+  for toggle in await page.locator('.automatic-nat input').all():
+   await expect(toggle).to_be_disabled();await expect(toggle).to_be_checked()
+  await expect(page.locator('.automatic-nat details')).to_have_count(0)
   await expect(page.get_by_text('WAN-IN',exact=True)).to_be_visible()
   await expect(saved).to_have_attribute('data-preserved','yes')
   await expect(page.get_by_text('Allow s1 to s2',exact=True)).to_have_count(2)
@@ -78,6 +113,8 @@ async def main():
   await page.evaluate("document.documentElement.dataset.theme='dark'")
   await checkbox.scroll_into_view_if_needed()
   await page.screenshot(path='output/playwright/firewall-inline.png',full_page=True)
+  await page.get_by_text('Трансляция адресов',exact=True).scroll_into_view_if_needed()
+  await page.screenshot(path='output/playwright/firewall-nat-inline.png',full_page=True)
   await page.set_viewport_size({'width':390,'height':900})
   await page.screenshot(path='output/playwright/firewall-inline-mobile.png',full_page=True)
   await page.set_viewport_size({'width':1440,'height':1000})
@@ -98,7 +135,7 @@ async def main():
   async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
    await nat.locator('..').click()
   assert state['cfg']['firewall']['nat'][0]['enabled']
-  assert len(state['cfg']['firewall']['nat'])==1 and state['cfg']['firewall']['nat'][0]['id']=='old-nat'
+  assert len(state['cfg']['firewall']['nat'])==5 and state['cfg']['firewall']['nat'][0]['id']=='old-nat'
   await page.reload();await page.locator('summary').filter(has_text='Uplink').first.click()
   await expect(nat).to_be_checked()
   assert not errors,errors
