@@ -569,7 +569,7 @@ func (c *Controller) probe(ctx context.Context, wan config.WAN, iface string) bo
 		var err error
 		switch wan.Probe.Type {
 		case "http":
-			err = system.ProbeHTTP(ctx, c.Runner, iface, target, time.Duration(timeout)*time.Second)
+			_, err = c.Runner.Run(ctx, "curl", "--interface", iface, "--fail", "--silent", "--max-time", fmt.Sprint(timeout), target)
 		case "tcp":
 			host, port, splitErr := net.SplitHostPort(target)
 			if splitErr != nil {

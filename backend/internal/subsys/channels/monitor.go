@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
-	"github.com/netos-router/netos/internal/system"
 )
 
 type channelState struct {
@@ -225,7 +224,7 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 		var err error
 		switch ch.Probe.Type {
 		case "http":
-			err = system.ProbeHTTP(ctx, s.Runner, iface, target, time.Duration(timeout)*time.Second)
+			_, err = s.Runner.Run(ctx, "curl", "--interface", iface, "--fail", "--silent", "--max-time", fmt.Sprint(timeout), target)
 		case "tcp":
 			host, port, splitErr := net.SplitHostPort(target)
 			if splitErr != nil {
