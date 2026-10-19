@@ -299,6 +299,47 @@ func TestCatalogStateUsesBatchedPackageAndUnitSnapshots(t *testing.T) {
 	if len(r.commands) != 3 {
 		t.Fatalf("catalog snapshot launched %d processes instead of 3: %v", len(r.commands), r.commands)
 	}
+	if !strings.HasSuffix(r.commands[2], "dnsmasq.service unbound.service missing.service") {
+		t.Fatalf("unit file query must be restricted to requested services: %v", r.commands)
+	}
+}
+
+type unitFileFallbackRunner struct {
+	snapshotRunner
+	fullErr error
+	cancel  context.CancelFunc
+}
+
+func (r *unitFileFallbackRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if args[0] != "list-unit-files" {
+		return r.snapshotRunner.Run(ctx, name, args...)
+	}
+	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if len(args) > 4 {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		return "", errors.New("no matching unit files")
+	}
+	return "unrelated.service enabled enabled\n", r.fullErr
+}
+
+func TestDisabledUnitsAbsentFilesRetainSnapshotFallback(t *testing.T) {
+	r := &unitFileFallbackRunner{}
+	states, err := NewSystemd(r).DisabledUnits(context.Background(), []string{"missing.service"})
+	if err != nil || !states["missing.service"] || len(states) != 1 || len(r.commands) != 3 {
+		t.Fatalf("states=%v err=%v commands=%v", states, err, r.commands)
+	}
+	r = &unitFileFallbackRunner{fullErr: errors.New("systemd unavailable")}
+	if states, err = NewSystemd(r).DisabledUnits(context.Background(), []string{"missing.service"}); err == nil || states != nil {
+		t.Fatalf("failed snapshot must not mark absent units disabled: %v %v", states, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r = &unitFileFallbackRunner{cancel: cancel}
+	if _, err = NewSystemd(r).DisabledUnits(ctx, []string{"missing.service"}); err == nil || len(r.commands) != 2 {
+		t.Fatalf("cancelled request ran fallback: err=%v commands=%v", err, r.commands)
+	}
 }
 
 type packageRunner struct {

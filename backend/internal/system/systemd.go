@@ -138,9 +138,6 @@ func (s *Systemd) DisabledUnits(ctx context.Context, units []string) (map[string
 	if len(units) == 0 {
 		return result, nil
 	}
-	// Do not pass unit names as patterns: list-unit-files exits with status 1
-	// when even one optional package unit is absent, discarding the useful
-	// snapshot and forcing the slow per-unit fallback on minimal installs.
 	activeOut, err := s.R.Run(ctx, "systemctl", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager")
 	if err != nil {
 		return nil, err
@@ -153,7 +150,16 @@ func (s *Systemd) DisabledUnits(ctx context.Context, units []string) (map[string
 		}
 	}
 
-	fileOut, err := s.R.Run(ctx, "systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager")
+	// Ask only about the catalog units. Enumerating every installed unit file
+	// makes PID 1 repeatedly inspect unrelated services on each panel poll.
+	fileArgs := []string{"list-unit-files", "--type=service", "--no-legend", "--no-pager"}
+	fileOut, err := s.R.Run(ctx, "systemctl", append(append([]string(nil), fileArgs...), units...)...)
+	if err != nil && ctx.Err() == nil {
+		// An empty match returns status 1 on systemd, including when all optional
+		// packages are absent. Preserve the full-snapshot semantics in that case
+		// (and on other failures) rather than guessing that every unit is disabled.
+		fileOut, err = s.R.Run(ctx, "systemctl", fileArgs...)
+	}
 	if err != nil {
 		return nil, err
 	}
