@@ -33,6 +33,7 @@ type clientBaseline struct {
 	At time.Time
 }
 type DNSCount struct {
+	Source string `json:"source,omitempty"`
 	Client string `json:"client"`
 	Domain string `json:"domain"`
 	Count  int64  `json:"count"`
@@ -48,6 +49,7 @@ type ClientHistory struct {
 	mu           sync.Mutex
 	addresses    map[string]ClientCounter
 	baseline     map[string]clientBaseline
+	resources    map[string]*DNSCount
 	dns          map[string]*DNSCount
 	enabled      bool
 	problem      string
@@ -75,7 +77,9 @@ func NewClientHistory(path string, r system.Runner, c *Collector, current func()
  CREATE INDEX IF NOT EXISTS traffic_time ON traffic(at);
  CREATE INDEX IF NOT EXISTS traffic_client_time ON traffic(id,at DESC);
  CREATE TABLE IF NOT EXISTS domains(at INTEGER,client TEXT,domain TEXT,n INTEGER,first INTEGER,last INTEGER);
- CREATE INDEX IF NOT EXISTS domains_time ON domains(at);`)
+ CREATE INDEX IF NOT EXISTS domains_time ON domains(at);
+ CREATE TABLE IF NOT EXISTS resources(at INTEGER,client TEXT,domain TEXT,source TEXT,n INTEGER,first INTEGER,last INTEGER);
+ CREATE INDEX IF NOT EXISTS resources_time ON resources(at);`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -256,6 +260,7 @@ func (h *ClientHistory) sample(parent context.Context) {
 		h.liveUntil = time.Time{}
 		h.lastPersist = time.Time{}
 		h.dns = map[string]*DNSCount{}
+		h.resources = map[string]*DNSCount{}
 		h.addresses = map[string]ClientCounter{}
 		h.problem = ""
 		h.dnsProblem = ""
@@ -368,11 +373,18 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 		}
 	}
 
+	for _, d := range h.resources {
+		if _, err = tx.Exec("INSERT INTO resources VALUES(?,?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Source, d.Count, d.First, d.Last); err != nil {
+			return err
+		}
+	}
+
 	if err = tx.Commit(); err != nil {
 		return err
 	}
 	h.baseline = next
 	h.dns = map[string]*DNSCount{}
+	h.resources = map[string]*DNSCount{}
 	return nil
 }
 func (h *ClientHistory) AddDNS(at time.Time, addr, domain string) {
@@ -411,12 +423,13 @@ func (h *ClientHistory) AddDNS(at time.Time, addr, domain string) {
 }
 
 type ClientTotal struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Address string `json:"address"`
-	RX      uint64 `json:"rx"`
-	TX      uint64 `json:"tx"`
-	Queries int64  `json:"queries"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Address     string `json:"address"`
+	RX          uint64 `json:"rx"`
+	TX          uint64 `json:"tx"`
+	Queries     int64  `json:"queries"`
+	Connections int64  `json:"connections"`
 }
 type ClientPoint struct {
 	At int64   `json:"at"`
@@ -501,13 +514,13 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 		return report, err
 	}
 	if details {
-		rows, err = h.db.QueryContext(ctx, "SELECT client,domain,SUM(n),MIN(first),MAX(last) FROM domains WHERE at>=? AND at<=? AND client IN ("+placeholders+") GROUP BY client,domain ORDER BY SUM(n) DESC LIMIT 200", args...)
+		rows, err = h.db.QueryContext(ctx, "SELECT client,domain,source,SUM(n),MIN(first),MAX(last) FROM (SELECT at,client,domain,'dns' AS source,n,first,last FROM domains UNION ALL SELECT at,client,domain,source,n,first,last FROM resources) WHERE at>=? AND at<=? AND client IN ("+placeholders+") GROUP BY client,domain,source ORDER BY SUM(n) DESC LIMIT 200", args...)
 		if err != nil {
 			return report, err
 		}
 		for rows.Next() {
 			var d DNSCount
-			if err = rows.Scan(&d.Client, &d.Domain, &d.Count, &d.First, &d.Last); err != nil {
+			if err = rows.Scan(&d.Client, &d.Domain, &d.Source, &d.Count, &d.First, &d.Last); err != nil {
 				rows.Close()
 				return report, err
 			}
@@ -537,8 +550,28 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 		if err != nil {
 			return report, err
 		}
+		connections := map[string]int64{}
+		rows, err = h.db.QueryContext(ctx, "SELECT client,SUM(n) FROM resources WHERE at>=? AND at<=? GROUP BY client", from.Unix(), to.Unix())
+		if err != nil {
+			return report, err
+		}
+		for rows.Next() {
+			var id string
+			var n int64
+			if err = rows.Scan(&id, &n); err != nil {
+				rows.Close()
+				return report, err
+			}
+			connections[id] = n
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return report, err
+		}
 		for i := range report.Clients {
 			report.Clients[i].Queries = queries[report.Clients[i].ID]
+			report.Clients[i].Connections = connections[report.Clients[i].ID]
 		}
 	}
 	sort.Slice(report.Points, func(i, j int) bool { return report.Points[i].At < report.Points[j].At })
@@ -555,12 +588,12 @@ func (h *ClientHistory) prune(now time.Time) error {
 	}
 	defer tx.Rollback()
 	{
-		for _, table := range []string{"traffic", "domains"} {
+		for _, table := range []string{"traffic", "domains", "resources"} {
 			if _, err = tx.Exec("DELETE FROM "+table+" WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
 				return err
 			}
 			limit := 200000
-			if table == "domains" {
+			if table != "traffic" {
 				limit = 50000
 			}
 			result, e := tx.Exec("DELETE FROM "+table+" WHERE rowid IN (SELECT rowid FROM "+table+" ORDER BY at DESC LIMIT -1 OFFSET ?)", limit)

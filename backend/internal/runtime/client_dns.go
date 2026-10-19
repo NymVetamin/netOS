@@ -31,40 +31,20 @@ func ParseDNSQuery(line string) (address, domain string) {
 func (h *ClientHistory) watchDNS(ctx context.Context) {
 	go h.tailDNSFile(ctx)
 	for ctx.Err() == nil {
-		cmd := exec.CommandContext(ctx, "journalctl", "--follow", "--lines=0", "--output=json", "--output-fields=MESSAGE,__REALTIME_TIMESTAMP", "-u", "netos-dnsmasq.service", "-u", "netos-unbound.service")
+		// Match the executable, then validate the unit below: unit globs expand only
+		// when journalctl starts and would miss newly added Xray servers.
+		cmd := exec.CommandContext(ctx, "journalctl", "--follow", "--lines=0", "--output=json", "--output-fields=MESSAGE,__REALTIME_TIMESTAMP,_SYSTEMD_UNIT,_SYSTEMD_INVOCATION_ID,_PID", "_SYSTEMD_UNIT=netos-dnsmasq.service", "+", "_SYSTEMD_UNIT=netos-unbound.service", "+", "_COMM=xray")
 		pipe, err := cmd.StdoutPipe()
 		if err == nil {
 			err = cmd.Start()
 		}
 		if err == nil {
 			h.setDNSProblem("")
-			scan := bufio.NewScanner(pipe)
-			scan.Buffer(make([]byte, 4096), 65536)
-			for scan.Scan() {
-				var entry struct {
-					Message string `json:"MESSAGE"`
-					At      string `json:"__REALTIME_TIMESTAMP"`
-				}
-				if json.Unmarshal(scan.Bytes(), &entry) != nil {
-					continue
-				}
-				if strings.Contains(entry.Message, "Suppressed ") && strings.Contains(entry.Message, "messages") {
-					h.mu.Lock()
-					h.limited = true
-					h.mu.Unlock()
-				}
-				addr, domain := ParseDNSQuery(entry.Message)
-				if addr == "" {
-					continue
-				}
-				at := time.Now()
-				if n, e := strconv.ParseInt(entry.At, 10, 64); e == nil {
-					at = time.UnixMicro(n)
-				}
-				h.AddDNS(at, addr, domain)
-			}
+			h.readResourceJournal(ctx, pipe)
+			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 		}
+
 		if ctx.Err() == nil {
 			h.setDNSProblem("Сбор DNS-запросов прерван; повторное подключение через 10 секунд")
 		}
@@ -75,6 +55,84 @@ func (h *ClientHistory) watchDNS(ctx context.Context) {
 		}
 	}
 }
+
+// One bounded stream reader; a timer flushes pending IP joins even on an idle journal.
+func (h *ClientHistory) readResourceJournal(ctx context.Context, pipe io.Reader) {
+	lines := make(chan []byte, 128)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(lines)
+		scan := bufio.NewScanner(pipe)
+		scan.Buffer(make([]byte, 4096), 65536)
+		for scan.Scan() {
+			line := append([]byte(nil), scan.Bytes()...)
+			select {
+			case lines <- line:
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	xray := &xrayResources{}
+	for {
+		xray.configure(h.Current())
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			h.addXrayResources(xray.flush(now))
+			if xray.limited {
+				h.mu.Lock()
+				h.limited = true
+				h.mu.Unlock()
+				xray.unsafeUntil = time.Now().Add(xrayDNSWindow + xrayJoinDelay)
+				xray.limited = false
+			}
+		case line, ok := <-lines:
+			if !ok {
+				return
+			}
+			var entry struct {
+				Message    string `json:"MESSAGE"`
+				At         string `json:"__REALTIME_TIMESTAMP"`
+				Unit       string `json:"_SYSTEMD_UNIT"`
+				Invocation string `json:"_SYSTEMD_INVOCATION_ID"`
+				PID        string `json:"_PID"`
+			}
+			if json.Unmarshal(line, &entry) != nil {
+				continue
+			}
+			if strings.Contains(entry.Message, "Suppressed ") && strings.Contains(entry.Message, "messages") {
+				h.mu.Lock()
+				h.limited = true
+				h.mu.Unlock()
+				xray.unsafeUntil = time.Now().Add(xrayDNSWindow + xrayJoinDelay)
+			}
+			at := time.Now()
+			if n, e := strconv.ParseInt(entry.At, 10, 64); e == nil {
+				at = time.UnixMicro(n)
+			}
+			if strings.HasPrefix(entry.Unit, "netos-xray-srv") {
+				process := entry.Invocation
+				if process == "" {
+					process = entry.PID
+				}
+				h.addXrayResources(xray.consume(at, entry.Unit, process, entry.Message))
+				continue
+			}
+			addr, domain := ParseDNSQuery(entry.Message)
+			if addr != "" {
+				h.AddDNS(at, addr, domain)
+			}
+		}
+	}
+}
+
 func (h *ClientHistory) tailDNSFile(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

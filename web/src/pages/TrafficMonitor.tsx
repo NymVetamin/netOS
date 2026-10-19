@@ -55,7 +55,7 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
  const recent=custom?[]:live.filter(batch=>batch.at>=from&&batch.at<=to);
  const allTotals:any[]=clients?.clients||[];
  const active=new Map<string,any>();
- for(const c of allTotals)if(c.rx>0||c.tx>0)active.set(c.id,c);
+ for(const c of allTotals)if(c.rx>0||c.tx>0||c.connections>0||c.queries>0)active.set(c.id,c);
  for(const batch of recent)for(const c of batch.clients||[])if((c.rx>0||c.tx>0)&&!active.has(c.id))active.set(c.id,{...c,rx:0,tx:0,queries:0});
  const totals=[...active.values()].sort((a,b)=>(b.rx+b.tx)-(a.rx+a.tx));
  useEffect(()=>{
@@ -88,16 +88,16 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
     {clients.limited&&<Notice tone="warn" title="Достигнут лимит истории — часть подробностей не сохранена"/>}
     {totals.length===0?<Empty>{enabled?"За выбранный период нет клиентов с трафиком. После включения сбора дождитесь двух замеров.":"За этот период данных нет"}</Empty>:<>
      <div className="monitor-toolbar"><select aria-label="Направление трафика клиентов" value={direction} onChange={e=>setDirection(e.target.value)}><option value="sum">Суммарно</option><option value="down">Скачивание</option><option value="up">Отправка</option></select><button className="btn sm" onClick={()=>setSelected([])}>Топ-5 за период</button><span className="faint">Выбрано {ids.length} из {totals.length} · максимум 16</span></div>
-     <div className="monitor-clients">{totals.map(c=><label key={c.id}><input type="checkbox" checked={ids.includes(c.id)} disabled={!ids.includes(c.id)&&ids.length>=16} onChange={()=>{const next=ids.includes(c.id)?ids.filter(id=>id!==c.id):[...ids,c.id];if(next.length)setSelected(next)}}/><span>{c.name}<small className="faint"> {c.rx||c.tx?<>↓ {formatBytes(c.rx)} · ↑ {formatBytes(c.tx)}</>:"Есть трафик · итог ещё собирается"}</small></span></label>)}</div>
+     <div className="monitor-clients">{totals.map(c=><label key={c.id}><input type="checkbox" checked={ids.includes(c.id)} disabled={!ids.includes(c.id)&&ids.length>=16} onChange={()=>{const next=ids.includes(c.id)?ids.filter(id=>id!==c.id):[...ids,c.id];if(next.length)setSelected(next)}}/><span>{c.name}<small className="faint"> {c.rx||c.tx?<>↓ {formatBytes(c.rx)} · ↑ {formatBytes(c.tx)}</>:c.connections||c.queries?"Есть обращения · нет замера трафика":"Есть трафик · итог ещё собирается"}</small></span></label>)}</div>
      <TimeChart lines={lines} from={from} to={to} height={320}/>
     </>}
     <button type="button" className="btn sm" aria-expanded={details} onClick={()=>setDetails(!details)}>{details?"Скрыть подробности":"Подробнее"}</button>
     {details&&<div className="monitor-details">
-     <p className="faint">Учитывается маршрутизируемый IP-трафик, включая обмен между сегментами. Обмен внутри одного сегмента и трафик к службам роутера (Samba, SOCKS5) здесь не видны. После запуска сбора и смены адреса первый интервал может отсутствовать.</p><h3>Клиенты за выбранный период</h3><TableWrap><table><thead><tr><th>Клиент</th><th>Скачано</th><th>Отправлено</th><th>DNS-запросов</th></tr></thead><tbody>{totals.filter(c=>ids.includes(c.id)).map(c=><tr key={c.id}><td>{c.name}</td><td>{formatBytes(c.rx)}</td><td>{formatBytes(c.tx)}</td><td>{c.queries}</td></tr>)}</tbody></table></TableWrap>
-     <h3>Запрашиваемые ресурсы</h3><p className="faint">Количество DNS-запросов, не объём трафика сайта. Фоновые обращения также учитываются. Сторонний DNS и домены внутри клиентского VPN здесь не видны.</p>
-     {topDomains.length===0?<Empty>DNS-запросов выбранных клиентов за этот период нет</Empty>:<>
+     <p className="faint">Учитывается маршрутизируемый IP-трафик, включая обмен между сегментами. Обмен внутри одного сегмента и трафик к службам роутера (Samba, SOCKS5) здесь не видны. После запуска сбора и смены адреса первый интервал может отсутствовать.</p><h3>Клиенты за выбранный период</h3><TableWrap><table><thead><tr><th>Клиент</th><th>Скачано</th><th>Отправлено</th><th>DNS-запросов</th><th>Соединений Xray</th></tr></thead><tbody>{totals.filter(c=>ids.includes(c.id)).map(c=><tr key={c.id}><td>{c.name}</td><td>{formatBytes(c.rx)}</td><td>{formatBytes(c.tx)}</td><td>{c.queries||0}</td><td>{c.connections||0}</td></tr>)}</tbody></table></TableWrap>
+     <h3>Запрашиваемые ресурсы</h3><p className="faint">DNS-запросы и соединения Xray, не просмотры страниц и не объём трафика сайта. «Xray · по DNS» — сопоставление IP с недавним ответом резолвера; при неоднозначности остаётся IP. Фоновые обращения тоже учитываются.</p>
+     {topDomains.length===0?<Empty>Обращений выбранных клиентов за этот период нет</Empty>:<>
       <div className="monitor-domains">{topDomains.map(([domain,count])=><div key={domain}><span title={domain}>{domain}</span><div><i style={{width:`${count/maxDomain*100}%`}}/></div><b>{count}</b></div>)}</div>
-      <p className="faint">До 200 наиболее частых пар «клиент — домен» за период.</p><TableWrap><table><thead><tr><th>Клиент</th><th>Домен</th><th>Запросов</th><th>Первый</th><th>Последний</th></tr></thead><tbody>{domains.map(d=><tr key={d.client+"|"+d.domain}><td>{totals.find(c=>c.id===d.client)?.name||d.client}</td><td>{d.domain}</td><td>{d.count}</td><td>{timeLabel(d.first)}</td><td>{timeLabel(d.last)}</td></tr>)}</tbody></table></TableWrap>
+      <p className="faint">До 200 записей «клиент — ресурс — источник» за период.</p><TableWrap><table><thead><tr><th>Клиент</th><th>Домен / IP</th><th>Источник</th><th>Обращений</th><th>Первый</th><th>Последний</th></tr></thead><tbody>{domains.map(d=><tr key={d.client+"|"+d.domain+"|"+(d.source||"dns")}><td>{totals.find(c=>c.id===d.client)?.name||d.client}</td><td>{d.domain}</td><td>{{"xray-domain":"Xray · домен", "xray-dns":"Xray · по DNS", "xray-ip":"Xray · IP", "dns":"DNS"}[d.source as string] || "DNS"}</td><td>{d.count}</td><td>{timeLabel(d.first)}</td><td>{timeLabel(d.last)}</td></tr>)}</tbody></table></TableWrap>
      </>}
     </div>}
    </>}

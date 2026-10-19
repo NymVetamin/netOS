@@ -179,3 +179,38 @@ func TestXrayRouterDNS(t *testing.T) {
 		}
 	}
 }
+
+func TestXrayResourceLoggingSwitch(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		cfg, server := xrayServerConfig()
+		cfg.TrafficMonitor.Enabled = enabled
+		data, err := RenderXray(server, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		json.Unmarshal(data, &doc)
+		log := doc["log"].(map[string]any)
+		if enabled {
+			if log["dnsLog"] != true || log["access"] != "" {
+				t.Fatal(log)
+			}
+		} else if log["access"] != "none" || log["dnsLog"] == true {
+			t.Fatal(log)
+		}
+	}
+}
+
+func TestXrayMonitorTogglePlansRestart(t *testing.T) {
+	old, server := xrayServerConfig()
+	old.VPNServers = []config.VPNServer{server}
+	next := *old
+	next.TrafficMonitor.Enabled = !old.TrafficMonitor.Enabled
+	actions, err := (&Subsystem{}).Plan(old, &next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || !actions[0].Disruptive || actions[0].Kind != "update" {
+		t.Fatalf("missing logging restart: %+v", actions)
+	}
+}

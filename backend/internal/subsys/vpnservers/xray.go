@@ -238,11 +238,17 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 	default:
 		return nil, fmt.Errorf("неподдерживаемый серверный протокол Xray %q", protocol)
 	}
+	logConfig := map[string]any{"loglevel": "warning", "access": "none"}
+	if cfg.TrafficMonitor.Enabled {
+		// Console access and DNS events are consumed through the bounded system journal.
+		logConfig["access"] = ""
+		logConfig["dnsLog"] = true
+	}
 	doc := map[string]any{
 		"api":       map[string]any{"tag": "netos-stats", "listen": XrayStatsSocket(server), "services": []string{"StatsService"}},
 		"stats":     map[string]any{},
 		"policy":    map[string]any{"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true}}},
-		"log":       map[string]any{"loglevel": "warning"},
+		"log":       logConfig,
 		"inbounds":  []any{inbound},
 		"outbounds": outbounds,
 		"routing":   map[string]any{"domainStrategy": "IPIfNonMatch", "rules": rules},
