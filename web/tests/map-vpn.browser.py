@@ -51,12 +51,13 @@ async def scenario(browser, mode):
         await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd ok')
     box=await graph.bounding_box()
     assert box['y']+box['height']<1000
-    live=graph.locator('.edge.live').first
+    edges=graph.locator('..').locator('.map-edges')
+    live=edges.locator('.edge.live').first
     await expect(live).to_have_css('animation-name','flow')
     offset=await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')
     await page.wait_for_timeout(180)
     assert await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')!=offset
-    for edge in await graph.locator('.edge.idle, .edge.dead').all():
+    for edge in await edges.locator('.edge.idle, .edge.dead').all():
         await expect(edge).to_have_css('animation-name','none')
     await page.emulate_media(reduced_motion='reduce')
     await expect(live).to_have_css('animation-name','none')
@@ -86,10 +87,12 @@ async def scenario(browser, mode):
         after_anchor=await canvas.evaluate("(e,p)=>{const q=new DOMPoint(...p).matrixTransform(e.getScreenCTM().inverse());return [q.x,q.y]}",[x,y])
         assert all(abs(a-b)<0.1 for a,b in zip(anchor,after_anchor)),(anchor,after_anchor)
         zoomed=await canvas.get_attribute("transform")
+        await expect(edges.locator(':scope > g')).to_have_attribute('transform',zoomed)
         await page.wait_for_timeout(5500)
         await expect(canvas).to_have_attribute("transform",zoomed)
         await page.get_by_role("button",name="Показать всю карту",exact=True).click()
         await expect(canvas).to_have_attribute("transform",before)
+        await expect(edges.locator(':scope > g')).to_have_attribute('transform',before)
         node=graph.get_by_role("button",name="LAN:",exact=False)
         nb=await node.bounding_box()
         await page.mouse.move(nb["x"]+20,nb["y"]+20)
@@ -98,6 +101,7 @@ async def scenario(browser, mode):
         await page.mouse.move(nb["x"]+100,nb["y"]+50,steps=10)
         await page.mouse.up()
         await expect(canvas).not_to_have_attribute("transform",before)
+        await expect(edges.locator(':scope > g')).to_have_attribute('transform',await canvas.get_attribute('transform'))
         await expect(node).to_have_attribute("aria-pressed","false")
         await page.get_by_role("button",name="Показать всю карту",exact=True).click()
         await node.click()

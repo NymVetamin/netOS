@@ -223,7 +223,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
   );
 
   return (
-    <MapViewport width={vpn.length ? 1240 : W} height={height}>
+    <MapViewport width={vpn.length ? 1240 : W} height={height} background={<>
         {wans.map((w, i) => (
           <g key={`e-${w.id}`}>
             <path className={`edge ${edgeState(w.up, w.primary)}`} d={curve(122, cy, 205, wanY[i])} />
@@ -242,6 +242,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
           {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${["recent", "online"].includes(peer.state) ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
         </g>)}
 
+        </>}>
         <g>
           <circle cx={80} cy={cy} r={44} className="cloud" />
           <text className="nt" x={80} y={cy + 4} textAnchor="middle">Интернет</text>

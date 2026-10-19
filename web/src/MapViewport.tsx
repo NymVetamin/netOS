@@ -3,7 +3,7 @@ import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 const MIN = 0.5, MAX = 4;
 const initial = { x: 0, y: 0, scale: 1 };
 
-export function MapViewport({ width, height, children }: { width: number; height: number; children: ReactNode }) {
+export function MapViewport({ width, height, background, children }: { width: number; height: number; background?: ReactNode; children: ReactNode }) {
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState(initial);
   const canvas = useRef<HTMLDivElement>(null);
@@ -67,8 +67,11 @@ export function MapViewport({ width, height, children }: { width: number; height
       <span className="hint">Колёсико — масштаб · Потяните карту для перемещения</span>
     </div>
     <div ref={canvas} className="map-canvas" style={{height:canvasHeight}}>
+      {background && <svg className="map-edges" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+        <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>{background}</g>
+      </svg>}
       <svg ref={svg} viewBox={`0 0 ${width} ${height}`} role="group" aria-label="Схема сети"
-        className={dragging ? "map-dragging" : undefined}
+        className={dragging ? "map-nodes map-dragging" : "map-nodes"}
         onPointerDown={e => {
           if (e.button !== 0 || !e.isPrimary) return;
           suppressClick.current = false;

@@ -2082,6 +2082,7 @@ tr.disabled-row td {
 }
 
 .map-canvas {
+  position: relative;
   overflow: hidden;
   background: radial-gradient(var(--border) 1px, transparent 1.3px) 0 0 / 16px 16px;
 }
@@ -2093,6 +2094,18 @@ tr.disabled-row td {
   touch-action: none;
   user-select: none;
   cursor: grab;
+}
+
+/* Keep animated strokes from repainting the static node labels every frame. */
+.map-canvas .map-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.map-canvas .map-nodes {
+  position: relative;
+  will-change: transform;
 }
 
 .map-legend {
