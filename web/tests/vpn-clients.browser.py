@@ -137,6 +137,17 @@ async def scenario(browser, mode):
         assert all(s["isolated"] for s in state["config"]["vpn_servers"][1:])
         assert not errors,errors
         await page.close();print(mode,"PASS");return
+    if mode == "sessions-xray":
+        toggle=page.get_by_role('checkbox',name='Включить sniffing',exact=True)
+        await expect(toggle).not_to_be_checked()
+        async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
+            await toggle.locator('..').click()
+        assert state['config']['vpn_servers'][0]['config']['sniffing'] is True
+        await page.reload()
+        await expect(toggle).to_be_checked()
+        async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
+            await toggle.locator('..').click()
+        assert state['config']['vpn_servers'][0]['config']['sniffing'] is False
     if mode.startswith("sessions-"):
         await expect(page.get_by_text("Последний раз замечен онлайн", exact=True)).to_be_visible()
         state["telemetry"] = "offline"

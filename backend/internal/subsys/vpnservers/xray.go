@@ -175,6 +175,9 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		inboundTag = "reality-in"
 	}
 	inbound := map[string]any{"tag": inboundTag, "listen": "0.0.0.0", "port": server.Port}
+	if xr.Sniffing {
+		inbound["sniffing"] = map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": false}
+	}
 	switch protocol {
 	case "reality":
 		inbound["protocol"] = "vless"

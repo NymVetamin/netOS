@@ -49,6 +49,7 @@ func (s VPNServer) WireGuardProfileFor(peer VPNPeer) (WireGuardClientProfile, er
 // XrayServerConfig describes an authenticated Xray listener. An empty protocol
 // keeps the original VLESS+Reality configuration used by existing installs.
 type XrayServerConfig struct {
+	Sniffing       bool     `json:"sniffing,omitempty"`
 	Protocol       string   `json:"protocol,omitempty"`
 	Listen         string   `json:"listen,omitempty"`
 	Method         string   `json:"method,omitempty"`

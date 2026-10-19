@@ -228,3 +228,41 @@ func TestXrayDNSLoggingTogglePlansRestart(t *testing.T) {
 		t.Fatalf("missing DNS logging restart: %+v %v", actions, err)
 	}
 }
+
+func TestXraySniffingOption(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		cfg, server := xrayServerConfig()
+		server.Config["sniffing"] = enabled
+		typed, err := server.XrayConfig()
+		if err != nil || typed.Sniffing != enabled {
+			t.Fatalf("sniffing config lost: %+v %v", typed, err)
+		}
+		data, err := RenderXray(server, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err = json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		in := doc["inbounds"].([]any)[0].(map[string]any)
+		sn, exists := in["sniffing"]
+		if exists != enabled {
+			t.Fatalf("unexpected sniffing: %+v", in)
+		}
+		if enabled {
+			value := sn.(map[string]any)
+			if value["enabled"] != true || value["routeOnly"] != false || fmt.Sprint(value["destOverride"]) != "[http tls quic]" {
+				t.Fatal(value)
+			}
+		}
+		old, previous := xrayServerConfig()
+		previous.Config["sniffing"] = !enabled
+		old.VPNServers = []config.VPNServer{previous}
+		cfg.VPNServers = []config.VPNServer{server}
+		actions, err := (&Subsystem{}).Plan(old, cfg)
+		if err != nil || len(actions) != 1 || actions[0].Kind != "update" || !actions[0].Disruptive {
+			t.Fatalf("missing sniffing restart: %+v %v", actions, err)
+		}
+	}
+}
