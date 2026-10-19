@@ -1,3 +1,4 @@
+import { DomainChart } from "./DomainChart";
 import { useEffect, useRef, useState } from "react";
 import { api, formatBitrate, formatBytes } from "../api";
 import { Card, Empty, Switch, Notice, TableWrap } from "../ui";
@@ -73,8 +74,6 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
  const freshWAN=custom?[]:wanLive.filter(p=>new Date(p.at).getTime()/1000>=from);
  const wanPoints=[...(internet?.points||[]).filter((p:any)=>!freshWAN.length||new Date(p.at).getTime()<new Date(freshWAN[0].at).getTime()),...freshWAN];
  for(const p of wanPoints){let down=0,up=0;for(const iface of interfaces){down+=p.interfaces?.[iface]?.rx_bps||0;up+=p.interfaces?.[iface]?.tx_bps||0}wanLines[0].points.push({at:new Date(p.at).getTime()/1000,value:down});wanLines[1].points.push({at:new Date(p.at).getTime()/1000,value:up})}
- const domains:any[]=clients?.domains||[];const domainTotals=new Map<string,number>();for(const d of domains)domainTotals.set(d.domain,(domainTotals.get(d.domain)||0)+d.count);
- const topDomains=[...domainTotals.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);const maxDomain=topDomains[0]?.[1]||1;
  return <>
   <Card title="Скорость интернета" subtitle="Трафик аплинков за выбранный период" actions={<select aria-label="Период статистики" value={period} onChange={e=>{setPeriod(Number(e.target.value));if(Number(e.target.value)!==0)setCustom(null)}}>{periods.map(([n,label])=><option key={n} value={n}>{label}</option>)}<option value={0}>Свой период</option></select>}>
    {period===0&&<div className="monitor-range"><label>С <input aria-label="Начало периода" type="datetime-local" value={start} onChange={e=>setStart(e.target.value)}/></label><label>По <input aria-label="Конец периода" type="datetime-local" value={end} onChange={e=>setEnd(e.target.value)}/></label><button className="btn sm" onClick={()=>{const a=new Date(start).getTime()/1000,b=new Date(end).getTime()/1000,now=Date.now()/1000;if(!Number.isFinite(a)||!Number.isFinite(b)||a>=b||a<now-604800||b>now+60){setRangeError("Выберите начало и конец в пределах последних 7 дней");return}setRangeError("");setCustom({from:a,to:b})}}>Показать</button>{rangeError&&<span role="alert">{rangeError}</span>}</div>}
@@ -94,11 +93,9 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
     <button type="button" className="btn sm" aria-expanded={details} onClick={()=>setDetails(!details)}>{details?"Скрыть подробности":"Подробнее"}</button>
     {details&&<div className="monitor-details">
      <p className="faint">Учитывается маршрутизируемый IP-трафик, включая обмен между сегментами. Обмен внутри одного сегмента и трафик к службам роутера (Samba, SOCKS5) здесь не видны. После запуска сбора и смены адреса первый интервал может отсутствовать.</p><h3>Клиенты за выбранный период</h3><TableWrap><table><thead><tr><th>Клиент</th><th>Скачано</th><th>Отправлено</th><th>DNS-запросов</th><th>Соединений Xray</th></tr></thead><tbody>{totals.filter(c=>ids.includes(c.id)).map(c=><tr key={c.id}><td>{c.name}</td><td>{formatBytes(c.rx)}</td><td>{formatBytes(c.tx)}</td><td>{c.queries||0}</td><td>{c.connections||0}</td></tr>)}</tbody></table></TableWrap>
-     <h3>Запрашиваемые ресурсы</h3><p className="faint">DNS-запросы и соединения Xray, не просмотры страниц и не объём трафика сайта. «Xray · по DNS» — сопоставление IP с недавним ответом резолвера; при неоднозначности остаётся IP. Фоновые обращения тоже учитываются.</p>
-     {topDomains.length===0?<Empty>Обращений выбранных клиентов за этот период нет</Empty>:<>
-      <div className="monitor-domains">{topDomains.map(([domain,count])=><div key={domain}><span title={domain}>{domain}</span><div><i style={{width:`${count/maxDomain*100}%`}}/></div><b>{count}</b></div>)}</div>
-      <p className="faint">До 200 записей «клиент — ресурс — источник» за период.</p><TableWrap><table><thead><tr><th>Клиент</th><th>Домен / IP</th><th>Источник</th><th>Обращений</th><th>Первый</th><th>Последний</th></tr></thead><tbody>{domains.map(d=><tr key={d.client+"|"+d.domain+"|"+(d.source||"dns")}><td>{totals.find(c=>c.id===d.client)?.name||d.client}</td><td>{d.domain}</td><td>{{"xray-domain":"Xray · домен", "xray-dns":"Xray · по DNS", "xray-ip":"Xray · IP", "dns":"DNS"}[d.source as string] || "DNS"}</td><td>{d.count}</td><td>{timeLabel(d.first)}</td><td>{timeLabel(d.last)}</td></tr>)}</tbody></table></TableWrap>
-     </>}
+     <h3>Запрашиваемые домены</h3><p className="faint">Поддомены объединены. Доли по числу DNS-запросов и соединений Xray с определённым доменом, не по объёму трафика. Только загруженная выборка за период.</p>
+     <DomainChart records={clients.domains || []}/>
+
     </div>}
    </>}
   </Card>

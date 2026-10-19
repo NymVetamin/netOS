@@ -22,7 +22,7 @@ async def main():
    elif path=='/api/status':body={'interfaces':[],'wans':[],'channels':[],'uptime_seconds':100}
    elif path=='/api/statistics':body={'points':[{'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(now-n)),'interfaces':{'eth0':{'rx_bps':10000+n,'tx_bps':1000}}} for n in [60,30,0]]}
    elif path=='/api/statistics/clients/live':body={'enabled':cfg['traffic_monitor']['enabled'],'at':now,'clients':[{'id':'a','name':'Speaker','rx':100,'tx':50}],'points':[{'id':'a','at':now,'rx_bps':(now%60+1)*100000,'tx_bps':10000}]}
-   elif path=='/api/statistics/clients':body={'enabled':True,'from':start,'to':now,'clients':[{'id':'a','name':'Speaker','rx':25000,'tx':180000,'queries':3,'connections':5},{'id':'b','name':'Laptop','rx':80000,'tx':1000,'queries':1},{'id':'zero','name':'Never used','rx':0,'tx':0,'queries':0},{'id':'short','name':'Short sessions','rx':0,'tx':0,'queries':0,'connections':4 if q.get('details')==['1'] else 0}],'points':[{'id':id,'at':now-n,'rx_bps':20000,'tx_bps':10000} for id in ['a','b'] for n in [60,30,0]],'domains':[{'client':'a','domain':'example.com','count':3,'first':now-30,'last':now},{'client':'a','domain':'xray.example','source':'xray-domain','count':2,'first':now-30,'last':now},{'client':'a','domain':'inferred.example','source':'xray-dns','count':2,'first':now-30,'last':now},{'client':'a','domain':'192.0.2.5','source':'xray-ip','count':1,'first':now-30,'last':now}] if q.get('details')==['1'] else []}
+   elif path=='/api/statistics/clients':body={'enabled':True,'from':start,'to':now,'clients':[{'id':'a','name':'Speaker','rx':25000,'tx':180000,'queries':3,'connections':5},{'id':'b','name':'Laptop','rx':80000,'tx':1000,'queries':1},{'id':'zero','name':'Never used','rx':0,'tx':0,'queries':0},{'id':'short','name':'Short sessions','rx':0,'tx':0,'queries':0,'connections':4 if q.get('details')==['1'] else 0}],'points':[{'id':id,'at':now-n,'rx_bps':20000,'tx_bps':10000} for id in ['a','b'] for n in [60,30,0]],'domains':[{'client':'a','domain':'example.com','count':3,'first':now-30,'last':now},{'client':'a','domain':'deep.www.example.com','source':'xray-domain','count':2,'first':now-30,'last':now},{'client':'a','domain':'api.news.bbc.co.uk','source':'xray-dns','count':2,'first':now-30,'last':now},{'client':'a','domain':'192.0.2.5','source':'xray-ip','count':1,'first':now-30,'last':now}] if q.get('details')==['1'] else []}
    await r.fulfill(json=body,content_type='application/json')
   await page.route('**/*',route);await page.goto('http://netos-ui.test/#dashboard')
   await expect(page.get_by_text('Трафик клиентов',exact=True)).to_be_visible()
@@ -50,9 +50,18 @@ async def main():
   await page.screenshot(path='output/playwright/traffic-live-hover.png',full_page=True)
   await page.mouse.move(0,0)
   await expect(page.locator('[role="tooltip"]')).to_have_count(0)
-  await page.get_by_role('button',name='Подробнее',exact=True).click();await expect(page.get_by_role('cell',name='example.com',exact=True)).to_be_visible()
-  for label in ['Xray · домен','Xray · по DNS','Xray · IP']:
-   await expect(page.get_by_role('cell',name=label,exact=True)).to_be_visible()
+  await page.get_by_role('button',name='Подробнее',exact=True).click()
+  await expect(page.locator('.domain-legend li').filter(has_text='example.com')).to_have_text('example.com571.4%')
+  await expect(page.locator('.domain-legend li').filter(has_text='bbc.co.uk')).to_have_text('bbc.co.uk228.6%')
+  await expect(page.get_by_text('192.0.2.5',exact=True)).to_have_count(0)
+  await expect(page.get_by_text('deep.www.example.com',exact=True)).to_have_count(0)
+  await expect(page.locator('.monitor-details table')).to_have_count(1)
+  await expect(page.get_by_role('img',name='Обращения к доменам: 7')).to_be_visible()
+  await page.locator('.domain-chart').screenshot(path='output/playwright/domain-chart.png')
+  await page.set_viewport_size({'width':390,'height':844})
+  await page.locator('.domain-chart').screenshot(path='output/playwright/domain-chart-mobile.png')
+  assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+  await page.set_viewport_size({'width':1440,'height':1000})
   await expect(page.locator('th').filter(has_text='Соединений Xray')).to_be_visible()
   await expect(page.locator('.monitor-clients label').filter(has_text='Short sessions')).to_be_visible()
   await expect(page.get_by_text('Есть обращения · нет замера трафика',exact=True)).to_be_visible()

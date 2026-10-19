@@ -2562,10 +2562,6 @@ td > select {
 .monitor-axis {display:flex;justify-content:space-between;gap:12px;color:var(--text-dim);font-size:11px}
 .monitor-hover {display:flex;flex-wrap:wrap;gap:8px 16px;min-height:36px;padding:10px 0;font-size:12px}
 .monitor-details {margin-top:22px;border-top:1px solid var(--border);padding-top:12px}
-.monitor-domains {display:grid;gap:10px;margin:20px 0}
-.monitor-domains>div {display:grid;grid-template-columns:minmax(120px,260px) 1fr 60px;align-items:center;gap:12px}
-.monitor-domains span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.monitor-domains i {display:block;height:12px;min-width:2px;border-radius:3px;background:var(--accent-fill)}
 
 /* Compact access matrix and update workflow. */
 .permission-table { width: min(100%, 560px); margin-top: 16px; table-layout: fixed; }
@@ -2615,3 +2611,15 @@ td > select {
   .panel-users-table .user-role { grid-column: 1 / -1; grid-row: 2; }
   .panel-users-table .user-actions { grid-column: 1 / -1; grid-row: 3; }
 }
+
+.domain-chart {display:flex;flex-wrap:wrap;align-items:center;gap:2rem;margin:1.25rem 0}
+.domain-donut {width:220px;height:220px;flex:0 0 auto;border-radius:50%;display:grid;place-items:center}
+.domain-donut>div {width:140px;height:140px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center}
+.domain-donut strong {font-size:1.6rem}
+.domain-donut span {font-size:.85rem;color:var(--text-faint)}
+.domain-legend {list-style:none;padding:0;margin:0;flex:1;max-width:560px;min-width:0}
+.domain-legend li {display:grid;grid-template-columns:10px minmax(0,1fr) auto 52px;gap:.75rem;align-items:center;padding:.4rem 0}
+.domain-legend i {width:10px;height:10px;border-radius:50%}
+.domain-legend span {overflow-wrap:anywhere}
+.domain-legend small {text-align:right;color:var(--text-faint)}
+@media(max-width:600px){.domain-chart{flex-direction:column;gap:1rem}.domain-legend{width:100%}}
