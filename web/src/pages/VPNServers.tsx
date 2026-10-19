@@ -425,7 +425,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
         <Switch checked={!!cfg.show} label="Включить show" onChange={(value) => setConfig("show", value)} />
       </Field>
       </>}
-      <Field label="Определение доменов (sniffing)" hint="Определяет домен назначения по трафику для маршрутизации и подключения. HTTPS не расшифровывает.">
+      <Field label="Анализ трафика (sniffing)" hint="Распознаёт протокол и адрес назначения для применения правил маршрутизации.">
         <Switch checked={!!cfg.sniffing} label="Включить sniffing" onChange={(value) => setConfig("sniffing", value)} />
       </Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
