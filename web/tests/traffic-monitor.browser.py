@@ -7,8 +7,9 @@ DIST=Path(__file__).resolve().parents[2]/'backend/internal/api/webdist'
 async def main():
  async with async_playwright() as p:
   browser=await p.chromium.launch(headless=True,executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') or ('C:/Program Files/Google/Chrome/Application/chrome.exe' if os.name=='nt' else None))
-  page=await browser.new_page(viewport={'width':1440,'height':1000});errors=[];calls=[];writes=[]
+  page=await browser.new_page(viewport={'width':1440,'height':1000});errors=[];calls=[];writes=[];aborted=[]
   page.on('pageerror',lambda e:errors.append(str(e)))
+  page.on('requestfailed',lambda r:aborted.append(r.url))
   cfg={'system':{'hostname':'router'},'interfaces':[{'id':'wan','name':'eth0','enabled':True}],'wans':[{'id':'wan','interface':'wan','enabled':True}],'networks':[],'channels':[],'vpn_servers':[],'traffic_monitor':{'enabled':True}}
   async def route(r):
    u=urlparse(r.request.url);path=u.path;q=parse_qs(u.query);body={};calls.append((path,q))
@@ -23,6 +24,8 @@ async def main():
    elif path=='/api/statistics':body={'points':[{'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(now-n)),'interfaces':{'eth0':{'rx_bps':10000+n,'tx_bps':1000}}} for n in [60,30,0]]}
    elif path=='/api/statistics/clients/live':body={'enabled':cfg['traffic_monitor']['enabled'],'at':now,'clients':[{'id':'a','name':'Speaker','rx':100,'tx':50}],'points':[{'id':'a','at':now,'rx_bps':(now%60+1)*100000,'tx_bps':10000}]}
    elif path=='/api/statistics/clients':body={'enabled':True,'from':start,'to':now,'clients':[{'id':'a','name':'Speaker','rx':25000,'tx':180000,'queries':3,'connections':5},{'id':'b','name':'Laptop','rx':80000,'tx':1000,'queries':1},{'id':'zero','name':'Never used','rx':0,'tx':0,'queries':0},{'id':'short','name':'Short sessions','rx':0,'tx':0,'queries':0,'connections':4 if q.get('details')==['1'] else 0}],'points':[{'id':id,'at':now-n,'rx_bps':20000,'tx_bps':10000} for id in ['a','b'] for n in [60,30,0]],'domains':[{'client':'a','domain':'example.com','count':3,'first':now-30,'last':now},{'client':'a','domain':'deep.www.example.com','source':'xray-domain','count':2,'first':now-30,'last':now},{'client':'a','domain':'api.news.bbc.co.uk','source':'xray-dns','count':2,'first':now-30,'last':now},{'client':'a','domain':'192.0.2.5','source':'xray-ip','count':1,'first':now-30,'last':now}] if q.get('details')==['1'] else []}
+   if path in ['/api/statistics','/api/statistics/clients'] and q.get('minutes')==['120']:
+    await asyncio.sleep(1)
    await r.fulfill(json=body,content_type='application/json')
   await page.route('**/*',route);await page.goto('http://netos-ui.test/#dashboard')
   await expect(page.get_by_text('Трафик клиентов',exact=True)).to_be_visible()
@@ -67,6 +70,17 @@ async def main():
   await expect(page.get_by_text('Есть обращения · нет замера трафика',exact=True)).to_be_visible()
   await page.get_by_label('Направление трафика клиентов').select_option('up')
   await page.get_by_role('button',name='Скрыть подробности',exact=True).click();await expect(page.get_by_role('cell',name='example.com',exact=True)).to_have_count(0)
+  # Changing the range must cancel both obsolete requests, not just ignore
+  # their eventual result while the router continues aggregating history.
+  async with page.expect_request('**/api/statistics/clients?minutes=120&*'):
+   await page.get_by_label('Период статистики').select_option('120')
+  await page.get_by_label('Период статистики').select_option('360')
+  await page.wait_for_timeout(1300)
+  cancelled={urlparse(u).path for u in aborted if parse_qs(urlparse(u).query).get('minutes')==['120']}
+  assert cancelled=={'/api/statistics','/api/statistics/clients'},cancelled
+  await expect(page.get_by_label('Период статистики')).to_have_value('360')
+  await expect(page.get_by_role('img',name='График скорости за выбранный период')).to_have_count(2)
+  await expect(page.get_by_text('Не удалось обновить историю клиентов',exact=True)).to_have_count(0)
   await page.get_by_text('Собирать историю',exact=True).click();await page.wait_for_timeout(700);assert writes==[False],writes
   await page.get_by_label('Период статистики').select_option('0')
   await page.get_by_label('Начало периода').fill('2020-01-01T00:00');await page.get_by_role('button',name='Показать',exact=True).click();await expect(page.get_by_text('Выберите начало и конец в пределах последних 7 дней',exact=True)).to_be_visible()

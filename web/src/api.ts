@@ -304,9 +304,9 @@ export const api = {
 	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),
   status: () => request<any>("GET", "/api/status"),
   ddnsStatus: (signal?: AbortSignal) => request<any>("GET", "/api/ddns/status", undefined, undefined, signal),
-  trafficWindow: (query: string, interfaces: string[]) => request<any>("GET", `/api/statistics?${query}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
+  trafficWindow: (query: string, interfaces: string[], signal?: AbortSignal) => request<any>("GET", `/api/statistics?${query}&interfaces=${encodeURIComponent(interfaces.join(","))}`, undefined, undefined, signal),
   clientTrafficLive: () => request<any>("GET", "/api/statistics/clients/live"),
-  clientStatistics: (query: string, clients: string[], details: boolean) => request<any>("GET", `/api/statistics/clients?${query}&clients=${encodeURIComponent(clients.join(","))}&details=${details?1:0}`),
+  clientStatistics: (query: string, clients: string[], details: boolean, signal?: AbortSignal) => request<any>("GET", `/api/statistics/clients?${query}&clients=${encodeURIComponent(clients.join(","))}&details=${details?1:0}`, undefined, undefined, signal),
   statistics: (hours = 24, interfaces: string[] = []) =>
     request<any>("GET", `/api/statistics?hours=${hours}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
   backups: () => request<{ backups: any[] }>("GET", "/api/backups"),

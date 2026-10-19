@@ -46,11 +46,11 @@ export function TrafficMonitor({config,patch,interfaces,status}:{config:any;patc
  const query=custom?`from=${custom.from}&to=${custom.to}`:`minutes=${period||1440}`;
  useEffect(()=>{
   let cancelled=false,busy=false;
-
+  const controller=new AbortController();
   const load=async()=>{if(busy)return;busy=true;await Promise.all([
-   api.trafficWindow(query,interfaces).then(v=>{if(!cancelled){setInternet(v);setError("")}}).catch(()=>{if(!cancelled)setError("Не удалось обновить скорость интернета")}),
-   api.clientStatistics(query,selected,details).then(v=>{if(!cancelled){setClients(v);setClientError("")}}).catch(()=>{if(!cancelled)setClientError("Не удалось обновить историю клиентов")})
-  ]);busy=false;};void load();const timer=setInterval(load,30000);return()=>{cancelled=true;clearInterval(timer)};
+   api.trafficWindow(query,interfaces,controller.signal).then(v=>{if(!cancelled){setInternet(v);setError("")}}).catch(()=>{if(!cancelled)setError("Не удалось обновить скорость интернета")}),
+   api.clientStatistics(query,selected,details,controller.signal).then(v=>{if(!cancelled){setClients(v);setClientError("")}}).catch(()=>{if(!cancelled)setClientError("Не удалось обновить историю клиентов")})
+  ]);busy=false;};void load();const timer=setInterval(load,30000);return()=>{cancelled=true;controller.abort();clearInterval(timer)};
  },[query,interfaces.join(","),selected.join(","),details]);
  const to=custom?.to||Math.floor(Date.now()/1000),from=custom?.from||to-(period||1440)*60;
  const recent=custom?[]:live.filter(batch=>batch.at>=from&&batch.at<=to);
