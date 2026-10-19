@@ -110,6 +110,18 @@ async def users_scenario(browser):
     await page.get_by_role("button",name="Сохранить пользователя",exact=True).click()
     await expect(page.get_by_text("operator",exact=True)).to_be_visible()
     assert users[-1]["permissions"]=={"clients":"manage","map":"view"}
+    listing=page.locator('.panel-users-table')
+    card=listing.locator('xpath=ancestor::section[1]')
+    await expect(listing.locator('tbody tr')).to_have_count(2)
+    await card.screenshot(path="output/playwright/panel-users-mobile.png")
+    assert await card.evaluate("el => el.scrollWidth <= el.clientWidth"), "users overflow on mobile"
+    await page.set_viewport_size({"width":1440,"height":1000})
+    await card.screenshot(path="output/playwright/panel-users-desktop.png")
+    await listing.locator('tr').filter(has_text='operator').get_by_role('button',name='Изменить',exact=True).click()
+    await expect(page.get_by_label('Логин пользователя панели',exact=True)).to_have_value('operator')
+    await expect(page.get_by_label('Логин пользователя панели',exact=True)).to_be_disabled()
+    await page.get_by_role('button',name='Отмена',exact=True).click()
+    await expect(page.get_by_role('button',name='Добавить пользователя панели',exact=True)).to_be_enabled()
     assert not errors,errors
     await page.close();print("user form PASS")
 

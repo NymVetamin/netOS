@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { PANEL_SECTIONS } from "./permissions";
-import { Card, Field, Notice } from "./ui";
+import { Badge, Card, Field, Notice } from "./ui";
 import { confirmAction } from "./confirm";
 
 type User = { username: string; role: string; enabled: boolean; permissions: Record<string, string> };
@@ -35,17 +35,22 @@ export function PanelUsers() {
     catch (e) { setError(e instanceof Error ? e.message : "Не удалось удалить пользователя"); }
     finally { setBusy(false); }
   }
-  return <Card title="Пользователи панели" subtitle="Доступ к управлению netOS; учётные записи файлового сервера настраиваются отдельно">
+  return <Card tight title="Пользователи панели" subtitle="Доступ к управлению netOS; учётные записи файлового сервера настраиваются отдельно"
+    actions={<button className="btn sm primary" disabled={busy || !!form} onClick={() => { setCreating(true); setForm(emptyUser()); }}>Добавить пользователя панели</button>}>
     {error && <Notice tone="danger" title={error} />}
-    <div className="stack">
-      {users.map(user => <div key={user.username} className="row-actions">
-        <strong>{user.username}</strong><span className="dim">{user.role === "admin" ? "Администратор" : "Ограниченный доступ"} · {user.enabled ? "Включён" : "Отключён"}</span>
-        <button className="btn sm" disabled={busy} onClick={() => edit(user)}>Изменить</button>
-        <button className="btn sm danger" disabled={busy} onClick={() => void remove(user)}>Удалить</button>
-      </div>)}
-      {!form && <div><button className="btn" onClick={() => { setCreating(true); setForm(emptyUser()); }}>Добавить пользователя панели</button></div>}
-    </div>
-    {form && <fieldset disabled={busy} style={{ border: 0, padding: "16px 0 0", margin: 0 }}>
+    <table className="panel-users-table" aria-label="Пользователи панели">
+      <thead><tr><th scope="col">Логин</th><th scope="col">Права</th><th scope="col">Состояние</th><th scope="col" className="user-actions-heading">Действия</th></tr></thead>
+      <tbody>{users.map(user => <tr key={user.username}>
+        <td className="user-login"><strong>{user.username}</strong></td>
+        <td className="user-role"><span className="dim">{user.role === "admin" ? "Администратор" : "Ограниченный доступ"}</span></td>
+        <td className="user-state"><Badge tone={user.enabled ? "ok" : "neutral"}>{user.enabled ? "Включён" : "Отключён"}</Badge></td>
+        <td className="user-actions"><div>
+          <button className="btn sm" disabled={busy} onClick={() => edit(user)}>Изменить</button>
+          <button className="btn sm danger" disabled={busy} onClick={() => void remove(user)}>Удалить</button>
+        </div></td>
+      </tr>)}</tbody>
+    </table>
+    {form && <fieldset disabled={busy} className="panel-user-form">
       <div className="form-grid">
         <Field label="Логин"><input aria-label="Логин пользователя панели" autoComplete="off" disabled={!creating} value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /></Field>
         <Field label={creating ? "Пароль" : "Новый пароль"} hint={creating ? "Не менее 12 символов" : "Оставьте пустым, чтобы сохранить текущий пароль"}><input aria-label="Пароль пользователя панели" type="password" autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></Field>

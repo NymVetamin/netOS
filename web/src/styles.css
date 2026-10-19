@@ -2597,3 +2597,21 @@ td > select {
 .monitor-plot {position:relative;cursor:crosshair}
 .monitor-tooltip {width:max-content;position:absolute;top:12px;pointer-events:none;z-index:1;background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow-lg);border-radius:6px;padding:9px 12px;display:grid;gap:5px;font-size:12px;max-width:min(280px,45%);overflow-wrap:anywhere}
 .monitor-crosshair {pointer-events:none}
+
+.panel-users-table { width: 100%; }
+.panel-users-table td, .panel-users-table th { padding: .75rem 1rem; }
+.panel-users-table .user-login { overflow-wrap: anywhere; }
+.panel-users-table .user-actions-heading { text-align: right; }
+.panel-users-table .user-actions > div { display: flex; justify-content: flex-end; gap: .5rem; }
+.panel-user-form { border: 0; border-top: 1px solid var(--border); padding: 1rem; margin: 0; min-width: 0; }
+@media (max-width: 600px) {
+  .panel-users-table, .panel-users-table tbody { display: block; }
+  .panel-users-table thead { display: none; }
+  .panel-users-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .6rem; padding: 1rem; border-bottom: 1px solid var(--border); }
+  .panel-users-table tr:last-child { border-bottom: 0; }
+  .panel-users-table td { padding: 0; border: 0; }
+  .panel-users-table .user-login { grid-column: 1; grid-row: 1; }
+  .panel-users-table .user-state { grid-column: 2; grid-row: 1; text-align: right; }
+  .panel-users-table .user-role { grid-column: 1 / -1; grid-row: 2; }
+  .panel-users-table .user-actions { grid-column: 1 / -1; grid-row: 3; }
+}
