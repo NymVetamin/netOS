@@ -75,6 +75,17 @@ func TestXrayServerValidation(t *testing.T) {
 	if result := cfg.Validate(); result.HasErrors() {
 		t.Fatalf("valid Xray server rejected: %+v", result.Problems)
 	}
+	for _, fp := range []string{"", "chrome", "firefox", "safari", "ios", "edge", "random", "randomized"} {
+		cfg.VPNServers[0].Peers[0].TLSFingerprint = fp
+		if result := cfg.Validate(); result.HasErrors() {
+			t.Fatalf("fingerprint rejected %s: %+v", fp, result.Problems)
+		}
+	}
+	cfg.VPNServers[0].Peers[0].TLSFingerprint = "unsupported"
+	if !hasErrorAt(cfg.Validate(), "vpn_servers[0].peers[0].tls_fingerprint") {
+		t.Fatal("unknown fingerprint accepted")
+	}
+	cfg.VPNServers[0].Peers[0].TLSFingerprint = ""
 	cfg.VPNServers[0].Config["short_ids"] = []string{"not-hex"}
 	for _, problem := range cfg.Validate().Problems {
 		if problem.Path == "vpn_servers[0].config.short_ids[0]" {

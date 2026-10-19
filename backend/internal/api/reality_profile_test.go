@@ -43,7 +43,12 @@ func TestRealityProfileAfterRedactedEdit(t *testing.T) {
 	}
 	for _, sid := range []string{"abcd", "1234567890abcdef"} {
 		reload.VPNServers[0].Config["short_ids"] = []string{sid}
-		for i := 0; i < 2; i++ {
+		for _, fingerprint := range []string{"", "firefox", "randomized"} {
+			reload.VPNServers[0].Peers[0].TLSFingerprint = fingerprint
+			expected := fingerprint
+			if expected == "" {
+				expected = "chrome"
+			}
 			w := request("admin", "p")
 			var result map[string]string
 			json.Unmarshal(w.Body.Bytes(), &result)
@@ -52,7 +57,7 @@ func TestRealityProfileAfterRedactedEdit(t *testing.T) {
 				t.Fatal(err)
 			}
 			public, _ := xrayPublicKey(private)
-			if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), private) || u.User.Username() != cfg.VPNServers[0].Peers[0].Credentials["uuid"] || u.Query().Get("pbk") != public || u.Query().Get("sid") != sid || u.Host != "[2001:db8::1]:443" || u.Fragment != "Телефон #1" {
+			if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), private) || u.User.Username() != cfg.VPNServers[0].Peers[0].Credentials["uuid"] || u.Query().Get("pbk") != public || u.Query().Get("sid") != sid || u.Query().Get("fp") != expected || u.Host != "[2001:db8::1]:443" || u.Fragment != "Телефон #1" {
 				t.Fatalf("invalid profile: status %d", w.Code)
 			}
 		}

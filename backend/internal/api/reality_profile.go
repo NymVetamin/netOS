@@ -36,7 +36,11 @@ func realityClientLink(server config.VPNServer, peer config.VPNPeer) (string, er
 	if uuid == "" {
 		return "", fmt.Errorf("Создайте UUID устройства Reality")
 	}
-	query := url.Values{"encryption": {"none"}, "security": {"reality"}, "sni": {cfg.ServerNames[0]}, "fp": {"chrome"}, "pbk": {public}, "sid": {cfg.ShortIDs[0]}, "type": {"tcp"}}
+	fingerprint := peer.TLSFingerprint
+	if fingerprint == "" {
+		fingerprint = "chrome"
+	}
+	query := url.Values{"encryption": {"none"}, "security": {"reality"}, "sni": {cfg.ServerNames[0]}, "fp": {fingerprint}, "pbk": {public}, "sid": {cfg.ShortIDs[0]}, "type": {"tcp"}}
 	if cfg.Flow != "" {
 		query.Set("flow", cfg.Flow)
 	}

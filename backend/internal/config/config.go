@@ -625,7 +625,8 @@ type VPNServer struct {
 }
 
 type VPNPeer struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	TLSFingerprint string          `json:"tls_fingerprint,omitempty"`
+	SecretsSet     map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
 
 	WireGuardProfile *WireGuardClientProfile `json:"wireguard_profile,omitempty"`
 	ID               string                  `json:"id"`

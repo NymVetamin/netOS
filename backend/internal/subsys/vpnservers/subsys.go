@@ -229,6 +229,21 @@ func ownedServersEqual(left, right []ownedServer) bool {
 	return true
 }
 
+// Client TLS fingerprints affect exported profiles, not the server process.
+func sameServerRuntime(a, b config.VPNServer) bool {
+	if a.Type == "xray" && b.Type == "xray" {
+		a.Peers = append([]config.VPNPeer(nil), a.Peers...)
+		b.Peers = append([]config.VPNPeer(nil), b.Peers...)
+		for i := range a.Peers {
+			a.Peers[i].TLSFingerprint = ""
+		}
+		for i := range b.Peers {
+			b.Peers[i].TLSFingerprint = ""
+		}
+	}
+	return reflect.DeepEqual(a, b)
+}
+
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	return s.PlanContext(context.Background(), old, next)
 }
@@ -247,7 +262,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		delete(previous, server.ID)
 		kind := "create"
 		if exists {
-			if reflect.DeepEqual(before, server) && (server.Type != "xray" || (old.TrafficMonitor.Enabled == next.TrafficMonitor.Enabled && reflect.DeepEqual(old.IsolationDestinations(before), next.IsolationDestinations(server)))) {
+			if sameServerRuntime(before, server) && (server.Type != "xray" || (old.TrafficMonitor.Enabled == next.TrafficMonitor.Enabled && reflect.DeepEqual(old.IsolationDestinations(before), next.IsolationDestinations(server)))) {
 				continue
 			}
 			kind = "update"

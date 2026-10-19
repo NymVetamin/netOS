@@ -288,3 +288,28 @@ func TestDNSQueryLogDoesNotChangeXray(t *testing.T) {
 		}
 	}
 }
+
+func TestXrayClientFingerprintDoesNotChangeServer(t *testing.T) {
+	cfg, server := xrayServerConfig()
+	before, err := RenderXray(server, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := server
+	changed.Peers = append([]config.VPNPeer(nil), server.Peers...)
+	changed.Peers[0].TLSFingerprint = "firefox"
+	after, err := RenderXray(changed, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) || !sameServerRuntime(server, changed) {
+		t.Fatal("client fingerprint changed server runtime")
+	}
+	if server.Peers[0].TLSFingerprint != "" || changed.Peers[0].TLSFingerprint != "firefox" {
+		t.Fatal("comparison mutated configuration")
+	}
+	changed.Peers[0].Enabled = !changed.Peers[0].Enabled
+	if sameServerRuntime(server, changed) {
+		t.Fatal("real client change ignored")
+	}
+}

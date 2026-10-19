@@ -1,5 +1,6 @@
 """Production UI with mocked API; never connects to a router."""
 import asyncio
+import json
 import base64
 import copy
 import mimetypes
@@ -96,6 +97,9 @@ async def scenario(browser, mode):
             else:
                 body = [{"id": "phone", "public_key": PUBLIC, "state": state["telemetry"], "last_handshake": 1791800000,
                          "last_seen": 1791800000, "traffic_known": True, "endpoint": "192.0.2.5:43210", "received": 1048576, "sent": 2097152}]
+        elif path.endswith('/reality-profile'):
+            fp=state['config']['vpn_servers'][0]['peers'][0].get('tls_fingerprint') or 'chrome'
+            body={'link':f'vless://123e4567-e89b-12d3-a456-426614174000@vpn.example.test:443?security=reality&sni=example.com&pbk=fixture&sid=abcd&fp={fp}'}
         elif path.endswith("/profile"):
             state["profiles"] += 1
             creds = next(p for p in state["config"]["vpn_servers"][0]["peers"] if p["id"] == path.split("/")[-2])["credentials"]
@@ -138,6 +142,18 @@ async def scenario(browser, mode):
         assert not errors,errors
         await page.close();print(mode,"PASS");return
     if mode == "sessions-xray":
+        fingerprint=page.get_by_role('combobox',name='TLS fingerprint клиента',exact=True)
+        await expect(fingerprint).to_have_value('')
+        async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
+            await fingerprint.select_option('firefox')
+        assert state['config']['vpn_servers'][0]['peers'][0]['tls_fingerprint']=='firefox'
+        await page.reload()
+        await expect(fingerprint).to_have_value('firefox')
+        async with page.expect_download() as pending:
+            await page.get_by_role('button',name='Скачать JSON Xray',exact=True).click()
+        download=await pending.value
+        profile=json.loads(Path(await download.path()).read_text(encoding='utf-8'))
+        assert profile['outbounds'][0]['streamSettings']['realitySettings']['fingerprint']=='firefox'
         toggle=page.get_by_role('checkbox',name='Включить sniffing',exact=True)
         await expect(toggle).not_to_be_checked()
         async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):

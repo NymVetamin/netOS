@@ -498,7 +498,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
       const outbound: Record<string, unknown> = { protocol, settings };
       if (protocol === "vless" || protocol === "trojan" || protocol === "hysteria") {
         const pem = await api.vpnServerCertificate(server.id);
-        const tlsSettings = { serverName: address, pinnedPeerCertSha256: await certificateFingerprint(pem) };
+        const tlsSettings = { ...(protocol !== "hysteria" && peer.tls_fingerprint ? {fingerprint:peer.tls_fingerprint} : {}), serverName: address, pinnedPeerCertSha256: await certificateFingerprint(pem) };
         outbound.streamSettings = protocol === "hysteria"
           ? { method: "hysteria", hysteriaSettings: { version: 2, auth: credentials.password }, security: "tls", tlsSettings }
           : { network: "tcp", security: "tls", tlsSettings };
@@ -519,7 +519,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
   }
   const [realityLink, setRealityLink] = useState("");
   const [realityBusy, setRealityBusy] = useState(false);
-  useEffect(() => { setRealityLink(""); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name]);
+  useEffect(() => { setRealityLink(""); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name, peer.tls_fingerprint]);
   async function openReality(downloadFile = false) {
     setError(""); setRealityBusy(true);
     try {
@@ -541,6 +541,12 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
       {(protocol === "trojan" || protocol === "shadowsocks" || protocol === "socks" || protocol === "http") && <Field label="Пароль"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; rememberCredentials({ password }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
       {protocol === "hysteria" && <Field label="Пароль Hysteria 2"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; rememberCredentials({ password }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
       {protocol === "wireguard" && <><Field label="Публичный ключ клиента"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; })} /></Field><Field label="Предварительный ключ"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "preshared_key")} value={peer.credentials?.preshared_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.preshared_key = e.target.value; })} /></Field></>}
+      {["reality", "vless", "trojan"].includes(protocol) && <Field label="TLS fingerprint" hint="Какой TLS-отпечаток имитирует приложение клиента. После изменения скачайте новый профиль или обновите ссылку в приложении.">
+        <select aria-label="TLS fingerprint клиента" value={peer.tls_fingerprint || ""} onChange={e => edit((draft) => draft.tls_fingerprint = e.target.value)}>
+          <option value="">{protocol === "reality" ? "По умолчанию (Chrome)" : "По умолчанию приложения"}</option>
+          {[["chrome","Chrome"],["firefox","Firefox"],["safari","Safari"],["ios","iOS"],["edge","Edge"],["random","Случайный браузер"],["randomized","Случайный отпечаток"]].map(([value,label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </Field>}
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>

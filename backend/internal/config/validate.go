@@ -3117,6 +3117,12 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 	seenUUID := map[string]bool{}
 	enabledPeers := 0
 	for i, peer := range s.Peers {
+		switch peer.TLSFingerprint {
+		case "", "chrome", "firefox", "safari", "ios", "edge", "random", "randomized":
+		default:
+			r.errf(fmt.Sprintf("%s.peers[%d].tls_fingerprint", path, i), "неподдерживаемый TLS fingerprint")
+		}
+
 		if peer.ID == "" {
 			r.errf(fmt.Sprintf("%s.peers[%d].id", path, i), "пустой идентификатор клиента")
 		}
