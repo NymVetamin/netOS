@@ -30,7 +30,6 @@ async def main():
     kind=parse_qs(urlparse(r.request.url).query).get('kind',['all'])[0]
     state['kinds'].append(kind)
     entries=[{'time':'2026-10-15T10:00:00Z','source':v,'unit':v,'message':v+' fixture.example <script>safe</script>'} for v in ['dns','firewall','services'] if kind=='all' or kind==v]
-    if kind in ['all','dns']:entries.append({'time':'2026-10-19T06:48:04Z','source':'dns','unit':'netos-xray-srv1.service','message':'TCP:127.0.0.1 cache HIT: www.example.com -> [192.0.2.1]'})
     body={'kind':kind,'entries':entries,'warnings':['fixture partial source warning'],'captured_at':'2026-10-15T10:00:01Z'}
    elif path=='/api/session':body={'username':'admin','role':'admin','csrf_token':'qa'}
    elif path=='/api/status':body={'interfaces':[],'channels':[],'uptime_seconds':1}
@@ -44,8 +43,6 @@ async def main():
   await page.locator('.logs-section > summary').click()
   await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_attribute('aria-selected','true')
   await expect(page.get_by_text('dns fixture.example <script>safe</script>',exact=True)).to_be_visible()
-  await expect(page.get_by_text('TCP:127.0.0.1 cache HIT: www.example.com -> [192.0.2.1]',exact=True)).to_be_visible()
-  await expect(page.get_by_text('netos-xray-srv1.service',exact=True)).to_be_visible()
   await page.get_by_role('tab',name='Общий',exact=True).click()
   await expect(page.get_by_text('services fixture.example <script>safe</script>',exact=True)).to_be_visible()
   await page.get_by_label('Поиск в журнале',exact=True).fill('firewall')

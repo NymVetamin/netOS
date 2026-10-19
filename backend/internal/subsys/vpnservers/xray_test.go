@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -182,24 +183,21 @@ func TestXrayRouterDNS(t *testing.T) {
 
 func TestXrayResourceLoggingSwitch(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		for _, queryLog := range []bool{false, true} {
-			cfg, server := xrayServerConfig()
-			cfg.TrafficMonitor.Enabled = enabled
-			cfg.DNS.QueryLog = queryLog
-			data, err := RenderXray(server, cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var doc map[string]any
-			json.Unmarshal(data, &doc)
-			log := doc["log"].(map[string]any)
-			if enabled || queryLog {
-				if log["dnsLog"] != true || log["access"] != "" {
-					t.Fatal(log)
-				}
-			} else if log["access"] != "none" || log["dnsLog"] == true {
+		cfg, server := xrayServerConfig()
+		cfg.TrafficMonitor.Enabled = enabled
+		data, err := RenderXray(server, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		json.Unmarshal(data, &doc)
+		log := doc["log"].(map[string]any)
+		if enabled {
+			if log["dnsLog"] != true || log["access"] != "" {
 				t.Fatal(log)
 			}
+		} else if log["access"] != "none" || log["dnsLog"] == true {
+			t.Fatal(log)
 		}
 	}
 }
@@ -215,17 +213,6 @@ func TestXrayMonitorTogglePlansRestart(t *testing.T) {
 	}
 	if len(actions) != 1 || !actions[0].Disruptive || actions[0].Kind != "update" {
 		t.Fatalf("missing logging restart: %+v", actions)
-	}
-}
-
-func TestXrayDNSLoggingTogglePlansRestart(t *testing.T) {
-	old, server := xrayServerConfig()
-	old.VPNServers = []config.VPNServer{server}
-	next := *old
-	next.DNS.QueryLog = !old.DNS.QueryLog
-	actions, err := (&Subsystem{}).Plan(old, &next)
-	if err != nil || len(actions) != 1 || !actions[0].Disruptive || actions[0].Kind != "update" {
-		t.Fatalf("missing DNS logging restart: %+v %v", actions, err)
 	}
 }
 
@@ -263,6 +250,41 @@ func TestXraySniffingOption(t *testing.T) {
 		actions, err := (&Subsystem{}).Plan(old, cfg)
 		if err != nil || len(actions) != 1 || actions[0].Kind != "update" || !actions[0].Disruptive {
 			t.Fatalf("missing sniffing restart: %+v %v", actions, err)
+		}
+	}
+}
+
+func TestDNSQueryLogDoesNotChangeXray(t *testing.T) {
+	for _, monitor := range []bool{false, true} {
+		old, server := xrayServerConfig()
+		old.TrafficMonitor.Enabled = monitor
+		old.DNS.QueryLog = false
+		server.Config["sniffing"] = true
+		old.VPNServers = []config.VPNServer{server}
+		next := *old
+		next.DNS.QueryLog = true
+		before, err := RenderXray(server, old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := RenderXray(server, &next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("DNS logging changed Xray config")
+		}
+		// No live services in this unit fixture: compare against the unchanged
+		// plan, which may already contain a runtime-health repair action.
+		baseline, err := (&Subsystem{}).Plan(old, old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pair := range [][2]*config.Config{{old, &next}, {&next, old}} {
+			actions, err := (&Subsystem{}).Plan(pair[0], pair[1])
+			if err != nil || !reflect.DeepEqual(actions, baseline) {
+				t.Fatalf("DNS logging restarted Xray: %+v %v", actions, err)
+			}
 		}
 	}
 }

@@ -28,11 +28,6 @@ type logEntry struct {
 var dnsmasqQuery = regexp.MustCompile(`\bquery\[[^\]]+\]\s+\S+\s+from\s+\S+`)
 var unboundQuery = regexp.MustCompile(`(?:info:|query:)\s+(\S+)\s+\S+\s+[A-Z0-9]+\s+(?:IN|CH|HS|CLASS[0-9]+)\s*$`)
 var dnsproxyQuestion = regexp.MustCompile(`^;[^;\s]+\s+(?:IN|CH|HS|CLASS[0-9]+)\s+[A-Z0-9]+\s*$`)
-
-// Xray logs resolver answers and cache hits, separately from connection access logs.
-var xrayDNSMessage = regexp.MustCompile(`(?:got answer:|cache HIT:|cache OPTIMISTE:)\s+\S+\s+->\s+\[[^\]]*\]`)
-var xrayServerUnit = regexp.MustCompile(`^netos-xray-srv[0-9]+\.service$`)
-
 var dnsproxyLine = regexp.MustCompile(`\bline=("(?:\\.|[^"\\])*"|\S+)`)
 
 func isDNSQuery(message string) bool {
@@ -87,7 +82,7 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 		if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
 			ts = time.UnixMicro(us).UTC().Format(time.RFC3339Nano)
 		}
-		query := isDNSQuery(message) || (xrayServerUnit.MatchString(unit) && xrayDNSMessage.MatchString(message))
+		query := isDNSQuery(message)
 		if source == "dns" && !query || source == "services" && query {
 			continue
 		}
@@ -186,7 +181,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		args := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER"}
 		switch src {
 		case "dns":
-			args = append(args, "-u", "netos-unbound.service", "-u", "dnsmasq.service", "-u", "netos-dnsmasq.service", "-u", "netos-dnsproxy.service", "-u", "netos-xray-srv*.service")
+			args = append(args, "-u", "netos-unbound.service", "-u", "dnsmasq.service", "-u", "netos-dnsmasq.service", "-u", "netos-dnsproxy.service")
 		case "firewall":
 			args = append(args, "-k", "--grep=netos ")
 		case "services":
