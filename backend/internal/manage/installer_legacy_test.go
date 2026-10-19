@@ -42,7 +42,11 @@ func TestInstallerLegacyReadiness(t *testing.T) {
 				}
 			}
 			function := strings.ReplaceAll(source[start:end], "/run/netosd.ready", marker)
+			// The retry count bounds this mocked test; real wall time must not
+			// expire while the CI runner schedules the helper processes.
+			function = strings.ReplaceAll(function, "SECONDS", "QA_SECONDS")
 			script := `set -eu
+QA_SECONDS=0
 BIN_PATH=fake_binary
 fake_binary() {
  case "$1" in
