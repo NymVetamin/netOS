@@ -284,10 +284,6 @@ var artifacts = []Artifact{
 		Active: ikev2Active, Render: renderIKEv2,
 	},
 	{
-		ID: "ikev2", Title: "Серверы IKEv2",
-		Active: ikev2Active, Render: renderIKEv2,
-	},
-	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",
 		Active: dnsmasq.Needed,
 		Render: func(cfg *config.Config) (string, error) { return dnsmasq.Render(cfg), nil },
@@ -369,6 +365,10 @@ func IDs() []string {
 
 // ByID находит артефакт по имени.
 func ByID(id string) (Artifact, bool) {
+	// Keep the CLI/API alias out of the visible artifact catalog.
+	if id == "ikev2" {
+		id = "strongswan"
+	}
 	for _, a := range artifacts {
 		if a.ID == id {
 			return a, true

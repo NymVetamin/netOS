@@ -146,3 +146,37 @@ func TestConditionalRenderersPropagateInvalidConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestIKEv2CatalogAliasDoesNotDuplicateTab(t *testing.T) {
+	cfg := config.Default()
+	cfg.VPNServers = []config.VPNServer{
+		{ID: "ike", Index: 5, Enabled: true, Type: "ikev2", Port: 500, Subnet: "10.50.0.1/24", Config: map[string]any{"server_identity": "vpn.example"}},
+	}
+	for _, enabled := range []bool{true, false} {
+		cfg.VPNServers[0].Enabled = enabled
+		count := 0
+		for _, a := range Active(cfg) {
+			if a.Title == "Серверы IKEv2" {
+				count++
+			}
+			if a.ID == "ikev2" {
+				t.Fatal("alias exposed as a separate tab")
+			}
+		}
+		want := 0
+		if enabled {
+			want = 1
+		}
+		if count != want {
+			t.Fatalf("enabled=%v: got %d tabs, want %d", enabled, count, want)
+		}
+		canonical, err := Render("strongswan", cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alias, err := Render("ikev2", cfg)
+		if err != nil || alias != canonical {
+			t.Fatalf("alias differs from canonical output: %v", err)
+		}
+	}
+}
