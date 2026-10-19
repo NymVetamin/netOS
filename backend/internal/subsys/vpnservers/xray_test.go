@@ -144,3 +144,38 @@ func TestXrayIsolationOnEveryOutbound(t *testing.T) {
 		t.Fatal("disabled firewall still blocks")
 	}
 }
+
+func TestXrayRouterDNS(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, port := range []int{53, 5353} {
+			cfg, server := xrayServerConfig()
+			cfg.DNS.Enabled, cfg.DNS.Port = enabled, port
+			data, err := RenderXray(server, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			dns, exists := doc["dns"]
+			if exists != enabled {
+				t.Fatal("DNS enabled state ignored")
+			}
+			if enabled && dns.(map[string]any)["servers"].([]any)[0] != fmt.Sprintf("tcp+local://127.0.0.1:%d", port) {
+				t.Fatal("wrong local DNS endpoint")
+			}
+			for _, raw := range doc["outbounds"].([]any) {
+				outbound := raw.(map[string]any)
+				stream, _ := outbound["streamSettings"].(map[string]any)
+				sockopt, _ := stream["sockopt"].(map[string]any)
+				if (sockopt["domainStrategy"] == "ForceIP") != enabled {
+					t.Fatal("wrong resolution strategy")
+				}
+				if outbound["tag"] == "channel-vpn" && sockopt["mark"] != float64(channels.Mark(cfg.Channels[1])) {
+					t.Fatal("channel mark lost")
+				}
+			}
+		}
+	}
+}

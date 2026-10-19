@@ -247,6 +247,28 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		"outbounds": outbounds,
 		"routing":   map[string]any{"domainStrategy": "IPIfNonMatch", "rules": rules},
 	}
+	if cfg.DNS.Enabled {
+		// Local mode keeps resolver requests out of client channel routing.
+		doc["dns"] = map[string]any{
+			"servers":       []string{fmt.Sprintf("tcp+local://127.0.0.1:%d", cfg.DNS.Port)},
+			"queryStrategy": "UseIP",
+		}
+		for _, raw := range outbounds {
+			outbound := raw.(map[string]any)
+			stream, _ := outbound["streamSettings"].(map[string]any)
+			if stream == nil {
+				stream = map[string]any{}
+				outbound["streamSettings"] = stream
+			}
+			sockopt, _ := stream["sockopt"].(map[string]any)
+			if sockopt == nil {
+				sockopt = map[string]any{}
+				stream["sockopt"] = sockopt
+			}
+			// Fail on DNS errors instead of silently using the OS resolver.
+			sockopt["domainStrategy"] = "ForceIP"
+		}
+	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	return append(data, '\n'), err
 }
