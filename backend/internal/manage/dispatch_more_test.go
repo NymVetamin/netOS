@@ -28,6 +28,8 @@ func TestExecuteDispatchesEveryReadOnlyAndServiceCommand(t *testing.T) {
 	} {
 		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
 			m, _ := testManager()
+			// Exercise the systemctl fallback without contacting a running daemon.
+			m.Root = t.TempDir()
 			m.Binary = "BIN"
 			var calls []string
 			m.Run = func(_ context.Context, cmd command) error {
