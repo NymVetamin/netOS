@@ -152,6 +152,9 @@ func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
 			return nil
 		})
 	case "isc-dhcp-server":
+		if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, m.ISC.Runner.Run); err != nil {
+			return err
+		}
 		if len(m.ISC.interfaces(cfg)) == 0 {
 			return fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")
 		}
@@ -170,6 +173,9 @@ func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
 			return nil
 		})
 	case "kea":
+		if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, m.Kea.Runner.Run); err != nil {
+			return err
+		}
 		content := []byte(m.Kea.Render(cfg))
 		return validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
 			if _, err := m.Kea.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {

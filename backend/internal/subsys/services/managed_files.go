@@ -106,7 +106,7 @@ func validateManagedContent(path string, content []byte, mode os.FileMode, valid
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".netos-validate-*")
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".netos-validate-*")
 	if err != nil {
 		return err
 	}

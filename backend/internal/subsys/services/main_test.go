@@ -17,6 +17,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	systemdUnitDir = filepath.Join(root, "systemd")
+	dhcpArmorDir, dhcpArmorProfiles = filepath.Join(root, "apparmor.d"), filepath.Join(root, "apparmor-profiles")
 	dnsmasqConfPath, dnsmasqLeasePath = filepath.Join(root, "dnsmasq.conf"), filepath.Join(root, "dnsmasq.leases")
 	iscConfPath, iscLeasePath = filepath.Join(root, "dhcpd.conf"), filepath.Join(root, "dhcpd.leases")
 	keaConfPath, keaLeasePath = filepath.Join(root, "kea.json"), filepath.Join(root, "kea-leases.csv")

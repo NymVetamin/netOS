@@ -204,6 +204,9 @@ func (d *ISCDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if len(d.interfaces(cfg)) == 0 {
 		return fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")
 	}
+	if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, d.Runner.Run); err != nil {
+		return err
+	}
 	lease, err := os.OpenFile(iscLeasePath, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err

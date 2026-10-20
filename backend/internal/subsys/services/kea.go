@@ -173,6 +173,9 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if len(dhcp4["subnet4"].([]any)) == 0 {
 		return fmt.Errorf("Kea DHCP: нет включённых пулов на доступных интерфейсах")
 	}
+	if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, d.Runner.Run); err != nil {
+		return err
+	}
 	content := []byte(d.Render(cfg))
 	if err := validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
 		if _, err := d.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {
