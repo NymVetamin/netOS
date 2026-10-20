@@ -128,8 +128,9 @@ function TimeChart({lines,from,to,height}:{lines:Line[];from:number;to:number;he
   }}>
    {[.25,.5,.75,1].map(n=><line key={n} x1={pad} x2={width-pad} y1={y(peak*n)} y2={y(peak*n)} stroke="var(--border)" vectorEffect="non-scaling-stroke"/>)}
    {lines.map(l=><path key={l.id} d={path(l)} fill="none" stroke={l.color} strokeWidth={1.8} vectorEffect="non-scaling-stroke"/>)}
-   {hover!==null&&<g className="monitor-crosshair"><line x1={cursor} x2={cursor} y1={pad} y2={height-pad} stroke="var(--text-dim)" strokeDasharray="4 4" vectorEffect="non-scaling-stroke"/>{values.filter(v=>v.point).map(({line,point})=><circle key={line.id} cx={x(point!.at)} cy={y(point!.value)} r={4} fill={line.color} stroke="var(--surface)" strokeWidth={2} vectorEffect="non-scaling-stroke"/>)}</g>}
+   {hover!==null&&<g className="monitor-crosshair"><line x1={cursor} x2={cursor} y1={pad} y2={height-pad} stroke="var(--text-dim)" strokeDasharray="4 4" vectorEffect="non-scaling-stroke"/></g>}
   </svg>
+  {values.filter(v=>v.point).map(({line,point})=><span key={line.id} className="monitor-point" aria-hidden="true" style={{left:`${x(point!.at)/width*100}%`,top:y(point!.value),background:line.color}}/>)}
   {hover!==null&&<div className="monitor-tooltip" role="tooltip" style={{left:`${Math.max(1,Math.min(99,cursor/width*100))}%`,transform:cursor>width/2?"translateX(calc(-100% - 10px))":"translateX(10px)"}}><strong>{new Date(hover*1000).toLocaleTimeString()}</strong>{values.map(({line,point})=><span key={line.id} style={{color:line.color}}>{line.name}: {point?formatBitrate(point.value):"нет замера"}</span>)}</div>}
   </div>
   <div className="monitor-axis"><span>{timeLabel(from)}</span><span>{timeLabel((from+to)/2)}</span><span>{timeLabel(to)}</span></div>

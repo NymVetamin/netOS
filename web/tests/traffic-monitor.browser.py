@@ -43,7 +43,7 @@ async def main():
   await page.mouse.move(box['x']+box['width']*.9,box['y']+100)
   await expect(page.locator('[role="tooltip"]')).to_be_visible()
   await expect(chart.locator('.monitor-crosshair line')).to_have_count(1)
-  assert await chart.locator('.monitor-crosshair circle').count()>0
+  assert await chart.locator('..').locator('.monitor-point').count()>0
   await page.mouse.move(box['x']+box['width']*.99,box['y']+100)
   tooltip=await page.locator('[role="tooltip"]').bounding_box()
   assert tooltip['width']>=120 and tooltip['x']>=box['x'] and tooltip['x']+tooltip['width']<=box['x']+box['width'],tooltip
@@ -53,6 +53,27 @@ async def main():
   await page.screenshot(path='output/playwright/traffic-live-hover.png',full_page=True)
   await page.mouse.move(0,0)
   await expect(page.locator('[role="tooltip"]')).to_have_count(0)
+  # The marker must stay round in screen pixels, even when the SVG is stretched.
+  for width in [390,1440,1920]:
+   await page.set_viewport_size({'width':width,'height':1000})
+   for graph in await page.get_by_role('img',name='График скорости за выбранный период').all():
+    await graph.scroll_into_view_if_needed()
+    bounds=await graph.bounding_box()
+    await page.mouse.move(bounds['x']+bounds['width']*.988,bounds['y']+100)
+    markers=graph.locator('..').locator('.monitor-point')
+    await expect(markers.first).to_be_visible()
+    cursor=await graph.locator('.monitor-crosshair line').bounding_box()
+    for marker in await markers.all():
+     point=await marker.bounding_box()
+     # The panel's global 1.05 zoom applies equally to both axes.
+     assert abs(point['width']-point['height'])<.1 and 8<=point['width']<=11,point
+     # Individual series may snap to observations up to 5 seconds apart.
+     assert abs(point['x']+point['width']/2-(cursor['x']+cursor['width']/2))<bounds['width']*5/300+1,(point,cursor)
+    if width==390:
+     await graph.locator('..').screenshot(path='output/playwright/traffic-round-marker-mobile.png')
+    await page.mouse.move(0,0)
+    await expect(markers).to_have_count(0)
+  await page.set_viewport_size({'width':1440,'height':1000})
   await page.get_by_role('button',name='Подробнее',exact=True).click()
   await expect(page.locator('.domain-legend li').filter(has_text='example.com')).to_have_text('example.com571.4%')
   await expect(page.locator('.domain-legend li').filter(has_text='bbc.co.uk')).to_have_text('bbc.co.uk228.6%')

@@ -2616,6 +2616,7 @@ td > select {
 .monitor-plot {position:relative;cursor:crosshair}
 .monitor-tooltip {width:max-content;position:absolute;top:12px;pointer-events:none;z-index:1;background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow-lg);border-radius:6px;padding:9px 12px;display:grid;gap:5px;font-size:12px;max-width:min(280px,45%);overflow-wrap:anywhere}
 .monitor-crosshair {pointer-events:none}
+.monitor-point {position:absolute;width:10px;height:10px;box-sizing:border-box;border:2px solid var(--surface);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
 
 .panel-users-table { width: 100%; }
 .panel-users-table td, .panel-users-table th { padding: .75rem 1rem; }
