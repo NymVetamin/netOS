@@ -2688,3 +2688,20 @@ td > select {
 @media (max-width: 600px) {
   .service-group-content { padding: 10px; }
 }
+.dns-upstream-editor {
+  display: grid;
+  grid-template-columns: 140px minmax(240px, 520px) minmax(140px, 200px);
+  gap: 12px;
+  align-items: start;
+}
+.dns-upstream-editor > * { min-width: 0; }
+.dns-custom-address { margin-top: 8px; }
+.dns-upstream-name { overflow-wrap: anywhere; }
+@media (min-width: 861px) {
+  .dns-upstream-rows .xrows { --xcols: 38px minmax(0, 3fr) 90px minmax(0, 1fr) 0px 0px 84px; }
+  .dns-upstream-rows .xhead > span:empty,
+  .dns-upstream-rows .xsum > span:empty { padding: 0; }
+}
+@media (max-width: 800px) {
+  .dns-upstream-editor { grid-template-columns: minmax(0, 1fr); }
+}

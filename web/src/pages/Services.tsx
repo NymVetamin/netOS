@@ -5,6 +5,8 @@ import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch
 import { newID } from "../id";
 import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
+import { DNSUpstreamEditor } from "./DNSUpstreamEditor";
+import { matchDNSPreset, presetAddress, presetLabel } from "../dnsPresets";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -234,6 +236,10 @@ function DNSSection({
             <select
               value={provider}
               onChange={(e) => patch((d) => {
+                for (const upstream of d.dns.upstreams || []) {
+                  const preset = matchDNSPreset(upstream);
+                  if (preset && upstream.type === "dot") upstream.address = presetAddress(preset, upstream.type, e.target.value);
+                }
                 d.dns.provider = e.target.value;
                 if (e.target.value === "dnsmasq") d.dns.dnssec = false;
                 if (e.target.value !== "unbound") d.dns.advanced_options = "";
@@ -379,16 +385,15 @@ function DNSSection({
         {(config.dns?.upstreams || []).length === 0 ? (
           <Empty>Апстримы не заданы</Empty>
         ) : (
-          <Rows cols={["Адрес", "Тип", "Канал", "Комментарий", ""]} toggle="Вкл.">
+          <div className="dns-upstream-rows"><Rows cols={["Резолвер", "Тип", "Канал"]} toggle="Вкл.">
           {config.dns.upstreams.map((u: any, idx: number) => (
             <Row
               key={u.id}
               id={u.id}
               cells={[
-                <strong className="mono">{u.address || "—"}</strong>,
+                <strong className="dns-upstream-name">{matchDNSPreset(u) ? presetLabel(matchDNSPreset(u)!, u.type) : u.address || "—"}</strong>,
                 DNS_TYPE[u.type] || u.type,
                 (config.channels || []).find((channel: any) => channel.id === (u.channel || "direct"))?.name || "—",
-                <span className="dim">{u.comment}</span>,
               ]}
               toggle={<Switch
                         checked={u.enabled}
@@ -397,38 +402,9 @@ function DNSSection({
                         onChange={(v) => patch((d) => (d.dns.upstreams[idx].enabled = v))}
                       />}
             >
-              <div className="form-grid">
-                <Cap label="Адрес"><input
-                        type="text"
-                        aria-label={`Адрес DNS-сервера ${idx + 1}`}
-                        className="mono"
-                        value={u.address}
-                        onChange={(e) =>
-                          patch((d) => (d.dns.upstreams[idx].address = e.target.value))
-                        }
-                      /></Cap>
-                <Cap label="Тип"><select
-                        aria-label={`Тип DNS-сервера ${idx + 1}`}
-                        value={u.type}
-                        onChange={(e) => patch((d) => (d.dns.upstreams[idx].type = e.target.value))}
-                      >
-                        <option value="plain">открытый</option>
-                        <option value="dot">DoT</option>
-                        <option value="doh">DoH</option>
-                        <option value="doq">DoQ</option>
-                      </select></Cap>
-                <Cap label="Канал"><select aria-label={`Канал DNS-сервера ${idx + 1}`} value={u.channel || "direct"} onChange={(e) => patch((d) => (d.dns.upstreams[idx].channel = e.target.value))}>
-                        {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                      </select></Cap>
-                <Cap label="Комментарий"><input
-                        type="text"
-                        aria-label={`Комментарий DNS-сервера ${idx + 1}`}
-                        value={u.comment || ""}
-                        onChange={(e) =>
-                          patch((d) => (d.dns.upstreams[idx].comment = e.target.value))
-                        }
-                      /></Cap>
-              </div>
+              <DNSUpstreamEditor upstream={u} index={idx + 1} provider={provider}
+                channels={config.channels || []}
+                onChange={values => patch(d => Object.assign(d.dns.upstreams[idx], values))} />
               <div className="row-actions end"><button
                         className="btn ghost sm"
                         disabled={(config.dns?.split_rules || []).some((rule: any) => rule.upstream === u.id)}
@@ -442,7 +418,7 @@ function DNSSection({
                       </button></div>
             </Row>
           ))}
-        </Rows>
+        </Rows></div>
         )}
         <div className="rows-foot row wrap">
           <button
