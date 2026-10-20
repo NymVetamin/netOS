@@ -124,7 +124,16 @@ func (h *TrafficHistory) Points(since time.Time, names []string) []TrafficPoint 
 // Window bounds the response independently of the selected history length.
 // Rates are averaged within a time bucket, never added across time.
 func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) []TrafficPoint {
-	points := h.Points(from, names)
+	filter := map[string]bool{}
+	for _, name := range names {
+		if name != "" {
+			filter[name] = true
+		}
+	}
+	// Aggregate directly from immutable samples under the read lock. Copying
+	// every sample's map first costs far more than the bounded output itself.
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	out := []TrafficPoint{}
 	if limit < 2 {
 		limit = 2
@@ -149,7 +158,10 @@ func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) [
 			p.Interfaces[name] = v
 		}
 	}
-	for _, p := range points {
+	for _, p := range h.points {
+		if p.At.Before(from) {
+			continue
+		}
 		if p.At.After(to) {
 			break
 		}
@@ -162,13 +174,24 @@ func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) [
 		}
 		count++
 		target := &out[len(out)-1]
-		for name, v := range p.Interfaces {
+		add := func(name string, v TrafficRate) {
 			old := target.Interfaces[name]
 			old.RXBPS += v.RXBPS
 			old.TXBPS += v.TXBPS
 			old.RXBytes = v.RXBytes
 			old.TXBytes = v.TXBytes
 			target.Interfaces[name] = old
+		}
+		if len(filter) == 0 {
+			for name, v := range p.Interfaces {
+				add(name, v)
+			}
+		} else {
+			for name := range filter {
+				if v, ok := p.Interfaces[name]; ok {
+					add(name, v)
+				}
+			}
 		}
 	}
 	flush()
