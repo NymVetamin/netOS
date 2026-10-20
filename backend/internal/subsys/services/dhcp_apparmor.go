@@ -97,10 +97,17 @@ func ensureDHCPArmor(ctx context.Context, provider string, run func(context.Cont
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(string(data), "<local/"+policy.file+">") {
-			return fmt.Errorf("профиль AppArmor %s не подключает локальные разрешения", policy.file)
-		}
 		path := filepath.Join(dhcpArmorDir, "local", policy.file)
+		legacy := !strings.Contains(string(data), "<local/"+policy.file+">")
+		if legacy {
+			// Debian 12 Kea profiles have no local include. Keep the same
+			// scoped block inside this known single-profile layout instead
+			// of enabling unrelated, previously inactive local rules.
+			if !legacyKeaProfile(string(data), policy) {
+				return fmt.Errorf("профиль AppArmor %s не подключает локальные разрешения и имеет неподдерживаемую структуру", policy.file)
+			}
+			path = filepath.Join(dhcpArmorDir, policy.file)
+		}
 		original, err := os.ReadFile(path)
 		created := os.IsNotExist(err)
 		if err != nil && !created {
@@ -114,7 +121,15 @@ func ensureDHCPArmor(ctx context.Context, provider string, run func(context.Cont
 		if created || wasCreated {
 			block += "# created-by-netos\n"
 		}
-		if err := writeDHCPArmor(path, []byte(base+block+policy.rules+dhcpArmorEnd)); err != nil {
+		next := base + block + policy.rules + dhcpArmorEnd
+		if legacy {
+			end := strings.LastIndex(base, "\n}")
+			if end < 0 || !legacyKeaProfile(base, policy) {
+				return fmt.Errorf("повреждена структура профиля AppArmor %s", policy.file)
+			}
+			next = base[:end] + block + policy.rules + dhcpArmorEnd + base[end:]
+		}
+		if err := writeDHCPArmor(path, []byte(next)); err != nil {
 			return err
 		}
 		// Also retry a previous failed reload when the file already matches.
@@ -125,32 +140,48 @@ func ensureDHCPArmor(ctx context.Context, provider string, run func(context.Cont
 	return nil
 }
 
+func legacyKeaProfile(data string, policy dhcpArmorPolicy) bool {
+	if policy.file != "usr.sbin.kea-dhcp4" && policy.file != "usr.sbin.kea-lfc" {
+		return false
+	}
+	header := "profile " + policy.name + " /usr/sbin/" + policy.name + " {"
+	return strings.Contains(data, "\n"+header+"\n") &&
+		strings.Count(data, "\nprofile ") == 1 &&
+		strings.HasSuffix(strings.TrimSpace(data), "\n}")
+}
+
 // RemoveDHCPAppArmor preserves administrator additions and removes only our blocks.
 func RemoveDHCPAppArmor(ctx context.Context, dir, profiles string, run func(context.Context, string, ...string) (string, error)) error {
 	for _, policy := range dhcpArmorPolicies() {
-		path := filepath.Join(dir, "local", policy.file)
-		data, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
+		changed := false
+		for _, path := range []string{filepath.Join(dir, "local", policy.file), filepath.Join(dir, policy.file)} {
+			data, err := os.ReadFile(path)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			base, created, err := stripDHCPArmor(string(data))
+			if err != nil {
+				return err
+			}
+			if base == string(data) {
+				continue
+			}
+			if created && base == "" {
+				// Package includes can be mandatory; keep an empty local file.
+				err = system.WriteFileAtomic(path, nil, 0o644)
+			} else {
+				err = writeDHCPArmor(path, []byte(base))
+			}
+			if err != nil {
+				return err
+			}
+			changed = true
+		}
+		if !changed {
 			continue
-		}
-		if err != nil {
-			return err
-		}
-		base, created, err := stripDHCPArmor(string(data))
-		if err != nil {
-			return err
-		}
-		if base == string(data) {
-			continue
-		}
-		if created && base == "" {
-			// Package includes can be mandatory; keep an empty local file.
-			err = system.WriteFileAtomic(path, nil, 0o644)
-		} else {
-			err = writeDHCPArmor(path, []byte(base))
-		}
-		if err != nil {
-			return err
 		}
 		if err := reloadDHCPArmor(ctx, dir, profiles, policy, run); err != nil {
 			return err
