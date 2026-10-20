@@ -3,6 +3,7 @@ import { linkSpeed } from "./PortLinkSettings";
 import { useEffect, useState } from "react";
 import { api, formatBytes, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
+import { Icon } from "../icons";
 
 // Сводка: то, на что администратор смотрит первым делом, когда что-то не
 // работает. Поэтому здесь состояние аплинка, клиенты и счётчики интерфейсов,
@@ -41,7 +42,7 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
   return (
     <>
       <div className="page-head">
-        <h1>Сводка</h1>
+        <h1><Icon name="layout-dashboard" />Сводка</h1>
         <p>Состояние роутера {config.system?.hostname}</p>
       </div>
 
@@ -56,6 +57,7 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
       ) : <>
       <div className="tiles">
         <Tile
+          icon="globe"
           label="Аплинк"
           value={wan ? (wan.up ? "На связи" : "Нет связи") : "Не настроен"}
           note={wan?.name}
@@ -63,18 +65,22 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
           small
         />
         <Tile
+          icon="users"
           label="Клиенты"
           value={status ? `${status.clients_online} / ${status.clients_total}` : "—"}
           note="в сети / всего известно"
         />
         <Tile
+          icon="activity"
           label="Соединений"
           value={status?.conntrack_count ?? "—"}
           note="отслеживается ядром"
         />
         <Tile
+          icon={status?.os_id === "debian" || status?.os_id === "ubuntu" ? status.os_id : "history"}
           label="Время работы"
           value={formatUptime(status?.uptime_seconds)}
+          note={status?.os_name || undefined}
           small
         />
       </div>

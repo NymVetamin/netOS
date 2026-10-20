@@ -3,6 +3,7 @@
 
 import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useEffect, useId, useRef } from "react";
 import { formatBitrate } from "./api";
+import { CARD_ICONS, Icon, IconName } from "./icons";
 
 function labelNestedControls(node: ReactNode, label: string, hintID?: string): ReactNode {
   return Children.map(node, (child) => {
@@ -43,7 +44,7 @@ export function Card({
       {(title || actions) && (
         <header className="card-head">
           <div>
-            {title && <h2>{title}</h2>}
+            {title && <h2>{CARD_ICONS[title] && <Icon name={CARD_ICONS[title]} />}{title}</h2>}
             {subtitle && <div className="sub">{subtitle}</div>}
           </div>
           {actions && <div className="row">{actions}</div>}
@@ -60,23 +61,26 @@ export function Tile({
   note,
   tone,
   small,
+  icon,
 }: {
+  icon?: IconName;
   label: string;
   value: ReactNode;
   note?: string;
   tone?: "ok" | "warn" | "danger";
   small?: boolean;
 }) {
-  return (
-    <div className="tile">
-      <div className="label">
-        {tone && <span className="dot" style={{ color: `var(--${tone})` }} />}
-        {label}
-      </div>
-      <div className={small ? "value small" : "value"}>{value}</div>
-      {note && <div className="note">{note}</div>}
+  const body = <>
+    <div className="label">
+      {tone && <span className="dot" style={{ color: `var(--${tone})` }} />}
+      {label}
     </div>
-  );
+    <div className={small ? "value small" : "value"}>{value}</div>
+    {note && <div className="note">{note}</div>}
+  </>;
+  return icon
+    ? <div className="tile with-icon"><Icon name={icon} className="tile-icon" /><div>{body}</div></div>
+    : <div className="tile">{body}</div>;
 }
 
 export function Badge({
@@ -215,11 +219,14 @@ export function Row({
   toggle,
   children,
   className,
+  icon,
   as: Tag = "div",
   ...rest
 }: {
   id?: string;
   cells: ReactNode[];
+  // Значок перед именем записи: тип канала, сервера, порта.
+  icon?: IconName;
   toggle?: ReactNode;
   children?: ReactNode;
   className?: string;
@@ -230,7 +237,9 @@ export function Row({
   useEffect(() => {
     if (id && created.delete(id) && details.current) details.current.open = true;
   }, [id]);
-  const summary = [0, 1, 2, 3, 4].map((i) => <span key={i}>{cells[i] ?? ""}</span>);
+  const summary = [0, 1, 2, 3, 4].map((i) => i === 0 && icon
+    ? <span key={i} className="xname"><Icon name={icon} />{cells[i]}</span>
+    : <span key={i}>{cells[i] ?? ""}</span>);
   const Wrapper = Tag as "div";
   return (
     <Wrapper className={`xrow ${className || ""}`} {...rest}>
@@ -249,7 +258,7 @@ export function AddMenu({
   items,
 }: {
   label: string;
-  items: { label: string; ariaLabel?: string; note?: string; disabled?: boolean; onSelect: () => void }[];
+  items: { label: string; ariaLabel?: string; note?: string; icon?: IconName; disabled?: boolean; onSelect: () => void }[];
 }) {
   const menu = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -276,8 +285,11 @@ export function AddMenu({
             disabled={item.disabled}
             onClick={() => { if (menu.current) menu.current.open = false; item.onSelect(); }}
           >
-            {item.label}
-            {item.note && <small>{item.note}</small>}
+            {item.icon && <Icon name={item.icon} />}
+            <span>
+              {item.label}
+              {item.note && <small>{item.note}</small>}
+            </span>
           </button>
         ))}
       </div>

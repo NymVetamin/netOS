@@ -9,6 +9,7 @@ import { api, ApiError, formatMiB } from "../api";
 import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
 import { newID } from "../id";
 import { AddMenu, Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { Icon, vpnServerIcon } from "../icons";
 
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
 type ClientSecret = { publicKey: string; privateKey: string; serverPublicKey: string; presharedKey?: string };
@@ -204,14 +205,14 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   }
 
   const needs = (installed: boolean) => installed ? undefined : "нужен компонент";
-  const xrayItem = (protocol: string, name: string) => ({ label: XRAY_NAMES[protocol], ariaLabel: `Добавить ${name}`, note: needs(xrayInstalled), onSelect: () => void addServer("xray", protocol) });
+  const xrayItem = (protocol: string, name: string) => ({ label: XRAY_NAMES[protocol], ariaLabel: `Добавить ${name}`, icon: vpnServerIcon("xray", protocol), note: needs(xrayInstalled), onSelect: () => void addServer("xray", protocol) });
   const addItems = [
-    { label: "WireGuard", ariaLabel: "Добавить WireGuard", note: needs(wireguardInstalled), onSelect: () => void addServer("wireguard") },
+    { label: "WireGuard", ariaLabel: "Добавить WireGuard", icon: vpnServerIcon("wireguard"), note: needs(wireguardInstalled), onSelect: () => void addServer("wireguard") },
     xrayItem("reality", "Reality"), xrayItem("vless", "VLESS TLS"), xrayItem("vmess", "VMess"), xrayItem("trojan", "Trojan TLS"),
     xrayItem("shadowsocks", "Shadowsocks"), xrayItem("socks", "SOCKS"), xrayItem("http", "HTTP proxy"), xrayItem("wireguard", "Xray WireGuard"), xrayItem("hysteria", "Hysteria 2"),
-    { label: "IKEv2", ariaLabel: "Добавить IKEv2", note: needs(strongswanInstalled), onSelect: () => void addServer("ikev2") },
-    { label: "OpenConnect", ariaLabel: "Добавить OpenConnect", note: needs(ocservInstalled), onSelect: () => void addServer("ocserv") },
-    { label: "L2TP", ariaLabel: "Добавить L2TP", note: needs(l2tpInstalled), onSelect: () => void addServer("l2tp") },
+    { label: "IKEv2", ariaLabel: "Добавить IKEv2", icon: vpnServerIcon("ikev2"), note: needs(strongswanInstalled), onSelect: () => void addServer("ikev2") },
+    { label: "OpenConnect", ariaLabel: "Добавить OpenConnect", icon: vpnServerIcon("ocserv"), note: needs(ocservInstalled), onSelect: () => void addServer("ocserv") },
+    { label: "L2TP", ariaLabel: "Добавить L2TP", icon: vpnServerIcon("l2tp"), note: needs(l2tpInstalled), onSelect: () => void addServer("l2tp") },
   ];
 
   const clientItems = servers
@@ -219,6 +220,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     .map((s: any) => ({
       label: s.name || s.id,
       ariaLabel: `Добавить клиента на ${s.name || s.id}`,
+      icon: vpnServerIcon(s.type, s.config?.protocol),
       note: s.type === "xray" ? XRAY_NAMES[s.config?.protocol || "reality"]
         : ({ wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[s.type],
       disabled: !!addingTo,
@@ -226,7 +228,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     }));
 
   return <>
-    <div className="page-head"><h1>VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
+    <div className="page-head"><h1><Icon name="shield-check" />VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
 	{!wireguardInstalled && !xrayInstalled && !ocservInstalled && !strongswanInstalled && !l2tpInstalled && <Notice tone="info" title="Нужен VPN-компонент">Установите нужный VPN-компонент в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
     <ClientCreators.Provider value={creators}><Card split title="VPN-доступ" subtitle="Создайте сервер, затем выдавайте каждому клиенту отдельный готовый профиль" actions={<AddMenu label="Добавить сервер" items={addItems} />}>
@@ -251,7 +253,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
 // Каркас сервера: строка с главным и настройки под ней. Устройства сервера
 // лежат отдельным разделом ниже — список серверов не растягивается на экраны.
 function ServerRow({ server, type, endpoint, installed, referenced, update, patch, children }: any) {
-  return <Row as="form" className="vpn-server" id={server.id} data-server-id={server.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
+  return <Row as="form" className="vpn-server" icon={vpnServerIcon(server.type, server.config?.protocol)} id={server.id} data-server-id={server.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
     cells={[<strong>{server.name}</strong>, type, <span className="mono">{endpoint || "—"}</span>, (server.peers || []).length, <Badge tone={server.enabled ? "ok" : "neutral"}>{server.enabled ? "Включён" : "Отключён"}</Badge>]}
     toggle={<Switch checked={!!server.enabled} disabled={!installed} label="" ariaLabel="Включить" onChange={(value) => update((draft: any) => draft.enabled = value)} />}>
     {children}
@@ -370,7 +372,7 @@ function OcservPeer({ status, server, peer, referenced, channels, update, canEna
   const certAuth = server.type === "ocserv" && ["certificate", "certificate_password"].includes(server.config?.auth_mode);
   const passwordAuth = !certAuth || server.config?.auth_mode === "certificate_password";
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
-  return <Row className="peer-card" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
+  return <Row className="peer-card" icon="monitor-smartphone" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} disabled={!canEnable} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} session />
@@ -530,7 +532,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
     } catch (err: any) { setError(err?.message || "Не удалось создать ссылку подключения"); }
     finally { setRealityBusy(false); }
   }
-  return <Row className="peer-card" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
+  return <Row className="peer-card" icon="monitor-smartphone" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} session />
@@ -743,7 +745,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
   }
   const state = status?.state || "pending";
   const known = ["recent", "idle", "never"].includes(state);
-  return <Row className="peer-card" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
+  return <Row className="peer-card" icon="monitor-smartphone" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{known ? status?.endpoint || "Неизвестен" : "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} />

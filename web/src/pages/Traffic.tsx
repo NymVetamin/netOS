@@ -1,4 +1,5 @@
 import { Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { Icon } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -25,7 +26,7 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
   return (
     <>
       <div className="page-head">
-        <h1>Скорость и QoS</h1>
+        <h1><Icon name="gauge" />Скорость и QoS</h1>
         <p>Управление скоростью и задержкой интернет-подключений</p>
       </div>
 

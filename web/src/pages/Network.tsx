@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { api, Problem } from "../api";
 import { newID } from "../id";
 import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { Icon, INTERFACE_ICONS } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -50,7 +51,7 @@ export function NetworkPage({
   return (
     <>
       <div className="page-head">
-        <h1>Сеть</h1>
+        <h1><Icon name="network" />Сеть</h1>
         <p>Подключение к интернету, локальные сети и физические порты</p>
       </div>
 
@@ -156,6 +157,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
             <Row
               key={w.id}
               id={w.id}
+              icon="globe"
               className="subcard"
               cells={[
                 <strong>{w.name}</strong>,
@@ -460,6 +462,7 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
             <Row
               key={n.id}
               id={n.id}
+              icon="network"
               className="subcard"
               cells={[
                 <strong>{n.name}</strong>,
@@ -697,7 +700,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
           <AddMenu
             label="Добавить"
             items={[
-              { label: "Мост", ariaLabel: "Добавить мост", onSelect: () => patch((d) => {
+              { label: "Мост", ariaLabel: "Добавить мост", icon: "merge", onSelect: () => patch((d) => {
                 d.interfaces = d.interfaces || [];
                 d.interfaces.push({
                   id: openOnCreate(newID("br")),
@@ -707,7 +710,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                   enabled: true,
                 });
               }) },
-              { label: "Агрегация", ariaLabel: "Добавить агрегацию", onSelect: () => patch((d) => {
+              { label: "Агрегация", ariaLabel: "Добавить агрегацию", icon: "combine", onSelect: () => patch((d) => {
                 d.interfaces = d.interfaces || [];
                 d.interfaces.push({
                   id: openOnCreate(newID("bond")),
@@ -720,6 +723,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
               {
                 label: "VLAN",
                 ariaLabel: "Добавить VLAN",
+                icon: "layers",
                 // Нет интерфейса, над которым можно поднять VLAN: все порты отданы мостам или агрегациям.
                 disabled: vlanParents(config).length === 0,
                 note: vlanParents(config).length === 0 ? "все порты заняты мостами" : undefined,
@@ -747,6 +751,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
           {discovered.map((i: any) => (
             <Row
               key={`discovered-${i.name}`}
+              icon="ethernet-port"
               cells={[
                 <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="accent">новый порт</Badge>,
@@ -775,6 +780,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
             <Row
               key={i.id}
               id={i.id}
+              icon={INTERFACE_ICONS[i.type] || "ethernet-port"}
               cells={[
                 <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="neutral">{typeLabel(i.type)}</Badge>,

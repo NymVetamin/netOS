@@ -6,6 +6,7 @@ import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { Icon } from "../icons";
 import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
 
@@ -128,7 +129,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
   return (
     <>
       <div className="page-head">
-        <h1>Защита сети</h1>
+        <h1><Icon name="brick-wall" />Защита сети</h1>
         <p>Правила доступа и перенаправления портов; проверяются сверху вниз</p>
       </div>
 

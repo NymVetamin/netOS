@@ -4,6 +4,7 @@ import { api, RouteEntry } from "../api";
 import { canonicalTable, observedTables, tableDetails } from "../routingTables";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { Icon } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -55,7 +56,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   return (
     <>
       <div className="page-head">
-        <h1>Маршрутизация</h1>
+        <h1><Icon name="route" />Маршрутизация</h1>
         <p>Статические маршруты, дополнительные таблицы и правила выбора таблиц</p>
       </div>
 

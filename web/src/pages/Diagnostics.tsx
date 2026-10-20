@@ -3,6 +3,7 @@ import { Logs } from "./Logs";
 import { useEffect, useState, ReactNode } from "react";
 import { api } from "../api";
 import { Card, Empty, Notice, TableWrap } from "../ui";
+import { Icon } from "../icons";
 
 // Диагностика показывает, во что превратилась конфигурация: настоящие правила
 // iptables, конфиги работающих демонов, таблицу маршрутов. Администратор
@@ -158,7 +159,7 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
   return (
     <>
       <div className="page-head">
-        <h1>Диагностика</h1>
+        <h1><Icon name="activity" />Диагностика</h1>
         <p>Что получилось из настроек на самом деле</p>
       </div>
 

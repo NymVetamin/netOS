@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, CatalogResponse } from "../api";
 import { Badge, Card, Notice, Spinner, Switch } from "../ui";
+import { COMPONENT_ICONS, Icon } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -44,7 +45,7 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
     };
   }, []);
 
-  if (!catalog) return <><div className="page-head"><h1>Компоненты</h1><p>Установленные возможности и системные службы роутера</p></div><Card><div className="loading-state"><Spinner /> Загружаем состояние компонентов…</div></Card></>;
+  if (!catalog) return <><div className="page-head"><h1><Icon name="package" />Компоненты</h1><p>Установленные возможности и системные службы роутера</p></div><Card><div className="loading-state"><Spinner /> Загружаем состояние компонентов…</div></Card></>;
 
   const wanted = new Map<string, boolean>(
     (config.components || []).map((c: any) => [c.id, c.installed]),
@@ -95,7 +96,7 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
   return (
     <>
       <div className="page-head">
-        <h1>Компоненты</h1>
+        <h1><Icon name="package" />Компоненты</h1>
         <p>Установленные возможности и системные службы роутера</p>
       </div>
 
@@ -119,6 +120,7 @@ export function ComponentsPage({ config, patch }: { config: any; patch: Patch })
                 <div key={c.id} className={`component ${on ? "on" : ""}`}>
                   <div className="component-main">
                     <div className="row" style={{ gap: "0.5rem" }}>
+                      {COMPONENT_ICONS[c.id] && <Icon name={COMPONENT_ICONS[c.id]} />}
                       <strong>{c.title}</strong>
                       {isReady && <Badge tone="ok">готов</Badge>}
                       {atWork && <Badge tone="ok">используется</Badge>}

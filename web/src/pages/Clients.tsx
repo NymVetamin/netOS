@@ -5,6 +5,7 @@ import { localDevices } from "../deviceList";
 import { vpnMapServers } from "../mapVPN";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
+import { Icon } from "../icons";
 
 function ClientChannel({ config, value, inherited, source, label, onChange }: {
   config: any; value: string; inherited?: string; source: string; label: string; onChange: (value: string) => void;
@@ -164,7 +165,7 @@ export function Clients({
   return (
     <>
       <div className="page-head">
-        <h1>Клиенты</h1>
+        <h1><Icon name="users" />Клиенты</h1>
         <p>Телефоны, компьютеры и другая техника, которую видит роутер</p>
       </div>
 
@@ -193,6 +194,7 @@ export function Clients({
                   return (
               <Row
                 key={`lan:${c.mac}`}
+                icon="monitor-smartphone"
                 id={`lan:${c.mac}`}
                 cells={[<strong>{cfgClient?.name || c.hostname || "без имени"}</strong>,
                   <span className="mono">{c.ip || "—"}{pinButton(c)}</span>,
@@ -234,7 +236,7 @@ export function Clients({
               </Row>
           );
                 })}
-          {vpn.flatMap(server => server.peers.map(peer => <Row
+          {vpn.flatMap(server => server.peers.map(peer => <Row icon="monitor-smartphone"
             key={`vpn:${server.id}:${peer.id}`} id={`vpn:${server.id}:${peer.id}`}
             toggle={can("vpn-servers") ? <a className="btn client-settings-icon" href={`#vpn-servers?server=${encodeURIComponent(server.id)}&client=${encodeURIComponent(peer.id)}`} title="Настройки VPN-клиента" aria-label="Настройки VPN-клиента">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

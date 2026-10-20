@@ -5,6 +5,7 @@ import { confirmAction } from "../confirm";
 import { useEffect, useRef, useState } from "react";
 import { api, formatBytes, formatTime, Session } from "../api";
 import { Badge, Card, Empty, Field, Notice, Switch, TableWrap } from "../ui";
+import { Icon } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -80,7 +81,7 @@ export function SystemPage({
   return (
     <>
       <div className="page-head">
-        <h1>Система</h1>
+        <h1><Icon name="settings" />Система</h1>
         <p>Общие параметры роутера, панель управления и учётная запись</p>
       </div>
 

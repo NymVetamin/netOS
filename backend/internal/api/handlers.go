@@ -1567,6 +1567,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"conntrack_count": s.Collector.ConntrackCount(),
 		"pending_confirm": pending,
 	}
+	resp["os_id"], resp["os_name"] = osRelease()
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname
 		resp["wans"], resp["channels"] = s.liveLinks(r.Context(), cfg, stats)
@@ -1834,3 +1835,28 @@ func uptimeSeconds() int64 {
 }
 
 var procUptimePath = "/proc/uptime"
+
+// osRelease возвращает ID и PRETTY_NAME из os-release: по ним Сводка
+// показывает, на чём стоит роутер. Нечитаемый файл — не ошибка статуса.
+func osRelease() (id, name string) {
+	data, err := os.ReadFile(osReleasePath)
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		value = strings.Trim(value, `"'`)
+		switch key {
+		case "ID":
+			id = value
+		case "PRETTY_NAME":
+			name = value
+		}
+	}
+	return id, name
+}
+
+var osReleasePath = "/etc/os-release"

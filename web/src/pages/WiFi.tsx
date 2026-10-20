@@ -1,5 +1,6 @@
 import { secretInput } from "../secrets";
 import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { Icon } from "../icons";
 import { newID } from "../id";
 
 type Props = { config: any; patch: (mutate: (draft: any) => void) => void };
@@ -18,7 +19,7 @@ export function WiFiPage({ config, patch }: Props) {
   }
 
   return <>
-    <div className="page-head"><h1>Wi-Fi</h1><p>Точки доступа, защита сети и привязка к сегментам роутера</p></div>
+    <div className="page-head"><h1><Icon name="wifi" />Wi-Fi</h1><p>Точки доступа, защита сети и привязка к сегментам роутера</p></div>
     {!installed && <Notice tone="info" title="Нужен компонент hostapd">Установите «Точку доступа Wi-Fi» в разделе «Компоненты». Настройки можно подготовить заранее.</Notice>}
     <Notice tone="info" title="Совместимость оборудования">Радиокарта и драйвер должны поддерживать режим AP. Доступные режимы можно проверить командой <span className="mono">iw list</span>.</Notice>
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={addRadio}>Добавить радио</button>}>
@@ -42,7 +43,7 @@ function RadioEditor({ radio, config, installed, patch }: any) {
     });
   }
 
-  return <Row as="form" className="radio-row" id={radio.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
+  return <Row as="form" className="radio-row" icon="radio" id={radio.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
     cells={[<strong className="mono">{radio.device || "Новое радио"}</strong>, `${radio.band || "2.4"} ГГц`, `канал ${radio.channel || 1}`, `сетей: ${(radio.ssids || []).length}`, <Badge tone={radio.enabled ? "ok" : "neutral"}>{radio.enabled ? "включено" : "черновик"}</Badge>]}
     toggle={<Switch checked={!!radio.enabled} disabled={!installed} label="" ariaLabel="Включить" onChange={(value) => update((draft) => draft.enabled = value)} />}>
     <div className="form-grid">
@@ -66,7 +67,7 @@ function RadioEditor({ radio, config, installed, patch }: any) {
 
 function SSIDEditor({ ssid, networks, update }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.ssids.find((item: any) => item.id === ssid.id)));
-  return <Row className="ssid-row" id={ssid.id}
+  return <Row className="ssid-row" icon="wifi" id={ssid.id}
     cells={[<strong>{ssid.ssid || "Новая сеть"}</strong>, networks.find((item: any) => item.id === ssid.network)?.name || <span className="dim">не выбран</span>, SECURITY[ssid.security || "wpa2/wpa3"] || ssid.security,
       <span className="dim">{[ssid.hidden && "скрыта", ssid.isolate && "клиенты изолированы"].filter(Boolean).join(", ")}</span>,
       <Badge tone={ssid.enabled ? "ok" : "neutral"}>{ssid.enabled ? "в эфире" : "выключена"}</Badge>]}

@@ -3,6 +3,7 @@ import { PermissionContext } from "../permissions";
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
 import { Badge, Card, Empty, Notice, TableWrap } from "../ui";
+import { Icon } from "../icons";
 
 // История ревизий и журнал аудита. Главная ценность — возможность вернуться к
 // заведомо рабочей конфигурации, когда что-то пошло не так.
@@ -36,7 +37,7 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
   return (
     <>
       <div className="page-head">
-        <h1>История</h1>
+        <h1><Icon name="history" />История</h1>
         <p>Ревизии конфигурации и журнал действий</p>
       </div>
 

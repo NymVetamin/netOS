@@ -2,6 +2,7 @@ import { SocksSection } from "./Socks";
 import { DDNSSection } from "./DDNS";
 import { useEffect, useState } from "react";
 import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { Icon } from "../icons";
 import { newID } from "../id";
 import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
@@ -34,7 +35,7 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
   return (
     <>
       <div className="page-head">
-        <h1>Сетевые службы</h1>
+        <h1><Icon name="server-cog" />Сетевые службы</h1>
         <p>DHCP, DNS, динамические адреса и прокси для клиентов</p>
       </div>
 

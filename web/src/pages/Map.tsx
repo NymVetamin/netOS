@@ -2,6 +2,7 @@ import { useAccess } from "../permissions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
+import { Icon } from "../icons";
 import { MapViewport } from "../MapViewport";
 import { vpnMapServers } from "../mapVPN";
 import { interfaceName, wanInterfaceName } from "./Dashboard";
@@ -84,7 +85,7 @@ export function MapPage({ config }: { config: any }) {
   return (
     <>
       <div className="page-head">
-        <h1>Карта сети</h1>
+        <h1><Icon name="waypoints" />Карта сети</h1>
         <p>Как устроена сеть сейчас. Выберите узел, чтобы увидеть подробности</p>
       </div>
       {error && (

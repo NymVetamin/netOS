@@ -927,6 +927,82 @@ summary:not(.xsum) {
   font-size: 11.5px;
 }
 
+/* --- значки (icons.tsx). Контур цветом текста; свой цвет только у логотипа
+   ОС. Значок сам смысла не несёт: рядом всегда стоит подпись. --- */
+.glyph {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.nav-item .glyph {
+  width: 17px;
+  height: 17px;
+  color: inherit;
+}
+
+svg.glyph.glyph-os {
+  color: color-mix(in srgb, var(--brand) 85%, var(--text));
+}
+
+.page-head h1,
+.card-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-head h1 .glyph {
+  width: 24px;
+  height: 24px;
+  color: var(--text-dim);
+}
+
+.card-head h2 .glyph,
+.xname .glyph,
+.component-main .row .glyph {
+  color: var(--text-dim);
+}
+
+.xsum > span.xname {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.xname > :not(.glyph) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.addmenu > .menu button:has(> .glyph) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.addmenu > .menu button:disabled .glyph {
+  opacity: 0.5;
+}
+
+.tile.with-icon {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.tile.with-icon > div {
+  min-width: 0;
+}
+
+.tile .tile-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--text-dim);
+}
+
 @media (max-width: 860px) {
   .xrows {
     --xcols: 34px minmax(0, 1fr) 64px;

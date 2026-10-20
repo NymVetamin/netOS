@@ -138,12 +138,17 @@ func serveStatus(t *testing.T, s *Server) string {
 	if err := os.WriteFile(path, []byte("123.75 10.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldPath := procUptimePath
-	procUptimePath = path
-	t.Cleanup(func() { procUptimePath = oldPath })
+	release := filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(release, []byte("PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nID=debian\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldPath, oldRelease := procUptimePath, osReleasePath
+	procUptimePath, osReleasePath = path, release
+	t.Cleanup(func() { procUptimePath, osReleasePath = oldPath, oldRelease })
 	w := httptest.NewRecorder()
 	s.handleStatus(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"uptime_seconds":123`) || !strings.Contains(w.Body.String(), `"br0"`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"uptime_seconds":123`) || !strings.Contains(w.Body.String(), `"br0"`) ||
+		!strings.Contains(w.Body.String(), `"os_id":"debian"`) || !strings.Contains(w.Body.String(), `"os_name":"Debian GNU/Linux 12 (bookworm)"`) {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 	return w.Body.String()

@@ -9,6 +9,7 @@ import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
 import { channelNAT, setChannelNAT, removeChannelNAT } from "../channelNAT";
 import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { CHANNEL_ICONS, Icon } from "../icons";
 
 type Props = {
   config: any;
@@ -202,7 +203,7 @@ export function ChannelsPage({ config, patch }: Props) {
   const adders: Record<string, () => void> = { wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP };
   const addItems = channelComponents.filter(component => ready(component.type)).map(component => {
     const name = component.type === "ikev2" ? "IKEv2" : component.title;
-    return { label: name, ariaLabel: name, onSelect: adders[component.type] };
+    return { label: name, ariaLabel: name, icon: CHANNEL_ICONS[component.type], onSelect: adders[component.type] };
   });
 
   return (
@@ -230,7 +231,7 @@ export function ChannelsPage({ config, patch }: Props) {
         <p className="hint">Изменения вступят в силу после применения. Можно также отменить действие и изменить назначения по отдельности.</p>
       </Notice></div>}
       <div className="page-head">
-        <h1>Интернет-каналы</h1>
+        <h1><Icon name="globe" />Интернет-каналы</h1>
         <p>VPN-выходы и правила выбора подключения для устройств и сетей</p>
       </div>
 
@@ -257,7 +258,7 @@ export function ChannelsPage({ config, patch }: Props) {
               {" "}<SectionLink section="components">Раздел «Компоненты»</SectionLink>. Настройки канала сохранены.
             </Notice>}
           {channel.type === "direct" ? (
-            <Row key={channel.id} cells={[<strong>{channel.name}</strong>, <span className="dim">через провайдера</span>, "—", "—", <Badge tone="ok">активен</Badge>]} />
+            <Row key={channel.id} icon="arrow-right-left" cells={[<strong>{channel.name}</strong>, <span className="dim">через провайдера</span>, "—", "—", <Badge tone="ok">активен</Badge>]} />
           ) : channel.type === "wireguard" ? (
             <WireGuardEditor
               key={channel.id}
@@ -344,7 +345,7 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
   const state = !channel.enabled ? <Badge tone="neutral">выключен</Badge>
     : !live ? <Badge tone="ok">включён</Badge>
     : <Badge tone={live.up ? "ok" : "warn"}>{live.probe_down ? "проба не прошла" : live.up ? "поднят" : "нет связи"}</Badge>;
-  return <Row as="form" className="channel-row" id={channel.id} data-channel-id={channel.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
+  return <Row as="form" className="channel-row" icon={CHANNEL_ICONS[channel.type]} id={channel.id} data-channel-id={channel.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
     cells={[<strong>{channel.name}</strong>, TYPE_NAMES[channel.type] || channel.type, <span className="mono">{live?.interface || "—"}</span>, <span className="dim">{probe}</span>, state]}
     toggle={<Switch checked={!!channel.enabled} disabled={!channel.enabled && (!installed || !!blocked)} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="" ariaLabel="Использовать" />}>
     {children}
