@@ -630,9 +630,11 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		iface := channels.InterfaceName(ch)
+		if ch.Enabled && !masqueraded[iface] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+			masqueraded[iface] = true
 			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE",
-				channels.InterfaceName(ch), "NAT канала «"+ch.Name+"»")
+				iface, "NAT канала «"+ch.Name+"»")
 		}
 	}
 

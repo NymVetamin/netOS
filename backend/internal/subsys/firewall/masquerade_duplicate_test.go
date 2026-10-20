@@ -75,3 +75,62 @@ func TestExplicitMasqueradeToggleKeepsOtherWAN(t *testing.T) {
 		}
 	}
 }
+
+func TestChannelMasqueradeControl(t *testing.T) {
+	for typ, iface := range map[string]string{
+		"wireguard": "wg-ch1", "openconnect": "tun-ch1", "xray": "tun-ch1",
+		"l2tp": "ppp-ch1", "ikev2": "xfrm-ch1",
+	} {
+		t.Run(typ, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Channels = []config.Channel{
+				{ID: "test", Name: "test", Type: typ, Index: 1, Enabled: true},
+				{ID: "other", Name: "other", Type: "wireguard", Index: 2, Enabled: true},
+			}
+			for _, tc := range []struct {
+				name string
+				rule *config.NATRule
+				auto bool
+			}{
+				{"legacy default", nil, true},
+				{"off", &config.NATRule{Interface: iface, System: true}, false},
+				{"on", &config.NATRule{Interface: iface, System: true, Enabled: true}, false},
+				{"off again", &config.NATRule{Interface: iface, System: true}, false},
+				{"manual on", &config.NATRule{Interface: iface, Enabled: true}, false},
+				{"manual off", &config.NATRule{Interface: iface}, false},
+				{"subnet", &config.NATRule{Interface: iface, Source: "192.0.2.0/24", Enabled: true}, true},
+				{"SNAT", &config.NATRule{Interface: iface, ToSource: "198.51.100.2", Enabled: true}, true},
+				{"DNAT", &config.NATRule{Interface: iface, Direction: "destination", Enabled: true, Protocol: "tcp", ExtPort: "80", DestIP: "192.0.2.2"}, true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					cfg.Firewall.NAT = nil
+					if tc.rule != nil {
+						cfg.Firewall.NAT = []config.NATRule{*tc.rule}
+					}
+					var b builder
+					b.nat(cfg, buildZoneMap(cfg))
+					text := b.String()
+					auto := strings.Contains(text, `--comment "NAT канала «test»"`)
+					if auto != tc.auto {
+						t.Fatalf("automatic NAT=%v, want %v:\n%s", auto, tc.auto, text)
+					}
+					if tc.rule != nil && !tc.auto {
+						want := 0
+						if tc.rule.Enabled {
+							want = 1
+						}
+						if got := strings.Count(text, "-A POSTROUTING -o "+iface+" "); got != want {
+							t.Fatalf("got %d NAT rules, want %d", got, want)
+						}
+					}
+					if !strings.Contains(text, "-A POSTROUTING -o wg-ch2 ") {
+						t.Fatal("other channel lost NAT")
+					}
+					if tc.name == "SNAT" && strings.Index(text, "-j SNAT") > strings.Index(text, `"NAT канала «test»"`) {
+						t.Fatal("explicit SNAT lost precedence")
+					}
+				})
+			}
+		})
+	}
+}

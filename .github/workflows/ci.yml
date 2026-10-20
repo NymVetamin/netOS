@@ -129,6 +129,10 @@ jobs:
         working-directory: web
         run: npm run build
 
+      - name: проверка управления NAT каналов
+        working-directory: web
+        run: npm run test:channel-nat
+
       # Сборка фронтенда кладёт файлы в backend/internal/api/webdist. Если она
       # оставила репозиторий грязным сверх ожидаемого, значит что-то пишется не
       # туда, куда думает .gitignore.

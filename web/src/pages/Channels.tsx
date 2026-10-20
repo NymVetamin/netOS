@@ -7,6 +7,7 @@ import { channelComponents, channelComponentReady } from "../channelComponents";
 import { newID } from "../id";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
+import { channelNAT, setChannelNAT, removeChannelNAT } from "../channelNAT";
 import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 
 type Props = {
@@ -246,6 +247,7 @@ export function ChannelsPage({ config, patch }: Props) {
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
         {liveChannels === null && <div className="hint" role="status">{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</div>}
         </div>
+        <NATSettings.Provider value={{config, patch}}>
         <Live.Provider value={liveChannels}>
         <Rows cols={["Канал", "Тип", "Интерфейс", "Проверка", "Состояние"]} toggle="Включён">
         {channels.map((channel: any) => <Fragment key={channel.id}>
@@ -266,7 +268,7 @@ export function ChannelsPage({ config, patch }: Props) {
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() =>
                 patch((draft) => {
-                  draft.channels = draft.channels.filter((item: any) => item.id !== channel.id);
+                  draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id);
                 })
               }
             />
@@ -278,7 +280,7 @@ export function ChannelsPage({ config, patch }: Props) {
               installed={openconnectInstalled}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
-              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })}
+              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })}
             />
           ) : channel.type === "xray" ? (
             <XrayEditor
@@ -288,7 +290,7 @@ export function ChannelsPage({ config, patch }: Props) {
               installed={xrayInstalled}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
-              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })}
+              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })}
             />
           ) : channel.type === "l2tp" ? (
             <L2TPEditor
@@ -298,25 +300,26 @@ export function ChannelsPage({ config, patch }: Props) {
               installed={l2tpInstalled}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
-              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })}
+              remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })}
             />
 		  ) : channel.type === "ikev2" ? (
 			<IKEv2Editor key={channel.id} channel={channel} channels={channels} installed={strongswanInstalled}
 				referenced={isChannelReferenced(config, channel.id)} update={(mutate) => updateChannel(channel.id, mutate)}
-				remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); })} />
+				remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })} />
           ) : (
             <Notice key={channel.id} tone="warn" title={`Неподдерживаемый канал: ${channel.type || "без типа"}`}>
               <strong>{channel.name || channel.id}</strong>
               <p>Этот сохранённый канал нельзя включить в текущей версии. Его настройки сохранены; канал можно удалить.</p>
               {isChannelReferenced(config, channel.id) && <p>Сначала уберите ссылки на канал в настройках устройств, сегментов, политик, запасных каналов, DNS и VPN-доступа.</p>}
               <button type="button" className="btn ghost sm" aria-label={`Удалить канал ${channel.name || channel.id}`} disabled={isChannelReferenced(config, channel.id)} onClick={() => patch((draft) => {
-                draft.channels = draft.channels.filter((item: any) => item.id !== channel.id);
+                draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id);
               })}>Удалить</button>
             </Notice>
           )}
         </Fragment>)}
         </Rows>
         </Live.Provider>
+        </NATSettings.Provider>
       </Card>
 
       <Policies config={config} patch={patch} policies={policies} />
@@ -328,12 +331,15 @@ const TYPE_NAMES: Record<string, string> = { wireguard: "WireGuard", openconnect
 
 // Живое состояние каналов из /api/status: его показывает строка самого канала.
 const Live = createContext<any[] | null>(null);
+const NATSettings = createContext<Props | null>(null);
 
 function ChannelRow({ channel, installed, referenced, blocked, update, remove, children }: {
   channel: any; installed: boolean; referenced: boolean; blocked?: boolean;
   update: (mutate: (channel: any) => void) => void; remove: () => void; children: ReactNode;
 }) {
   const live = (useContext(Live) || []).find((item: any) => item.id === channel.id);
+  const settings = useContext(NATSettings);
+  const nat = settings ? channelNAT(settings.config, channel) : null;
   const probe = channel.probe?.enabled === false ? "выключена" : `${String(channel.probe?.type || "").toUpperCase()}, каждые ${channel.probe?.interval || 10} с`;
   const state = !channel.enabled ? <Badge tone="neutral">выключен</Badge>
     : !live ? <Badge tone="ok">включён</Badge>
@@ -342,6 +348,13 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
     cells={[<strong>{channel.name}</strong>, TYPE_NAMES[channel.type] || channel.type, <span className="mono">{live?.interface || "—"}</span>, <span className="dim">{probe}</span>, state]}
     toggle={<Switch checked={!!channel.enabled} disabled={!channel.enabled && (!installed || !!blocked)} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="" ariaLabel="Использовать" />}>
     {children}
+    {settings && nat?.iface && <div className="form-grid">
+      <Field label="NAT канала" hint={channel.type === "xray" ? "Подмена адресов перед передачей трафика в Xray." : "Без NAT на другой стороне нужен маршрут к подсетям клиентов."}>
+        <Switch label="Подменять адреса клиентов (NAT)" ariaLabel={`NAT канала ${channel.name}`} checked={nat.enabled} disabled={nat.manual}
+          onChange={enabled => settings.patch(draft => setChannelNAT(draft, draft.channels.find((c: any) => c.id === channel.id), enabled))} />
+        {nat.manual && <SectionLink className="hint" section="firewall">Маскарад задан ручным правилом — изменить в защите сети</SectionLink>}
+      </Field>
+    </div>}
     <div className="row-actions"><button type="button" className="btn ghost sm to-right" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
   </Row>;
 }

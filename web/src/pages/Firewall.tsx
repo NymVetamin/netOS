@@ -1,5 +1,6 @@
 import { interfaceDisplay } from "../interfaceDisplay";
 import { managedWanNAT } from "../wanNAT";
+import { managedChannelNAT } from "../channelNAT";
 import { AutomaticRuleRow, AutomaticNATRow, includeAutomatic, RuleGroup } from "./FirewallRules";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
@@ -796,7 +797,7 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
   const nat: any[] = config.firewall?.nat || [];
   const interfaces = natInterfaceOptions(config);
   const base: RuleGroup[] = [
-    {key:"source",chain:"POSTROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction !== "destination" && !managedWanNAT(config,r))},
+    {key:"source",chain:"POSTROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction !== "destination" && !managedWanNAT(config,r) && !managedChannelNAT(config,r))},
     {key:"destination",chain:"PREROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction === "destination")},
   ];
   const groups = automatic ? includeAutomatic(base,automatic,config,"nat") : base;
