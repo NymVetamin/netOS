@@ -191,14 +191,16 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 }
 
 type Subsystem struct {
-	Runner       system.Runner
-	StateDir     string
-	RTTablesPath string
-	SysClassNet  string
-	ProcSysNet   string
-	UnitDir      string
-	Logger       Logger
-	Probe        func(context.Context, config.Channel, string) bool
+	Runner           system.Runner
+	StateDir         string
+	RTTablesPath     string
+	SysClassNet      string
+	ProcSysNet       string
+	UnitDir          string
+	AppArmorDir      string
+	AppArmorProfiles string
+	Logger           Logger
+	Probe            func(context.Context, config.Channel, string) bool
 
 	mu          sync.Mutex
 	states      map[string]*channelState
@@ -213,13 +215,15 @@ type Logger interface {
 
 func New(r system.Runner, stateDir string, loggers ...Logger) *Subsystem {
 	s := &Subsystem{
-		Runner:       r,
-		StateDir:     stateDir,
-		RTTablesPath: "/etc/iproute2/rt_tables.d/netos-channels.conf",
-		SysClassNet:  "/sys/class/net",
-		ProcSysNet:   "/proc/sys/net",
-		UnitDir:      "/etc/systemd/system",
-		states:       map[string]*channelState{},
+		Runner:           r,
+		StateDir:         stateDir,
+		RTTablesPath:     "/etc/iproute2/rt_tables.d/netos-channels.conf",
+		SysClassNet:      "/sys/class/net",
+		ProcSysNet:       "/proc/sys/net",
+		UnitDir:          "/etc/systemd/system",
+		AppArmorDir:      "/etc/apparmor.d",
+		AppArmorProfiles: "/sys/kernel/security/apparmor/profiles",
+		states:           map[string]*channelState{},
 	}
 	if len(loggers) > 0 {
 		s.Logger = loggers[0]
@@ -298,7 +302,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	return actions, nil
 }
 
-func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
+func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wanted := enabledChannels(cfg)
@@ -308,6 +312,25 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	owned, err := s.readOwned()
 	if err != nil {
 		return err
+	}
+	hasIKE, hadIKE := false, false
+	for _, ch := range wanted {
+		hasIKE = hasIKE || ch.Type == "ikev2"
+	}
+	for _, ch := range owned {
+		hadIKE = hadIKE || ch.Type == "ikev2"
+	}
+	if hasIKE {
+		defer func() {
+			if retErr != nil && !hadIKE {
+				if err := RemoveIKEv2ChannelAppArmor(context.Background(), s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run); err != nil {
+					retErr = fmt.Errorf("%v; очистка AppArmor: %w", retErr, err)
+				}
+			}
+		}()
+		if err := syncChannelArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, true, s.Runner.Run); err != nil {
+			return err
+		}
 	}
 	tableSnapshot, err := captureChannelFiles(s.RTTablesPath)
 	if err != nil {
@@ -405,6 +428,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	s.states = map[string]*channelState{}
 	s.pausedUntil = time.Now().Add(15 * time.Second)
+	if !hasIKE && hadIKE {
+		return RemoveIKEv2ChannelAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run)
+	}
 	return nil
 }
 

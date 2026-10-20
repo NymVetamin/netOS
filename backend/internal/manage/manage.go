@@ -26,6 +26,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/store"
+	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/monitor"
@@ -1259,6 +1260,9 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 	}
 	if err := vpnservers.RemoveL2TPPreUpHooks(filepath.Join(m.StateDir, "generated"), m.sys("/etc/ppp/ip-pre-up.d")); err != nil {
 		return fmt.Errorf("удаление PPP hooks: %w", err)
+	}
+	if err := channels.RemoveIKEv2ChannelAppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
+		return fmt.Errorf("удаление разрешений AppArmor каналов IKEv2: %w", err)
 	}
 	if err := vpnservers.RemoveIKEv2AppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
 		return fmt.Errorf("удаление разрешений AppArmor IKEv2: %w", err)

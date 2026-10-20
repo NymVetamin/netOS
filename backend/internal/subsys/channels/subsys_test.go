@@ -116,6 +116,8 @@ func newTestSubsystem(t *testing.T) (*Subsystem, *channelRunner) {
 	s.SysClassNet = filepath.Join(root, "sys", "class", "net")
 	s.ProcSysNet = filepath.Join(root, "proc", "sys", "net")
 	s.UnitDir = filepath.Join(root, "systemd")
+	s.AppArmorDir = filepath.Join(root, "apparmor")
+	s.AppArmorProfiles = filepath.Join(root, "loaded-profiles")
 	r := &channelRunner{s: s}
 	s.Runner = r
 	return s, r
