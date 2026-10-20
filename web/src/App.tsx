@@ -664,24 +664,23 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 // править. Предупреждения тоже показываем — они объясняют, почему настройка
 // принята, но работать не будет.
 function ProblemList({ problems }: { problems: Problem[] }) {
-  const ordered = [
-    ...problems.filter((p) => p.severity === "error"),
-    ...problems.filter((p) => p.severity !== "error"),
+  const groups = [
+    { kind: "error", title: "Нужно исправить", items: problems.filter((p) => p.severity === "error") },
+    { kind: "warning", title: "Обратите внимание", items: problems.filter((p) => p.severity !== "error") },
   ];
-  if (ordered.length === 0) return null;
-  const shown = ordered.slice(0, 8);
   return (
-    <span style={{ display: "block", marginTop: ".35rem", fontWeight: 400 }}>
-      {shown.map((p, i) => (
-        <span key={i} style={{ display: "block" }}>
-          {p.severity === "error" ? "" : "⚠ "}
-          {p.message}
-        </span>
+    <div className="apply-problems">
+      {groups.filter((group) => group.items.length > 0).map((group) => (
+        <section className={`apply-problem-group ${group.kind}`} key={group.kind} aria-label={group.title}>
+          <div className="apply-problem-heading">
+            <span className="apply-problem-icon" aria-hidden="true">{group.kind === "error" ? "!" : "i"}</span>
+            <strong>{group.title}</strong>
+            <span className="apply-problem-count">{group.items.length}</span>
+          </div>
+          <ul>{group.items.map((p, i) => <li key={i}>{p.message}</li>)}</ul>
+        </section>
       ))}
-      {ordered.length > shown.length && (
-        <span style={{ display: "block" }}>и ещё {ordered.length - shown.length}</span>
-      )}
-    </span>
+    </div>
   );
 }
 
@@ -815,13 +814,7 @@ function ApplyBar({
         <strong>{dirty ? "Есть несохранённые изменения" : "Изменения не применены"}</strong>
         <div className="dim">
           {errorCount > 0 ? (
-            // Одного числа мало: раньше панель сообщала «ошибок 4» и не
-            // говорила, каких именно, — валидатор объяснял причину, а до
-            // администратора она не доходила.
-            <span style={{ color: "var(--danger)" }}>
-              Ошибок в конфигурации: {errorCount} — исправьте перед применением
-              <ProblemList problems={problems} />
-            </span>
+            <ProblemList problems={problems} />
           ) : error ? (
             null
           ) : (
