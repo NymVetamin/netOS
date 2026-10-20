@@ -51,26 +51,29 @@ type DNSCount struct {
 	Last   int64  `json:"last"`
 }
 type ClientHistory struct {
-	Runner       system.Runner
-	Collector    *Collector
-	Current      func() *config.Config
-	Extra        func(context.Context, *config.Config) []ClientCounter
-	db           *sql.DB
-	mu           sync.Mutex
-	addresses    map[string]ClientCounter
-	baseline     map[string]clientBaseline
-	resources    map[string]*DNSCount
-	dns          map[string]*DNSCount
-	enabled      bool
-	problem      string
-	dnsProblem   string
-	limited      bool
-	dnsCancel    context.CancelFunc
-	lastPrune    time.Time
-	lastPersist  time.Time
-	liveUntil    time.Time
-	liveBaseline map[string]clientBaseline
-	liveSnapshot ClientLive
+	Runner              system.Runner
+	Collector           *Collector
+	Current             func() *config.Config
+	Extra               func(context.Context, *config.Config) []ClientCounter
+	db                  *sql.DB
+	trafficMu           sync.Mutex
+	trafficCache        *historyTrafficCache
+	trafficCacheBlocked bool
+	mu                  sync.Mutex
+	addresses           map[string]ClientCounter
+	baseline            map[string]clientBaseline
+	resources           map[string]*DNSCount
+	dns                 map[string]*DNSCount
+	enabled             bool
+	problem             string
+	dnsProblem          string
+	limited             bool
+	dnsCancel           context.CancelFunc
+	lastPrune           time.Time
+	lastPersist         time.Time
+	liveUntil           time.Time
+	liveBaseline        map[string]clientBaseline
+	liveSnapshot        ClientLive
 }
 
 func NewClientHistory(path string, r system.Runner, c *Collector, current func() *config.Config) (*ClientHistory, error) {
@@ -330,6 +333,8 @@ func (h *ClientHistory) sample(parent context.Context) {
 }
 func (h *ClientHistory) setProblem(s string) { h.mu.Lock(); h.problem = s; h.mu.Unlock() }
 func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
+	h.trafficMu.Lock()
+	defer h.trafficMu.Unlock()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	tx, err := h.db.Begin()
@@ -396,6 +401,15 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 
 	if err = tx.Commit(); err != nil {
 		return err
+	}
+	if h.trafficCache != nil {
+		for _, d := range deltas {
+			h.trafficCache.add(now.Unix(), d.ClientCounter, d.Seconds)
+		}
+		if h.trafficCache.rows > maxCachedTrafficRows || len(h.trafficCache.clients) > maxCachedTrafficClients {
+			h.trafficCache = nil
+			h.trafficCacheBlocked = true
+		}
 	}
 	h.baseline = next
 	h.dns = map[string]*DNSCount{}
@@ -470,33 +484,10 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 		report.Problem = strings.TrimSpace(report.Problem + " " + h.dnsProblem)
 	}
 	h.mu.Unlock()
-	rows, err := h.db.QueryContext(ctx, "SELECT t.id,(SELECT name FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),(SELECT address FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),SUM(t.rx),SUM(t.tx) FROM traffic t WHERE t.at>=? AND t.at<=? GROUP BY t.id ORDER BY SUM(t.rx+t.tx) DESC LIMIT 512", from.Unix(), to.Unix())
+	traffic, selected, err := h.reportTraffic(ctx, from, to, selected)
+	report.Clients, report.Points = traffic.Clients, traffic.Points
 	if err != nil {
 		return report, err
-	}
-	for rows.Next() {
-		var c ClientTotal
-		if err = rows.Scan(&c.ID, &c.Name, &c.Address, &c.RX, &c.TX); err != nil {
-			rows.Close()
-			return report, err
-		}
-		report.Clients = append(report.Clients, c)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return report, err
-	}
-	if len(selected) == 0 {
-		for i, c := range report.Clients {
-			if i == 5 {
-				break
-			}
-			selected = append(selected, c.ID)
-		}
-	}
-	if len(selected) > 16 {
-		return report, fmt.Errorf("не более 16 клиентов")
 	}
 	if len(selected) == 0 {
 		return report, nil
@@ -506,28 +497,7 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 	for _, id := range selected {
 		args = append(args, id)
 	}
-	step := int64(to.Sub(from).Seconds() / 400)
-	if step < 30 {
-		step = 30
-	}
-	query := fmt.Sprintf("SELECT (at/%d)*%d,id,SUM(rx)*8.0/MAX(SUM(seconds),1),SUM(tx)*8.0/MAX(SUM(seconds),1) FROM traffic WHERE at>=? AND at<=? AND id IN (%s) GROUP BY at/%d,id ORDER BY at", step, step, placeholders, step)
-	rows, err = h.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return report, err
-	}
-	for rows.Next() {
-		var p ClientPoint
-		if err = rows.Scan(&p.At, &p.ID, &p.RX, &p.TX); err != nil {
-			rows.Close()
-			return report, err
-		}
-		report.Points = append(report.Points, p)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return report, err
-	}
+	var rows *sql.Rows
 	if details {
 		rows, err = h.db.QueryContext(ctx, "SELECT client,domain,source,SUM(n),MIN(first),MAX(last) FROM (SELECT at,client,domain,'dns' AS source,n,first,last FROM domains UNION ALL SELECT at,client,domain,source,n,first,last FROM resources) WHERE at>=? AND at<=? AND client IN ("+placeholders+") GROUP BY client,domain,source ORDER BY SUM(n) DESC LIMIT 200", args...)
 		if err != nil {
@@ -595,6 +565,8 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 
 // Retention also runs while collection is disabled; disabling is not permanent storage.
 func (h *ClientHistory) prune(now time.Time) error {
+	h.trafficMu.Lock()
+	defer h.trafficMu.Unlock()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	tx, err := h.db.Begin()
@@ -616,12 +588,20 @@ func (h *ClientHistory) prune(now time.Time) error {
 				return e
 			}
 			if n, _ := result.RowsAffected(); n > 0 {
+				if table == "traffic" {
+					h.trafficCache = nil
+				}
 				h.limited = true
 			}
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
+	}
+	// Row limits may remove retained samples by rowid, so reload after a capped prune.
+	h.trafficCacheBlocked = false
+	if h.trafficCache != nil {
+		h.trafficCache.prune(now.Add(-7 * 24 * time.Hour).Unix())
 	}
 	h.lastPrune = now
 	return nil
@@ -632,4 +612,68 @@ func (h *ClientHistory) setDNSProblem(s string) {
 	if h.enabled {
 		h.dnsProblem = s
 	}
+}
+
+func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time, selected []string) (ClientReport, []string, error) {
+	report := ClientReport{Clients: []ClientTotal{}, Points: []ClientPoint{}}
+	rows, err := h.db.QueryContext(ctx, "SELECT t.id,(SELECT name FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),(SELECT address FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),SUM(t.rx),SUM(t.tx) FROM traffic t WHERE t.at>=? AND t.at<=? GROUP BY t.id ORDER BY SUM(t.rx+t.tx) DESC LIMIT 512", from.Unix(), to.Unix())
+	if err != nil {
+		return report, selected, err
+	}
+	for rows.Next() {
+		var c ClientTotal
+		if err = rows.Scan(&c.ID, &c.Name, &c.Address, &c.RX, &c.TX); err != nil {
+			rows.Close()
+			return report, selected, err
+		}
+		report.Clients = append(report.Clients, c)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return report, selected, err
+	}
+	if len(selected) == 0 {
+		for i, c := range report.Clients {
+			if i == 5 {
+				break
+			}
+			selected = append(selected, c.ID)
+		}
+	}
+	if len(selected) > 16 {
+		return report, selected, fmt.Errorf("не более 16 клиентов")
+	}
+	if len(selected) == 0 {
+		return report, selected, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(selected)), ",")
+	args := []any{from.Unix(), to.Unix()}
+	for _, id := range selected {
+		args = append(args, id)
+	}
+	step := int64(to.Sub(from).Seconds() / 400)
+	if step < 30 {
+		step = 30
+	}
+	query := fmt.Sprintf("SELECT (at/%d)*%d,id,SUM(rx)*8.0/MAX(SUM(seconds),1),SUM(tx)*8.0/MAX(SUM(seconds),1) FROM traffic WHERE at>=? AND at<=? AND id IN (%s) GROUP BY at/%d,id ORDER BY at", step, step, placeholders, step)
+	rows, err = h.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return report, selected, err
+	}
+	for rows.Next() {
+		var p ClientPoint
+		if err = rows.Scan(&p.At, &p.ID, &p.RX, &p.TX); err != nil {
+			rows.Close()
+			return report, selected, err
+		}
+		report.Points = append(report.Points, p)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return report, selected, err
+	}
+
+	return report, selected, nil
 }
