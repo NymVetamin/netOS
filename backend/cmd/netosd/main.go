@@ -282,6 +282,24 @@ func main() {
 	go channelMonitor.Run(ctx, engine.Current)
 	go ddnsController.Run(ctx, engine.Current)
 	go sambaController.Run(ctx, engine.Current, logger)
+	go func() {
+		keaLinks := services.NewKeaLinkMonitor(runner)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			err := engine.Maintain(ctx, func(current *config.Config) error {
+				return keaLinks.Reconcile(ctx, current)
+			})
+			if err != nil && ctx.Err() == nil {
+				logger.Errorf("готовность интерфейсов DHCP: %v", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
 	// Дальше пароль знает только владелец машины.

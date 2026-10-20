@@ -135,13 +135,12 @@ func (d *KeaDHCP) Render(cfg *config.Config) string {
 	for _, code := range privateCodes {
 		optionDefs = append(optionDefs, map[string]any{"name": fmt.Sprintf("netos-option-%d", code), "code": code, "type": "string", "space": "dhcp4"})
 	}
-	// A newly-created bridge can need a short moment to acquire carrier from
-	// its dummy port. Without retries Kea stays "active" but opens no DHCP
-	// socket, so clients never receive an address until the next Apply.
+	// KeaLinkMonitor reopens sockets when a configured interface becomes
+	// ready, including long after startup. Finite startup retries both spam
+	// the journal on unplugged LANs and leave late clients without DHCP.
 	interfaces := map[string]any{
-		"interfaces":                      ifaces,
-		"service-sockets-max-retries":     60,
-		"service-sockets-retry-wait-time": 1000,
+		"interfaces":                  ifaces,
+		"service-sockets-max-retries": 0,
 	}
 	dhcp4 := map[string]any{"interfaces-config": interfaces, "authoritative": true, "early-global-reservations-lookup": true, "reservations-global": true, "reservations": globalReservations, "lease-database": map[string]any{"type": "memfile", "persist": true, "name": keaLeasePath, "lfc-interval": 3600}, "option-def": optionDefs, "subnet4": subnets}
 	root := map[string]any{"Dhcp4": dhcp4}
