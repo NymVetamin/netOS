@@ -176,7 +176,11 @@ func (m *Maintenance) scheduleCommand(ctx context.Context, command []string) err
 func (m *Maintenance) Status(ctx context.Context) map[string]any {
 	// systemd-run accepts a job before its delayed service starts. The timer
 	// represents that pending operation, even if the previous service failed.
-	timer, timerErr := m.Runner.Run(ctx, "systemctl", "show", m.Unit+".timer",
+	// Exact names make systemctl load absent units. After daemon-reload during
+	// an update, systemd can retain a path to a collected transient file and
+	// log "Failed to open" on every poll. A glob matches loaded units only;
+	// [.] still matches exactly our unit, without matching other job names.
+	timer, timerErr := m.Runner.Run(ctx, "systemctl", "show", m.Unit+"[.]timer",
 		"--property=ActiveState", "--property=SubState")
 	if timerErr == nil {
 		fields := maintenanceUnitFields(timer)
@@ -185,7 +189,7 @@ func (m *Maintenance) Status(ctx context.Context) map[string]any {
 			return map[string]any{"state": "activating", "sub_state": "waiting", "result": "", "exit_code": "", "failed": false}
 		}
 	}
-	out, err := m.Runner.Run(ctx, "systemctl", "show", m.Unit+".service",
+	out, err := m.Runner.Run(ctx, "systemctl", "show", m.Unit+"[.]service",
 		"--property=ActiveState", "--property=SubState", "--property=Result", "--property=ExecMainStatus")
 	if err != nil {
 		return map[string]any{"state": "idle"}

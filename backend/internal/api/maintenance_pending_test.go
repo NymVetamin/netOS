@@ -9,7 +9,7 @@ import (
 type pendingMaintenanceRunner struct{ timer, service string }
 
 func (r pendingMaintenanceRunner) Run(_ context.Context, _ string, args ...string) (string, error) {
-	if strings.Contains(strings.Join(args, " "), ".timer") {
+	if strings.Contains(strings.Join(args, " "), "[.]timer") {
 		return r.timer, nil
 	}
 	return r.service, nil
@@ -24,6 +24,7 @@ func TestMaintenanceStatusPendingTimer(t *testing.T) {
 		name, timer, service, state string
 		failed                      bool
 	}{
+		{"collected job", "", "", "idle", false},
 		{"first scheduled job", "ActiveState=active\nSubState=waiting\n", "", "activating", false},
 		{"scheduled after failure", "ActiveState=active\nSubState=waiting\n", "ActiveState=failed\nResult=exit-code\nExecMainStatus=17\n", "activating", false},
 		{"starting timer", "ActiveState=activating\n", "ActiveState=inactive\n", "activating", false},
@@ -38,5 +39,19 @@ func TestMaintenanceStatusPendingTimer(t *testing.T) {
 				t.Fatalf("status = %v; want state %s, failed %v", got, tc.state, tc.failed)
 			}
 		})
+	}
+}
+
+func TestMaintenanceStatusDoesNotLoadMissingUnits(t *testing.T) {
+	runner := &maintenanceRunner{}
+	m := Maintenance{Runner: runner, Unit: "netos-maintenance"}
+	m.Status(context.Background())
+	if len(runner.commands) != 2 {
+		t.Fatalf("unexpected calls: %v", runner.commands)
+	}
+	for i, suffix := range []string{"timer", "service"} {
+		if !strings.Contains(runner.commands[i], "show netos-maintenance[.]"+suffix+" ") {
+			t.Fatalf("status may load missing transient unit: %s", runner.commands[i])
+		}
 	}
 }
