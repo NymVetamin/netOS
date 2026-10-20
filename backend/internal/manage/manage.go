@@ -1571,7 +1571,7 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	// До этого места unit, бинарник и данные остаются доступны для аварийного
 	// повторного Apply. Удаляем их только после успешного возврата системы.
 	fmt.Fprintln(m.Out, "Сеть восстановлена. Удаляем оставшиеся файлы netOS…")
-	if err := m.removeInstalledPackages(ctx); err != nil {
+	if err := m.removePackagesPreservingUnbound(ctx, keepData); err != nil {
 		return fmt.Errorf("удаление пакетов netOS: %w", err)
 	}
 	if needDefault && !m.waitDefaultRoute(ctx, 3) {
