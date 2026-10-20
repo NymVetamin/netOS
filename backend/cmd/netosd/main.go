@@ -298,6 +298,23 @@ func main() {
 	}
 	traffic := runtime.NewTrafficHistory("/var/lib/netos/traffic-history.json", collector)
 	go traffic.Run(ctx)
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			err := engine.Maintain(ctx, func(current *config.Config) error {
+				return services.RotateDNSLog(ctx, current, runner)
+			})
+			if err != nil && ctx.Err() == nil {
+				logger.Errorf("ротация DNS-журнала: %v", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	panel := api.New(st, engine, collector, logger)
 	panel.Certificates = certificateManager
 	panel.PKI = clientPKI

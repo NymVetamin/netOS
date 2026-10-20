@@ -133,17 +133,75 @@ func (h *ClientHistory) readResourceJournal(ctx context.Context, pipe io.Reader)
 	}
 }
 
+// dnsFileTail drains a renamed inode before switching to the new file. Only
+// the first attachment skips history; a rotated file must be read from byte 0.
+type dnsFileTail struct {
+	file    *os.File
+	offset  int64
+	pending string
+}
+
+func (t *dnsFileTail) close() {
+	if t.file != nil {
+		_ = t.file.Close()
+	}
+	*t = dnsFileTail{}
+}
+
+func (t *dnsFileTail) read(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if t.file == nil {
+		t.file, err = os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		t.offset, err = t.file.Seek(0, io.SeekEnd)
+		return nil, err
+	}
+	old, err := t.file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	rotated := !os.SameFile(old, info)
+	if old.Size() < t.offset {
+		t.offset, t.pending = 0, ""
+		if _, err := t.file.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(t.file, 256<<10))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 && rotated {
+		next, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		_ = t.file.Close()
+		t.file, t.offset, t.pending = next, 0, ""
+		data, err = io.ReadAll(io.LimitReader(t.file, 256<<10))
+		if err != nil {
+			return nil, err
+		}
+	}
+	t.offset += int64(len(data))
+	parts := strings.Split(t.pending+string(data), "\n")
+	t.pending = parts[len(parts)-1]
+	if len(t.pending) > 8192 {
+		t.pending = ""
+	}
+	return parts[:len(parts)-1], nil
+}
+
 func (h *ClientHistory) tailDNSFile(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	var file *os.File
-	var offset int64
-	var pending string
-	defer func() {
-		if file != nil {
-			file.Close()
-		}
-	}()
+	var tail dnsFileTail
+	defer tail.close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -152,50 +210,14 @@ func (h *ClientHistory) tailDNSFile(ctx context.Context) {
 		}
 		cfg := h.Current()
 		if cfg == nil || !cfg.DNS.QueryLog {
-			if file != nil {
-				file.Close()
-				file = nil
-			}
+			tail.close()
 			continue
 		}
-		info, err := os.Stat("/var/log/netos/dns.log")
+		lines, err := tail.read("/var/log/netos/dns.log")
 		if err != nil {
 			continue
 		}
-		if file != nil {
-			old, e := file.Stat()
-			if e != nil || !os.SameFile(old, info) {
-				file.Close()
-				file = nil
-				offset = 0
-				pending = ""
-			}
-		}
-		if file == nil {
-			file, err = os.Open("/var/log/netos/dns.log")
-			if err != nil {
-				continue
-			}
-			offset, _ = file.Seek(0, io.SeekEnd)
-			continue
-		}
-		if info.Size() < offset {
-			offset = 0
-			pending = ""
-			_, _ = file.Seek(0, io.SeekStart)
-		}
-		// Bounded batch. Falling behind is not allowed to allocate arbitrary memory.
-		data, err := io.ReadAll(io.LimitReader(file, 256<<10))
-		if err != nil {
-			continue
-		}
-		offset += int64(len(data))
-		parts := strings.Split(pending+string(data), "\n")
-		pending = parts[len(parts)-1]
-		if len(pending) > 8192 {
-			pending = ""
-		}
-		for _, line := range parts[:len(parts)-1] {
+		for _, line := range lines {
 			addr, domain := ParseDNSQuery(line)
 			if addr != "" {
 				h.AddDNS(time.Now(), addr, domain)
