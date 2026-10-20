@@ -522,18 +522,26 @@ func TestUninstallRemovesKeaLeaseDataUnlessKept(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(lease), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(lease, []byte("192.0.2.50,client.qa.lan\n"), 0o640); err != nil {
-				t.Fatal(err)
+			suffixes := []string{"", ".1", ".2", ".output", ".completed", ".pid"}
+			for _, suffix := range append(append([]string{}, suffixes...), ".foreign") {
+				if err := os.WriteFile(lease+suffix, []byte("192.0.2.50,client.qa.lan\n"), 0o640); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := m.uninstall(context.Background(), true, keepData, !keepData, false); err != nil {
 				t.Fatal(err)
 			}
-			_, err := os.Stat(lease)
-			if keepData && err != nil {
-				t.Fatalf("--keep-data removed Kea leases: %v", err)
+			for _, suffix := range suffixes {
+				_, err := os.Stat(lease + suffix)
+				if keepData && err != nil {
+					t.Fatalf("--keep-data removed Kea leases %s: %v", suffix, err)
+				}
+				if !keepData && !os.IsNotExist(err) {
+					t.Fatalf("full uninstall retained Kea leases %s: %v", suffix, err)
+				}
 			}
-			if !keepData && !os.IsNotExist(err) {
-				t.Fatalf("full uninstall retained Kea leases: %v", err)
+			if _, err := os.Stat(lease + ".foreign"); err != nil {
+				t.Fatalf("removed unrelated lease file: %v", err)
 			}
 		})
 	}

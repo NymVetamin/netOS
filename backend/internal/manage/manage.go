@@ -1595,9 +1595,11 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		// Kea's AppArmor profile forces this netOS-owned lease database outside
 		// StateDir. Full uninstall must remove its client data; --keep-data
 		// intentionally preserves it for reinstall.
-		keaLease := m.sys("/var/lib/kea/netos-leases4.csv")
-		if err := os.Remove(keaLease); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove netOS Kea leases %s: %w", keaLease, err)
+		for _, suffix := range []string{"", ".1", ".2", ".output", ".completed", ".pid"} {
+			keaLease := m.sys("/var/lib/kea/netos-leases4.csv" + suffix)
+			if err := os.Remove(keaLease); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove netOS Kea leases %s: %w", keaLease, err)
+			}
 		}
 		if err := os.Remove(m.sys("/var/lib/unbound/netos-root.key")); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("удаление якоря DNSSEC netOS: %w", err)
