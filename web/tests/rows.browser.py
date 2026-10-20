@@ -82,7 +82,11 @@ async def open_rows_above(control):
         closed = control.locator("xpath=ancestor::details[not(@open)]")
         if await closed.count() == 0:
             return
-        await closed.first.locator("xpath=./summary").click()
+        row = closed.first
+        element = await row.element_handle()
+        # The middle of a row may contain an independent channel selector.
+        await row.locator("xpath=./summary/span[1]").click()
+        assert await element.evaluate("(row) => row.open"), "clicking the row name did not open it"
 
 
 async def main():
@@ -123,9 +127,17 @@ async def main():
         shots = os.environ.get("ROWS_SCREENSHOTS")
         for name, label, value, read in EDITS:
             await page.goto(f"http://netos-ui.test/#{name}")
+            custom_dns = label == "Адрес DNS-сервера 1"
+            if custom_dns:
+                preset = page.get_by_label("Резолвер DNS-сервера 1", exact=True)
+                await expect(preset).to_have_count(1)
+                assert not await preset.is_visible(), "DNS row must start collapsed"
+                await open_rows_above(preset)
+                await preset.select_option("custom")
             control = page.get_by_label(label, exact=True)
             await expect(control).to_have_count(1)
-            assert not await control.is_visible(), f"{name}: «{label}» is visible while its row is collapsed"
+            if not custom_dns:
+                assert not await control.is_visible(), f"{name}: «{label}» is visible while its row is collapsed"
             await open_rows_above(control)
             await expect(control).to_be_visible()
             async with page.expect_response(is_put):
@@ -180,6 +192,7 @@ async def main():
         await page.goto("http://netos-ui.test/#clients")
         pin = page.get_by_role("button", name=f"Закрепить адрес за устройством {MAC}", exact=True)
         await expect(pin).to_be_visible()
+        await open_rows_above(page.get_by_text(MAC, exact=True))
         await expect(page.get_by_text(MAC, exact=True)).to_be_visible()
         print("mobile storage action and client address PASS")
 
