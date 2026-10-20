@@ -14,9 +14,9 @@ func TestUninstallRemovesOnlyOwnedUnboundFiles(t *testing.T) {
 			m, _ := testManager()
 			sandbox(t, m)
 			owned := []string{"/etc/unbound/netos.conf", "/etc/unbound/netos-blocklist.conf"}
-			anchor := "/var/lib/unbound/netos-root.key"
+			anchors := []string{"/var/lib/unbound/netos-root.key", "/var/lib/unbound/netos/root.key", "/var/lib/unbound/netos/root.key.123-tmp"}
 			foreign := []string{"/etc/unbound/unbound.conf", "/var/lib/unbound/root.key"}
-			for _, name := range append(append(append([]string{}, owned...), anchor), foreign...) {
+			for _, name := range append(append(append([]string{}, owned...), anchors...), foreign...) {
 				path := m.sys(name)
 				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 					t.Fatal(err)
@@ -33,9 +33,11 @@ func TestUninstallRemovesOnlyOwnedUnboundFiles(t *testing.T) {
 					t.Fatalf("retained %s: %v", name, err)
 				}
 			}
-			_, err := os.Stat(m.sys(anchor))
-			if keep && err != nil || !keep && !os.IsNotExist(err) {
-				t.Fatalf("anchor keep=%v: %v", keep, err)
+			for _, anchor := range anchors {
+				_, err := os.Stat(m.sys(anchor))
+				if keep && err != nil || !keep && !os.IsNotExist(err) {
+					t.Fatalf("anchor %s keep=%v: %v", anchor, keep, err)
+				}
 			}
 			for _, name := range foreign {
 				if _, err := os.Stat(m.sys(name)); err != nil {

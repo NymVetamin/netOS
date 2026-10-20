@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestUnboundUsesDebianAppArmorLocations(t *testing.T) {
 	cfg.DNS.DNSSEC = true
 	cfg.DNS.Blocklists = []config.Blocklist{{Enabled: true, URL: "https://example.test/hosts"}}
 	out := NewUnbound(nil).Render(cfg)
-	for _, want := range []string{`directory: "/var/lib/unbound"`, `auto-trust-anchor-file: "/var/lib/unbound/netos-root.key"`, `include: "/etc/unbound/netos-blocklist.conf"`} {
+	for _, want := range []string{`directory: "/var/lib/unbound/netos"`, `auto-trust-anchor-file: "/var/lib/unbound/netos/root.key"`, `include: "/etc/unbound/netos-blocklist.conf"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing permitted path %s", want)
 		}
@@ -40,6 +41,53 @@ func TestUnboundUsesDebianAppArmorLocations(t *testing.T) {
 	}
 	if !strings.Contains(unboundUnitContent(), "-c /etc/unbound/netos.conf") {
 		t.Fatal("unit uses old config location")
+	}
+}
+
+func TestUnboundAnchorMigrationPrefersRecentPath(t *testing.T) {
+	useProviderPaths(t)
+	prior, legacy := priorUnboundAnchorPath, legacyUnboundAnchorPath
+	t.Cleanup(func() { priorUnboundAnchorPath, legacyUnboundAnchorPath = prior, legacy })
+	root := t.TempDir()
+	priorUnboundAnchorPath, legacyUnboundAnchorPath = filepath.Join(root, "prior.key"), filepath.Join(root, "legacy.key")
+	unboundAnchorPath = filepath.Join(root, "netos", "root.key")
+	for path, content := range map[string]string{priorUnboundAnchorPath: "recent RFC5011 state", legacyUnboundAnchorPath: "older RFC5011 state"} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := newProviderRunner()
+	if err := NewUnbound(r).ensureTrustAnchor(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(unboundAnchorPath)
+	if string(data) != "recent RFC5011 state" || hasCommand(r.commands, "unbound-anchor") {
+		t.Fatal("recent state lost or bootstrapped again")
+	}
+	info, err := os.Stat(filepath.Dir(unboundAnchorPath))
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0700 {
+		t.Fatalf("unsafe directory: %v", err)
+	}
+}
+
+func TestUnboundRejectsSymlinkStateDirectory(t *testing.T) {
+	useProviderPaths(t)
+	root := t.TempDir()
+	target := filepath.Join(root, "foreign")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "netos")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	unboundAnchorPath = filepath.Join(link, "root.key")
+	if err := ensureUnboundStateDir(); err == nil {
+		t.Fatal("symlink directory accepted")
+	}
+	info, _ := os.Stat(target)
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0755 {
+		t.Fatal("foreign directory modified")
 	}
 }
 

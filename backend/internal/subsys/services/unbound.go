@@ -21,7 +21,8 @@ var (
 	unboundUnit     = "netos-unbound.service"
 	// Каталог для root.key: unbound обновляет якорь DNSSEC на месте, поэтому
 	// файл живёт в изменяемом состоянии, а не рядом с конфигом.
-	unboundAnchorPath       = "/var/lib/unbound/netos-root.key"
+	unboundAnchorPath       = "/var/lib/unbound/netos/root.key"
+	priorUnboundAnchorPath  = "/var/lib/unbound/netos-root.key"
 	legacyUnboundAnchorPath = "/var/lib/netos/unbound-root.key"
 )
 
@@ -390,6 +391,9 @@ func (u *Unbound) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRe
 	}
 
 	content := []byte(u.Render(cfg))
+	if err := ensureUnboundStateDir(); err != nil {
+		return err
+	}
 	if cfg.DNS.DNSSEC {
 		if err := u.ensureTrustAnchor(ctx); err != nil {
 			return err
@@ -424,6 +428,9 @@ func (u *Unbound) ApplyPrepared(ctx context.Context, cfg *config.Config, forceRe
 // unbound-checkconf откажет с невнятным «does not exist», поэтому объясняем
 // причину сами.
 func (u *Unbound) ensureTrustAnchor(ctx context.Context) error {
+	if err := ensureUnboundStateDir(); err != nil {
+		return err
+	}
 	if err := trustAnchorHealth(unboundAnchorPath); err == nil {
 		return nil
 	}
@@ -435,15 +442,17 @@ func (u *Unbound) ensureTrustAnchor(ctx context.Context) error {
 		return fmt.Errorf("якорь DNSSEC %s небезопасен: нужен обычный файл без symlink", unboundAnchorPath)
 	}
 	// Preserve an existing RFC5011 anchor when upgrading from the old path.
-	if os.IsNotExist(statErr) && trustAnchorHealth(legacyUnboundAnchorPath) == nil {
-		data, err := os.ReadFile(legacyUnboundAnchorPath)
-		if err != nil {
-			return err
+	if os.IsNotExist(statErr) {
+		for _, old := range []string{priorUnboundAnchorPath, legacyUnboundAnchorPath} {
+			if trustAnchorHealth(old) != nil {
+				continue
+			}
+			data, err := os.ReadFile(old)
+			if err != nil {
+				return err
+			}
+			return system.WriteFileAtomic(unboundAnchorPath, data, 0600)
 		}
-		return system.WriteFileAtomic(unboundAnchorPath, data, 0600)
-	}
-	if err := os.MkdirAll(filepath.Dir(unboundAnchorPath), 0700); err != nil {
-		return err
 	}
 	_, runErr := u.Runner.Run(ctx, "unbound-anchor", "-a", unboundAnchorPath)
 	if err := trustAnchorHealth(unboundAnchorPath); err == nil {
@@ -453,6 +462,29 @@ func (u *Unbound) ensureTrustAnchor(ctx context.Context) error {
 		return fmt.Errorf("якорь DNSSEC не создан (%w); отключите DNSSEC или проверьте доступ в сеть", runErr)
 	}
 	return fmt.Errorf("якорь DNSSEC не создан: %s не появился", unboundAnchorPath)
+}
+
+// The daemon runs as root. Debian's package directory belongs to unbound;
+// creating an anchor temporary file there would require dac_override, which
+// the profile intentionally does not grant. Use our own writable directory.
+func ensureUnboundStateDir() error {
+	dir := filepath.Dir(unboundAnchorPath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("каталог DNSSEC %s небезопасен: нужен каталог без symlink", dir)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chown(dir, os.Getuid(), os.Getgid()); err != nil {
+			return fmt.Errorf("владелец каталога DNSSEC: %w", err)
+		}
+	}
+	return os.Chmod(dir, 0700)
 }
 
 func trustAnchorHealth(path string) error {

@@ -195,6 +195,9 @@ func (m *Manager) preflightDNS(ctx context.Context, cfg *config.Config) error {
 	case "dnsmasq":
 		return m.preflightDnsmasq(ctx, cfg)
 	case "unbound":
+		if err := ensureUnboundStateDir(); err != nil {
+			return err
+		}
 		if cfg.DNS.DNSSEC {
 			if err := m.Unbound.ensureTrustAnchor(ctx); err != nil {
 				return err

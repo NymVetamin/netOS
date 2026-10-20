@@ -1602,6 +1602,9 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		if err := os.Remove(m.sys("/var/lib/unbound/netos-root.key")); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("удаление якоря DNSSEC netOS: %w", err)
 		}
+		if err := os.RemoveAll(m.sys("/var/lib/unbound/netos")); err != nil {
+			return fmt.Errorf("удаление состояния DNSSEC netOS: %w", err)
+		}
 	}
 	if err := os.Remove(m.Binary); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("удаление netosd: %w", err)

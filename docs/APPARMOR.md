@@ -11,7 +11,7 @@ netOS не отключает AppArmor глобально и не перевод
 | ISC DHCP `/usr/sbin/dhcpd` | `usr.sbin.dhcpd` | `generated/dhcpd.conf`, временная проверка с префиксом имени конфига, собственные аренды. Блок `netOS DHCP` в local. |
 | Kea `/usr/sbin/kea-dhcp4` | `usr.sbin.kea-dhcp4` | `generated/kea-dhcp4.json`, временная проверка, `/var/lib/kea/netos-leases4.csv*`, lock в `/run/kea`. Блок `netOS DHCP`. |
 | Kea LFC `/usr/sbin/kea-lfc` | `usr.sbin.kea-lfc` | То же семейство файлов аренды, включая ротацию. Проверять отдельно от выдачи DHCP-адреса. |
-| Unbound `/usr/sbin/unbound` | `usr.sbin.unbound` | Конфиг и списки в `/etc/unbound/netos*`, изменяемый DNSSEC-якорь в `/var/lib/unbound/netos-root.key`. Используются разрешённые пакетным профилем каталоги. |
+| Unbound `/usr/sbin/unbound` | `usr.sbin.unbound` | Конфиг и списки в `/etc/unbound/netos*`, изменяемый DNSSEC-якорь в `/var/lib/unbound/netos/root.key`. Собственный каталог root:root 0700 позволяет root-процессу создавать временные файлы без `dac_override`. Состояние переносится из прежних путей. |
 | Входящий IKEv2, charon + swanctl | `usr.sbin.charon-systemd`, `usr.sbin.swanctl` | Дерево `generated/strongswan`, `/run/netos-strongswan/charon.vici`. Отдельный блок `netOS IKEv2`. |
 | Исходящий IKEv2, charon + swanctl | Те же два профиля | Конфиги в `generated/netos-ikev2-chN`, каталог CA и сертификат; `/run/netos-ikev2-chN/charon.vici`. Отдельный блок `netOS IKEv2 channels`, подготовка до сетевых изменений. |
 | Диагностика `/usr/bin/tcpdump` | `usr.bin.tcpdump` | Штатный профиль; захват и чтение pcap проверяются отдельно от перечисления интерфейсов. |
