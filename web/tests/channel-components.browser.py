@@ -102,7 +102,7 @@ async def scenario(browser, mode):
             await expect(toggle).to_be_enabled()
             await expect(page.locator('input[value="Poland"]')).to_be_visible()
         else:
-            await page.get_by_role("link", name="Открыть «Компоненты»", exact=True).click()
+            await page.get_by_role("link", name="«Компоненты»", exact=True).click()
             await expect(page.get_by_role("heading", name="Компоненты", exact=True)).to_be_visible()
     assert not errors, errors
     await page.close()

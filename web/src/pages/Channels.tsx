@@ -368,11 +368,17 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="MTU"><input type="number" min={576} max={9000} value={channel.config?.mtu || 1400} onChange={(e) => update((draft) => { draft.config.mtu = Number(e.target.value); })} /></Field>
-      <Field label="Ссылка подключения" hint="vless://, vmess://, trojan:// или ss://"><div className="row"><input className="mono" value={link} onChange={(e) => setLink(e.target.value)} placeholder="vless://…" /><button type="button" className="btn ghost sm" disabled={!link.trim()} onClick={importLink}>Импорт</button></div></Field>
       <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => draft.fail_mode = e.target.value)}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
       {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => draft.fallback = e.target.value)}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
-      <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe = draft.probe || {}; draft.probe.enabled = enabled; })} /></Field>
-      {channel.probe?.enabled !== false && <>
+    </div>
+    <section className="channel-link-import" aria-label="Импорт подключения">
+      <h4>Импорт подключения из ссылки</h4>
+      <p className="hint">VLESS, VMess, Trojan или Shadowsocks — заполнить настройки подключения.</p>
+      <div className="channel-link-actions"><input aria-label="Ссылка подключения" className="mono" value={link} onChange={(e) => setLink(e.target.value)} placeholder="vless://…" /><button type="button" className="btn primary" disabled={!link.trim()} onClick={importLink}>Импортировать</button></div>
+    </section>
+    <section className="channel-probe-settings" aria-label="Проверка канала">
+      <div className="channel-probe-heading"><h4>Проверка канала</h4><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe = draft.probe || {}; draft.probe.enabled = enabled; })} /></div>
+      {channel.probe?.enabled !== false && <><div className="form-grid">
         {channel.probe?.type === "icmp" && <Notice tone="warn" title="Выберите HTTP или TCP">ICMP получает локальный ответ Xray даже при недоступном VPN-сервере и не проверяет канал.</Notice>}
         <Field label="Тип проверки"><select value={channel.probe?.type || "tcp"} onChange={(e) => update((draft) => changeProbeType(draft.probe, e.target.value))}>{channel.probe?.type === "icmp" && <option value="icmp" disabled>ICMP (недоступно для Xray)</option>}<option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
         {channel.probe?.type === "tcp" && <>
@@ -381,12 +387,13 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
           <Field label="Начало ответа TCP" hint="Обязательный точный текст в начале ответа удалённой службы. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_response || ""} onChange={(e) => update((draft) => draft.probe.tcp_response = e.target.value)} /></Field>
         </>}
         <Field label="Цели" hint="По одной в строке"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      </div><div className="form-grid channel-probe-timing">
         <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => draft.probe.interval = Number(e.target.value))} /></Field>
         <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => draft.probe.timeout = Number(e.target.value))} /></Field>
         <Field label="Ошибок до отказа"><input type="number" min={1} value={channel.probe?.fail_threshold || 3} onChange={(e) => update((draft) => draft.probe.fail_threshold = Number(e.target.value))} /></Field>
         <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => draft.probe.rise_threshold = Number(e.target.value))} /></Field>
-      </>}
-    </div>
+      </div></>}
+    </section>
     <details className="more"><summary>Outbound Xray (JSON)</summary>
     {Object.values(channel.secrets_set || {}).some(Boolean) && <Notice tone="info" title="Секреты подключения сохранены">Пустые значения скрытых полей сохраняют прежние секреты. Для замены импортируйте новую ссылку или введите новое значение.
       <ul>{Object.entries(channel.secrets_set || {}).filter(([, saved]) => saved).map(([field]) => <li key={field}><span className="mono">{field}</span>: ••••••••</li>)}</ul>

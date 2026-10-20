@@ -2487,6 +2487,21 @@ td > select {
 .peer-group-hint { padding: 12px 20px; border-top: 1px solid var(--border); }
 
 .client-channel { width: 100%; min-width: 0; }
+.channel-link-import {margin:18px 0;padding:16px;max-width:820px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface)}
+.channel-link-import h4, .channel-probe-heading h4 {margin:0;font-size:14px}
+.channel-link-import .hint {margin:6px 0 12px}
+.channel-link-actions {display:flex;gap:12px;align-items:center}
+.channel-link-actions input {flex:1;min-width:0}
+.channel-link-actions button {flex-shrink:0}
+.channel-probe-settings {margin:18px 0;padding:16px;border:1px solid var(--border);border-radius:8px;min-width:0}
+.channel-probe-heading {display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px}
+.channel-probe-heading:only-child {margin-bottom:0}
+.channel-probe-timing {margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+@media (max-width:600px) {
+  .channel-link-actions {flex-wrap:wrap}
+  .channel-link-actions input {flex-basis:100%}
+  .channel-probe-settings .form-grid .field-label {white-space:normal}
+}
 .clients-channel-hint { padding: 12px 16px; border-top: 1px solid var(--border); }
 
 .grip svg { pointer-events: none; }
