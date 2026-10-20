@@ -59,6 +59,7 @@ export function Updates({ current, disabled, onBusyChange, onInstalled }: {
   const progress = useRef<HTMLDivElement>(null);
   const latest = releases?.[0];
   const newer = latest && compareVersions(latest.tag_name, current);
+  const developmentRelease = current === "dev" && !!latest && compareVersions(latest.tag_name, latest.tag_name) === 0;
   const active = !!operation || submitting;
   useEffect(() => { onBusyChange(active); return () => onBusyChange(false); }, [active, onBusyChange]);
   useEffect(() => {
@@ -118,8 +119,8 @@ export function Updates({ current, disabled, onBusyChange, onInstalled }: {
     <div className="card-part pad update-panel">
       <div className="update-toolbar">
         <button className="btn" disabled={disabled || active || checking} onClick={check}>{checking ? "Проверяем…" : "Проверить обновления"}</button>
-        {latest && <span>{newer === 1 ? `Доступна версия ${latest.tag_name}` : newer === null ? "Не удалось сравнить установленную версию с релизом." : "Новых обновлений нет."}</span>}
-        {newer === 1 && <button className="btn primary" disabled={disabled || active} onClick={() => setPending(latest!)}>Обновить</button>}
+        {latest && <span>{developmentRelease ? `Установлена тестовая сборка. Доступен релиз ${latest.tag_name}.` : newer === 1 ? `Доступна версия ${latest.tag_name}` : newer === null ? "Не удалось сравнить установленную версию с релизом." : "Новых обновлений нет."}</span>}
+        {(newer === 1 || developmentRelease) && <button className="btn primary" disabled={disabled || active} onClick={() => setPending(latest!)}>{developmentRelease ? "Установить релиз" : "Обновить"}</button>}
       </div>
       <div ref={progress} className="update-status" aria-live="polite">
         {error && <Notice tone="danger" title={error} />}

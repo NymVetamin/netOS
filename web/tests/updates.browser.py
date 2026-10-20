@@ -139,12 +139,29 @@ async def scenario(browser, mode):
     await expect(page.locator(".update-panel").get_by_text("Не удалось запустить установщик",exact=True)).to_be_visible()
     await expect(page.get_by_role("button", name="Создать копию",exact=True)).to_be_enabled()
     state["start_error"] = False
-    for current in ("v0.10", "v0.11", "dev"):
+    for current in ("v0.10", "v0.11", "unknown"):
         state["current"] = current
         await page.reload()
         await check.click()
         await expect(page.get_by_text("Релиз 0.10", exact=True)).to_be_visible()
         await expect(update).to_have_count(0)
+    state["current"] = "dev"
+    await page.reload(); await check.click()
+    await expect(page.get_by_text("Установлена тестовая сборка. Доступен релиз v0.10.", exact=True)).to_be_visible()
+    release_install = page.get_by_role("button", name="Установить релиз", exact=True)
+    await release_install.click()
+    await expect(confirm).to_be_disabled()
+    await page.get_by_role("button", name="Отмена", exact=True).click()
+    before = len(state["posts"])
+    await release_install.click()
+    await page.get_by_label("Резервная копия перед установкой").select_option("yes")
+    await confirm.click()
+    assert len(state["posts"]) == before + 1
+    assert state["posts"][-1] == {"version": "v0.10", "confirm": "UPDATE", "backup": True}
+    state["maintenance"] = "idle"
+    state["current"] = "v0.10"
+    await expect(page.get_by_role("status").filter(has_text="Обновление завершено")).to_be_visible(timeout=10000)
+    await expect(release_install).to_have_count(0)
     state["error"] = True
     await check.click()
     await expect(page.get_by_text("GitHub временно недоступен", exact=True)).to_be_visible()
