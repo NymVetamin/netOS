@@ -16,6 +16,14 @@ async def main():
     'channels':[{'id':'direct','type':'direct','enabled':True}]+[{'id':f'ch{i}','index':i,'name':name,'enabled':True,'type':kind} for i,name,kind in [(1,'Riga','xray'),(2,'Poland','xray'),(3,'WG','wireguard'),(4,'OC','openconnect'),(5,'L2TP','l2tp'),(6,'IKE','ikev2')]],
     'ddns':{}, 'vpn_servers':[]}
   state = {'cfg': cfg, 'puts': []}
+  tunnel_names = [('Riga','tun-ch1'),('Poland','tun-ch2'),('WG','wg-ch3'),
+                  ('OC','tun-ch4'),('L2TP','ppp-ch5'),('IKE','xfrm-ch6')]
+  preview = {'families':[{'family':'IPv4','tables':[{'name':'nat','chains':[
+    {'name':'POSTROUTING','rules':[
+      f'-A POSTROUTING -o {iface} -m comment --comment "NAT канала «{name}»" -j MASQUERADE'
+      for name,iface in tunnel_names
+    ] + ['-A POSTROUTING -o ppp-wan -m comment --comment "NAT аплинка «PPP»" -j MASQUERADE']}
+  ]}]}]}
   errors = []
   page.on('pageerror', lambda e: errors.append(str(e)))
   async def route(r):
@@ -33,10 +41,15 @@ async def main():
      state['cfg'] = value
     body = {'config': copy.deepcopy(state['cfg']), 'dirty': False, 'draft_version': len(state['puts']) + 1, 'problems': []}
    elif path == '/api/status': body = {'interfaces': [], 'channels': [], 'uptime_seconds': 1}
+   elif path == '/api/firewall/preview': body = preview
    elif path.endswith('/clients'): body = []
    await r.fulfill(json=body)
   await page.route('**/*', route)
   await page.goto('https://netos-ui.test/#firewall')
+  checkbox = page.get_by_role('checkbox',name='Показать автоматические правила',exact=True)
+  await expect(page.locator('.automatic-nat')).to_have_count(0)
+  await checkbox.check()
+  await expect(page.locator('.automatic-nat')).to_have_count(7)
   for name in ('Riga','Poland','WG','OC','L2TP','IKE'):
    await expect(page.get_by_text(f'NAT канала «{name}»',exact=True)).to_be_visible()
   for iface in ('tun-ch1','tun-ch2','wg-ch3','tun-ch4','ppp-ch5','xfrm-ch6'):
@@ -45,27 +58,20 @@ async def main():
   Path('output/playwright').mkdir(parents=True,exist_ok=True)
   await page.get_by_text('NAT канала «Riga»',exact=True).scroll_into_view_if_needed()
   await page.screenshot(path='output/playwright/automatic-nat.png')
-  state['cfg']['firewall']['nat'][0]['enabled']=False
-  await page.reload()
-  await expect(page.get_by_text('NAT аплинка «Uplink»',exact=True)).to_have_count(0)
-  await expect(page.get_by_text('NAT канала «Riga»',exact=True)).to_be_visible()
-  for changes in ({'source':'192.0.2.0/24'},{'to_source':'198.51.100.1'},{'direction':'destination'}):
-   state['cfg']['firewall']['nat']=[{'id':'manual','name':'Explicit WAN','enabled':True,'direction':'source','interface':'enp8s0',**changes}]
-   await page.reload()
-   await expect(page.get_by_text('NAT аплинка «Uplink»',exact=True)).to_be_visible()
-  state['cfg']['firewall']['nat']=[]
-  state['cfg']['wans'][0]['proto']='pppoe'
-  state['cfg']['channels'][0]['enabled']=False
-  state['cfg']['channels'][1]['enabled']=False
-  await page.reload()
+  for toggle in await page.locator('.automatic-nat input').all():
+   await expect(toggle).to_be_disabled()
+   await expect(toggle).to_be_checked()
+  await checkbox.uncheck()
+  await expect(page.locator('.automatic-nat')).to_have_count(0)
+  await expect(page.get_by_text('Explicit WAN',exact=True)).to_be_visible()
+  await checkbox.check()
+  await expect(page.locator('.automatic-nat')).to_have_count(7)
   await expect(page.get_by_text('ppp-wan',exact=True)).to_be_visible()
-  await expect(page.get_by_text('NAT канала «Riga»',exact=True)).to_have_count(0)
-  await expect(page.get_by_text('NAT канала «Poland»',exact=True)).to_be_visible()
   await expect(page.get_by_text('Правил подмены адреса отправителя в настройках нет',exact=True)).to_have_count(0)
   await page.set_viewport_size({'width':390,'height':844})
   assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
   assert not state['puts'], 'read-only rows must not write config'
   assert not errors, errors
-  print('PASS: automatic WAN/channel NAT, all tunnel names, catch-all suppression, disabled/SNAT/subnet rules, PPP, mobile, no config writes')
+  print('PASS: preview NAT visibility, all tunnel names, PPP, disabled toggles, mobile, no config writes')
   await browser.close()
 asyncio.run(main())
