@@ -8,6 +8,14 @@ export function MapViewport({ width, height, background, children, overlay }: { 
   const [view, setView] = useState(initial);
   const canvas = useRef<HTMLDivElement>(null);
   const [canvasHeight,setCanvasHeight]=useState(320);
+  const overlayBox=useRef<HTMLDivElement>(null);
+  const [overlayHeight,setOverlayHeight]=useState(0);
+  useLayoutEffect(()=>{
+    const el=overlayBox.current;if(!el)return;
+    const measure=()=>setOverlayHeight(el.offsetHeight);
+    measure();const observer=new ResizeObserver(measure);observer.observe(el);
+    return()=>observer.disconnect();
+  },[]);
   const pending = useRef(initial);
   const frame = useRef<number>();
   const updateView = (next: typeof initial) => {
@@ -66,7 +74,7 @@ export function MapViewport({ width, height, background, children, overlay }: { 
       <button className="btn" type="button" onClick={() => updateView(initial)}>Показать всю карту</button>
       <span className="hint">Колёсико — масштаб · Потяните карту для перемещения</span>
     </div>
-    <div ref={canvas} className="map-canvas" style={{height:canvasHeight}}>
+    <div ref={canvas} className="map-canvas" style={{height:Math.max(canvasHeight,overlayHeight+20)}}>
       {background && <svg className="map-edges" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
         <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>{background}</g>
       </svg>}
@@ -98,7 +106,7 @@ export function MapViewport({ width, height, background, children, overlay }: { 
         }}>
         <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>{children}</g>
       </svg>
-      {overlay}
+      <div ref={overlayBox} className="map-overlay-anchor">{overlay}</div>
     </div>
   </>;
 }

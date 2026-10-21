@@ -28,15 +28,15 @@ export function useRealtimeTraffic(enabled:boolean) {
 
 // Geometry changes only when a measurement arrives. Pointer movement updates
 // only the overlay. CSS moves the bounded SVG layer between measurements.
-const Plot=memo(function Plot({lines,at,peak,motion,seconds}:{lines:Line[];at:number;peak:number;seconds:number;motion:MutableRefObject<number>}){
+const Plot=memo(function Plot({lines,at,peak,motion,seconds,paused}:{lines:Line[];at:number;peak:number;seconds:number;motion:MutableRefObject<number>;paused:boolean}){
  const node=useRef<HTMLDivElement>(null);
- useLayoutEffect(()=>{motion.current=performance.now();if(!node.current||matchMedia('(prefers-reduced-motion: reduce)').matches){motion.current=-Infinity;return;}const animation=node.current.animate([{transform:'translate3d(0,0,0)'},{transform:`translate3d(${-100/seconds}%,0,0)`}],{duration:1000,easing:'linear'});return()=>animation.cancel()},[at,motion,seconds]);
+ useLayoutEffect(()=>{motion.current=performance.now();if(paused||!node.current||matchMedia('(prefers-reduced-motion: reduce)').matches){motion.current=-Infinity;return;}const animation=node.current.animate([{transform:'translate3d(0,0,0)'},{transform:`translate3d(${-100/seconds}%,0,0)`}],{duration:1000,easing:'linear'});return()=>animation.cancel()},[at,motion,seconds,paused]);
  const paths=lines.map(l=>{
   let last=0,lastGap=3;return {...l,path:l.points.map(p=>{if(p.value==null){last=0;return ""}const command=last&&p.at-last<=Math.max(lastGap,p.gap||3)?"L":"M";last=p.at;lastGap=p.gap||3;return `${command}${((p.at-at+seconds+1)/seconds*1000).toFixed(2)},${(180-p.value/peak*170).toFixed(2)}`}).join(" ")};
  });
  return <div ref={node} className="rt-moving" style={{transform:`translate3d(${-100/seconds}%,0,0)`}}><svg viewBox="0 0 1000 190" preserveAspectRatio="none" aria-hidden="true" style={{width:'100%',height:190,overflow:'visible'}}>{paths.map(l=><path key={l.id} d={l.path} fill="none" stroke={l.color} strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>)}</svg></div>;
 });
-export function LiveChart({lines,at,seconds=180}:{lines:Line[];at:number;seconds?:number}) {
+export function LiveChart({lines,at,seconds=180,paused=false}:{lines:Line[];at:number;seconds?:number;paused?:boolean}) {
  const [hover,setHover]=useState<number|null>(null);const motion=useRef(0);const scale=useRef({peak:1000,at:0});
  const incoming=Math.max(1000,...lines.flatMap(l=>l.points.map(p=>p.value||0)));
  if(incoming>scale.current.peak||at-scale.current.at>30){scale.current={peak:Math.pow(2,Math.ceil(Math.log2(incoming))),at}}
@@ -44,20 +44,20 @@ export function LiveChart({lines,at,seconds=180}:{lines:Line[];at:number;seconds
  return <div className="rt-chart">
   <div className="chart-legend">{lines.map(l=><span key={l.id} style={{color:l.color}}>{l.name}: {l.points.at(-1)?.value!=null?formatBitrate(l.points.at(-1)!.value!):"—"}</span>)}<span className="faint">Шкала {formatBitrate(peak)}</span></div>
   <div className="rt-plot" role="img" aria-label="График скорости в реальном времени" onPointerLeave={()=>setHover(null)} onPointerMove={e=>{const b=e.currentTarget.getBoundingClientRect();setHover(Math.max(0,Math.min(1,(e.clientX-b.left)/b.width)))}}>
-   <div className="rt-lines-clip"><Plot lines={lines} at={at} peak={peak} motion={motion} seconds={seconds}/></div>
+   <div className="rt-lines-clip"><Plot lines={lines} at={at} peak={peak} motion={motion} seconds={seconds} paused={paused}/></div>
    {!at&&<span className="rt-wait">Ожидание замеров…</span>}
-   {hover!=null&&<ChartCursor lines={lines} at={at} peak={peak} position={hover} motion={motion} seconds={seconds}/>}
+   {hover!=null&&<ChartCursor lines={lines} at={at} peak={peak} position={hover} motion={motion} seconds={seconds} paused={paused}/>}
 
 
   </div>
-  <div className="monitor-axis"><span>{seconds/60} мин назад</span><span>Сейчас</span></div>
+  <div className="monitor-axis"><span>{seconds/60} мин назад</span><span>{paused?new Date(at*1000).toLocaleTimeString():"Сейчас"}</span></div>
  </div>;
 }
 
-function ChartCursor({lines,at,peak,position,motion,seconds}:{lines:Line[];at:number;peak:number;position:number;seconds:number;motion:MutableRefObject<number>}) {
+function ChartCursor({lines,at,peak,position,motion,seconds,paused}:{lines:Line[];at:number;peak:number;position:number;seconds:number;motion:MutableRefObject<number>;paused:boolean}) {
  const root=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{
-  let timer:ReturnType<typeof setTimeout>,lastSecond=-1;const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let timer:ReturnType<typeof setTimeout>,lastSecond=-1;const reduced=paused||matchMedia('(prefers-reduced-motion: reduce)').matches;
   const time=root.current?.querySelector('strong');
   const elapsed=reduced?1:Math.max(0,Math.min(1,(performance.now()-motion.current)/1000));
   const start=at-seconds-1+elapsed+position*seconds,end=at-seconds+position*seconds;
@@ -86,7 +86,7 @@ function ChartCursor({lines,at,peak,position,motion,seconds}:{lines:Line[];at:nu
    if(!reduced&&elapsed<1)timer=setTimeout(draw,100);
   };
   draw();return()=>{clearTimeout(timer);animations.forEach(animation=>animation.cancel())};
- },[lines,at,peak,position,motion,seconds]);
+ },[lines,at,peak,position,motion,seconds,paused]);
  return <div ref={root} className="rt-hover-layer">
   <div className="rt-cursor" style={{left:`${position*100}%`}}/>
   {lines.map((line,i)=><span key={line.id} data-marker={i} className="monitor-point" aria-hidden="true" style={{left:`${position*100}%`,top:0,background:line.color,display:'none',willChange:'transform'}}/>)}

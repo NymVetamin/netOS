@@ -24,8 +24,7 @@ export function MapPage({ config }: { config: any }) {
   const vpnIDs = JSON.stringify((config.vpn_servers || []).map((s: any) => s.id));
   const [error, setError] = useState(false);
   const [rates, setRates] = useState<Rates>(new Map());
-  const [selected, setSelected] = useState<NodeID>("router");
-  const [detailsOpen,setDetailsOpen]=useState(true);
+  const [selected, setSelected] = useState<NodeID>("");
   const previous = useRef<{ at: number; bytes: Map<string, { rx: number; tx: number }> } | null>(null);
 
   useEffect(() => {
@@ -108,10 +107,10 @@ export function MapPage({ config }: { config: any }) {
             }
             tight
           >
-            <MapSVG graph={graph} selected={selected} onSelect={id=>{setSelected(id);setDetailsOpen(true)}} config={config} status={status} overlay={<aside className="map-node-overlay" aria-label="Сведения об узле">
-              <button className="map-details-toggle" aria-expanded={detailsOpen} onClick={()=>setDetailsOpen(!detailsOpen)}>Узел <span>{detailsOpen?"−":"+"}</span></button>
-              {detailsOpen&&<div className="map-node-scroll"><NodeDetails graph={graph} id={selected} config={config} status={status} clients={clients}/></div>}
-            </aside>}/>
+            <MapSVG graph={graph} selected={selected} onSelect={setSelected} config={config} status={status} overlay={selected?<aside className="map-node-overlay" aria-label="Сведения об узле">
+              <button className="map-details-close" aria-label="Закрыть сведения об узле" onClick={()=>setSelected("")}>×</button>
+              <NodeDetails graph={graph} id={selected} config={config} status={status} clients={clients}/>
+            </aside>:null}/>
           </Card>
         </div>
       )}

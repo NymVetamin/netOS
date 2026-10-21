@@ -2212,13 +2212,14 @@ tr.disabled-row td {
 }
 
 /* Details are an overlay, so the entire canvas remains available to the map. */
-.map-node-overlay { position:absolute; z-index:3; top:10px; right:10px; width:220px; max-width:calc(100% - 20px); border:1px solid var(--border-strong); border-radius:8px; background:var(--surface); box-shadow:0 4px 14px #0003; font-size:12px; }
-.map-details-toggle { width:100%; display:flex; justify-content:space-between; padding:7px 10px; border:0; background:transparent; color:var(--text); cursor:pointer; font:inherit; font-weight:600; }
-.map-node-scroll { max-height:140px; overflow:auto; padding:0 10px 10px; }
+.map-overlay-anchor { position:absolute; z-index:3; top:10px; right:10px; width:220px; max-width:calc(100% - 20px); }
+.map-node-overlay { position:relative; padding:10px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface); box-shadow:0 4px 14px #0003; font-size:12px; }
+.map-details-close { position:absolute; z-index:1; top:3px; right:3px; width:26px; height:26px; border:0; border-radius:4px; background:transparent; color:var(--text); cursor:pointer; font-size:20px; line-height:1; }
+.map-details-close:hover { background:var(--border); }
 .map-node-overlay .card { margin:0; }
 .map-node-overlay .card-head { display:none; }
 .map-node-overlay .card-body { border:0; padding:0; background:transparent; }
-.map-node-overlay .details-title { font-size:14px; margin:0 0 7px; }
+.map-node-overlay .details-title { font-size:14px; margin:0 24px 7px 0; }
 .map-node-overlay .kv { display:block; }
 .map-node-overlay .kv dt { font-size:11px; margin-top:5px; }
 .map-node-overlay .kv dd { margin:1px 0 0; }
