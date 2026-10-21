@@ -57,6 +57,9 @@ func selectList(v any, fields ...string) []any {
 }
 
 func scopedConfig(r *http.Request, cfg *config.Config) (*config.Config, error) {
+	if roleOf(r) == "admin" {
+		return redactAdminConfig(cfg)
+	}
 	redacted, err := redactAdminConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -127,6 +130,15 @@ func scopedConfig(r *http.Request, cfg *config.Config) (*config.Config, error) {
 // Merge only authorized differences into the private full draft. Hidden fields
 // are never supplied by the browser and cannot be overwritten with zero values.
 func mergeScopedConfig(r *http.Request, previous, incoming *config.Config) (*config.Config, error) {
+	if roleOf(r) == "admin" {
+		out, err := objectConfig(configObject(incoming))
+		if err != nil {
+			return nil, err
+		}
+		mergeRedactedSecrets(out, previous)
+		out.Normalize()
+		return out, nil
+	}
 	shown, err := scopedConfig(r, previous)
 	if err != nil {
 		return nil, err

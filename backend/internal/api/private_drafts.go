@@ -8,6 +8,11 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
+// Panel accounts own their drafts; the root control socket has no panel role.
+func usesPrivateDraft(r *http.Request) bool {
+	return userOf(r) != "" && (roleOf(r) == "admin" || roleOf(r) == "limited")
+}
+
 type privateDraft struct {
 	Base    *config.Config
 	Config  *config.Config
@@ -41,7 +46,7 @@ func (s *Server) privateDraftLocked(username string) *privateDraft {
 }
 
 func (s *Server) requestConfig(r *http.Request) *config.Config {
-	if roleOf(r) != "limited" {
+	if !usesPrivateDraft(r) {
 		return s.currentDraft()
 	}
 	s.draftMu.Lock()
@@ -64,6 +69,10 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := d.Config
 	if cfg == nil {
 		cfg = d.Base
+	}
+	if cfg == nil {
+		writeError(w, 503, "конфигурация ещё не загружена")
+		return
 	}
 	p := r.URL.Path
 	if r.Method == http.MethodPut || p == "/api/config/validate" {
@@ -155,7 +164,11 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pending, deadline := s.Engine.Pending()
-	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: pending && s.pendingOwner == userOf(r), Problems: []config.Problem{}}
+	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: pending && (roleOf(r) == "admin" || s.pendingOwner == userOf(r)), Problems: []config.Problem{}}
+	if roleOf(r) == "admin" {
+		resp.Problems = cfg.Validate().Problems
+		resp.Rollback = s.Engine.LastRollback()
+	}
 	if resp.Pending {
 		resp.Deadline = &deadline
 	}

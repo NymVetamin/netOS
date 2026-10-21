@@ -77,8 +77,9 @@ func applyDraft(t *testing.T, s *Server, cookie *http.Cookie, csrf, hostname str
 	cfg := *s.Engine.Current()
 	cfg.System.Hostname = hostname
 	s.draftMu.Lock()
-	s.draft = &cfg
-	version := s.draftVersion
+	d := s.privateDraftLocked("admin")
+	d.Config = &cfg
+	version := d.Version
 	s.draftMu.Unlock()
 	body, err := json.Marshal(applyRequest{Comment: hostname, DraftVersion: version})
 	if err != nil {
@@ -123,7 +124,7 @@ func TestConfigConfirmAndDisconnectedManualRollback(t *testing.T) {
 	if err != nil || revision.State != store.StateActive {
 		t.Fatalf("confirmed revision=%+v err=%v", revision, err)
 	}
-	if pending, _ := s.Engine.Pending(); pending || s.draft != nil {
+	if pending, _ := s.Engine.Pending(); pending || s.privateDrafts["admin"].Config != nil {
 		t.Fatalf("confirm left pending=%v draft=%v", pending, s.draft)
 	}
 
@@ -148,8 +149,8 @@ func TestConfigConfirmAndDisconnectedManualRollback(t *testing.T) {
 	if len(subsystem.applied) < 4 || subsystem.applied[len(subsystem.applied)-1] != "confirmed-router" {
 		t.Fatalf("subsystem lifecycle=%v", subsystem.applied)
 	}
-	if s.draft != nil {
-		t.Fatalf("rollback retained rejected draft: %+v", s.draft)
+	if s.privateDrafts["admin"].Config != nil {
+		t.Fatalf("rollback retained rejected draft: %+v", s.privateDrafts["admin"])
 	}
 }
 

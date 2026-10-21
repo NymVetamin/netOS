@@ -43,7 +43,7 @@ func TestScopedConfigRejectsHiddenChanges(t *testing.T) {
 }
 
 func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
-	s, adminCookie, adminCSRF, _ := transactionServer(t)
+	s, _, _, _ := transactionServer(t)
 	u := store.PanelUser{Username: "operator", Role: "limited", PanelAccess: store.PanelAccess{Enabled: true, Permissions: map[string]string{"system": "manage"}}}
 	if err := s.Store.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
 		t.Fatal(err)
@@ -59,8 +59,9 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
 	}
-	s.draft = config.Default()
-	s.draft.System.Hostname = "admin-private"
+	adminDraft := s.privateDraftLocked("admin")
+	adminDraft.Config = config.Default()
+	adminDraft.Config.System.Hostname = "admin-private"
 	w := serveAuthed(h, "GET", "/api/config", nil, cookie, "")
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
@@ -84,18 +85,9 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 	if saved.Code != 200 {
 		t.Fatalf("save: %d %s", saved.Code, saved.Body.String())
 	}
-	if s.draft.System.Hostname != "admin-private" {
+	if adminDraft.Config.System.Hostname != "admin-private" {
 		t.Fatal("private save overwrote admin draft")
 	}
-	w = serveAuthed(h, "POST", "/api/config/apply", []byte(`{"draft_version":2}`), cookie, "limited-csrf")
-	if w.Code != 409 {
-		t.Fatalf("apply over admin draft: %d %s", w.Code, w.Body.String())
-	}
-	w = serveAuthed(h, "GET", "/api/config", nil, adminCookie, adminCSRF)
-	if w.Code != 200 {
-		t.Fatal(w.Body.String())
-	}
-	s.draft = nil
 	w = serveAuthed(h, "POST", "/api/config/apply", []byte(`{"draft_version":2}`), cookie, "limited-csrf")
 	if w.Code != 200 {
 		t.Fatalf("private apply: %d %s", w.Code, w.Body.String())
@@ -129,6 +121,9 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 	w = serveAuthed(h, "GET", "/api/config", nil, cookie, "")
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
+	}
+	if adminDraft.Config == nil || adminDraft.Config.System.Hostname != "admin-private" {
+		t.Fatal("apply cleared another user draft")
 	}
 	if response.Dirty || response.DraftVersion <= 2 {
 		t.Fatalf("private version reused: %+v", response)

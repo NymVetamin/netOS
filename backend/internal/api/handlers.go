@@ -642,7 +642,7 @@ type configResponse struct {
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	if roleOf(r) == "limited" {
+	if usesPrivateDraft(r) {
 		s.handlePrivateConfig(w, r)
 		return
 	}
@@ -1023,7 +1023,7 @@ func (s *Server) scheduleMaintenance(w http.ResponseWriter, r *http.Request, ope
 // handleSaveConfig сохраняет черновик. Применение — отдельным действием:
 // администратор должен видеть план до того, как что-то изменится.
 func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
-	if roleOf(r) == "limited" {
+	if usesPrivateDraft(r) {
 		s.handlePrivateConfig(w, r)
 		return
 	}
@@ -1112,7 +1112,7 @@ func sameConfig(a, b *config.Config) bool {
 }
 
 func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
-	if roleOf(r) == "limited" {
+	if usesPrivateDraft(r) {
 		s.handlePrivateConfig(w, r)
 		return
 	}
@@ -1139,7 +1139,7 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
-	if roleOf(r) == "limited" {
+	if usesPrivateDraft(r) {
 		s.handlePrivateConfig(w, r)
 		return
 	}
@@ -1157,7 +1157,7 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
-	if roleOf(r) == "limited" {
+	if usesPrivateDraft(r) {
 		s.handlePrivateConfig(w, r)
 		return
 	}
@@ -1216,40 +1216,47 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg := s.draft
-	if roleOf(r) == "limited" {
-		currentAccess, err := s.Store.PanelAccess(userOf(r))
-		currentUser, userErr := s.Store.UserByName(userOf(r))
-		if err != nil || userErr != nil || !currentAccess.Enabled || currentUser.Role != "limited" {
-			s.draftMu.Unlock()
-			writeError(w, 403, "права доступа изменились; войдите снова")
-			return
+	if usesPrivateDraft(r) {
+		if roleOf(r) == "limited" {
+			currentAccess, err := s.Store.PanelAccess(userOf(r))
+			currentUser, userErr := s.Store.UserByName(userOf(r))
+			if err != nil || userErr != nil || !currentAccess.Enabled || currentUser.Role != "limited" {
+				s.draftMu.Unlock()
+				writeError(w, 403, "права доступа изменились; войдите снова")
+				return
+			}
+			r = withPanelAccess(r, currentUser.Role, currentAccess)
 		}
-		r = withPanelAccess(r, currentUser.Role, currentAccess)
 		d := s.privateDraftLocked(userOf(r))
-		if req.DraftVersion != d.Version || !sameConfig(d.Base, s.Engine.Current()) || s.draft != nil {
+		if req.DraftVersion != d.Version || !sameConfig(d.Base, s.Engine.Current()) {
 			s.draftMu.Unlock()
-			writeError(w, 409, "конфигурация или общий черновик изменены другим пользователем; завершите предыдущие изменения")
+			writeError(w, 409, "черновик или применённая конфигурация изменились; обновите страницу и проверьте изменения")
 			return
 		}
-		if d.Config == nil {
+		if d.Config == nil && roleOf(r) != "admin" {
 			s.draftMu.Unlock()
 			writeError(w, 409, "нет изменений для применения")
 			return
 		}
-		// Recheck current permissions against the complete private diff.
-		shown, err := scopedConfig(r, d.Config)
-		if err != nil {
-			s.draftMu.Unlock()
-			writeError(w, 500, "не удалось проверить настройки")
-			return
-		}
-		checked, err := mergeScopedConfig(r, d.Base, shown)
-		if err != nil || !sameConfig(checked, d.Config) {
-			s.draftMu.Unlock()
-			writeError(w, 403, "права на изменения изменились; пересоздайте черновик")
-			return
+		if roleOf(r) == "limited" {
+			// Recheck current permissions against the complete private diff.
+			shown, err := scopedConfig(r, d.Config)
+			if err != nil {
+				s.draftMu.Unlock()
+				writeError(w, 500, "не удалось проверить настройки")
+				return
+			}
+			checked, err := mergeScopedConfig(r, d.Base, shown)
+			if err != nil || !sameConfig(checked, d.Config) {
+				s.draftMu.Unlock()
+				writeError(w, 403, "права на изменения изменились; пересоздайте черновик")
+				return
+			}
 		}
 		cfg = d.Config
+		if cfg == nil {
+			cfg = d.Base // Administrators may reapply the active config to repair drift.
+		}
 	} else {
 		if req.DraftVersion != s.draftVersion {
 			s.draftMu.Unlock()
@@ -1469,14 +1476,27 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.draftMu.Lock()
-	if s.draftApplying || expected != s.draftVersion {
+	version := s.draftVersion
+	var personal *privateDraft
+	if usesPrivateDraft(r) {
+		personal = s.privateDraftLocked(userOf(r))
+		version = personal.Version
+	}
+	if s.draftApplying || expected != version {
 		s.draftMu.Unlock()
 		writeError(w, http.StatusConflict, "черновик уже изменён или применяется; обновите страницу")
 		return
 	}
-	s.draft = rev.Config
-	s.draftVersion++
-	version := s.draftVersion
+	if personal != nil {
+		personal.Base = s.Engine.Current()
+		personal.Config = rev.Config
+		personal.Version++
+		version = personal.Version
+	} else {
+		s.draft = rev.Config
+		s.draftVersion++
+		version = s.draftVersion
+	}
 	s.draftMu.Unlock()
 
 	visible, err := redactAdminConfig(rev.Config)
