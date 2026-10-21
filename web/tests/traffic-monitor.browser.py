@@ -21,34 +21,41 @@ async def main():
     if r.request.method=='PUT':cfg.update(r.request.post_data_json);writes.append(cfg['traffic_monitor']['enabled'])
     body={'config':cfg,'draft_version':1,'dirty':bool(writes),'problems':[]}
    elif path=='/api/status':body={'interfaces':[],'wans':[],'channels':[],'uptime_seconds':100}
-   elif path=='/api/statistics':body={'points':[{'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(now-n)),'interfaces':{'eth0':{'rx_bps':10000+n,'tx_bps':1000}}} for n in [60,30,0]]}
+   elif path in ['/api/statistics/realtime','/api/statistics/realtime/history']:
+    def frame(at):
+     return {'at':at,'sequence':at,'problems':[],'values':[{'id':id,'name':name,'at':at,'rx_bps':(at%60+1)*10000,'tx_bps':1000} for id,name in [('if:eth0','eth0'),('a','Speaker'),('b','Laptop')]]}
+    if path.endswith('/history'):
+     finish=int(float(q.get('to',[now])[0]));begin=int(float(q.get('from',[start])[0]))
+     step=max(1,(finish-begin)//1200)
+     body={'points':[frame(at) for at in range(begin,finish+1,step)],'interval_seconds':step}
+    else:
+     await asyncio.sleep(1);body=frame(int(time.time()))
    elif path=='/api/statistics/clients/live':body={'enabled':cfg['traffic_monitor']['enabled'],'at':now,'clients':[{'id':'a','name':'Speaker','rx':100,'tx':50}],'points':[{'id':'a','at':now,'rx_bps':(now%60+1)*100000,'tx_bps':10000}]}
    elif path=='/api/statistics/clients':body={'enabled':True,'from':start,'to':now,'clients':[{'id':'a','name':'Speaker','rx':25000,'tx':180000,'queries':3,'connections':5},{'id':'b','name':'Laptop','rx':80000,'tx':1000,'queries':1},{'id':'zero','name':'Never used','rx':0,'tx':0,'queries':0},{'id':'short','name':'Short sessions','rx':0,'tx':0,'queries':0,'connections':4 if q.get('details')==['1'] else 0}],'points':[{'id':id,'at':now-n,'rx_bps':20000,'tx_bps':10000} for id in ['a','b'] for n in [60,30,0]],'domains':[{'client':'a','domain':'example.com','count':3,'first':now-30,'last':now},{'client':'a','domain':'deep.www.example.com','source':'xray-domain','count':2,'first':now-30,'last':now},{'client':'a','domain':'api.news.bbc.co.uk','source':'xray-dns','count':2,'first':now-30,'last':now},{'client':'a','domain':'192.0.2.5','source':'xray-ip','count':1,'first':now-30,'last':now}] if q.get('details')==['1'] else []}
-   if path in ['/api/statistics','/api/statistics/clients'] and q.get('minutes')==['120']:
+   if path in ['/api/statistics/realtime/history','/api/statistics/clients'] and q.get('minutes')==['120']:
     await asyncio.sleep(1)
    await r.fulfill(json=body,content_type='application/json')
   await page.route('**/*',route);await page.goto('http://netos-ui.test/#dashboard')
   await expect(page.get_by_text('Трафик клиентов',exact=True)).to_be_visible()
   await page.get_by_label('Период статистики').select_option('5')
-  await expect(page.get_by_role('img',name='График скорости за выбранный период')).to_have_count(2)
-  assert any(path=='/api/statistics' and q.get('minutes')==['5'] for path,q in calls)
+  await expect(page.get_by_role('img',name='График скорости в реальном времени')).to_have_count(2)
+  assert any(path=='/api/statistics/realtime/history' and q.get('minutes')==['5'] for path,q in calls)
   await expect(page.locator('.monitor-clients').get_by_text('Never used',exact=True)).to_have_count(0)
   boxes=[await node.bounding_box() for node in await page.locator('.monitor-clients label').all()]
   assert boxes[1]['x']-boxes[0]['x']<=280,boxes
-  chart=page.get_by_role('img',name='График скорости за выбранный период').last
+  chart=page.get_by_role('img',name='График скорости в реальном времени').last
   await chart.scroll_into_view_if_needed()
   before=await chart.locator('path').first.get_attribute('d')
   await expect(chart.locator('path').first).not_to_have_attribute('d',before,timeout=10000)
   box=await chart.bounding_box()
   await page.mouse.move(box['x']+box['width']*.9,box['y']+100)
   await expect(page.locator('[role="tooltip"]')).to_be_visible()
-  await expect(chart.locator('.monitor-crosshair line')).to_have_count(1)
+  await expect(chart.locator('.rt-cursor')).to_have_count(1)
   assert await chart.locator('..').locator('.monitor-point').count()>0
   await page.mouse.move(box['x']+box['width']*.99,box['y']+100)
   tooltip=await page.locator('[role="tooltip"]').bounding_box()
   assert tooltip['width']>=120 and tooltip['x']>=box['x'] and tooltip['x']+tooltip['width']<=box['x']+box['width'],tooltip
-  stroke=await chart.locator('.monitor-crosshair line').evaluate('(e)=>getComputedStyle(e).stroke')
-  assert stroke!='none',stroke
+  await expect(chart.locator('.rt-cursor')).to_be_visible()
   Path('output/playwright').mkdir(parents=True,exist_ok=True)
   await page.screenshot(path='output/playwright/traffic-live-hover.png',full_page=True)
   await page.mouse.move(0,0)
@@ -56,19 +63,18 @@ async def main():
   # The marker must stay round in screen pixels, even when the SVG is stretched.
   for width in [390,1440,1920]:
    await page.set_viewport_size({'width':width,'height':1000})
-   for graph in await page.get_by_role('img',name='График скорости за выбранный период').all():
+   for graph in await page.get_by_role('img',name='График скорости в реальном времени').all():
     await graph.scroll_into_view_if_needed()
     bounds=await graph.bounding_box()
     await page.mouse.move(bounds['x']+bounds['width']*.988,bounds['y']+100)
     markers=graph.locator('..').locator('.monitor-point')
     await expect(markers.first).to_be_visible()
-    cursor=await graph.locator('.monitor-crosshair line').bounding_box()
+    cursor=await graph.locator('.rt-cursor').bounding_box()
     for marker in await markers.all():
      point=await marker.bounding_box()
      # The panel's global 1.05 zoom applies equally to both axes.
      assert abs(point['width']-point['height'])<.1 and 8<=point['width']<=11,point
-     # Individual series may snap to observations up to 5 seconds apart.
-     assert abs(point['x']+point['width']/2-(cursor['x']+cursor['width']/2))<bounds['width']*5/300+1,(point,cursor)
+     assert abs(point['x']+point['width']/2-cursor['x'])<2,(point,cursor)
     if width==390:
      await graph.locator('..').screenshot(path='output/playwright/traffic-round-marker-mobile.png')
     await page.mouse.move(0,0)
@@ -98,7 +104,7 @@ async def main():
   await page.get_by_label('Период статистики').select_option('360')
   await page.wait_for_timeout(1300)
   cancelled={urlparse(u).path for u in aborted if parse_qs(urlparse(u).query).get('minutes')==['120']}
-  assert cancelled=={'/api/statistics','/api/statistics/clients'},cancelled
+  assert cancelled=={'/api/statistics/realtime/history','/api/statistics/clients'},cancelled
   await expect(page.get_by_label('Период статистики')).to_have_value('360')
   await expect(page.get_by_role('img',name='График скорости за выбранный период')).to_have_count(2)
   await expect(page.get_by_text('Не удалось обновить историю клиентов',exact=True)).to_have_count(0)
@@ -108,9 +114,9 @@ async def main():
   dates=await page.evaluate("()=>[Date.now()-300000,Date.now()].map(t=>{const d=new Date(t);return new Date(t-d.getTimezoneOffset()*60000).toISOString().slice(0,16)})")
   await page.get_by_label('Начало периода').fill(dates[0]);await page.get_by_label('Конец периода').fill(dates[1])
   await page.get_by_role('button',name='Показать',exact=True).click()
-  live_calls=sum(path=='/api/statistics/clients/live' for path,q in calls)
+  live_calls=sum(path=='/api/statistics/realtime' for path,q in calls)
   await page.wait_for_timeout(5500)
-  assert sum(path=='/api/statistics/clients/live' for path,q in calls)==live_calls
+  assert sum(path=='/api/statistics/realtime' for path,q in calls)==live_calls
   await page.set_viewport_size({'width':390,'height':844})
   assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
   assert not errors,errors
