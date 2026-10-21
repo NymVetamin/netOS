@@ -29,7 +29,7 @@ export function MapViewport({ width, height, background, children, overlay }: { 
       const rect=el.getBoundingClientRect();
       const scale=el.clientWidth>0?rect.width/el.clientWidth:1;
       const available=(window.innerHeight-rect.top-24)/(scale || 1);
-      setCanvasHeight(Math.max(240,Math.min(Math.max(420,el.clientWidth*height/width),available)));
+      setCanvasHeight(Math.max(240,available));
     };
     fit();const observer=new ResizeObserver(fit);
     observer.observe(el.parentElement || el);
