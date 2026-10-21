@@ -281,7 +281,7 @@ fi
 AUTO_PACKAGES=""
 for package in $PACKAGES; do
     if dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii ' \
-        && apt-mark showauto 2>/dev/null | grep -Fxq "$package"
+        && apt-mark showauto 2>/dev/null | grep -Fx "$package" >/dev/null
     then
         AUTO_PACKAGES="$AUTO_PACKAGES $package"
     fi

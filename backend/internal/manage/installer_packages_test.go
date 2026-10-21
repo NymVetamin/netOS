@@ -9,6 +9,36 @@ import (
 	"testing"
 )
 
+func TestInstallerPreservesAutoMarksWithLargePackageList(t *testing.T) {
+	bash := "bash"
+	if runtime.GOOS == "windows" {
+		bash = "C:/Program Files/Git/bin/bash.exe"
+	}
+	if _, err := exec.LookPath(bash); err != nil {
+		t.Skip("bash unavailable")
+	}
+	source := installerSource(t)
+	start := strings.Index(source, `AUTO_PACKAGES=""`)
+	end := strings.Index(source[start:], "# Keep package ownership") + start
+	script := `set -euo pipefail
+PACKAGES="ethtool missing"
+dpkg-query() { printf 'ii '; }
+apt-mark() {
+    printf 'ethtool\n'
+    for ((i=0; i<10000; i++)); do printf 'dependency-%05d\n' "$i"; done
+}
+` + source[start:end] + `
+test "$AUTO_PACKAGES" = " ethtool" || { echo "lost automatic packages: [$AUTO_PACKAGES]"; exit 1; }
+`
+	path := filepath.Join(t.TempDir(), "auto.sh")
+	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(bash, filepath.ToSlash(path)).CombinedOutput(); err != nil {
+		t.Fatalf("auto package capture: %v: %s", err, out)
+	}
+}
+
 func TestInstallerTracksAptPackagesAcrossRetries(t *testing.T) {
 	bash := "bash"
 	if runtime.GOOS == "windows" {
