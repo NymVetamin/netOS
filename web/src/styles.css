@@ -1060,7 +1060,8 @@ svg.glyph.glyph-os {
   margin-bottom: var(--section-gap);
 }
 
-.rt-plot { position:relative; height:190px; overflow:hidden; background:repeating-linear-gradient(to top, transparent 0, transparent 46px, var(--border) 47px, transparent 48px); }
+.rt-plot { position:relative; height:190px; background:repeating-linear-gradient(to top, transparent 0, transparent 46px, var(--border) 47px, transparent 48px); }
+.rt-lines-clip { position:absolute; inset:0; overflow:hidden; }
 .rt-moving { width:100%; height:190px; overflow:visible; will-change:transform; transform:translate3d(-0.555556%,0,0); }
 .rt-cursor { position:absolute; top:0; bottom:0; border-left:1px dashed var(--text-dim); pointer-events:none; }
 .rt-wait { position:absolute; inset:70px 20px auto; color:var(--text-faint); }
@@ -2201,7 +2202,7 @@ tr.disabled-row td {
 
 .map-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 280px;
   gap: var(--pad);
   align-items: start;
 }
@@ -2212,6 +2213,8 @@ tr.disabled-row td {
 
 .map-layout > .card:last-child {
   container-type: inline-size;
+  position: sticky;
+  top: 16px;
 }
 
 .map-layout > .card:last-child .mini {
@@ -2336,7 +2339,7 @@ tr.disabled-row td {
   background: var(--surface-2);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 700px) {
   .map-layout {
     grid-template-columns: 1fr;
   }
@@ -2769,7 +2772,7 @@ td > select {
 .monitor-plot {position:relative;cursor:crosshair}
 .monitor-tooltip {width:max-content;position:absolute;top:12px;pointer-events:none;z-index:1;background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow-lg);border-radius:6px;padding:9px 12px;display:grid;gap:5px;font-size:12px;max-width:min(280px,45%);overflow-wrap:anywhere}
 .monitor-crosshair {pointer-events:none}
-.monitor-point {position:absolute;width:10px;height:10px;box-sizing:border-box;border:2px solid var(--surface);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+.monitor-point {position:absolute;width:10px;height:10px;box-sizing:border-box;border:1px solid #eef8ff;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 25%,transparent);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
 
 .panel-users-table { width: 100%; }
 .panel-users-table td, .panel-users-table th { padding: .75rem 1rem; }
