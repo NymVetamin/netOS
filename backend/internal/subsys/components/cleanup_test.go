@@ -3,6 +3,7 @@ package components
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,7 +31,23 @@ func (r *ipsetRemovalRunner) Run(_ context.Context, name string, args ...string)
 func (r *ipsetRemovalRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
 	return r.Run(ctx, name, args...)
 }
+
+// Apply reconciles the entire catalog even when the runner only models ipset.
+// Keep real external binaries outside these unit tests' filesystem scope.
+func isolateCleanupExternalTargets(t *testing.T) {
+	t.Helper()
+	original := externalReleases
+	isolated := make(map[string]externalRelease, len(original))
+	for id, rel := range original {
+		rel.Target = filepath.Join(t.TempDir(), id)
+		isolated[id] = rel
+	}
+	externalReleases = isolated
+	t.Cleanup(func() { externalReleases = original })
+}
+
 func TestIPSetRemovalWaitsForConsumers(t *testing.T) {
+	isolateCleanupExternalTargets(t)
 	r := &ipsetRemovalRunner{installed: true}
 	s := New(r, testLogger{})
 	s.DeferIPSetRemoval = true
@@ -58,6 +75,7 @@ func TestIPSetRemovalWaitsForConsumers(t *testing.T) {
 }
 
 func TestDomainPolicyKeepsImplicitIPSetPackage(t *testing.T) {
+	isolateCleanupExternalTargets(t)
 	r := &ipsetRemovalRunner{installed: true}
 	s := New(r, testLogger{})
 	s.DeferIPSetRemoval = true
