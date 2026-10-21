@@ -1570,6 +1570,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp["os_id"], resp["os_name"] = osRelease()
 	if r.URL.Query().Get("overview") == "1" && may(r, "dashboard", false) {
 		resp["client_summary"] = s.dashboardClients(r.Context(), cfg, len(clients), online)
+		resp["resources"] = s.dashboardMetrics.read("/proc", "/sys")
+		resp["services"], resp["services_available"] = s.dashboardServiceStatus(r.Context())
 	}
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname

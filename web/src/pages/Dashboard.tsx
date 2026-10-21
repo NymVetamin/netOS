@@ -1,4 +1,5 @@
 import { TrafficMonitor } from "./TrafficMonitor";
+import { DashboardHealth } from "./DashboardHealth";
 import { linkSpeed } from "./PortLinkSettings";
 import { useEffect, useState } from "react";
 import { api, formatBytes, formatUptime } from "../api";
@@ -85,6 +86,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
           small
         />
       </div>
+
+      <DashboardHealth status={status} />
 
       <Card title="Сетевые сегменты" subtitle="Локальные сети и их адреса">
         {(config.networks || []).length === 0 ? (
@@ -189,49 +192,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
         </TableWrap>
       </Card>
 
-      {/* Здесь только применённое состояние: карточка описывает то, что
-          работает на роутере сейчас. Пока она строилась из редактируемого
-          черновика, выключенные, но не применённые DHCP и DNS показывались
-          выключенными, хотя продолжали обслуживать сеть. */}
-      <Card title="Службы" subtitle="Состояние применённой конфигурации">
-        <div className="row wrap" style={{ gap: "1.5rem" }}>
-          <ServiceInfo label="DHCP" value={status?.dhcp_enabled ? status.dhcp_provider : "выключен"} />
-          <ServiceInfo label="DNS" value={status?.dns_enabled ? status.dns_provider : "выключен"} />
-          <ServiceInfo
-            label="Файрволл"
-            value={status?.firewall_enabled ? "включён" : "выключен"}
-            tone={status?.firewall_enabled ? "ok" : "danger"}
-          />
-          <ServiceInfo
-            label="IPv6"
-            value={status?.ipv6_mode === "off" ? "подавлен" : "разрешён"}
-            tone={status?.ipv6_mode === "off" ? "ok" : "warn"}
-          />
-        </div>
-      </Card>
       </>}
     </>
-  );
-}
-
-function ServiceInfo({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "ok" | "warn" | "danger";
-}) {
-  return (
-    <div>
-      <div className="faint" style={{ fontSize: 12 }}>
-        {label}
-      </div>
-      <div className="row" style={{ marginTop: 2 }}>
-        {tone ? <Badge tone={tone}>{value}</Badge> : <strong>{value}</strong>}
-      </div>
-    </div>
   );
 }
 

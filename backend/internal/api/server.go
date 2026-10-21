@@ -93,6 +93,8 @@ type Server struct {
 	networkConflictStatus networkConflictCache
 	vpnStatusMu           sync.Mutex
 	vpnStatus             map[string]*vpnStatusCache
+	dashboardMetrics      dashboardMetrics
+	dashboardServices     dashboardServiceCache
 
 	httpServer         *http.Server
 	challengeServer    *http.Server

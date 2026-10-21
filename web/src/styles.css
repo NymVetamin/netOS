@@ -1060,6 +1060,12 @@ svg.glyph.glyph-os {
   margin-bottom: var(--section-gap);
 }
 
+.dashboard-services { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 10px; }
+.dashboard-service { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; flex-wrap: wrap; }
+.dashboard-service > div { min-width: 0; overflow-wrap: anywhere; }
+.dashboard-service .mono { margin-top: 4px; font-size: 11px; }
+.dashboard-protection { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
+
 .tile {
   background: var(--surface);
   padding: var(--pad) 18px;
