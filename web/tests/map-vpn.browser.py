@@ -37,7 +37,7 @@ async def scenario(browser, mode):
         elif path=="/api/status":body={"interfaces":[],"wans":[],"channels":[],"uptime_seconds":100}
         elif path=="/api/clients":body={"clients":[]}
         elif path.endswith("/clients") and path.startswith("/api/vpn-servers/"):
-            body=[{"id":"phone","state":"recent","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":1234,"sent":5678},
+            body=[{"id":"phone","state":"offline" if mode=="idle" else "recent","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":1234,"sent":5678},
                   {"id":"tablet","state":"never"}]
             if telemetry_error:status,body=503,{"error":"unavailable"}
         await route.fulfill(status=status,json=body)
@@ -56,12 +56,17 @@ async def scenario(browser, mode):
     detail_box=await layout.locator(':scope > .card').last.bounding_box()
     assert detail_box['y']>=box['y']+box['height'], 'details must be below the map'
     edges=graph.locator('..').locator('.map-edges')
+    if mode!='no-vpn':
+        server_edge=edges.locator('[data-vpn-server="wg1"]')
+        await expect(server_edge).to_have_class('edge ready' if mode in ('idle','error') else 'edge live')
+    if mode=='many':
+        await expect(edges.locator('[data-vpn-server="wg2"]')).to_have_class('edge dead')
     live=edges.locator('.edge.live').first
     await expect(live).to_have_css('animation-name','flow')
     offset=await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')
     await page.wait_for_timeout(180)
     assert await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')!=offset
-    for edge in await edges.locator('.edge.idle, .edge.dead').all():
+    for edge in await edges.locator('.edge.idle, .edge.dead, .edge.ready').all():
         await expect(edge).to_have_css('animation-name','none')
     await page.emulate_media(reduced_motion='reduce')
     await expect(live).to_have_css('animation-name','none')
@@ -153,6 +158,17 @@ async def scenario(browser, mode):
                 await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
                 await expect(page.get_by_text("состояние неизвестно",exact=True)).to_be_visible()
                 await expect(page.get_by_text("192.0.2.10:4567",exact=True)).to_have_count(0)
+    if mode=='many':
+        for theme in ('light','dark'):
+            await page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
+            for width in (1280,1920):
+                await page.set_viewport_size({'width':width,'height':1000})
+                await page.locator('.main').evaluate('e=>e.scrollTop=0')
+                await page.wait_for_timeout(150)
+                labels=await graph.locator('.nt').evaluate_all('(items)=>items.map(e=>parseFloat(getComputedStyle(e).fontSize)*e.getScreenCTM().a)')
+                assert min(labels)>=11, (width,labels)
+                assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                await page.screenshot(path=f'output/playwright/map-layout-{theme}-{width}.png')
     assert not errors,errors
     assert not writes,writes
     await page.close();print(mode,"PASS")
@@ -163,7 +179,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("healthy", "error", "many", "no-vpn"):
+        for mode in ("healthy", "error", "many", "no-vpn", "idle"):
             await scenario(browser, mode)
         await browser.close()
 

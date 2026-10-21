@@ -2249,6 +2249,7 @@ tr.disabled-row td {
 }
 
 .map-legend i.idle { border-top: 2px dotted var(--border-strong); }
+.map-legend i.ready { border-top: 2px solid var(--ok); }
 .map-legend i.dead { border-top: 2px dotted var(--danger); }
 
 .cloud { fill: var(--surface-2); stroke: var(--border-strong); }
@@ -2274,6 +2275,7 @@ tr.disabled-row td {
   .edge.live { animation: none; }
 }
 .edge.idle { stroke-dasharray: 2 6; }
+.edge.ready { stroke: var(--ok); }
 .edge.dead { stroke: var(--danger); stroke-dasharray: 2 6; opacity: 0.8; }
 
 @keyframes flow {
