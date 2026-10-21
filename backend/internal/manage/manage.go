@@ -1351,6 +1351,10 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	if err != nil {
 		return fmt.Errorf("системный baseline повреждён; удаление остановлено до изменений: %w", err)
 	}
+	componentBaseline, err := system.ReadComponentBaseline(m.sys(system.PackageOwnershipDir))
+	if err != nil {
+		return fmt.Errorf("снимок исходных компонентов повреждён; удаление остановлено до изменений: %w", err)
+	}
 	uplink, err := m.captureManagementUplink(ctx, "удалением")
 	if err != nil {
 		return err
@@ -1573,6 +1577,30 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	fmt.Fprintln(m.Out, "Сеть восстановлена. Удаляем оставшиеся файлы netOS…")
 	if err := m.removePackagesPreservingUnbound(ctx, keepData); err != nil {
 		return fmt.Errorf("удаление пакетов netOS: %w", err)
+	}
+	if err := system.RestoreComponentPackages(ctx, componentRestoreRunner{m}, m.Root, m.sys(system.PackageOwnershipDir), componentBaseline); err != nil {
+		return err
+	}
+	if componentBaseline != nil && len(componentBaseline.Packages) > 0 {
+		if err := m.run(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+		if state, _ := m.Output(ctx, "systemctl", "is-active", "apparmor.service"); strings.TrimSpace(state) == "active" {
+			if err := m.run(ctx, "systemctl", "reload", "apparmor.service"); err != nil {
+				return err
+			}
+		}
+		var units []string
+		for unit := range componentBaseline.Services {
+			units = append(units, unit)
+		}
+		sort.Strings(units)
+		for _, unit := range units {
+			state := componentBaseline.Services[unit]
+			if err := m.restoreServiceBaseline(ctx, unit, serviceBaseline{Enabled: state.Enabled, Active: state.Active}); err != nil {
+				return fmt.Errorf("восстановление исходной службы %s: %w", unit, err)
+			}
+		}
 	}
 	if needDefault && !m.waitDefaultRoute(ctx, 3) {
 		return m.networkRestoreFailure(ctx, savedRoutes, uplink, fmt.Errorf("шлюз пропал после удаления пакетов"))

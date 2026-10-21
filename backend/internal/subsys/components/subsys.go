@@ -155,6 +155,11 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 
 		if want {
 			_, allInstalled := s.componentState(ctx, info)
+			if !info.Essential {
+				if err := s.captureOriginalComponent(ctx, info); err != nil {
+					return err
+				}
+			}
 			if allInstalled {
 				continue
 			}
@@ -507,6 +512,23 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	if protected == nil {
 		protected = protectedComponentPackages(nil)
 	}
+	if err := s.captureOriginalComponent(ctx, info); err != nil {
+		return err
+	}
+	// Never purge an original component if its recovery copy is damaged.
+	// Initial dependencies must also survive autoremove; unlike an explicitly
+	// deselected component they do not have a reason to disappear.
+	original := map[string]bool{}
+	if dir := s.Packages.OwnershipDir; dir != "" {
+		var err error
+		original, err = system.ReadPackageNames(filepath.Join(dir, "initial.txt"))
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if _, err := system.ReadComponentBaseline(dir); err != nil {
+			return err
+		}
+	}
 	for _, unit := range info.Units {
 		if err := s.Systemd.Disable(ctx, unit); err != nil {
 			return fmt.Errorf("disable stock unit %s: %w", unit, err)
@@ -551,7 +573,14 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	// packages that are no longer needed by anything else.
 	args := []string{"-o", "DPkg::Lock::Timeout=60"}
 	var names []string
+	neverAutoRemove := map[string]bool{}
 	for pkg := range protected {
+		neverAutoRemove[pkg] = true
+	}
+	for pkg := range original {
+		neverAutoRemove[strings.Split(pkg, ":")[0]] = true
+	}
+	for pkg := range neverAutoRemove {
 		names = append(names, pkg)
 	}
 	sort.Strings(names)
@@ -565,6 +594,20 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	}
 	s.Logger.Infof("удалён компонент %s", info.Title)
 	return nil
+}
+
+func (s *Subsystem) captureOriginalComponent(ctx context.Context, info config.ComponentInfo) error {
+	if info.External || s.Packages.OwnershipDir == "" {
+		return nil
+	}
+	protected := protectedComponentPackages(nil)
+	var packages []string
+	for _, name := range info.Packages {
+		if !protected[name] {
+			packages = append(packages, name)
+		}
+	}
+	return system.CaptureComponentBaseline(ctx, s.Runner, "", s.Packages.OwnershipDir, []system.BaselineComponent{{ID: info.ID, Packages: packages, Units: info.Units}})
 }
 
 // Health не проверяет ничего: неустановленный компонент не повод откатывать

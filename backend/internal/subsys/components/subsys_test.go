@@ -3,11 +3,13 @@ package components
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 type testLogger struct{}
@@ -83,6 +85,41 @@ func TestComponentPurgeProtectsRuntimeAndEnabledDependencies(t *testing.T) {
 		if !containsArgument(r.aptArgs, "APT::NeverAutoRemove::=^"+pkg+"$") {
 			t.Errorf("autoremove can delete %s", pkg)
 		}
+	}
+}
+
+func TestComponentPurgePreservesOriginalAutomaticDependencies(t *testing.T) {
+	r := &removalFailureRunner{}
+	s := New(r, testLogger{})
+	s.Packages.OwnershipDir = t.TempDir()
+	if err := system.WritePackageNames(filepath.Join(s.Packages.OwnershipDir, "initial.txt"), map[string]bool{"liboriginal:amd64": true}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.removeProtected(context.Background(), config.ComponentInfo{ID: "dummy", Packages: []string{"dummy"}}, nil)
+	if !containsArgument(r.aptArgs, "APT::NeverAutoRemove::=^liboriginal$") {
+		t.Fatalf("original dependency unprotected: %v", r.aptArgs)
+	}
+	if !containsArgument(r.aptArgs, "dummy") {
+		t.Fatal("explicit component removal lost")
+	}
+}
+
+func TestCorruptOriginalComponentStopsPurge(t *testing.T) {
+	r := &removalFailureRunner{}
+	s := New(r, testLogger{})
+	s.Packages.OwnershipDir = t.TempDir()
+	dir := filepath.Join(s.Packages.OwnershipDir, "original-components")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.removeProtected(context.Background(), config.ComponentInfo{ID: "dummy", Packages: []string{"dummy"}}, nil); err == nil {
+		t.Fatal("corrupt recovery ignored")
+	}
+	if len(r.aptArgs) != 0 {
+		t.Fatal("purge ran without recovery")
 	}
 }
 
