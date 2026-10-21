@@ -13,6 +13,29 @@ vm.runInNewContext(compiled, { exports, URL, atob, TextDecoder, Uint8Array });
 const { parseXrayLink } = exports;
 const encode = value => Buffer.from(value).toString("base64url");
 const vmess = value => "vmess://" + encode(JSON.stringify(value));
+const xhttpLink = params => "vless://01234567-89ab-cdef-0123-456789abcdef@cdn.example.com:443?" + new URLSearchParams({ type: "xhttp", security: "tls", ...params });
+
+test("XHTTP import preserves mode, complete extra JSON and TLS ALPN", () => {
+  const extra = { scMaxEachPostBytes: "20000", scMinPostsIntervalMs: "7", xPaddingBytes: "100-1000",
+    xPaddingObfsMode: true, xPaddingKey: "hash", xPaddingHeader: "X-Client-Ver", xPaddingPlacement: "queryInHeader",
+    xPaddingMethod: "tokenish", uplinkHTTPMethod: "GET", seqPlacement: "path", uplinkDataPlacement: "header", uplinkChunkSize: "3000",
+    xmux: { maxConcurrency: "4", maxConnections: "0", hMaxReusableSecs: "1800-3000", hMaxRequestTimes: "600-900" },
+    downloadSettings: { network: "xhttp", xhttpSettings: { path: "/download%2F", mode: "stream-one" } } };
+  const out = JSON.parse(JSON.stringify(parseXrayLink(xhttpLink({ path: "/api/v1/events/", host: "cdn.example.com", mode: "packet-up",
+    extra: JSON.stringify(extra), sni: "cdn.example.com", fp: "firefox", alpn: "h2,http/1.1", encryption: "test-encryption" }))));
+  assert.deepEqual(out.streamSettings.xhttpSettings, { path: "/api/v1/events/", host: "cdn.example.com", mode: "packet-up", extra });
+  assert.deepEqual(out.streamSettings.tlsSettings, { serverName: "cdn.example.com", fingerprint: "firefox", alpn: ["h2", "http/1.1"] });
+  assert.equal(out.settings.vnext[0].users[0].encryption, "test-encryption");
+});
+
+test("XHTTP rejects malformed/non-object extra and preserves defaults without extra", () => {
+  for (const extra of ["{", "null", "[]", "1", '"text"', "true", ""]) {
+    assert.throws(() => parseXrayLink(xhttpLink({ extra })), /extra/);
+  }
+  const out = JSON.parse(JSON.stringify(parseXrayLink(xhttpLink({}))));
+  assert.deepEqual(out.streamSettings.xhttpSettings, { path: "/", host: "" });
+  assert.deepEqual(out.streamSettings.tlsSettings, { serverName: "", fingerprint: "chrome" });
+});
 
 test("reject missing credentials and invalid endpoint before replacing outbound", () => {
   for (const link of [

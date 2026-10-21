@@ -37,6 +37,7 @@ export function parseXrayLink(value: string): any {
     host: url.searchParams.get("host"), path: url.searchParams.get("path"), sni: url.searchParams.get("sni"),
     serviceName: url.searchParams.get("serviceName"), fingerprint: url.searchParams.get("fp"),
     publicKey: url.searchParams.get("pbk"), shortId: url.searchParams.get("sid"), spiderX: url.searchParams.get("spx"),
+    mode: url.searchParams.get("mode"), extra: url.searchParams.get("extra"), alpn: url.searchParams.get("alpn"),
   }) };
 }
 
@@ -44,8 +45,19 @@ function streamSettings(network: string, security: string, options: any): any {
   const out: any = { network, security };
   if (network === "ws") out.wsSettings = { path: options.path || "/", headers: options.host ? { Host: options.host } : {} };
   if (network === "grpc") out.grpcSettings = { serviceName: options.serviceName || "" };
-  if (network === "xhttp") out.xhttpSettings = { path: options.path || "/", host: options.host || "" };
+  if (network === "xhttp") {
+    out.xhttpSettings = { path: options.path || "/", host: options.host || "" };
+    if (options.mode) out.xhttpSettings.mode = options.mode;
+    if (options.extra != null) {
+      let extra: unknown;
+      try { extra = JSON.parse(options.extra); }
+      catch { throw new Error("Параметр XHTTP extra должен содержать корректный JSON-объект"); }
+      if (!extra || typeof extra !== "object" || Array.isArray(extra)) throw new Error("Параметр XHTTP extra должен быть JSON-объектом");
+      out.xhttpSettings.extra = extra;
+    }
+  }
   if (security === "tls") out.tlsSettings = { serverName: options.sni || options.host || "", fingerprint: options.fingerprint || "chrome" };
+  if (security === "tls" && options.alpn) out.tlsSettings.alpn = options.alpn.split(",").map((value: string) => value.trim()).filter(Boolean);
   if (security === "reality") out.realitySettings = { serverName: options.sni || "", fingerprint: options.fingerprint || "chrome", password: options.publicKey || "", shortId: options.shortId || "", spiderX: options.spiderX || "" };
   return out;
 }
