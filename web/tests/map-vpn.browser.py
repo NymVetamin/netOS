@@ -58,7 +58,10 @@ async def scenario(browser, mode):
     edges=graph.locator('..').locator('.map-edges')
     if mode!='no-vpn':
         server_edge=edges.locator('[data-vpn-server="wg1"]')
-        await expect(server_edge).to_have_class('edge ready' if mode in ('idle','error') else 'edge live')
+        await expect(server_edge).to_have_class('edge live')
+        await expect(server_edge).to_have_css('animation-name','flow')
+        if mode in ('idle','error'):
+            await expect(server_edge.locator('..').locator('path').nth(1)).to_have_class('edge idle')
     if mode=='many':
         await expect(edges.locator('[data-vpn-server="wg2"]')).to_have_class('edge dead')
     live=edges.locator('.edge.live').first
@@ -66,7 +69,7 @@ async def scenario(browser, mode):
     offset=await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')
     await page.wait_for_timeout(180)
     assert await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')!=offset
-    for edge in await edges.locator('.edge.idle, .edge.dead, .edge.ready').all():
+    for edge in await edges.locator('.edge.idle, .edge.dead').all():
         await expect(edge).to_have_css('animation-name','none')
     await page.emulate_media(reduced_motion='reduce')
     await expect(live).to_have_css('animation-name','none')

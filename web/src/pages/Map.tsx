@@ -101,7 +101,6 @@ export function MapPage({ config }: { config: any }) {
             actions={
               <span className="map-legend">
                 <span><i className="live" />активно</span>
-                <span title="VPN-сервер включён в настройках; активные подключения клиентов не подтверждены"><i className="ready" />сервер включён</span>
                 <span><i className="idle" />ждёт</span>
                 <span><i className="dead" />нет связи</span>
               </span>
@@ -240,8 +239,8 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
         ))}
 
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-lines-${server.id}`}>
-          <path data-vpn-server={server.id} className={`edge ${!server.enabled ? "dead" : server.peers.some(p=>["recent","online"].includes(p.state)) ? "live" : "ready"}`} d={curve(router.x + router.w / 2, cy, 755, y)}>
-            <title>{!server.enabled ? "Сервер отключён" : server.peers.some(p=>["recent","online"].includes(p.state)) ? "Есть активные или недавние подключения" : "Сервер включён в настройках; активные подключения не подтверждены"}</title>
+          <path data-vpn-server={server.id} className={`edge ${server.enabled ? "live" : "dead"}`} d={curve(router.x + router.w / 2, cy, 755, y)}>
+            <title>{server.enabled ? "VPN-сервер включён" : "VPN-сервер отключён"}</title>
           </path>
           {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${["recent", "online"].includes(peer.state) ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
         </g>)}
