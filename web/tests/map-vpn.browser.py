@@ -51,6 +51,10 @@ async def scenario(browser, mode):
         await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd ok')
     box=await graph.bounding_box()
     assert box['y']+box['height']<1000
+    layout=page.locator('.map-layout')
+    assert abs((await layout.bounding_box())['width']-box['width'])<4, 'details must not shrink the map'
+    detail_box=await layout.locator(':scope > .card').last.bounding_box()
+    assert detail_box['y']>=box['y']+box['height'], 'details must be below the map'
     edges=graph.locator('..').locator('.map-edges')
     live=edges.locator('.edge.live').first
     await expect(live).to_have_css('animation-name','flow')

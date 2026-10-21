@@ -162,7 +162,7 @@ function channelType(type: string): string {
 // ---------------------------------------------------------------------------
 
 const W = 1000;
-const ROW = 110;
+const ROW = 80;
 
 function spread(count: number, from: number, to: number): number[] {
   if (count === 1) return [(from + to) / 2];
