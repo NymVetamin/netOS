@@ -1,5 +1,5 @@
 import { useAccess } from "../permissions";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
 import { Icon } from "../icons";
@@ -25,6 +25,7 @@ export function MapPage({ config }: { config: any }) {
   const [error, setError] = useState(false);
   const [rates, setRates] = useState<Rates>(new Map());
   const [selected, setSelected] = useState<NodeID>("router");
+  const [detailsOpen,setDetailsOpen]=useState(true);
   const previous = useRef<{ at: number; bytes: Map<string, { rx: number; tx: number }> } | null>(null);
 
   useEffect(() => {
@@ -107,9 +108,11 @@ export function MapPage({ config }: { config: any }) {
             }
             tight
           >
-            <MapSVG graph={graph} selected={selected} onSelect={setSelected} config={config} status={status} />
+            <MapSVG graph={graph} selected={selected} onSelect={id=>{setSelected(id);setDetailsOpen(true)}} config={config} status={status} overlay={<aside className="map-node-overlay" aria-label="Сведения об узле">
+              <button className="map-details-toggle" aria-expanded={detailsOpen} onClick={()=>setDetailsOpen(!detailsOpen)}>Узел <span>{detailsOpen?"−":"+"}</span></button>
+              {detailsOpen&&<div className="map-node-scroll"><NodeDetails graph={graph} id={selected} config={config} status={status} clients={clients}/></div>}
+            </aside>}/>
           </Card>
-          <NodeDetails graph={graph} id={selected} config={config} status={status} clients={clients} />
         </div>
       )}
     </>
@@ -174,12 +177,13 @@ function curve(x1: number, y1: number, x2: number, y2: number) {
   return `M${x1},${y1} C${m},${y1} ${m},${y2} ${x2},${y2}`;
 }
 
-function MapSVG({ graph, selected, onSelect, config, status }: {
+function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
   graph: ReturnType<typeof buildGraph>;
   selected: NodeID;
   onSelect: (id: NodeID) => void;
   config: any;
   status: any;
+  overlay: ReactNode;
 }) {
   const { wans, channels, segments, vpn } = graph;
   const channelRows = Math.ceil(channels.length / 3);
@@ -224,7 +228,7 @@ function MapSVG({ graph, selected, onSelect, config, status }: {
   );
 
   return (
-    <MapViewport width={vpn.length ? 1240 : W} height={height} background={<>
+    <MapViewport width={vpn.length ? 1240 : W} height={height} overlay={overlay} background={<>
         {wans.map((w, i) => (
           <g key={`e-${w.id}`}>
             <path className={`edge ${edgeState(w.up, w.primary)}`} d={curve(122, cy, 205, wanY[i])} />

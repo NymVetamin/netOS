@@ -3,7 +3,7 @@ import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 const MIN = 0.5, MAX = 4;
 const initial = { x: 0, y: 0, scale: 1 };
 
-export function MapViewport({ width, height, background, children }: { width: number; height: number; background?: ReactNode; children: ReactNode }) {
+export function MapViewport({ width, height, background, children, overlay }: { width: number; height: number; background?: ReactNode; children: ReactNode; overlay?:ReactNode }) {
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState(initial);
   const canvas = useRef<HTMLDivElement>(null);
@@ -21,7 +21,7 @@ export function MapViewport({ width, height, background, children }: { width: nu
       const rect=el.getBoundingClientRect();
       const scale=el.clientWidth>0?rect.width/el.clientWidth:1;
       const available=(window.innerHeight-rect.top-24)/(scale || 1);
-      setCanvasHeight(Math.max(160,Math.min(el.clientWidth*height/width,available)));
+      setCanvasHeight(Math.max(240,Math.min(Math.max(420,el.clientWidth*height/width),available)));
     };
     fit();const observer=new ResizeObserver(fit);
     observer.observe(el.parentElement || el);
@@ -98,6 +98,7 @@ export function MapViewport({ width, height, background, children }: { width: nu
         }}>
         <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>{children}</g>
       </svg>
+      {overlay}
     </div>
   </>;
 }

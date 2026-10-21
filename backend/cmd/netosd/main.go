@@ -353,6 +353,11 @@ func main() {
 		go clientHistory.Run(ctx)
 	}
 	panel.Maintenance = api.NewMaintenance(runner)
+	if err := panel.StartSecondHistory(ctx, "/var/lib/netos/second-history.sqlite"); err != nil {
+		logger.Errorf("секундная история: %v", err)
+	} else {
+		defer panel.StopSecondHistory()
+	}
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
 	panel.Components = components.New(runner, logger)

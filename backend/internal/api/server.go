@@ -229,6 +229,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/statistics/clients", s.handleClientStatistics)
 	auth("GET /api/statistics/clients/live", s.handleClientLive)
 	auth("GET /api/statistics/realtime", s.handleRealtime)
+	auth("GET /api/statistics/realtime/history", s.handleSecondHistory)
 	auth("GET /api/maintenance/status", s.handleMaintenanceStatus)
 	auth("GET /api/backups", s.handleBackups)
 	auth("GET /api/backups/{name}", s.handleBackupDownload)

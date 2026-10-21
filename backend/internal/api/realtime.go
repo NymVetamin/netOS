@@ -21,6 +21,8 @@ type realtimeValue struct {
 	TXBPS   *float64 `json:"tx_bps"`
 	At      float64  `json:"at"`
 	Seconds float64  `json:"seconds"`
+	RXPeak  *float64 `json:"rx_peak,omitempty"`
+	TXPeak  *float64 `json:"tx_peak,omitempty"`
 }
 type realtimeSnapshot struct {
 	Sequence uint64          `json:"sequence"`
@@ -29,11 +31,14 @@ type realtimeSnapshot struct {
 	Problems []string        `json:"problems"`
 }
 type realtimeMonitor struct {
-	mu       sync.Mutex
-	until    time.Time
-	running  bool
-	changed  chan struct{}
-	snapshot realtimeSnapshot
+	history     *secondHistory
+	stopHistory context.CancelFunc
+	historyDone chan struct{}
+	mu          sync.Mutex
+	until       time.Time
+	running     bool
+	changed     chan struct{}
+	snapshot    realtimeSnapshot
 	// Below owned by the single sampler goroutine only.
 	identities   map[string]rt.ClientCounter
 	identitiesAt time.Time
@@ -81,12 +86,15 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, snapshot)
 }
 func (s *Server) runRealtime() {
+	s.runRealtimeContext(context.Background())
+}
+func (s *Server) runRealtimeContext(parent context.Context) {
 	m := &s.realtime
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		m.mu.Lock()
-		if time.Now().After(m.until) {
+		if m.history == nil && time.Now().After(m.until) {
 			m.running = false
 			m.previous = nil
 			m.snapshot = realtimeSnapshot{}
@@ -94,16 +102,25 @@ func (s *Server) runRealtime() {
 			return
 		}
 		m.mu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(parent, 1500*time.Millisecond)
 		snapshot := s.collectRealtime(ctx)
 		cancel()
+		if m.history != nil {
+			if err := m.history.append(snapshot); err != nil {
+				snapshot.Problems = append(snapshot.Problems, "Не удалось сохранить секундную историю")
+			}
+		}
 		m.mu.Lock()
 		snapshot.Sequence = m.snapshot.Sequence + 1
 		m.snapshot = snapshot
 		close(m.changed)
 		m.changed = make(chan struct{})
 		m.mu.Unlock()
-		<-ticker.C
+		select {
+		case <-parent.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
