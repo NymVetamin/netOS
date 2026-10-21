@@ -1568,6 +1568,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"pending_confirm": pending,
 	}
 	resp["os_id"], resp["os_name"] = osRelease()
+	if r.URL.Query().Get("overview") == "1" && may(r, "dashboard", false) {
+		resp["client_summary"] = s.dashboardClients(r.Context(), cfg, len(clients), online)
+	}
 	if cfg != nil {
 		resp["hostname"] = cfg.System.Hostname
 		resp["wans"], resp["channels"] = s.liveLinks(r.Context(), cfg, stats)

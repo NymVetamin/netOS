@@ -23,7 +23,7 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
       if (busy) return;
       busy = true;
       await Promise.all([
-        api.status().then((result) => {
+        api.status(true).then((result) => {
           if (!cancelled) { setStatus(result); setStatusError(false); }
         }).catch(() => { if (!cancelled) setStatusError(true); }),
 
@@ -38,6 +38,7 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
   const interfaces: any[] = status?.interfaces || [];
   const wanNames = new Set(wanInterfaces);
   const wan = interfaces.find((i) => wanNames.has(i.name));
+  const clients = status?.client_summary;
 
   return (
     <>
@@ -67,8 +68,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
         <Tile
           icon="users"
           label="Клиенты"
-          value={status ? `${status.clients_online} / ${status.clients_total}` : "—"}
-          note="в сети / всего известно"
+          value={clients ? `${clients.lan_online + clients.vpn_online} / ${clients.lan_total + clients.vpn_total}` : "—"}
+          note={clients ? `В сети / всего · LAN ${clients.lan_online}/${clients.lan_total} · VPN ${clients.vpn_online}/${clients.vpn_total}${clients.vpn_unknown ? ` · нет данных: ${clients.vpn_unknown}` : ""}` : "Нет данных о клиентах"}
         />
         <Tile
           icon="activity"
