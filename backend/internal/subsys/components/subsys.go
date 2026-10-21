@@ -147,6 +147,20 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("миграция владения внешними компонентами: %w", err)
 	}
 
+	// Save every component this Apply will touch before changing any package.
+	// Purging a shared dependency can also purge a later component (ppp in
+	// L2TP removes pppoe), so capturing only just before each purge is too late.
+	for _, info := range config.Catalog {
+		if info.Essential || info.External {
+			continue
+		}
+		if desired[info.ID] || s.componentRemovable(ctx, info, protected) {
+			if err := s.captureOriginalComponent(ctx, info); err != nil {
+				return err
+			}
+		}
+	}
+
 	for _, info := range config.Catalog {
 		want := desired[info.ID]
 		if info.Essential && !want {
@@ -155,11 +169,6 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 
 		if want {
 			_, allInstalled := s.componentState(ctx, info)
-			if !info.Essential {
-				if err := s.captureOriginalComponent(ctx, info); err != nil {
-					return err
-				}
-			}
 			if allInstalled {
 				continue
 			}
