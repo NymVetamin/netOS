@@ -95,6 +95,7 @@ type Server struct {
 	vpnStatus             map[string]*vpnStatusCache
 	dashboardMetrics      dashboardMetrics
 	dashboardServices     dashboardServiceCache
+	realtime              realtimeMonitor
 
 	httpServer         *http.Server
 	challengeServer    *http.Server
@@ -227,6 +228,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/statistics", s.handleStatistics)
 	auth("GET /api/statistics/clients", s.handleClientStatistics)
 	auth("GET /api/statistics/clients/live", s.handleClientLive)
+	auth("GET /api/statistics/realtime", s.handleRealtime)
 	auth("GET /api/maintenance/status", s.handleMaintenanceStatus)
 	auth("GET /api/backups", s.handleBackups)
 	auth("GET /api/backups/{name}", s.handleBackupDownload)

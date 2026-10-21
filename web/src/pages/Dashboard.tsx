@@ -1,5 +1,6 @@
 import { TrafficMonitor } from "./TrafficMonitor";
 import { DashboardHealth } from "./DashboardHealth";
+import { RealtimeTraffic } from "./RealtimeTraffic";
 import { linkSpeed } from "./PortLinkSettings";
 import { useEffect, useState } from "react";
 import { api, formatBytes, formatUptime } from "../api";
@@ -12,6 +13,7 @@ import { Icon } from "../icons";
 export function Dashboard({ config, patch }: { config: any; patch: (change: (draft: any) => void) => void }) {
   const [status, setStatus] = useState<any>(null);
   const [statusError, setStatusError] = useState(false);
+  const [realtime, setRealtime] = useState(true);
 
   const wanInterfaces = (config.wans || [])
     .filter((w: any) => w.enabled)
@@ -141,7 +143,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
         </div>
       </Card>
 
-      <TrafficMonitor config={config} patch={patch} interfaces={wanInterfaces} status={status} />
+      <div className="row" style={{marginBottom:16}}><button className={`btn ${realtime?"primary":""}`} onClick={()=>setRealtime(true)}>Сейчас</button><button className={`btn ${!realtime?"primary":""}`} onClick={()=>setRealtime(false)}>История</button></div>
+      {realtime?<RealtimeTraffic interfaces={wanInterfaces}/>:<TrafficMonitor config={config} patch={patch} interfaces={wanInterfaces} status={status} />}
 
       <Card title="Интерфейсы" subtitle="Счётчики с момента запуска системы" tight>
         <TableWrap>

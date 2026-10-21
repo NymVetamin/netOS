@@ -1060,6 +1060,13 @@ svg.glyph.glyph-os {
   margin-bottom: var(--section-gap);
 }
 
+.rt-plot { position:relative; height:190px; overflow:hidden; background:repeating-linear-gradient(to top, transparent 0, transparent 46px, var(--border) 47px, transparent 48px); }
+.rt-moving { width:100%; height:190px; overflow:visible; will-change:transform; transform:translate3d(-0.555556%,0,0); }
+.rt-cursor { position:absolute; top:0; bottom:0; border-left:1px dashed var(--text-dim); pointer-events:none; }
+.rt-wait { position:absolute; inset:70px 20px auto; color:var(--text-faint); }
+@keyframes rt-scroll { from {transform:translateX(0)} to {transform:translateX(-0.555556%)} }
+@media(prefers-reduced-motion:reduce) { .rt-moving {animation:none;transform:translateX(-0.555556%)} }
+
 .dashboard-services { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 10px; }
 .dashboard-service { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; flex-wrap: wrap; }
 .dashboard-service > div { min-width: 0; overflow-wrap: anywhere; }
