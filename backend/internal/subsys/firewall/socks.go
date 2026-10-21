@@ -59,6 +59,8 @@ func (b *builder) socksAccess(c *config.Config) {
 	}
 	for _, proto := range []string{"tcp"} {
 		b.line("-A INPUT -p %s --dport %d -m comment --comment %q -j DROP", proto, p.Port, "SOCKS5: остальные сети запрещены")
-		b.line("-A OUTPUT -p %s --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT", proto, p.Port)
+		if needsServiceOutputAccept(c) {
+			b.line("-A OUTPUT -p %s --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT", proto, p.Port)
+		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 func TestSambaAccessLimitsLANAndVPNBeforeGenericAccepts(t *testing.T) {
 	c := config.Default()
+	c.Firewall.OutputPolicy = "drop" // Service replies need explicit permission.
 	c.Interfaces = []config.Interface{{ID: "lanif", Name: "eth1", Enabled: true}}
 	c.Networks = []config.Network{{ID: "lan", Enabled: true, Interface: "lanif", RouterAddress: "192.168.8.1/24", Zone: "lan"}}
 	c.Samba = config.Samba{Enabled: true, Discovery: true, Networks: []string{"lan"}, VPNs: []string{"wg", "oc", "ipsec", "l2"}}
