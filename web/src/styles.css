@@ -9,6 +9,7 @@
 :root {
   color-scheme: light;
   --bg: #e5e8ec;
+  --outer: #d6dbe1;
   --surface: #f8f9fa;
   --surface-2: #eef0f3;
   --surface-3: #e4e8ed;
@@ -79,6 +80,7 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #15181b;
+    --outer: #0e1012;
     --surface: #1c2024;
     --surface-2: #23282d;
     --surface-3: #2a3036;
@@ -116,6 +118,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #15181b;
+  --outer: #0e1012;
   --surface: #1c2024;
   --surface-2: #23282d;
   --surface-3: #2a3036;
@@ -1668,6 +1671,38 @@ summary:focus-visible {
   gap: 1rem;
   z-index: 40;
   max-height: 50dvh;
+}
+
+/* --- широкий экран: весь интерфейс в центрированной рамке. Растянутые на
+   2560 px таблицы читаются плохо: взгляд теряет строку между именем и
+   переключателем. 1600 px — это рамка 1440 с полями, умноженная на --zoom.
+   Полоса применения закреплена относительно окна, поэтому её края считаются
+   от той же рамки; `contain` на .app тут не годится — тогда относительно
+   рамки встали бы и подсказки, которые позиционируются по координатам окна. --- */
+@media (min-width: 1600px) {
+  :root {
+    --frame: 1440px;
+    --frame-gap: calc((100vw / var(--zoom) - var(--frame)) / 2);
+  }
+  body:has(> #root .app) {
+    background: var(--outer);
+  }
+  .app {
+    max-width: var(--frame);
+    height: calc(100vh / var(--zoom) - 40px);
+    margin: 20px auto;
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+  }
+  .applybar {
+    left: calc(var(--frame-gap) + var(--sidebar-width) + 1px);
+    right: calc(var(--frame-gap) + 1px);
+    bottom: 21px;
+    border-bottom-right-radius: calc(var(--radius-lg) - 1px);
+  }
 }
 
 .applybar .msg {
