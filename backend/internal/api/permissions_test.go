@@ -19,6 +19,22 @@ func limitedRequest(permissions map[string]string) *http.Request {
 	return withPanelAccess(r, "limited", store.PanelAccess{Enabled: true, Permissions: permissions})
 }
 
+func TestSecondHistoryUsesStatisticsPermissions(t *testing.T) {
+	for _, section := range []string{"dashboard", "traffic", "clients", "system"} {
+		for _, level := range []string{"none", "view", "manage"} {
+			for _, method := range []string{"GET", "POST"} {
+				r := limitedRequest(map[string]string{section: level})
+				r.URL.Path = "/api/statistics/realtime/history"
+				r.Method = method
+				want := method == "GET" && (section == "dashboard" || section == "traffic") && level != "none"
+				if got := limitedEndpoint(r); got != want {
+					t.Errorf("%s %s/%s: allowed=%v, want %v", method, section, level, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestScopedConfigRejectsHiddenChanges(t *testing.T) {
 	cfg := config.Default()
 	r := limitedRequest(map[string]string{"clients": "manage", "map": "view"})
