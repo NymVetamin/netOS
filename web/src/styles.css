@@ -2852,3 +2852,14 @@ td > select {
 @media (max-width: 800px) {
   .dns-upstream-editor { grid-template-columns: minmax(0, 1fr); }
 }
+
+.domain-link {border:0;background:none;color:inherit;font:inherit;text-align:left;padding:0;cursor:pointer;overflow-wrap:anywhere;justify-self:start;max-width:100%;text-decoration:underline;text-decoration-color:var(--text-faint);text-underline-offset:3px}
+.domain-link:hover {color:var(--accent)}
+.domain-details {width:640px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow:auto}
+.domain-details header {display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}
+.domain-details header h2 {min-width:0;margin:0;overflow-wrap:anywhere}
+.domain-details header button {flex-shrink:0}
+.domain-details > p {margin:1rem 0}
+.domain-detail-list table {width:100%;table-layout:fixed}
+.domain-detail-list th:last-child,.domain-detail-list td:last-child {width:110px;text-align:right}
+.domain-detail-list td:first-child {overflow-wrap:anywhere}

@@ -27,3 +27,13 @@ test('mixed sources, clients and filtered records agree with chart total',()=>{
  check(records.filter(r=>r.client==='b'),{b:4});
  assert.equal(domainCountsByClient([]).size,0);
 });
+
+
+test('drilldown retains full normalized hosts, aggregates duplicates and respects supplied clients',()=>{
+ const rows=[record('a','WWW.Example.com.',2,'dns'),record('a','www.example.com',3),record('a','deep.example.com',4),record('b','api.example.com',9),record('a','192.0.2.1',500,'xray-ip')];
+ const groups=JSON.parse(JSON.stringify(exports.groupDomainRecords(rows.filter(r=>r.client==='a'))));
+ assert.deepEqual(groups,[{domain:'example.com',count:9,hosts:[['www.example.com',5],['deep.example.com',4]]}]);
+ const many=exports.groupDomainRecords(Array.from({length:14},(_,i)=>record('a',`api.domain${String(i).padStart(2,'0')}.com`,1)));
+ assert.equal(many.length,14);
+ assert.deepEqual(Array.from(many.slice(10),g=>g.domain),['domain10.com','domain11.com','domain12.com','domain13.com']);
+});

@@ -11,6 +11,7 @@ async def main():
   page.on('pageerror',lambda e:errors.append(str(e)))
   page.on('requestfailed',lambda r:aborted.append(r.url))
   cfg={'system':{'hostname':'router'},'interfaces':[{'id':'wan','name':'eth0','enabled':True}],'wans':[{'id':'wan','interface':'wan','enabled':True}],'networks':[],'channels':[],'vpn_servers':[],'traffic_monitor':{'enabled':True}}
+  extra_domains=[]
   async def route(r):
    u=urlparse(r.request.url);path=u.path;q=parse_qs(u.query);body={};calls.append((path,q))
    if not path.startswith('/api/'):
@@ -32,6 +33,7 @@ async def main():
      await asyncio.sleep(1);body=frame(int(time.time()))
    elif path=='/api/statistics/clients/live':body={'enabled':cfg['traffic_monitor']['enabled'],'at':now,'clients':[{'id':'a','name':'Speaker','rx':100,'tx':50}],'points':[{'id':'a','at':now,'rx_bps':(now%60+1)*100000,'tx_bps':10000}]}
    elif path=='/api/statistics/clients':body={'enabled':True,'from':start,'to':now,'clients':[{'id':'a','name':'Speaker','rx':25000,'tx':180000,'queries':3,'connections':5},{'id':'b','name':'Laptop','rx':80000,'tx':1000,'queries':1},{'id':'zero','name':'Never used','rx':0,'tx':0,'queries':0},{'id':'short','name':'Short sessions','rx':0,'tx':0,'queries':0,'connections':4 if q.get('details')==['1'] else 0}],'points':[{'id':id,'at':now-n,'rx_bps':20000,'tx_bps':10000} for id in ['a','b'] for n in [60,30,0]],'domains':[{'client':'a','domain':'example.com','count':3,'first':now-30,'last':now},{'client':'a','domain':'deep.www.example.com','source':'xray-domain','count':2,'first':now-30,'last':now},{'client':'a','domain':'api.news.bbc.co.uk','source':'xray-dns','count':2,'first':now-30,'last':now},{'client':'a','domain':'192.0.2.5','source':'xray-ip','count':1,'first':now-30,'last':now}] if q.get('details')==['1'] else []}
+   if path=='/api/statistics/clients' and q.get('details')==['1']:body['domains']+=extra_domains
    if path in ['/api/statistics/realtime/history','/api/statistics/clients'] and q.get('minutes')==['120']:
     await asyncio.sleep(1)
    await r.fulfill(json=body,content_type='application/json')
@@ -88,6 +90,38 @@ async def main():
   await expect(page.locator('.monitor-details table')).to_have_count(1)
   await expect(page.get_by_role('img',name='Обращения к доменам: 7')).to_be_visible()
   await page.locator('.domain-chart').screenshot(path='output/playwright/domain-chart.png')
+  domain_button=page.locator('.domain-legend').get_by_role('button',name='example.com',exact=True)
+  await domain_button.focus();await page.keyboard.press('Enter')
+  dialog=page.get_by_role('dialog',name='example.com',exact=True)
+  await expect(dialog.get_by_role('cell',name='deep.www.example.com',exact=True)).to_be_visible()
+  await expect(dialog.locator('tbody tr')).to_have_count(2)
+  await page.keyboard.press('Escape');await expect(dialog).to_have_count(0);await expect(domain_button).to_be_focused()
+  extra_domains.extend({'client':'a','domain':f'api.domain{i:02d}.com','count':1,'source':'dns'} for i in range(12))
+  await page.get_by_label('Период статистики').select_option('10')
+  others=page.locator('.domain-legend').get_by_role('button',name='Остальные',exact=True)
+  await others.click()
+  dialog=page.get_by_role('dialog',name='Остальные домены',exact=True)
+  await expect(dialog.locator('tbody tr')).to_have_count(4)
+  await expect(dialog.get_by_role('button',name='domain07.com',exact=True)).to_have_count(0)
+  await dialog.get_by_role('button',name='domain11.com',exact=True).click()
+  dialog=page.get_by_role('dialog',name='domain11.com',exact=True)
+  await expect(dialog.get_by_role('cell',name='api.domain11.com',exact=True)).to_be_visible()
+  await page.set_viewport_size({'width':390,'height':844})
+  bounds=await dialog.bounding_box();assert bounds['x']>=0 and bounds['x']+bounds['width']<=390,bounds
+  assert await dialog.evaluate('(e)=>e.scrollWidth<=e.clientWidth')
+  await dialog.screenshot(path='output/playwright/domain-details-mobile.png')
+  await page.set_viewport_size({'width':1440,'height':1000})
+  await page.emulate_media(color_scheme='dark')
+  await dialog.screenshot(path='output/playwright/domain-details-dark.png')
+  await page.emulate_media(color_scheme='light')
+  await dialog.get_by_role('button',name='← Остальные домены',exact=True).click()
+  await expect(page.get_by_role('dialog').locator('tbody tr')).to_have_count(4)
+  await page.get_by_role('dialog').get_by_role('button',name='Закрыть',exact=True).click()
+  await expect(others).to_be_focused()
+  extra_domains.clear()
+  await page.get_by_label('Период статистики').select_option('5')
+  await expect(page.get_by_role('img',name='Обращения к доменам: 7')).to_be_visible()
+
   await page.set_viewport_size({'width':390,'height':844})
   await page.locator('.domain-chart').screenshot(path='output/playwright/domain-chart-mobile.png')
   assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
