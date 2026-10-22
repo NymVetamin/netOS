@@ -27,12 +27,14 @@ function serviceState(service: any): { label: string; tone: "ok" | "warn" | "dan
 export function DashboardHealth({ status }: { status: any }) {
   const r = status.resources;
   const memory = r?.memory_total > 0 && r?.memory_used != null ? 100 * r.memory_used / r.memory_total : null;
+  const disk = r?.disk_total > 0 && r?.disk_used != null ? 100 * r.disk_used / r.disk_total : null;
   const services = [...(status.services || [])].sort((a, b) => Number(b.state === "failed") - Number(a.state === "failed") || a.unit.localeCompare(b.unit));
   return <>
     <div className="tiles dashboard-resources" aria-label="Ресурсы роутера">
       <Tile icon="gauge" label="Процессор" value={r?.cpu_percent != null ? `${r.cpu_percent.toFixed(1)} %` : "—"} note={r?.cpu_percent != null ? "Загрузка всех ядер" : "Нет данных о загрузке"} />
       <Tile icon="layers" label="Оперативная память" value={memory != null ? `${memory.toFixed(1)} %` : "—"} note={memory != null ? `${formatBytes(r.memory_used)} из ${formatBytes(r.memory_total)} · без доступного кэша` : "Нет данных о памяти"} />
       <Tile icon="activity" label="Температура CPU" value={r?.cpu_temperature != null ? `${r.cpu_temperature.toFixed(1)} °C` : "—"} note={r?.cpu_temperature != null ? "Максимум по датчикам процессора" : "Датчик недоступен"} />
+      <Tile icon="hard-drive" label="Системный диск" value={disk != null ? `${disk.toFixed(1)} %` : "—"} note={disk != null ? `${formatBytes(r.disk_used)} из ${formatBytes(r.disk_total)} · раздел /` : "Нет данных о диске"} />
     </div>
     <Card title="Службы" subtitle="Текущее состояние">
       {!status.services_available ? <Empty>Не удалось получить состояние служб. Повторим при обновлении.</Empty> : !services.length ? <Empty>Службы netOS не найдены</Empty> :

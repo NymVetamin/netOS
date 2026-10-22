@@ -14,6 +14,8 @@ type dashboardResources struct {
 	MemoryTotal *uint64  `json:"memory_total"`
 	MemoryUsed  *uint64  `json:"memory_used"`
 	Temperature *float64 `json:"cpu_temperature"`
+	DiskTotal   *uint64  `json:"disk_total"`
+	DiskUsed    *uint64  `json:"disk_used"`
 }
 
 type dashboardMetrics struct {
@@ -105,6 +107,7 @@ func (m *dashboardMetrics) read(proc, sys string) dashboardResources {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := dashboardResources{Temperature: cpuTemperature(sys)}
+	result.DiskTotal, result.DiskUsed = filesystemUsage("/")
 	mem, _ := os.ReadFile(filepath.Join(proc, "meminfo"))
 	result.MemoryTotal, result.MemoryUsed = memoryUsage(string(mem))
 	stat, err := os.ReadFile(filepath.Join(proc, "stat"))

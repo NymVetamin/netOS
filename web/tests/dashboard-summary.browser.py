@@ -22,7 +22,7 @@ async def main():
                   "clients_online":0,"clients_total":0,"conntrack_count":23,
                   "firewall_enabled":True,"ipv6_mode":"off",
                   "client_summary":{"lan_online":0,"lan_total":0,"vpn_online":3,"vpn_total":12,"vpn_unknown":1},
-                  "resources":{"cpu_percent":12.5,"memory_total":4294967296,"memory_used":1073741824,"cpu_temperature":49},
+                  "resources":{"cpu_percent":12.5,"memory_total":4294967296,"memory_used":1073741824,"cpu_temperature":49,"disk_total":21474836480,"disk_used":8589934592},
                   "services_available":True,"services":[
                       {"unit":"netosd.service","state":"active","substate":"running"},
                       {"unit":"netos-unbound.service","state":"failed","substate":"failed"},
@@ -53,6 +53,8 @@ async def main():
         await expect(page.get_by_text("12.5 %",exact=True)).to_be_visible()
         await expect(page.get_by_text("25.0 %",exact=True)).to_be_visible()
         await expect(page.get_by_text("49.0 °C",exact=True)).to_be_visible()
+        await expect(page.get_by_text("40.0 %",exact=True)).to_be_visible()
+        await expect(page.locator('.dashboard-resources .tile')).to_have_count(4)
         await expect(page.locator('.dashboard-service').first).to_contain_text("Ошибка")
         await expect(page.locator('.dashboard-service').filter(has_text="Samba")).to_contain_text("Остановлена")
         await expect(page.get_by_text("Запускается / обновляется",exact=True)).to_be_visible()
@@ -65,15 +67,22 @@ async def main():
                 services=await page.locator('.dashboard-services').bounding_box()
                 resources=await page.locator('.dashboard-resources').bounding_box()
                 assert services['y']>resources['y']
+                if width >= 1280:
+                    rows = await page.locator('.tiles').evaluate_all('rows=>rows.slice(0,2).map(row=>[...row.children].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width]}))')
+                    assert len(rows)==2 and all(len(row)==4 for row in rows), rows
+                    assert all(abs(a[0]-b[0])<1 and abs(a[2]-b[2])<1 for a,b in zip(*rows)), rows
+                    assert all(max(e[1] for e in row)-min(e[1] for e in row)<1 for row in rows), rows
                 if width in (360,1280):
                     await page.screenshot(path=f"output/playwright/dashboard-summary-{theme}-{width}.png",full_page=True)
         mode="missing"
         await expect(page.get_by_text("Датчик недоступен",exact=True)).to_be_visible(timeout=10000)
+        await expect(page.get_by_text("Нет данных о диске",exact=True)).to_be_visible()
         await expect(page.get_by_text("Не удалось получить состояние служб.",exact=False)).to_be_visible()
         mode="error"
         await expect(page.get_by_text("Не удалось обновить состояние роутера",exact=True)).to_be_visible(timeout=10000)
         mode="healthy"
         await expect(page.get_by_text("49.0 °C",exact=True)).to_be_visible(timeout=10000)
+        await expect(page.get_by_text("40.0 %",exact=True)).to_be_visible()
         await expect(page.get_by_text("Не удалось обновить состояние роутера",exact=True)).to_have_count(0)
         assert not errors,errors
         assert not writes,writes
