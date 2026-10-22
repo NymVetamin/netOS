@@ -645,13 +645,25 @@ func (s *Subsystem) ensureAddress(ctx context.Context, name, address string) err
 
 func (s *Subsystem) ensureRoutes(ctx context.Context, ch config.Channel, name string) error {
 	table := fmt.Sprint(TableNumber(ch))
-	out, _ := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", table)
-	if !hasDefaultRoute(out, name) {
+	var normal, blackhole bool
+	reader, native := s.Runner.(interface {
+		ChannelRouteState(context.Context, int, string) (bool, bool, error)
+	})
+	var readErr error
+	if native {
+		normal, blackhole, readErr = reader.ChannelRouteState(ctx, TableNumber(ch), name)
+	}
+	if !native || readErr != nil {
+		// Preserve the command path on unsupported systems or a failed dump.
+		out, _ := s.Runner.Run(ctx, "ip", "-4", "route", "show", "table", table)
+		normal, blackhole = hasDefaultRoute(out, name), hasBlackholeDefault(out)
+	}
+	if !normal {
 		if err := s.replaceChannelDefaultWhenReady(ctx, name, table); err != nil {
 			return fmt.Errorf("маршрут канала: %w", err)
 		}
 	}
-	if !hasBlackholeDefault(out) {
+	if !blackhole {
 		if _, err := s.Runner.Run(ctx, "ip", "-4", "route", "replace", "blackhole", "default",
 			"metric", "1000", "table", table, "proto", fmt.Sprint(config.RouteProto)); err != nil {
 			return fmt.Errorf("kill-switch канала: %w", err)
