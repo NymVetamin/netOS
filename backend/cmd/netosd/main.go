@@ -283,6 +283,7 @@ func main() {
 	go ddnsController.Run(ctx, engine.Current)
 	go sambaController.Run(ctx, engine.Current, logger)
 	go services.NewKeaLinkMonitor(runner).Run(ctx, engine.Maintain, logger.Errorf)
+	go samba.NewDiscoveryMonitor(runner).Run(ctx, engine.Maintain, logger.Errorf)
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
 	// Дальше пароль знает только владелец машины.
