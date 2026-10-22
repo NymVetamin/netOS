@@ -164,6 +164,39 @@ func TestIPv6PlanApplyHealthOffAndPassthrough(t *testing.T) {
 	}
 }
 
+func TestIPv6OffReapplyPreservesGlobalSwitchAndRepairsInterfaceDrift(t *testing.T) {
+	withSysctlPaths(t)
+	cfg := config.Default()
+	cfg.IPv6.Mode = "off"
+	s := NewIPv6(&sysctlRunner{})
+	seedSysctls(t, s.values(cfg))
+	if err := os.MkdirAll(filepath.Join(netClassPath, "eth0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedSysctls(t, map[string]string{
+		"net.ipv6.conf.eth0.disable_ipv6": "", "net.ipv6.conf.eth0.accept_ra": "", "net.ipv6.conf.eth0.autoconf": "",
+	})
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	// The trailing newline models procfs reads and detects an unnecessary write.
+	// On Linux, rewriting all.disable_ipv6=1 disables ::1 as a side effect.
+	writeRawSysctl(t, "net.ipv6.conf.all.disable_ipv6", "1\n")
+	writeRawSysctl(t, "net.ipv6.conf.eth0.disable_ipv6", "0")
+	writeRawSysctl(t, "net.ipv6.conf.eth0.accept_ra", "2")
+	writeRawSysctl(t, "net.ipv6.conf.eth0.autoconf", "1")
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSysctl("net.ipv6.conf.all.disable_ipv6")
+	if err != nil || got != "1\n" {
+		t.Fatalf("unchanged global switch was rewritten: %q, %v", got, err)
+	}
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatalf("interface drift was not repaired: %v", err)
+	}
+}
+
 func TestIPv6ReturnsConfigProcAndInterfaceErrors(t *testing.T) {
 	withSysctlPaths(t)
 	cfg := config.Default()

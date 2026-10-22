@@ -284,7 +284,18 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := system.WriteFileAtomic(ipv6ConfPath, []byte(data), 0o644); err != nil {
 		return err
 	}
-	if err := applyValues(s.values(cfg)); err != nil {
+	values := s.values(cfg)
+	// Rewriting all.disable_ipv6=1 also disables IPv6 on lo, even when
+	// the global value already equals 1. Restoring lo below would recreate
+	// ::1 on every apply and interrupt loopback users/network discovery.
+	// Interface drift is still repaired individually below.
+	const disableAll = "net.ipv6.conf.all.disable_ipv6"
+	if values[disableAll] == "1" {
+		if current, err := readSysctl(disableAll); err == nil && strings.TrimSpace(current) == "1" {
+			delete(values, disableAll)
+		}
+	}
+	if err := applyValues(values); err != nil {
 		return err
 	}
 
