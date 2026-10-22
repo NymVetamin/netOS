@@ -16,6 +16,28 @@ func (h *ClientHistory) RealtimeIdentities(ctx context.Context, cfg *config.Conf
 	return h.identity(ctx, cfg)
 }
 func (h *ClientHistory) RealtimeCounters(ctx context.Context) (map[string]ClientCounter, error) {
+	if reader, ok := h.Runner.(interface {
+		NFTSetCounters(context.Context, string) (map[string]map[string]uint64, error)
+	}); ok {
+		sets, err := reader.NFTSetCounters(ctx, monitor.Table)
+		if err == nil {
+			result := map[string]ClientCounter{}
+			for name, counts := range sets {
+				for address, bytes := range counts {
+					v := result[address]
+					v.Address = address
+					if strings.HasPrefix(name, "up") {
+						v.TX += bytes
+					} else {
+						v.RX += bytes
+					}
+					result[address] = v
+				}
+			}
+			return result, nil
+		}
+		// Preserve the existing reader if native dumps are unavailable/interrupted.
+	}
 	raw, err := h.Runner.Run(ctx, "nft", "-j", "list", "table", "inet", monitor.Table)
 	if err != nil {
 		return nil, err
