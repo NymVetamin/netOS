@@ -25,14 +25,22 @@ export function MapViewport({ width, height, background, children, overlay }: { 
   useEffect(()=>()=>{if(frame.current!==undefined)cancelAnimationFrame(frame.current)},[]);
   useLayoutEffect(()=>{
     const el=canvas.current;if(!el)return;
+    const main=el.closest<HTMLElement>(".main");
+    const page=el.closest<HTMLElement>(".page");
     const fit=()=>{
       const rect=el.getBoundingClientRect();
       const scale=el.clientWidth>0?rect.width/el.clientWidth:1;
-      const available=(window.innerHeight-rect.top-24)/(scale || 1);
-      setCanvasHeight(Math.max(240,available));
+      // Measure the scroll container, including the page's bottom spacing.
+      // Undo scrolling so resizing a scrolled page cannot grow the canvas.
+      const bottom=main?.getBoundingClientRect().bottom ?? window.innerHeight;
+      const spacing=page ? page.getBoundingClientRect().bottom-rect.bottom : 24;
+      const available=(bottom-rect.top-spacing)/(scale || 1)-(main?.scrollTop || 0);
+      setCanvasHeight(Math.max(240,Math.floor(available)));
     };
     fit();const observer=new ResizeObserver(fit);
     observer.observe(el.parentElement || el);
+    if(main)observer.observe(main);
+    if(page)observer.observe(page);
     window.addEventListener("resize",fit);
     return()=>{observer.disconnect();window.removeEventListener("resize",fit)};
   },[width,height]);

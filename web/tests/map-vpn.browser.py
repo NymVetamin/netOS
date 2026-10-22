@@ -55,6 +55,19 @@ async def scenario(browser, mode):
     assert abs((await layout.bounding_box())['width']-box['width'])<4, 'details must not shrink the map'
     await expect(page.locator('.map-node-overlay')).to_have_count(0)
     await expect(graph.locator('.node.sel')).to_have_count(0)
+    # Checking only the SVG bottom misses overflow caused by page padding
+    # and by the app's scroll container ending above the viewport bottom.
+    if mode == 'healthy':
+        for width, height, zoom in [(1600,1000,1.05),(1366,768,1.05),(1920,1080,1.25),(1024,768,1),(390,844,1.05),(320,740,1.05)]:
+            await page.set_viewport_size({'width':width,'height':height})
+            await page.evaluate('(z)=>document.documentElement.style.setProperty("--zoom",z)',str(zoom))
+            await page.wait_for_function('''()=>{
+                const m=document.querySelector('.main'),p=document.querySelector('.page');
+                return m.scrollHeight<=m.clientHeight+1 && Math.abs(p.getBoundingClientRect().bottom-m.getBoundingClientRect().bottom)<2;
+            }''')
+        await page.evaluate('document.documentElement.style.removeProperty("--zoom")')
+        await page.set_viewport_size({'width':1600,'height':1000})
+        await page.wait_for_timeout(150)
     edges=graph.locator('..').locator('.map-edges')
     if mode!='no-vpn':
         server_edge=edges.locator('[data-vpn-server="wg1"]')
@@ -162,9 +175,18 @@ async def scenario(browser, mode):
                 await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
                 await expect(page.get_by_text("состояние неизвестно",exact=True)).to_be_visible()
                 await expect(page.get_by_text("192.0.2.10:4567",exact=True)).to_have_count(0)
+        if mode == 'healthy':
+            # Long details may legitimately exceed a short window; resizing
+            # while scrolled and closing them must restore the viewport fit.
+            await page.set_viewport_size({'width':1366,'height':450})
+            await page.wait_for_timeout(150)
+            await page.locator('.main').evaluate('e=>e.scrollTop=e.scrollHeight')
+            assert await page.locator('.main').evaluate('e=>e.scrollTop>0')
+            await page.set_viewport_size({'width':1366,'height':1000})
         await page.get_by_role('button',name='Закрыть сведения об узле',exact=True).click()
         await expect(page.locator('.map-node-overlay')).to_have_count(0)
         await expect(graph.locator('.node.sel')).to_have_count(0)
+        await page.wait_for_function('()=>{const m=document.querySelector(".main");return m.scrollHeight<=m.clientHeight+1}')
     if mode=='many':
         for theme in ('light','dark'):
             await page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
