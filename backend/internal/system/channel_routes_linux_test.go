@@ -54,6 +54,9 @@ func TestChannelRouteStateKernel(t *testing.T) {
 	if os.Getenv("NETOS_TEST_NETWORK_NAMESPACE") != "1" {
 		t.Skip("requires isolated network namespace")
 	}
+	// Removing the device does not remove the table's blackhole route.
+	// Clean it too so repeated runs in the same namespace start empty.
+	t.Cleanup(func() { exec.Command("ip", "route", "flush", "table", "1234").Run() })
 	ip := func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {
