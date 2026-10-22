@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -45,21 +44,8 @@ func (s *Server) startLocalControl() (func(), <-chan error, error) {
 		_ = os.Remove(ControlSocketPath)
 		return nil, nil, err
 	}
-	mux := http.NewServeMux()
-	root := func(h http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			h(w, r.WithContext(context.WithValue(r.Context(), ctxUser, "root")))
-		}
-	}
-	mux.HandleFunc("GET /draft", root(func(w http.ResponseWriter, r *http.Request) {
-		_, dirty, version := s.draftSnapshot()
-		writeJSON(w, http.StatusOK, map[string]any{"dirty": dirty, "draft_version": version})
-	}))
-	mux.HandleFunc("POST /apply", root(s.handleApply))
-	mux.HandleFunc("POST /confirm", root(s.handleConfirm))
-	mux.HandleFunc("GET /status", root(s.handleStatus))
 	server := &http.Server{
-		Handler: mux, ReadHeaderTimeout: 5 * time.Second,
+		Handler: s.localControlHandler(), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 15 * time.Minute,
 		MaxHeaderBytes: 8 << 10,
 	}

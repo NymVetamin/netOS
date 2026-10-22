@@ -232,14 +232,17 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		}
 		return m.run(ctx, m.Binary, "-plan")
 	case "apply", "confirm":
-		if len(args) != 1 {
-			return fmt.Errorf("команда %s не принимает параметры", args[0])
+		owner := ""
+		if args[0] == "apply" && len(args) == 3 && args[1] == "--user" && strings.TrimSpace(args[2]) != "" && !strings.HasPrefix(args[2], "-") {
+			owner = args[2]
+		} else if len(args) != 1 {
+			return fmt.Errorf("использование: netos apply [--user <логин>] или netos confirm")
 		}
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
 		if args[0] == "apply" {
-			return m.applyDraft(ctx)
+			return m.applyDraft(ctx, owner)
 		}
 		return m.confirmDraft(ctx)
 	case "render":
@@ -468,7 +471,7 @@ func (m *Manager) help() {
   netos start|stop|restart     управление службой
   netos plan                   что netOS изменит в живой системе, если применить
                                конфигурацию прямо сейчас
-  netos apply                  применить черновик панели через работающий netosd
+  netos apply [--user <логин>]  применить черновик; при нескольких указать владельца
   netos confirm                подтвердить изменения, ожидающие подтверждения
   netos render <артефакт>      вывести сгенерированный конфиг:
                                `+strings.Join(renderableArtifacts, ", ")+`
@@ -494,6 +497,12 @@ _netos() {
     fi
 
     case "$cmd" in
+        apply)
+            COMPREPLY=()
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "--user" -- "$cur"))
+            fi
+            ;;
         render)
             COMPREPLY=($(compgen -W "{{ARTIFACTS}}" -- "$cur"))
             ;;

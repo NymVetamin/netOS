@@ -33,6 +33,10 @@ COMP_WORDS=(netos uninstall --b); COMP_CWORD=2; _netos
 [[ "${COMPREPLY[*]}" == --backup ]]
 COMP_WORDS=(netos uninstall --no); COMP_CWORD=2; _netos
 [[ "${COMPREPLY[*]}" == --no-backup ]]
+COMP_WORDS=(netos apply --u); COMP_CWORD=2; _netos
+[[ "${COMPREPLY[*]}" == --user ]]
+COMP_WORDS=(netos apply --user ''); COMP_CWORD=3; _netos
+[[ "${#COMPREPLY[@]}" == 0 ]]
 COMP_WORDS=(netos ''); COMP_CWORD=1; _netos
 [[ " ${COMPREPLY[*]} " == *' status '* && " ${COMPREPLY[*]} " == *' uninstall '* ]]
 `

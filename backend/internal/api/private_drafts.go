@@ -8,7 +8,8 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
-// Panel accounts own their drafts; the root control socket has no panel role.
+// Panel accounts own their drafts; local root selects an owner explicitly
+// before using the same apply handler with administrative privileges.
 func usesPrivateDraft(r *http.Request) bool {
 	return userOf(r) != "" && (roleOf(r) == "admin" || roleOf(r) == "limited")
 }

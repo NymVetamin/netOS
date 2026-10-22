@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/netos-router/netos/internal/api"
 )
 
 type cliDraft struct {
+	Owner        string `json:"owner"`
 	Dirty        bool   `json:"dirty"`
 	DraftVersion uint64 `json:"draft_version"`
 }
@@ -83,16 +85,16 @@ func (m *Manager) controlRequest(ctx context.Context, method, path string, body 
 	return nil
 }
 
-func (m *Manager) applyDraft(ctx context.Context) error {
+func (m *Manager) applyDraft(ctx context.Context, owner string) error {
 	var draft cliDraft
-	if err := m.controlRequest(ctx, http.MethodGet, "/draft", nil, &draft); err != nil {
+	if err := m.controlRequest(ctx, http.MethodGet, "/draft?user="+url.QueryEscape(owner), nil, &draft); err != nil {
 		return err
 	}
 	if !draft.Dirty {
 		return fmt.Errorf("нет изменений в черновике")
 	}
 	var result cliApplyResult
-	if err := m.controlRequest(ctx, http.MethodPost, "/apply", map[string]any{
+	if err := m.controlRequest(ctx, http.MethodPost, "/apply?user="+url.QueryEscape(draft.Owner), map[string]any{
 		"draft_version": draft.DraftVersion,
 		"comment":       "netos apply",
 	}, &result); err != nil {
