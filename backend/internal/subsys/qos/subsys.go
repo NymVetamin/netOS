@@ -75,7 +75,12 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		} else if !afterLimits && beforeLimits {
 			kind = "delete"
 		}
-		actions = append(actions, apply.Action{Subsystem: s.Name(), Kind: kind, Target: "лимиты клиентов", Detail: "HTB и policing по MAC-адресам", Disruptive: true})
+		action := apply.Action{Subsystem: s.Name(), Kind: kind, Target: "лимиты клиентов", Detail: "HTB и policing по MAC-адресам", Disruptive: true}
+		if !qosChanged && s.clientRatesSafe(ctx, old, next) {
+			action.Disruptive = false
+			action.Confirmation = apply.ConfirmationSafe
+		}
+		actions = append(actions, action)
 	}
 	return actions, nil
 }

@@ -5,9 +5,11 @@ package qos
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
@@ -53,7 +55,7 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	s := New(r, t.TempDir())
 	cfg := config.Default()
 	cfg.Interfaces = []config.Interface{{ID: "lan", Name: "qos-repair0", Type: "physical", Enabled: true}}
-	cfg.Networks = []config.Network{{ID: "home", Interface: "lan", Enabled: true}}
+	cfg.Networks = []config.Network{{ID: "home", Interface: "lan", RouterAddress: "192.0.2.1/24", Enabled: true}}
 	cfg.Clients = []config.Client{{ID: "client", MAC: "02:00:00:00:00:01", Network: "home", DownKbit: 5000, UpKbit: 1000}}
 	cfg.Clients = append(cfg.Clients, config.Client{ID: "other", MAC: "02:00:00:00:00:02", Network: "home", DownKbit: 7000, UpKbit: 2000})
 	if err := s.Apply(ctx, cfg); err != nil {
@@ -64,8 +66,29 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	}
 	counted := &rateCountingRunner{Runner: r}
 	s.Runner = counted
+	old := *cfg
+	old.Clients = append([]config.Client(nil), cfg.Clients...)
 	cfg.Clients[0].DownKbit = 6000
 	cfg.Clients[0].UpKbit = 1500
+	planCtx := apply.WithManagementConnection(ctx, netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"))
+	for _, tc := range []struct {
+		mac  string
+		safe bool
+	}{{"02:00:00:00:00:99", true}, {"02:00:00:00:00:01", false}} {
+		if _, err := r.Run(ctx, "ip", "neigh", "replace", "192.0.2.2", "lladdr", tc.mac, "nud", "permanent", "dev", "qos-repair0"); err != nil {
+			t.Fatal(err)
+		}
+		actions, err := s.PlanContext(planCtx, &old, cfg)
+		if err != nil || len(actions) != 1 || (!apply.NeedsConfirmation(actions)) != tc.safe {
+			t.Fatalf("rate plan safe=%v: %v %v", tc.safe, actions, err)
+		}
+	}
+	if actions, err := s.Plan(&old, cfg); err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("unknown management path: %v %v", actions, err)
+	}
+	if counted.classChanges != 0 || counted.filterChanges != 0 || counted.qdiscDeletes != 0 {
+		t.Fatal("preview mutated queues")
+	}
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
