@@ -90,6 +90,9 @@ func hasClientLimits(clients []config.Client) bool {
 }
 
 func equalQoS(left, right config.QoS) bool {
+	if !left.Enabled && !right.Enabled {
+		return true // Stored settings do not configure queues until QoS is enabled.
+	}
 	if left.Enabled != right.Enabled || len(left.WANs) != len(right.WANs) {
 		return false
 	}

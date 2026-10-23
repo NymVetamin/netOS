@@ -54,6 +54,29 @@ func TestIntegrationCAKELifecycle(t *testing.T) {
 	cfg.Interfaces = []config.Interface{{ID: "uplink", Name: device, Type: "physical", Enabled: true}}
 	cfg.WANs = []config.WAN{{ID: "test-wan", Index: 91, Interface: "uplink", Proto: "dhcp", Enabled: true}}
 	cfg.QoS = config.QoS{Enabled: true, WANs: []config.QoSWAN{{WAN: "test-wan", UploadKbit: 8000, DownloadKbit: 12000, Diffserv: "diffserv4"}}}
+	// Stored settings while disabled must neither ask for confirmation nor
+	// replace any live qdisc. Enabling below still exercises the full lifecycle.
+	disabled := *cfg
+	disabled.QoS.Enabled = false
+	before, err := runner.Run(ctx, "tc", "qdisc", "show", "dev", device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, previous := range []*config.Config{config.Default(), &disabled} {
+		if actions, err := s.Plan(previous, &disabled); err != nil || len(actions) != 0 {
+			t.Fatalf("disabled settings plan=%+v err=%v", actions, err)
+		}
+		if err := s.Apply(ctx, &disabled); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := runner.Run(ctx, "tc", "qdisc", "show", "dev", device)
+	if err != nil || before != after {
+		t.Fatalf("disabled settings changed queues: before=%q after=%q err=%v", before, after, err)
+	}
+	if actions, err := s.Plan(&disabled, cfg); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("enable plan=%+v err=%v", actions, err)
+	}
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
