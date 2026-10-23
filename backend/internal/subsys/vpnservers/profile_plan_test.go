@@ -71,3 +71,50 @@ func TestWireGuardChannelDoesNotPlanServerRestart(t *testing.T) {
 		t.Fatalf("runtime repair: %v %v", actions, err)
 	}
 }
+
+func TestDisabledWireGuardPeerDoesNotPlanServerChange(t *testing.T) {
+	s, runner := newTestSubsystem(t)
+	old := serverConfig()
+	if err := s.Apply(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	next := serverConfig()
+	peer := next.VPNServers[0].Peers[0]
+	peer.ID, peer.Name, peer.Address, peer.Enabled = "disabled", "Stored peer", "10.9.0.3", false
+	next.VPNServers[0].Peers = append(next.VPNServers[0].Peers, peer)
+	for _, pair := range [][2]*config.Config{{old, next}, {next, old}} {
+		before, _ := RenderWireGuard(pair[0].VPNServers[0])
+		after, _ := RenderWireGuard(pair[1].VPNServers[0])
+		if before != after {
+			t.Fatal("disabled peer changed runtime configuration")
+		}
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("disabled peer plan: %v %v", actions, err)
+		}
+	}
+	if len(next.VPNServers[0].Peers) != 2 {
+		t.Fatal("comparison removed stored peer")
+	}
+	edited := *next
+	edited.VPNServers = append([]config.VPNServer(nil), next.VPNServers...)
+	edited.VPNServers[0].Peers = append([]config.VPNPeer(nil), next.VPNServers[0].Peers...)
+	edited.VPNServers[0].Peers[1].Name = "Edited stored peer"
+	edited.VPNServers[0].Peers[1].Address = "10.9.0.5"
+	if actions, err := s.Plan(next, &edited); err != nil || len(actions) != 0 {
+		t.Fatalf("disabled peer edit: %v %v", actions, err)
+	}
+	next.VPNServers[0].Peers[1].Enabled = true
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("enable lost confirmation: %v %v", actions, err)
+	}
+	next.VPNServers[0].Peers[1].Enabled = false
+	next.VPNServers[0].Peers[0].Address = "10.9.0.4"
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("active change lost confirmation: %v %v", actions, err)
+	}
+	next.VPNServers[0].Peers[0].Address = old.VPNServers[0].Peers[0].Address
+	runner.up = false
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("repair lost confirmation: %v %v", actions, err)
+	}
+}

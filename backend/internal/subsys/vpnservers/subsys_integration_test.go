@@ -115,6 +115,31 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	channelEdit.VPNServers[0].DefaultChannel = "alternate"
 	channelEdit.VPNServers[0].Peers = append([]config.VPNPeer(nil), next.VPNServers[0].Peers...)
 	channelEdit.VPNServers[0].Peers[0].Channel = "peer-channel"
+	stored := next
+	stored.VPNServers = append([]config.VPNServer(nil), next.VPNServers...)
+	stored.VPNServers[0].Peers = append([]config.VPNPeer(nil), next.VPNServers[0].Peers...)
+	_, storedPublic := wgKeypair(t)
+	stored.VPNServers[0].Peers = append(stored.VPNServers[0].Peers, config.VPNPeer{ID: "stored", Name: "Disabled peer", Address: "10.253.97.3", Credentials: map[string]string{"public_key": storedPublic}})
+	livePeers, err := runner.Run(ctx, "wg", "show", serverName, "peers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]*config.Config{{&next, &stored}, {&stored, &next}} {
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("disabled peer plan: %v %v", actions, err)
+		}
+		if err := s.Apply(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		peers, err := runner.Run(ctx, "wg", "show", serverName, "peers")
+		if err != nil || peers != livePeers {
+			t.Fatalf("disabled peer changed live peers: %v", err)
+		}
+		mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "1", "-W", "2", "10.253.97.1")
+	}
 	for _, pair := range [][2]*config.Config{{&next, &channelEdit}, {&channelEdit, &next}} {
 		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
 			t.Fatalf("routing-only server plan: %v %v", actions, err)
