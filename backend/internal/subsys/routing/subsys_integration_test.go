@@ -17,6 +17,18 @@ const routingTestNS = "netos-rttest"
 
 type routingNamespaceRunner struct{}
 
+type routingCountingRunner struct {
+	routingNamespaceRunner
+	mutations int
+}
+
+func (r *routingCountingRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if len(args) > 2 && args[1] == "rule" && (args[2] == "add" || args[2] == "del") {
+		r.mutations++
+	}
+	return r.routingNamespaceRunner.Run(ctx, name, args...)
+}
+
 func (routingNamespaceRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	all := append([]string{"netns", "exec", routingTestNS, name}, args...)
 	out, err := exec.Command("ip", all...).CombinedOutput()
@@ -50,6 +62,24 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 	}
 	if err := s.applyRules(context.Background(), cfg); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	counted := &routingCountingRunner{}
+	s.Runner = counted
+	if err := s.applyRules(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counted.mutations != 0 {
+		t.Fatalf("unchanged kernel rules recreated: %d", counted.mutations)
+	}
+	mustRoutingNS(t, "ip", "-4", "rule", "del", "priority", "20123")
+	if err := s.applyRules(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counted.mutations != 1 {
+		t.Fatalf("missing rule not restored: %d", counted.mutations)
 	}
 	if err := s.Health(context.Background(), cfg); err != nil {
 		t.Fatal(err)

@@ -230,15 +230,15 @@ func routeLineKey(line string) string {
 	return routeKey(table, destination, routeType, gateway, iface, metric)
 }
 
-// applyRules пересобирает правила выбора таблиц.
-//
-// Правила снимаются и ставятся заново целиком: их немного, а вычислять
-// разницу для команды, у которой нет replace, дороже и рискованнее, чем
-// пересоздать набор.
+// applyRules сохраняет полностью совпадающий набор правил выбора таблиц.
+// При расхождении остаётся полная пересборка принадлежащего netOS диапазона.
 func (s *Subsystem) applyRules(ctx context.Context, cfg *config.Config) error {
 	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return err
+	}
+	if rulesAlreadyApplied(out, cfg) {
+		return nil
 	}
 	for _, line := range strings.Split(out, "\n") {
 		prio := leadingPriority(line)
