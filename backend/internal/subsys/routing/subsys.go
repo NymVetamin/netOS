@@ -43,6 +43,10 @@ func New(r system.Runner) *Subsystem { return &Subsystem{Runner: r} }
 func (s *Subsystem) Name() string { return "routing" }
 
 func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
+	return s.PlanContext(context.Background(), old, new)
+}
+
+func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
 
 	if old == nil {
@@ -60,7 +64,11 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 	}
 
 	if !reflect.DeepEqual(old.Routing.Tables, new.Routing.Tables) {
-		actions = append(actions, apply.Action{Kind: "update", Target: "таблицы маршрутизации"})
+		action := apply.Action{Kind: "update", Target: "таблицы маршрутизации"}
+		if s.unusedTablesOnly(ctx, old, new) {
+			action.Confirmation = apply.ConfirmationSafe
+		}
+		actions = append(actions, action)
 	}
 	if !reflect.DeepEqual(enabledRoutes(old), enabledRoutes(new)) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "статические маршруты"})

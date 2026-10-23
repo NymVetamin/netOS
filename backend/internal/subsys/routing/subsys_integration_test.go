@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 )
 
@@ -112,6 +113,26 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 			t.Fatalf("missing %q in:\n%s", want, output)
 		}
 	}
+	emptyTable := *cfg
+	emptyTable.Routing.Tables = []config.RouteTable{{Name: "qa-empty", Number: 209}}
+	for _, pair := range [][2]*config.Config{{cfg, &emptyTable}, {&emptyTable, cfg}} {
+		actions, err := s.Plan(pair[0], pair[1])
+		if err != nil || len(actions) != 1 || actions[0].Confirmation != apply.ConfirmationSafe {
+			t.Fatalf("unused table plan: %v %v", actions, err)
+		}
+	}
+	mustRoutingNS(t, "ip", "-6", "route", "add", "unreachable", "2001:db8:209::/48", "table", "209")
+	actions, err := s.Plan(cfg, &emptyTable)
+	if err != nil || len(actions) != 1 || actions[0].Confirmation == apply.ConfirmationSafe {
+		t.Fatalf("live IPv6 table use ignored: %v %v", actions, err)
+	}
+	mustRoutingNS(t, "ip", "-6", "route", "del", "unreachable", "2001:db8:209::/48", "table", "209")
+	mustRoutingNS(t, "ip", "-4", "rule", "add", "priority", "12345", "lookup", "209")
+	actions, err = s.Plan(cfg, &emptyTable)
+	if err != nil || len(actions) != 1 || actions[0].Confirmation == apply.ConfirmationSafe {
+		t.Fatalf("foreign rule table use ignored: %v %v", actions, err)
+	}
+	mustRoutingNS(t, "ip", "-4", "rule", "del", "priority", "12345")
 
 	clean := config.Default()
 	if err := s.applyRoutes(context.Background(), clean); err != nil {
