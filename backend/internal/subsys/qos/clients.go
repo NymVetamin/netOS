@@ -118,6 +118,9 @@ func desiredClientInterfaces(cfg *config.Config) ([]clientInterface, error) {
 }
 
 func (s *Subsystem) applyClientInterface(ctx context.Context, item clientInterface) error {
+	if updated, err := s.updateClientRates(ctx, item); updated {
+		return err
+	}
 	if err := s.deleteClientQdisc(ctx, item.Name, "root"); err != nil {
 		return err
 	}
