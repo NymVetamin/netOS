@@ -510,6 +510,7 @@ code, pre {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .page {
@@ -1007,6 +1008,7 @@ svg.glyph.glyph-os {
 }
 
 @media (max-width: 860px) {
+  html { scrollbar-gutter: stable; }
   .xrows {
     --xcols: 34px minmax(0, 1fr) 64px;
   }
@@ -1912,6 +1914,7 @@ pre.output {
   }
   .main {
     overflow: visible;
+    scrollbar-gutter: auto;
   }
   .card-head {
     align-items: stretch;
