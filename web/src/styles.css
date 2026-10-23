@@ -1815,8 +1815,8 @@ pre.output {
 .hl-ok { color: var(--ok); font-weight: 500; }
 .hl-bad { color: var(--danger); font-weight: 500; }
 
-/* Закрепление адреса в строке устройства: булавка рядом с адресом. */
-.pin-btn {
+/* Булавка — только индикатор; изменение привязки в карточке клиента. */
+.reservation-pin {
   display: inline-grid;
   place-items: center;
   width: 22px;
@@ -1828,21 +1828,11 @@ pre.output {
   background: none;
   color: var(--text-faint);
   vertical-align: middle;
-  cursor: pointer;
-  opacity: 0.55;
-}
-
-.pin-btn:hover,
-.pin-btn:focus-visible {
-  background: var(--surface-2);
-  color: var(--text);
-  opacity: 1;
-}
-
-.pin-btn.on {
   color: var(--accent);
-  opacity: 1;
 }
+.client-reservation { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.client-reservation > strong { display: block; margin-bottom: .75rem; }
+.client-reservation-error { color: var(--danger); margin-bottom: .5rem; }
 
 .spinner {
   width: 15px;

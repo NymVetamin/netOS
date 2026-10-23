@@ -6,6 +6,8 @@ import { vpnMapServers } from "../mapVPN";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
 import { Icon } from "../icons";
+import { ReservationEditor } from "../ReservationEditor";
+import { reservationError, reservationNetwork } from "../clientReservation";
 
 function ClientChannel({ config, value, inherited, source, label, onChange }: {
   config: any; value: string; inherited?: string; source: string; label: string; onChange: (value: string) => void;
@@ -101,11 +103,8 @@ export function Clients({
         Object.assign(existing, changes);
         return;
       }
-      const live = clients.find((client) => client.mac === mac);
-      const detectedNetwork = (config.networks || []).find((network: any) => {
-        const iface = (config.interfaces || []).find((item: any) => item.id === network.interface);
-        return iface?.name === live?.interface;
-      })?.id || "";
+      const live = devices.find((client) => client.mac === mac);
+      const detectedNetwork = live ? reservationNetwork(config, live) : "";
       draft.clients.push({
         id: "cl-" + mac.replace(/:/g, ""),
         mac,
@@ -119,48 +118,8 @@ export function Clients({
     });
   }
 
-  // Булавка рядом с адресом: закрепить его за устройством или открепить.
-  const pinButton = (c: any) => {
-    if (!reserved.has(String(c.mac).toLowerCase()) && (!c.ip || (config.networks || []).length === 0)) return null;
-    const pinned: any = reserved.get(String(c.mac).toLowerCase());
-    return <button
-                            type="button"
-                            className={`pin-btn ${pinned ? "on" : ""}`}
-                            aria-pressed={!!pinned}
-                            aria-label={pinned ? `Открепить адрес устройства ${c.mac}` : `Закрепить адрес за устройством ${c.mac}`}
-                            title={pinned ? `Адрес ${pinned.ip} закреплён за устройством. Нажмите, чтобы открепить` : "Закрепить этот адрес за устройством"}
-                            onClick={(event) => { event.preventDefault(); togglePin(c); }}
-                          >
-                            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M10.2 1.3 14.7 5.8l-1.1 1.1-.9-.2-2.4 2.4.2 2.6-1.2 1.2-2.6-2.6L3 14l-.9-.1L2 13l3.7-3.7L3.1 6.7l1.2-1.2 2.6.2 2.4-2.4-.2-.9z" /></svg>
-                          </button>;
-  };
-
   const known = new Map((config.clients || []).map((c: any) => [String(c.mac).toLowerCase(), c]));
-  const reserved = new Map((config.dhcp?.reservations || []).map((r: any) => [String(r.mac).toLowerCase(), r]));
-
-  // Закрепить за устройством адрес, который у него сейчас, — одним нажатием в
-  // его же строке, включая сохранённое отключённое устройство.
-  function togglePin(client: any) {
-    const mac = String(client.mac).toLowerCase();
-    patch((draft) => {
-      draft.dhcp = draft.dhcp || {};
-      const list = draft.dhcp.reservations || [];
-      if (list.some((r: any) => String(r.mac).toLowerCase() === mac)) {
-        draft.dhcp.reservations = list.filter((r: any) => String(r.mac).toLowerCase() !== mac);
-        return;
-      }
-      const network = (draft.networks || []).find((item: any) =>
-        (draft.interfaces || []).find((iface: any) => iface.id === item.interface)?.name === client.interface)?.id
-        || draft.networks?.[0]?.id || "";
-      // Отображаемое имя может содержать пробелы и кириллицу. В DHCP берём
-      // только корректное DNS-имя, полученное от самого устройства.
-      const hostname = String(client.hostname || "");
-      const name = hostname.length <= 253 && hostname.split(".").every(label =>
-        label.length <= 63 && /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(label)
-      ) ? hostname : "";
-      draft.dhcp.reservations = [...list, { id: newID("res"), enabled: true, mac, ip: client.ip, hostname: name, network }];
-    });
-  }
+  const reserved = new Map<string, any>((config.dhcp?.reservations || []).map((r: any) => [String(r.mac).toLowerCase(), r]));
 
   return (
     <>
@@ -198,7 +157,7 @@ export function Clients({
                 id={`lan:${c.mac}`}
                 cells={[<strong>{cfgClient?.name || c.hostname || "без имени"}</strong>,
                   <span className="dim">{[c.interface, c.source === "dhcp" ? "DHCP" : c.source === "arp" ? "ARP" : c.source === "reservation" ? "Закреплённый адрес" : "DHCP + ARP", lease ? `до ${formatTime(lease.expires)}` : ""].filter(Boolean).join(" · ")}</span>,
-                  <span className="mono">{c.ip || "—"}{pinButton(c)}</span>,
+                  <span className="mono">{c.ip || "—"}{reserved.get(c.mac)?.enabled && <span className="reservation-pin" title={`Закреплён адрес ${reserved.get(c.mac)?.ip}`} aria-label="Адрес закреплён"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M10.2 1.3 14.7 5.8l-1.1 1.1-.9-.2-2.4 2.4.2 2.6-1.2 1.2-2.6-2.6L3 14l-.9-.1L2 13l3.7-3.7L3.1 6.7l1.2-1.2 2.6.2 2.4-2.4-.2-.9z" /></svg></span>}</span>,
                   <ClientChannel config={config} value={cfgClient?.channel || ""} inherited={network?.default_channel || (network ? "direct" : "")}
                     source="По сегменту" label={`Канал для устройства ${c.mac}`} onChange={channel => updateClient(c.mac, { channel })} />,
                   loadError ? <Badge tone="neutral">данные устарели</Badge> : cfgClient?.blocked ? <Badge tone="danger">заблокирован</Badge> : <Badge tone={c.online ? "ok" : "neutral"}>{c.online ? "в сети" : "молчит"}</Badge>]}
@@ -212,14 +171,8 @@ export function Clients({
                             onChange={(e) => updateClient(c.mac, { name: e.target.value })}
                           /></Cap>
                   <Cap label="MAC"><span className="mono">{c.mac}</span></Cap>
-                  <Cap label="Сегмент"><select aria-label={`Сегмент для устройства ${c.mac}`} value={cfgClient?.network || ""} onChange={(e) => updateClient(c.mac, { network: e.target.value })}>
-                          <option value="">— не выбран —</option>
-                          {(config.networks || []).filter((network: any) => network.enabled).map((network: any) => (
-                            <option key={network.id} value={network.id}>{network.name || network.id}</option>
-                          ))}
-                        </select></Cap>
-                  <Cap label="Лимит загрузки, Кбит/с"><input aria-label="Лимит загрузки" title="Загрузка, Кбит/с" type="number" min={0} max={10000000} placeholder="без лимита" value={cfgClient?.down_kbit || 0} onChange={(e) => updateClient(c.mac, { down_kbit: Number(e.target.value) })} /></Cap>
-                  <Cap label="Лимит отдачи, Кбит/с"><input aria-label="Лимит отдачи" title="Отдача, Кбит/с" type="number" min={0} max={10000000} placeholder="без лимита" value={cfgClient?.up_kbit || 0} onChange={(e) => updateClient(c.mac, { up_kbit: Number(e.target.value) })} /></Cap>
+                  <Cap label="Лимит загрузки, Мбит/с"><input aria-label="Лимит загрузки" title="Загрузка, Мбит/с; 0 — без лимита" type="number" min={0} max={10000} step={0.001} placeholder="без лимита" value={(cfgClient?.down_kbit || 0) / 1000} onChange={(e) => updateClient(c.mac, { down_kbit: Math.round(Number(e.target.value) * 1000) })} /></Cap>
+                  <Cap label="Лимит отдачи, Мбит/с"><input aria-label="Лимит отдачи" title="Отдача, Мбит/с; 0 — без лимита" type="number" min={0} max={10000} step={0.001} placeholder="без лимита" value={(cfgClient?.up_kbit || 0) / 1000} onChange={(e) => updateClient(c.mac, { up_kbit: Math.round(Number(e.target.value) * 1000) })} /></Cap>
                   <Cap label="Комментарий"><input
                           type="text"
                           aria-label={`Комментарий устройства ${c.mac}`}
@@ -227,6 +180,8 @@ export function Clients({
                           onChange={(e) => updateClient(c.mac, { comment: e.target.value })}
                         /></Cap>
                 </div>
+                <ReservationEditor key={`${c.mac}:${reserved.get(c.mac)?.id || ''}:${reserved.get(c.mac)?.ip || ''}:${reserved.get(c.mac)?.network || ''}`}
+                  config={config} client={c} reservation={reserved.get(c.mac)} devices={[...clients, ...leases]} patch={patch} />
                 <div className="row-actions end"><button
                           className={`btn sm ${cfgClient?.blocked ? "danger" : ""}`}
                           onClick={() => updateClient(c.mac, { blocked: !cfgClient?.blocked })}
@@ -299,6 +254,7 @@ function AddReservation({
               const c = clients.find((x) => x.mac === e.target.value);
               if (c?.hostname) setHostname(c.hostname);
               if (c?.ip) setIp(c.ip);
+              if (c) setNetwork(reservationNetwork(config, c));
             }}
           >
             <option value="">— выберите или введите MAC ниже —</option>
@@ -355,6 +311,9 @@ function AddReservation({
         className="btn primary"
         disabled={!mac || !ip}
         onClick={() => {
+          const problem = reservationError(config, mac, ip, network, clients)
+            || ((config.dhcp?.reservations || []).some((r: any) => String(r.mac).toLowerCase() === mac.toLowerCase()) ? "Для этого MAC уже есть закрепление — измените его в настройках клиента" : "");
+          if (problem) { setError(problem); return; }
           setError("");
           patch((d) => {
             d.dhcp = d.dhcp || {};

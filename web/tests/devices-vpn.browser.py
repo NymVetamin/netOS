@@ -50,7 +50,7 @@ async def scenario(browser, mode):
     await page.route("**/*",route_request)
     await page.goto("http://netos-ui.test/#clients")
     await expect(page.get_by_text("Offline laptop",exact=True)).to_be_visible()
-    await expect(page.get_by_role("button",name="Открепить адрес устройства aa:bb:cc:dd:ee:ff",exact=True)).to_be_visible()
+    await expect(page.get_by_label("Адрес закреплён",exact=True)).to_be_visible()
     await expect(page.get_by_text("Закреплённые адреса",exact=True)).to_have_count(0)
     await expect(page.get_by_text("Закрепить адрес",exact=True)).to_have_count(0)
     await expect(page.get_by_role("button",name="Добавить по MAC",exact=True)).to_be_visible()
@@ -121,8 +121,9 @@ async def scenario(browser, mode):
     await page.set_viewport_size({"width":390,"height":844})
     assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Horizontal overflow"
     assert not errors,errors
+    await page.get_by_text("Offline laptop",exact=True).click()
     async with page.expect_response(lambda r: r.request.method=="PUT" and r.url.endswith("/api/config")):
-        await page.get_by_role("button",name="Открепить адрес устройства aa:bb:cc:dd:ee:ff",exact=True).click()
+        await page.get_by_role("button",name="Снять закрепление",exact=True).click()
     assert cfg["dhcp"]["reservations"]==[]
     await page.reload()
     await expect(page.get_by_text("Offline laptop",exact=True)).to_have_count(0)
