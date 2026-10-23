@@ -72,6 +72,7 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 	cfg.VPNServers = []config.VPNServer{{ID: "wg", Index: 2, Type: "wireguard", Enabled: true, Subnet: "10.9.0.1/24", Port: 51820, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.9.0.2"}}}}
 	cfg.VPNServers = append(cfg.VPNServers, config.VPNServer{ID: "oc", Index: 3, Type: "ocserv", Enabled: true, Subnet: "10.10.0.1/24", Port: 14443, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.10.0.2"}}})
 	cfg.VPNServers = append(cfg.VPNServers, config.VPNServer{ID: "ike", Index: 4, Type: "ikev2", Enabled: true, Subnet: "10.11.0.1/24", Port: 500, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.11.0.2"}}})
+	cfg.VPNServers = append(cfg.VPNServers, config.VPNServer{ID: "l2tp", Index: 5, Type: "l2tp", Enabled: true, Subnet: "10.12.0.1/24", Port: 1701, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.12.0.2"}}})
 	s := New(r, t.TempDir())
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -127,7 +128,7 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 	input, output, finish := start()
 	defer finish()
 	check(input, output, "initial")
-	for _, mode := range []string{"client", "segment", "policy", "wg default", "wg peer", "wg policy", "oc default", "oc peer", "oc policy", "ike default", "ike peer", "ike policy", "direct"} {
+	for _, mode := range []string{"client", "segment", "policy", "wg default", "wg peer", "wg policy", "oc default", "oc peer", "oc policy", "ike default", "ike peer", "ike policy", "l2tp default", "l2tp peer", "l2tp policy", "direct"} {
 		data, _ := json.Marshal(cfg)
 		var before config.Config
 		if err := json.Unmarshal(data, &before); err != nil {
@@ -142,6 +143,8 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 		cfg.VPNServers[1].Peers[0].Channel = ""
 		cfg.VPNServers[2].DefaultChannel = "direct"
 		cfg.VPNServers[2].Peers[0].Channel = ""
+		cfg.VPNServers[3].DefaultChannel = "direct"
+		cfg.VPNServers[3].Peers[0].Channel = ""
 		switch mode {
 		case "client":
 			cfg.Clients[0].Channel = "vpn"
@@ -167,6 +170,12 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 			cfg.VPNServers[2].Peers[0].Channel = "vpn"
 		case "ike policy":
 			cfg.Policies = []config.Policy{{ID: "p", Enabled: true, Channel: "vpn", VPNServer: "ike", VPNPeer: "peer"}}
+		case "l2tp default":
+			cfg.VPNServers[3].DefaultChannel = "vpn"
+		case "l2tp peer":
+			cfg.VPNServers[3].Peers[0].Channel = "vpn"
+		case "l2tp policy":
+			cfg.Policies = []config.Policy{{ID: "p", Enabled: true, Channel: "vpn", VPNServer: "l2tp", VPNPeer: "peer"}}
 		}
 		actions, err := s.PlanContext(ctx, &before, cfg)
 		if err != nil {
