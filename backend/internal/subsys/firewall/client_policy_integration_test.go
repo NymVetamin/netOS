@@ -163,6 +163,43 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 		check(freshIn, freshOut, "new-"+mode)
 		closeFresh()
 	}
+	for _, blocked := range []bool{true, false} {
+		t.Log(run("ip", "-4", "-j", "neigh", "show", "to", "192.0.2.2", "dev", "lan0"))
+		before := *cfg
+		before.Clients = append([]config.Client(nil), cfg.Clients...)
+		cfg.Clients = append([]config.Client(nil), cfg.Clients[:1]...)
+		cfg.Clients = append(cfg.Clients, config.Client{ID: "other", MAC: "02:00:00:00:00:03", Blocked: blocked})
+		actions, err := s.PlanContext(ctx, &before, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range actions {
+			actions[i].Subsystem = s.Name()
+		}
+		if len(actions) == 0 || apply.NeedsConfirmation(actions) {
+			t.Fatalf("other client block=%v plan=%+v", blocked, actions)
+		}
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		check(input, output, fmt.Sprintf("other-block-%v", blocked))
+		freshIn, freshOut, closeFresh := start()
+		check(freshIn, freshOut, "new-after-block")
+		closeFresh()
+	}
+	selfBlocked := *cfg
+	selfBlocked.Clients = append([]config.Client(nil), cfg.Clients...)
+	selfBlocked.Clients[0].Blocked = true
+	selfActions, err := s.PlanContext(ctx, cfg, &selfBlocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range selfActions {
+		selfActions[i].Subsystem = s.Name()
+	}
+	if !apply.NeedsConfirmation(selfActions) {
+		t.Fatal("administrator block lost timer")
+	}
 	run("ip", "route", "del", "default", "table", "1001")
 	run("ip", "route", "add", "blackhole", "default", "table", "1001")
 	before := *cfg

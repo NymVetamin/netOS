@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -46,8 +47,17 @@ func clientRoutingOnly(old, next *config.Config) bool {
 // This is deliberately limited to a known direct IPv4 LAN management socket.
 func (s *Subsystem) managementRoutingSafe(ctx context.Context, cfg *config.Config) bool {
 	remote, local := apply.ManagementConnection(ctx)
-	if s.Runner == nil || !remote.Is4() || !local.Is4() || remote.IsLoopback() || remote.IsUnspecified() || remote.IsMulticast() {
+	iface := managementLANInterface(ctx, cfg)
+	if s.Runner == nil || iface == "" {
 		return false
+	}
+	return s.managementReverseRoutesSafe(ctx, cfg, remote, local, iface)
+}
+
+func managementLANInterface(ctx context.Context, cfg *config.Config) string {
+	remote, local := apply.ManagementConnection(ctx)
+	if !remote.Is4() || !local.Is4() || remote.IsLoopback() || remote.IsUnspecified() || remote.IsMulticast() {
+		return ""
 	}
 	iface := ""
 	for _, n := range cfg.Networks {
@@ -58,15 +68,19 @@ func (s *Subsystem) managementRoutingSafe(ctx context.Context, cfg *config.Confi
 		for _, link := range cfg.Interfaces {
 			if link.ID == n.Interface && link.Enabled {
 				if iface != "" && iface != link.Name {
-					return false
+					return ""
 				}
 				iface = link.Name
 			}
 		}
 	}
 	if iface == "" || strings.ContainsAny(iface, "/\x00\r\n") {
-		return false
+		return ""
 	}
+	return iface
+}
+
+func (s *Subsystem) managementReverseRoutesSafe(ctx context.Context, cfg *config.Config, remote, local netip.Addr, iface string) bool {
 	rules, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return false
@@ -158,4 +172,86 @@ func (s *Subsystem) managementRoutingSafe(ctx context.Context, cfg *config.Confi
 		}
 	}
 	return true
+}
+
+func clientAccessOnly(old, next *config.Config) bool {
+	strip := func(c *config.Config) *config.Config {
+		out := withoutRuleAnnotations(c)
+		out.Clients = append([]config.Client(nil), c.Clients...)
+		for i := range out.Clients {
+			out.Clients[i].Blocked = false
+		}
+		return out
+	}
+	a, err := Build(strip(old))
+	if err != nil {
+		return false
+	}
+	b, err := Build(strip(next))
+	return err == nil && a.IPv4 == b.IPv4 && a.IPv6 == b.IPv6
+}
+
+func (s *Subsystem) clientAccessSafe(ctx context.Context, old, next *config.Config) bool {
+	if !s.managementRoutingSafe(ctx, next) {
+		return false
+	}
+	previous := map[string]bool{}
+	for _, c := range old.Clients {
+		if c.Blocked {
+			mac, err := net.ParseMAC(c.MAC)
+			if err != nil || len(mac) != 6 {
+				return false
+			}
+			previous[mac.String()] = true
+		}
+	}
+	blocked := map[string]bool{}
+	for _, c := range next.Clients {
+		if c.Blocked {
+			mac, err := net.ParseMAC(c.MAC)
+			if err != nil || len(mac) != 6 {
+				return false
+			}
+			if !previous[mac.String()] {
+				blocked[mac.String()] = true
+			}
+		}
+	}
+	if len(blocked) == 0 {
+		return true
+	}
+	remote, _ := apply.ManagementConnection(ctx)
+	iface := managementLANInterface(ctx, next)
+	out, err := s.Runner.Run(ctx, "ip", "-4", "-j", "neigh", "show", "to", remote.String(), "dev", iface)
+	if err != nil {
+		return false
+	}
+	var entries []struct {
+		Dst   string   `json:"dst"`
+		Dev   string   `json:"dev"`
+		MAC   string   `json:"lladdr"`
+		State []string `json:"state"`
+	}
+	if json.Unmarshal([]byte(out), &entries) != nil || len(entries) != 1 {
+		return false
+	}
+	e := entries[0]
+	// iproute2 omits dev when the command already filters by that interface.
+	if e.Dst != remote.String() || (e.Dev != "" && e.Dev != iface) {
+		return false
+	}
+	mac, err := net.ParseMAC(e.MAC)
+	if err != nil || len(mac) != 6 {
+		return false
+	}
+	valid := false
+	for _, state := range e.State {
+		switch state {
+		case "REACHABLE", "STALE", "DELAY", "PROBE", "PERMANENT":
+			valid = true
+		default:
+			return false
+		}
+	}
+	return valid && !blocked[strings.ToLower(mac.String())]
 }

@@ -16,6 +16,7 @@ type confirmationRunner struct {
 	rules, rpf, route string
 	routeErr          error
 	queries           int
+	neighbours        string
 }
 
 func (r *confirmationRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -24,6 +25,9 @@ func (r *confirmationRunner) Run(ctx context.Context, name string, args ...strin
 	}
 	if name == "ip" && strings.Join(args, " ") == "-4 rule show" {
 		return r.rules, nil
+	}
+	if name == "ip" && len(args) > 2 && args[2] == "neigh" {
+		return r.neighbours, nil
 	}
 	if name == "ip" && len(args) > 3 && args[1] == "-j" {
 		r.queries++
@@ -126,6 +130,58 @@ func TestClientRoutingAllowlistPreservesOtherChanges(t *testing.T) {
 			}
 			if got := clientRoutingOnly(old, &next); got != safe {
 				t.Fatalf("allowlist %s=%v expected %v", mode, got, safe)
+			}
+		})
+	}
+}
+
+func TestClientAccessConfirmationProtectsAdministrator(t *testing.T) {
+	for _, mode := range []string{"other client", "filtered device", "unblock", "self", "self alternate MAC", "missing neighbour", "failed neighbour", "wrong interface", "wrong IP", "mixed filter"} {
+		t.Run(mode, func(t *testing.T) {
+			old, _ := configuredFirewall(t)
+			old.Clients = []config.Client{{ID: "other", MAC: "02:00:00:00:00:03"}}
+			if mode == "unblock" {
+				old.Clients[0].Blocked = true
+			}
+			if mode == "self" {
+				old.Clients[0].MAC = "02:00:00:00:00:02"
+			}
+			if mode == "self alternate MAC" {
+				old.Clients[0].MAC = "02-00-00-00-00-02"
+			}
+			next := *old
+			next.Clients = append([]config.Client(nil), old.Clients...)
+			next.Clients[0].Blocked = !old.Clients[0].Blocked
+			rs, err := Build(old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := &confirmationRunner{firewallRunner: cleanFirewallRunner(rs), rules: "0: from all lookup local\n32766: from all lookup main", rpf: "2\n2", route: `[{"dev":"lan0"}]`, neighbours: `[{"dst":"192.0.2.2","dev":"lan0","lladdr":"02:00:00:00:00:02","state":["REACHABLE"]}]`}
+			switch mode {
+			case "filtered device":
+				r.neighbours = strings.ReplaceAll(r.neighbours, `"dev":"lan0",`, "")
+			case "missing neighbour":
+				r.neighbours = "[]"
+			case "failed neighbour":
+				r.neighbours = strings.ReplaceAll(r.neighbours, "REACHABLE", "FAILED")
+			case "wrong interface":
+				r.neighbours = strings.ReplaceAll(r.neighbours, "lan0", "other0")
+			case "wrong IP":
+				r.neighbours = strings.ReplaceAll(r.neighbours, "192.0.2.2", "192.0.2.9")
+			case "mixed filter":
+				next.Firewall.OutputPolicy = "drop"
+			}
+			ctx := apply.WithManagementConnection(context.Background(), netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"))
+			actions, err := New(r, t.TempDir()).PlanContext(ctx, old, &next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range actions {
+				actions[i].Subsystem = "firewall"
+			}
+			want := mode == "other client" || mode == "filtered device" || mode == "unblock"
+			if safe := !apply.NeedsConfirmation(actions); safe != want {
+				t.Fatalf("safe=%v want=%v actions=%+v", safe, want, actions)
 			}
 		})
 	}
