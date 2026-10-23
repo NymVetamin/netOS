@@ -52,6 +52,46 @@ func TestJournalParsingAndInvalidData(t *testing.T) {
 
 type logRunner struct{ calls []string }
 
+type orderedDNSRunner struct{ logRunner }
+
+func (r *orderedDNSRunner) Run(_ context.Context, _ string, _ ...string) (string, error) {
+	return `{"__REALTIME_TIMESTAMP":"1792486481000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 127.0.0.1 old.example. A IN"}` + "\n" +
+		`{"_SYSTEMD_UNIT":"netos-dnsmasq.service","MESSAGE":"query[A] unknown-time.example from 127.0.0.1"}` + "\n" +
+		`{"__REALTIME_TIMESTAMP":"1792760305000000","_SYSTEMD_UNIT":"netos-dnsmasq.service","MESSAGE":"query[A] current.example from 127.0.0.1"}`, nil
+}
+
+func TestDNSLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
+	for _, kind := range []string{"dns", "all"} {
+		t.Run(kind, func(t *testing.T) {
+			s := &Server{StorageRunner: &orderedDNSRunner{}}
+			req := httptest.NewRequest("GET", "/api/logs?kind="+kind, nil)
+			req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
+			w := httptest.NewRecorder()
+			s.handleLogs(w, req)
+			var data struct{ Entries []logEntry }
+			if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil || w.Code != 200 {
+				t.Fatalf("response: %d %v", w.Code, err)
+			}
+			var rows []logEntry
+			for _, e := range data.Entries {
+				if strings.Contains(e.Message, ".example") {
+					rows = append(rows, e)
+				}
+			}
+			if len(rows) != 3 {
+				t.Fatalf("lost or duplicated records: %+v", rows)
+			}
+			first, second := "current.example", "old.example"
+			if kind == "all" {
+				first, second = second, first
+			}
+			if !strings.Contains(rows[0].Message, first) || !strings.Contains(rows[1].Message, second) || rows[2].Time != "" {
+				t.Fatalf("unexpected %s order: %+v", kind, rows)
+			}
+		})
+	}
+}
+
 func (r *logRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	cmd := name + " " + strings.Join(args, " ")
 	r.calls = append(r.calls, cmd)

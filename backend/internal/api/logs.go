@@ -219,6 +219,9 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		a, _ := time.Parse(time.RFC3339Nano, entries[i].Time)
 		b, _ := time.Parse(time.RFC3339Nano, entries[j].Time)
+		if kind == "dns" {
+			return a.After(b)
+		}
 		return a.Before(b)
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "warnings": warnings, "captured_at": now.UTC().Format(time.RFC3339), "kind": kind})
