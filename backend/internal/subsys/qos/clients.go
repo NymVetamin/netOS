@@ -209,7 +209,7 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 				classID := fmt.Sprintf("1:%d", index+10)
 				expectedClasses = append(expectedClasses, classID)
 				expectedMACs = append(expectedMACs, strings.ToLower(client.MAC))
-				if !blockHasTokens(classes, "class ", "class", "htb", classID, "rate", fmt.Sprintf("%dkbit", client.DownKbit)) ||
+				if !blockHasTokens(classes, "class ", "class", "htb", classID, fmt.Sprintf("rate=%dkbit", client.DownKbit), fmt.Sprintf("ceil=%dkbit", client.DownKbit)) ||
 					!blockHasTokens(filters, "filter ", "pref", fmt.Sprint(100+index), "dst_mac", strings.ToLower(client.MAC), "classid", classID) {
 					return fmt.Errorf("лимит загрузки клиента %s на %s не соответствует конфигурации", client.MAC, item.Name)
 				}

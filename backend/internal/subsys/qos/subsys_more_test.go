@@ -166,6 +166,8 @@ func TestHealthChecksEveryClientRateMACAndOwnership(t *testing.T) {
 		output  string
 	}{
 		{"download rate", "tc class show dev lan0", "class htb 1:10 parent 1:1 rate 4999kbit ceil 4999kbit"},
+		{"download ceil", "tc class show dev lan0", "class htb 1:1 root rate 10gbit ceil 10gbit\nclass htb 1:10 parent 1:1 rate 5000kbit ceil 9000kbit"},
+		{"rate confused with ceil", "tc class show dev lan0", "class htb 1:1 root rate 10gbit ceil 10gbit\nclass htb 1:10 parent 1:1 rate 4000kbit ceil 5000kbit"},
 		{"download mac", "tc filter show dev lan0 parent 1:", "filter protocol all pref 100 flower dst_mac 00:11:22:33:44:55 classid 1:10"},
 		{"upload rate", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 999kbit"},
 		{"upload mtu", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 2Kb"},
