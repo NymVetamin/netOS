@@ -18,6 +18,7 @@ export type RollbackInfo = {
 };
 
 export type ConfigResponse = {
+  base_reservations?: any[];
   config: any;
   dirty: boolean;
   problems: Problem[];

@@ -630,11 +630,12 @@ func (s *Server) currentDraft() *config.Config {
 }
 
 type configResponse struct {
-	Config   *config.Config   `json:"config"`
-	Dirty    bool             `json:"dirty"`
-	Problems []config.Problem `json:"problems"`
-	Pending  bool             `json:"pending_confirmation"`
-	Deadline *time.Time       `json:"confirm_deadline,omitempty"`
+	BaseReservations []config.Reservation `json:"base_reservations,omitempty"`
+	Config           *config.Config       `json:"config"`
+	Dirty            bool                 `json:"dirty"`
+	Problems         []config.Problem     `json:"problems"`
+	Pending          bool                 `json:"pending_confirmation"`
+	Deadline         *time.Time           `json:"confirm_deadline,omitempty"`
 	// Rollback заполняется, если последнее применение было откачено. Панель
 	// обязана показать это явно: иначе администратор увидит вернувшиеся
 	// старые настройки и не поймёт, почему его изменения исчезли.

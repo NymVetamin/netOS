@@ -266,6 +266,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   }, [readPage]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [cfg, setCfg] = useState<any>(null);
+  const [baseReservations, setBaseReservations] = useState<any[]>([]);
   const [configGeneration, setConfigGeneration] = useState(0);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -330,6 +331,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
   const applyServerState = useCallback((res: ConfigResponse) => {
     setCfg(res.config);
+    setBaseReservations(res.base_reservations || (!res.dirty ? res.config.dhcp?.reservations : []) || []);
     // Refresh local editors on authoritative reloads (rollback,
     // discard, history), never on debounced saves or individual keystrokes.
     setConfigGeneration((generation) => generation + 1);
@@ -593,7 +595,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             <fieldset disabled={discarding || (!canAccess(session, page, true) && !["dashboard", "map", "history", "diagnostics"].includes(page))} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
               {page === "dashboard" && <Dashboard config={cfg} patch={patch} />}
               {page === "map" && <MapPage config={cfg} />}
-              {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} />}
+              {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} baseReservations={baseReservations} />}
               {page === "network" && (
                 <NetworkPage config={cfg} patch={patch} problems={problems} />
               )}

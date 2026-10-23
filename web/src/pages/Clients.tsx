@@ -26,9 +26,11 @@ function ClientChannel({ config, value, inherited, source, label, onChange }: {
 export function Clients({
   config,
   patch,
+  baseReservations = [],
 }: {
   config: any;
   patch: (mutate: (draft: any) => void) => void;
+  baseReservations?: any[];
 }) {
   const can = useAccess();
   const [clients, setClients] = useState<any[]>([]);
@@ -181,7 +183,7 @@ export function Clients({
                         /></Cap>
                 </div>
                 <ReservationEditor key={`${c.mac}:${reserved.get(c.mac)?.id || ''}:${reserved.get(c.mac)?.ip || ''}:${reserved.get(c.mac)?.network || ''}`}
-                  config={config} client={c} reservation={reserved.get(c.mac)} devices={[...clients, ...leases]} patch={patch} />
+                  config={config} client={c} reservation={reserved.get(c.mac)} baseReservations={baseReservations} devices={[...clients, ...leases]} patch={patch} />
                 <div className="row-actions end"><button
                           className={`btn sm ${cfgClient?.blocked ? "danger" : ""}`}
                           onClick={() => updateClient(c.mac, { blocked: !cfgClient?.blocked })}

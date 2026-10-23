@@ -1,5 +1,5 @@
 """Reservation UI against a local API fixture; never touches a router."""
-import asyncio, mimetypes, os
+import asyncio, copy, mimetypes, os
 from pathlib import Path
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, expect
@@ -18,6 +18,7 @@ async def main():
              'networks':[{'id':'first','name':'First','interface':'a','router_address':'192.168.10.1/24','enabled':True},
                          {'id':'second','name':'Second','interface':'b','router_address':'192.168.20.1/24','enabled':True}],
              'vpn_servers':[],'channels':[],'clients':[],'dhcp':{'reservations':[]}}
+        baseline = copy.deepcopy(cfg)
         async def route_request(route):
             req,path=route.request,urlparse(route.request.url).path
             if not path.startswith('/api/'):
@@ -28,7 +29,7 @@ async def main():
             elif path=='/api/config':
                 if req.method=='PUT':
                     updated=req.post_data_json;cfg.clear();cfg.update(updated);writes.append(updated)
-                body={'config':cfg,'dirty':bool(writes),'draft_version':len(writes)+1,'problems':[],'pending_confirmation':False}
+                body={'config':cfg,'base_reservations':baseline['dhcp']['reservations'],'dirty':cfg!=baseline,'draft_version':len(writes)+1,'problems':[],'pending_confirmation':False}
             elif path=='/api/clients':body={'clients':[client]}
             elif path=='/api/dhcp/leases':body={'leases':[client]}
             await route.fulfill(json=body)
@@ -72,6 +73,21 @@ async def main():
         async with page.expect_response(lambda r:r.request.method=='PUT'):
             await save.click()
         assert cfg['dhcp']['reservations'][0]['network']=='second'
+        # Simulate an applied reservation with metadata that cannot be rebuilt
+        # from the live device. Removing/recreating it must restore exact data.
+        cfg['dhcp']['reservations'][0].update(id='original-id',hostname='saved-hostname',comment='keep this comment')
+        baseline=copy.deepcopy(cfg)
+        await page.reload();await page.get_by_text('Test laptop',exact=True).click()
+        for reload_between in [False,True]:
+            async with page.expect_response(lambda r:r.request.method=='PUT'):
+                await page.get_by_role('button',name='Снять закрепление',exact=True).click()
+            assert cfg!=baseline
+            if reload_between:
+                await page.reload();await page.get_by_text('Test laptop',exact=True).click()
+            async with page.expect_response(lambda r:r.request.method=='PUT'):
+                await save.click()
+            assert cfg==baseline, (cfg['dhcp']['reservations'],baseline['dhcp']['reservations'])
+            await expect(page.get_by_text('Есть несохранённые изменения',exact=True)).to_have_count(0)
         for width in [1280,768,390]:
             await page.set_viewport_size({'width':width,'height':900})
             await expect(ip).to_be_visible()

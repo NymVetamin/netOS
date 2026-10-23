@@ -166,6 +166,9 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	pending, deadline := s.Engine.Pending()
 	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: pending && (roleOf(r) == "admin" || s.pendingOwner == userOf(r)), Problems: []config.Problem{}}
+	if anySection(r, false, "clients", "services") {
+		resp.BaseReservations = d.Base.DHCP.Reservations
+	}
 	if roleOf(r) == "admin" {
 		resp.Problems = cfg.Validate().Problems
 		resp.Rollback = s.Engine.LastRollback()

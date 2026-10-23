@@ -3,8 +3,9 @@ import { Cap } from './ui';
 import { newID } from './id';
 import { reservationError, reservationHostname, reservationNetwork } from './clientReservation';
 
-export function ReservationEditor({ config, client, reservation, devices, patch }: any) {
-  const [ip, setIP] = useState(reservation?.ip || client.ip || '');
+export function ReservationEditor({ config, client, reservation, baseReservations = [], devices, patch }: any) {
+  const original = baseReservations.find((r: any) => r.mac.toLowerCase() === client.mac.toLowerCase());
+  const [ip, setIP] = useState(reservation?.ip || original?.ip || client.ip || '');
   const network = reservationNetwork(config, client);
   const segment = (config.networks || []).find((n: any) => n.id === network);
   const error = reservationError(config, client.mac, ip, network, devices);
@@ -20,7 +21,13 @@ export function ReservationEditor({ config, client, reservation, devices, patch 
         const list = d.dhcp.reservations ||= [];
         const existing = list.find((r: any) => String(r.mac).toLowerCase() === client.mac.toLowerCase());
         if (existing) Object.assign(existing, { ip, network, enabled: true });
-        else list.push({ id: newID('res'), enabled: true, mac: client.mac.toLowerCase(), ip, network, hostname: reservationHostname(client.hostname || '') });
+        else {
+          const restored = original ? { ...original, enabled: true, ip, network }
+            : { id: newID('res'), enabled: true, mac: client.mac.toLowerCase(), ip, network, hostname: reservationHostname(client.hostname || '') };
+          const following = original ? baseReservations.slice(baseReservations.indexOf(original) + 1).map((r: any) => r.id) : [];
+          const index = list.findIndex((r: any) => following.includes(r.id));
+          list.splice(index < 0 ? list.length : index, 0, restored);
+        }
       })}>{enabled ? 'Изменить закрепление' : 'Закрепить адрес'}</button>
       {reservation && <button className="btn sm" onClick={() => patch((d: any) => {
         d.dhcp.reservations = d.dhcp.reservations.filter((r: any) => String(r.mac).toLowerCase() !== client.mac.toLowerCase());
