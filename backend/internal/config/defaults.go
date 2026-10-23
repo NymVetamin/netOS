@@ -329,6 +329,7 @@ func (c *Config) Normalize() {
 	if c.Components == nil {
 		c.Components = []Component{}
 	}
+	c.normalizeComponents()
 	if c.QoS.WANs == nil {
 		c.QoS.WANs = []QoSWAN{}
 	}
