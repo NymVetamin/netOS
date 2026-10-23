@@ -87,7 +87,7 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 				Kind: "create", Target: iface.Name,
 				Detail: describeInterface(new, iface),
 			})
-		case existed && !reflect.DeepEqual(prev, iface):
+		case existed && !sameInterfaceRuntime(prev, iface):
 			actions = append(actions, apply.Action{
 				Kind: "update", Target: iface.Name,
 				Detail: describeInterface(new, iface),
@@ -109,6 +109,12 @@ func (s *Interfaces) Plan(old, new *config.Config) ([]apply.Action, error) {
 		})
 	}
 	return actions, nil
+}
+
+func sameInterfaceRuntime(a, b config.Interface) bool {
+	// Label is only a panel caption; Name remains the actual kernel link name.
+	a.Label, b.Label = "", ""
+	return reflect.DeepEqual(a, b)
 }
 
 func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {

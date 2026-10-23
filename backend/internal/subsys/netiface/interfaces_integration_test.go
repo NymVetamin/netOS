@@ -87,6 +87,23 @@ func TestIntegrationInterfacesFullLifecycle(t *testing.T) {
 
 	stableNames := []string{"qabr0", "qav100", "qabond0", "qae0", dummyNameFor("qae0"), carrierPeerNameFor("qae0")}
 	before := linkIndexes(t, stableNames)
+	labeled := *cfg
+	labeled.Interfaces = append([]config.Interface(nil), cfg.Interfaces...)
+	for i := range labeled.Interfaces {
+		labeled.Interfaces[i].Label = "Updated display label"
+	}
+	if actions, err := s.Plan(cfg, &labeled); err != nil || len(actions) != 0 {
+		t.Fatalf("labels changed interface runtime plan: %v %v", actions, err)
+	}
+	if err := s.Apply(context.Background(), &labeled); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), &labeled); err != nil {
+		t.Fatal(err)
+	}
+	if after := linkIndexes(t, stableNames); !sameIndexes(before, after) {
+		t.Fatalf("label change recreated links: before=%v after=%v", before, after)
+	}
 	if err := s.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
