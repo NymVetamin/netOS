@@ -175,6 +175,31 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 		rules, _ := runner.Run(ctx, "iptables", "-nvL", "INPUT")
 		t.Fatalf("traffic did not cross the IKEv2 tunnel: %q (%v); link=%s states=%s policies=%s input=%s client-routes=%s client-states=%s client-policies=%s client=%s", out, err, links, states, policies, rules, clientRoutes, clientStates, clientPolicies, clientLog.String())
 	}
+	changed := *cfg
+	changed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	changed.VPNServers[0].DefaultChannel = "alternate"
+	changed.VPNServers[0].Peers = append([]config.VPNPeer(nil), cfg.VPNServers[0].Peers...)
+	changed.VPNServers[0].Peers[0].Channel = "alternate"
+	for _, pair := range [][2]*config.Config{{cfg, &changed}, {&changed, cfg}} {
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("channel-only plan: %v %v", actions, err)
+		}
+		for i := 0; i < 2; i++ {
+			if err := s.Apply(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Health(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			started, err := runner.Run(ctx, "systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", ikev2Unit)
+			if err != nil || started != startedBefore {
+				t.Fatalf("channel edit restarted IKEv2: %v", err)
+			}
+			if out, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "2", "10.97.0.1"); err != nil {
+				t.Fatalf("channel edit lost tunnel: %s %v", out, err)
+			}
+		}
+	}
 	_ = client.Process.Kill()
 	<-clientDone
 	if err := s.Apply(ctx, config.Default()); err != nil {

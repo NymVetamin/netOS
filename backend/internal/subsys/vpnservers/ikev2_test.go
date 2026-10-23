@@ -71,6 +71,32 @@ func TestRenderIKEv2(t *testing.T) {
 	}
 }
 
+func TestIKEv2ChannelDoesNotChangeServerRuntime(t *testing.T) {
+	cfg, server := ikev2TestConfig()
+	next := server
+	next.DefaultChannel = "alternate"
+	next.Peers = append([]config.VPNPeer(nil), server.Peers...)
+	next.Peers[0].Channel = "alternate"
+	before, err := RenderIKEv2([]config.VPNServer{server}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := RenderIKEv2([]config.VPNServer{next}, cfg)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("channel changed runtime config: %v", err)
+	}
+	if !sameServerRuntime(server, next) {
+		t.Fatal("channel-only edit plans server update")
+	}
+	if next.Peers[0].Channel != "alternate" {
+		t.Fatal("comparison mutated config")
+	}
+	next.Peers[0].Credentials = map[string]string{"username": "alice", "password": "changed-secret"}
+	if sameServerRuntime(server, next) {
+		t.Fatal("credential change ignored")
+	}
+}
+
 func TestRenderIKEv2RejectsAmbiguousMultiUserPool(t *testing.T) {
 	cfg, server := ikev2TestConfig()
 	server.Peers = append(server.Peers, config.VPNPeer{
