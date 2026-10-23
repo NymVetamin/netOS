@@ -1,0 +1,143 @@
+//go:build linux
+
+package vpnservers
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
+)
+
+func TestIntegrationL2TPChannelPreservesSession(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root required")
+	}
+	for _, name := range []string{"xl2tpd", "pppd", "ip", "ping"} {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Skipf("missing %s", name)
+		}
+	}
+	ctx := context.Background()
+	runner := system.NewExec()
+	run := func(name string, args ...string) string {
+		t.Helper()
+		out, err := runner.Run(ctx, name, args...)
+		if err != nil {
+			t.Fatalf("%s %v: %v: %s", name, args, err, out)
+		}
+		return strings.TrimSpace(out)
+	}
+	const ns = "netos-l2tp996"
+	run("ip", "netns", "add", ns)
+	t.Cleanup(func() {
+		out, _ := runner.Run(ctx, "ip", "netns", "pids", ns)
+		for _, pid := range strings.Fields(out) {
+			_, _ = runner.Run(ctx, "kill", "-TERM", pid)
+		}
+		_, _ = runner.Run(ctx, "ip", "netns", "delete", ns)
+	})
+	run("ip", "link", "add", "veth-l2tp996h", "type", "veth", "peer", "name", "veth-l2tp996c")
+	t.Cleanup(func() { _, _ = runner.Run(ctx, "ip", "link", "delete", "veth-l2tp996h") })
+	for _, args := range [][]string{
+		{"link", "set", "veth-l2tp996c", "netns", ns},
+		{"addr", "add", "192.0.2.9/30", "dev", "veth-l2tp996h"},
+		{"link", "set", "veth-l2tp996h", "up"},
+		{"netns", "exec", ns, "ip", "addr", "add", "192.0.2.10/30", "dev", "veth-l2tp996c"},
+		{"netns", "exec", ns, "ip", "link", "set", "veth-l2tp996c", "up"},
+		{"netns", "exec", ns, "ip", "link", "set", "lo", "up"},
+	} {
+		run("ip", args...)
+	}
+	for _, rule := range [][]string{
+		{"INPUT", "-i", "veth-l2tp996h", "-p", "udp", "--dport", "1701", "-j", "ACCEPT"},
+		{"INPUT", "-i", "ppp-srv996", "-p", "icmp", "-j", "ACCEPT"},
+	} {
+		run("iptables", append([]string{"-I", rule[0], "1"}, rule[1:]...)...)
+		deleteArgs := append([]string{"-D"}, rule...)
+		t.Cleanup(func() { _, _ = runner.Run(ctx, "iptables", deleteArgs...) })
+	}
+	root, err := os.MkdirTemp("/var/lib", "netos-l2tp-integration-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	s := New(runner, root)
+	s.PreUpDir = filepath.Join(root, "pre-up.d")
+	server := config.VPNServer{ID: "qa-l2tp", Index: 996, Type: "l2tp", Name: "QA L2TP", Enabled: true,
+		Subnet: "10.96.0.1/24", DefaultChannel: "direct", Config: map[string]any{"listen": "192.0.2.9", "mtu": 1400},
+		Peers: []config.VPNPeer{{ID: "qa", Enabled: true, Address: "10.96.0.2", Credentials: map[string]string{"username": "qa-l2tp", "password": "qa-l2tp-secret"}}}}
+	_, _, unit := s.l2tpPaths(server)
+	if _, err := os.Stat(unit); !os.IsNotExist(err) {
+		t.Fatal("test unit already exists")
+	}
+	snapshots, err := capturePaths(l2tpChapSecrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		s.cleanupL2TP(ctx, server)
+		if err := restorePaths(snapshots); err != nil {
+			t.Error(err)
+		}
+	})
+	cfg := config.Default()
+	if _, err := s.applyL2TP(ctx, server, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	stamp := run("systemctl", "show", l2tpUnitName(server), "-p", "ActiveEnterTimestampMonotonic", "--value")
+	ppp := filepath.Join(root, "client.ppp")
+	conf := filepath.Join(root, "client.conf")
+	for path, data := range map[string]string{
+		ppp:  "name qa-l2tp\npassword qa-l2tp-secret\nnoauth\nnodefaultroute\nnoipv6\nifname ppp-qa996\nmtu 1400\nmru 1400\n",
+		conf: fmt.Sprintf("[global]\nport = 1701\n[lac qa]\nlns = 192.0.2.9\npppoptfile = %s\nautodial = yes\nredial = yes\nredial timeout = 2\n", ppp),
+	} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log, err := os.Create(filepath.Join(root, "client.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = log.Close() })
+	client := exec.Command("ip", "netns", "exec", ns, "xl2tpd", "-D", "-c", conf, "-p", filepath.Join(root, "client.pid"), "-C", filepath.Join(root, "client.ctl"))
+	client.Stdout, client.Stderr = log, log
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Process.Kill(); _ = client.Wait() })
+	connected := false
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+		if _, err := runner.Run(ctx, "ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "1", "10.96.0.1"); err == nil {
+			connected = true
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !connected {
+		data, _ := os.ReadFile(log.Name())
+		t.Fatalf("no PPP session: %s", data)
+	}
+	link := run("ip", "-o", "link", "show", "dev", "ppp-srv996")
+	for _, channel := range []string{"alternate", "alternate", "direct"} {
+		server.DefaultChannel, server.Peers[0].Channel = channel, channel
+		if _, err := s.applyL2TP(ctx, server, cfg, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := run("systemctl", "show", l2tpUnitName(server), "-p", "ActiveEnterTimestampMonotonic", "--value"); got != stamp {
+			t.Fatal("L2TP service restarted")
+		}
+		if got := run("ip", "-o", "link", "show", "dev", "ppp-srv996"); got != link {
+			t.Fatal("PPP interface changed")
+		}
+		run("ip", "netns", "exec", ns, "ping", "-c", "2", "-W", "1", "10.96.0.1")
+	}
+}

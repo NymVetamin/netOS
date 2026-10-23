@@ -10,6 +10,32 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
+func TestL2TPChannelDoesNotChangeServerRuntime(t *testing.T) {
+	server := config.VPNServer{Index: 7, Type: "l2tp", Name: "L2TP", Enabled: true, Subnet: "10.99.0.1/24", DefaultChannel: "direct",
+		Peers: []config.VPNPeer{{Enabled: true, Address: "10.99.0.2", Credentials: map[string]string{"username": "alice", "password": "secret"}}}}
+	next := server
+	next.DefaultChannel = "alternate"
+	next.Peers = append([]config.VPNPeer(nil), server.Peers...)
+	next.Peers[0].Channel = "alternate"
+	l2tp := config.L2TPServerConfig{Listen: "192.0.2.1", MTU: 1400}
+	if renderL2TPConf(server, l2tp, "test.ppp") != renderL2TPConf(next, l2tp, "test.ppp") ||
+		renderL2TPPPP(server, l2tp) != renderL2TPPPP(next, l2tp) ||
+		renderL2TPUnit(server, "test.conf") != renderL2TPUnit(next, "test.conf") ||
+		l2tpChapBlock(server) != l2tpChapBlock(next) {
+		t.Fatal("channel changes L2TP runtime configuration")
+	}
+	if !sameServerRuntime(server, next) {
+		t.Fatal("channel-only edit plans server update")
+	}
+	if next.Peers[0].Channel != "alternate" || server.Peers[0].Channel != "" {
+		t.Fatal("comparison mutated peers")
+	}
+	next.Peers[0].Credentials = map[string]string{"username": "alice", "password": "changed"}
+	if sameServerRuntime(server, next) {
+		t.Fatal("credential change ignored")
+	}
+}
+
 func TestCleanupL2TPClearsOnlyRemovedUnitsFailedState(t *testing.T) {
 	server := config.VPNServer{Index: 7}
 	var commands []string
