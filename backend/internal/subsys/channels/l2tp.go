@@ -88,6 +88,7 @@ func (s *Subsystem) applyL2TP(ctx context.Context, ch config.Channel, wasOwned, 
 	ppp := []byte(renderL2TPPPP(ch, l2tp))
 	unit := []byte(renderL2TPUnit(ch, confPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(pppPath, ppp) || system.FileChanged(unitPath, unit)
+	restart := system.FileChanged(confPath, conf) || system.FileChanged(pppPath, ppp) || system.UnitRuntimeChanged(unitPath, unit)
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -110,7 +111,7 @@ func (s *Subsystem) applyL2TP(ctx context.Context, ch config.Channel, wasOwned, 
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
-	if changed || strings.TrimSpace(active) != "active" {
+	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
 			return false, fmt.Errorf("запуск L2TP: %w", err)
 		}
