@@ -179,6 +179,7 @@ func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg 
 	ppp := []byte(renderL2TPPPP(server, l2tp))
 	unit := []byte(renderL2TPUnit(server, confPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(pppPath, ppp) || system.FileChanged(unitPath, unit) || system.FileChanged(l2tpChapSecrets, newChap)
+	restart := system.FileChanged(confPath, conf) || system.FileChanged(pppPath, ppp) || system.UnitRuntimeChanged(unitPath, unit) || system.FileChanged(l2tpChapSecrets, newChap)
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -211,7 +212,7 @@ func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg 
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
-	if changed || strings.TrimSpace(active) != "active" {
+	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
 			return false, fmt.Errorf("запуск L2TP-сервера: %w", err)
 		}

@@ -127,6 +127,22 @@ func TestIntegrationL2TPChannelPreservesSession(t *testing.T) {
 		t.Fatalf("no PPP session: %s", data)
 	}
 	link := run("ip", "-o", "link", "show", "dev", "ppp-srv996")
+	for _, name := range []string{"Renamed L2TP", "Renamed L2TP", server.Name} {
+		server.Name = name
+		if _, err := s.applyL2TP(ctx, server, cfg, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := run("systemctl", "show", l2tpUnitName(server), "-p", "ActiveEnterTimestampMonotonic", "--value"); got != stamp {
+			t.Fatal("rename restarted L2TP")
+		}
+		if got := run("systemctl", "show", l2tpUnitName(server), "-p", "Description", "--value"); !strings.Contains(got, name) {
+			t.Fatal("description not updated")
+		}
+		if got := run("ip", "-o", "link", "show", "dev", "ppp-srv996"); got != link {
+			t.Fatal("rename recreated PPP")
+		}
+		run("ip", "netns", "exec", ns, "ping", "-c", "2", "-W", "1", "10.96.0.1")
+	}
 	for _, channel := range []string{"alternate", "alternate", "direct"} {
 		server.DefaultChannel, server.Peers[0].Channel = channel, channel
 		if _, err := s.applyL2TP(ctx, server, cfg, true); err != nil {
