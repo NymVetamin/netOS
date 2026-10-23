@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -1093,27 +1094,16 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sameConfig сравнивает сериализованное содержимое. Пустые списки доступа
-// SOCKS имеют одинаковый смысл независимо от null/[] после переключения в UI.
+// sameConfig сравнивает содержимое с общей нормализацией пустых списков.
 func sameConfig(a, b *config.Config) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	canonical := func(c *config.Config) config.Config {
-		copy := *c
-		if len(copy.Socks.Networks) == 0 {
-			copy.Socks.Networks = nil
-		}
-		if len(copy.Socks.VPNs) == 0 {
-			copy.Socks.VPNs = nil
-		}
-		return copy
-	}
-	left, err := json.Marshal(canonical(a))
+	left, err := json.Marshal(comparisonValue(reflect.ValueOf(a)).Interface())
 	if err != nil {
 		return false
 	}
-	right, err := json.Marshal(canonical(b))
+	right, err := json.Marshal(comparisonValue(reflect.ValueOf(b)).Interface())
 	if err != nil {
 		return false
 	}
