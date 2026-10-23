@@ -88,6 +88,28 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	if err != nil || strings.HasSuffix(strings.TrimSpace(handshake), "\t0") || strings.TrimSpace(handshake) == "" {
 		t.Fatalf("нет WireGuard handshake: %q (%v)", handshake, err)
 	}
+	next := *cfg
+	next.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	server := &next.VPNServers[0]
+	server.Config = map[string]any{"private_key": serverPrivate, "public_endpoint": "vpn.example:51997", "client_dns": []string{"192.0.2.53"}, "client_allowed_ips": []string{"198.51.100.0/24"}}
+	server.Peers = append([]config.VPNPeer(nil), server.Peers...)
+	server.Peers[0].WireGuardProfile = &config.WireGuardClientProfile{UseRouterDNS: true, AllowedIPs: []string{"192.0.2.0/24"}}
+	if actions, err := s.Plan(cfg, &next); err != nil || len(actions) != 0 {
+		t.Fatalf("export-only plan: %v %v", actions, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.Apply(ctx, &next); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, &next); err != nil {
+			t.Fatal(err)
+		}
+		mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "2", "-W", "2", "10.253.97.1")
+		after, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+		if err != nil || after != handshake {
+			t.Fatalf("export edit reset handshake: %v", err)
+		}
+	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

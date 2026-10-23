@@ -231,6 +231,10 @@ func ownedServersEqual(left, right []ownedServer) bool {
 
 // Client TLS fingerprints affect exported profiles, not the server process.
 func sameServerRuntime(a, b config.VPNServer) bool {
+	if a.Type == "wireguard" && b.Type == "wireguard" {
+		a = withoutWireGuardExportSettings(a)
+		b = withoutWireGuardExportSettings(b)
+	}
 	if a.Type == "xray" && b.Type == "xray" {
 		a.Peers = append([]config.VPNPeer(nil), a.Peers...)
 		b.Peers = append([]config.VPNPeer(nil), b.Peers...)
@@ -242,6 +246,24 @@ func sameServerRuntime(a, b config.VPNServer) bool {
 		}
 	}
 	return reflect.DeepEqual(a, b)
+}
+
+func withoutWireGuardExportSettings(server config.VPNServer) config.VPNServer {
+	server.Peers = append([]config.VPNPeer(nil), server.Peers...)
+	for i := range server.Peers {
+		server.Peers[i].WireGuardProfile = nil
+	}
+	settings := make(map[string]any, len(server.Config))
+	for key, value := range server.Config {
+		switch key {
+		case "public_endpoint", "client_dns", "client_allowed_ips":
+			// Used only when exporting the client profile.
+		default:
+			settings[key] = value
+		}
+	}
+	server.Config = settings
+	return server
 }
 
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
