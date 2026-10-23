@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
@@ -40,6 +41,50 @@ func TestIntegrationDisabledPolicyPreservesActiveSet(t *testing.T) {
 	name := IPv4SetName("active")
 	if _, err := r.Run(ctx, "ipset", "add", name, "192.0.2.5"); err != nil {
 		t.Fatal(err)
+	}
+	stored := *base
+	stored.Firewall.IPSets = []config.FirewallIPSet{{ID: "unused", Entries: []string{"192.0.2.10"}}}
+	edited := stored
+	edited.Firewall.IPSets = []config.FirewallIPSet{{ID: "unused", Entries: []string{"192.0.2.11"}}}
+	cleanup := NewCleanup(r, s.StateDir)
+	for _, pair := range [][2]*config.Config{{base, &stored}, {&stored, &edited}, {&edited, base}} {
+		actions, err := s.Plan(pair[0], pair[1])
+		if err != nil || len(actions) != 1 || actions[0].Confirmation != apply.ConfirmationSafe {
+			t.Fatalf("unused static set plan: %v %v", actions, err)
+		}
+		if err := s.Apply(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanup.Apply(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Apply(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Run(ctx, "ipset", "test", name, "192.0.2.5"); err != nil {
+			t.Fatal("unrelated learned domain address lost", err)
+		}
+		if len(pair[1].Firewall.IPSets) > 0 {
+			set := FirewallSetName("unused")
+			entry := pair[1].Firewall.IPSets[0].Entries[0]
+			if _, err := r.Run(ctx, "ipset", "test", set, entry); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"INPUT", "-m", "set", "--match-set", set, "src", "-j", "ACCEPT"}
+			if _, err := r.Run(ctx, "iptables", append([]string{"-A"}, args...)...); err != nil {
+				t.Fatal(err)
+			}
+			risky, err := s.Plan(pair[1], base)
+			if err != nil || len(risky) != 1 || risky[0].Confirmation == apply.ConfirmationSafe {
+				t.Fatalf("foreign kernel rule not protected: %v %v", risky, err)
+			}
+			if _, err := r.Run(ctx, "iptables", append([]string{"-D"}, args...)...); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	next := *base
 	next.Policies = append(append([]config.Policy(nil), base.Policies...), config.Policy{ID: "disabled", Domains: []string{"disabled.example"}, Channel: "direct"})

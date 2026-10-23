@@ -133,7 +133,11 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		} else if len(before) > 0 && len(after) == 0 {
 			kind = "delete"
 		}
-		return []apply.Action{{Kind: kind, Target: "наборы адресов и доменные политики", Detail: fmt.Sprintf("%d IPv4 ipset", len(after))}}, nil
+		action := apply.Action{Kind: kind, Target: "наборы адресов и доменные политики", Detail: fmt.Sprintf("%d IPv4 ipset", len(after))}
+		if s.unusedStaticSetsOnly(ctx, old, next) {
+			action.Confirmation = apply.ConfirmationSafe
+		}
+		return []apply.Action{action}, nil
 	}
 	if err := s.Health(ctx, next); err != nil {
 		return []apply.Action{{Kind: "repair", Target: "наборы адресов и доменные политики", Detail: err.Error()}}, nil
