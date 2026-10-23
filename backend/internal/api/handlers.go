@@ -1093,18 +1093,27 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sameConfig сравнивает конфигурации по содержимому. Сравниваем сериализацию,
-// а не структуры: reflect.DeepEqual считает разными nil и пустой срез, а
-// панель присылает то одно, то другое в зависимости от того, трогали ли раздел.
+// sameConfig сравнивает сериализованное содержимое. Пустые списки доступа
+// SOCKS имеют одинаковый смысл независимо от null/[] после переключения в UI.
 func sameConfig(a, b *config.Config) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	left, err := json.Marshal(a)
+	canonical := func(c *config.Config) config.Config {
+		copy := *c
+		if len(copy.Socks.Networks) == 0 {
+			copy.Socks.Networks = nil
+		}
+		if len(copy.Socks.VPNs) == 0 {
+			copy.Socks.VPNs = nil
+		}
+		return copy
+	}
+	left, err := json.Marshal(canonical(a))
 	if err != nil {
 		return false
 	}
-	right, err := json.Marshal(b)
+	right, err := json.Marshal(canonical(b))
 	if err != nil {
 		return false
 	}
