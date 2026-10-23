@@ -58,6 +58,64 @@ func (s *Subsystem) clientRatesSafe(ctx context.Context, old, next *config.Confi
 	return true
 }
 
+func (s *Subsystem) clientLimitLifecycleSafe(ctx context.Context, old, next *config.Config) bool {
+	if old == nil || !equalQoS(old.QoS, next.QoS) || !reflect.DeepEqual(old.Interfaces, next.Interfaces) || !reflect.DeepEqual(old.Networks, next.Networks) || !reflect.DeepEqual(old.WANs, next.WANs) {
+		return false
+	}
+	before, err := desiredClientInterfaces(old)
+	if err != nil {
+		return false
+	}
+	after, err := desiredClientInterfaces(next)
+	if err != nil || (len(before) == 0) == (len(after) == 0) {
+		return false
+	}
+	admin := s.managementMAC(ctx, next)
+	if admin == "" {
+		return false
+	}
+	items := after
+	if len(before) > 0 {
+		items = before
+	}
+	for _, item := range items {
+		for _, clients := range [][]config.Client{item.Download, item.Upload} {
+			for _, client := range clients {
+				mac, err := net.ParseMAC(client.MAC)
+				if err != nil || len(mac) != 6 || mac.String() == admin {
+					return false
+				}
+			}
+		}
+	}
+	if s.Health(ctx, old) != nil {
+		return false
+	}
+	for _, item := range items {
+		if len(before) > 0 {
+			updates, ok := s.clientRateUpdates(ctx, item)
+			if !ok || len(updates) != 0 {
+				return false
+			}
+		} else {
+			var qdiscs []struct {
+				Kind, Handle, Parent string
+				Root                 bool
+				Refcnt               int
+				Options              map[string]json.RawMessage
+			}
+			if !s.readClientJSON(ctx, &qdiscs, "qdisc", "show", "dev", item.Name) || len(qdiscs) != 1 {
+				return false
+			}
+			q := qdiscs[0]
+			if q.Kind != "noqueue" || q.Handle != "0:" || !q.Root || len(q.Options) != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (s *Subsystem) managementMAC(ctx context.Context, cfg *config.Config) string {
 	remote, local := apply.ManagementConnection(ctx)
 	if !remote.Is4() || !local.Is4() || remote == local || remote.IsLoopback() || remote.IsUnspecified() || remote.IsMulticast() {

@@ -76,7 +76,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 			kind = "delete"
 		}
 		action := apply.Action{Subsystem: s.Name(), Kind: kind, Target: "лимиты клиентов", Detail: "HTB и policing по MAC-адресам", Disruptive: true}
-		if !qosChanged && s.clientRatesSafe(ctx, old, next) {
+		if !qosChanged && (s.clientRatesSafe(ctx, old, next) || s.clientLimitLifecycleSafe(ctx, old, next)) {
 			action.Disruptive = false
 			action.Confirmation = apply.ConfirmationSafe
 		}

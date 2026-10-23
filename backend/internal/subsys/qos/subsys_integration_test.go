@@ -200,6 +200,29 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("TCP sessions survived rate updates: down %.0f up %.0f bit/s", download, upload)
+	limits := append([]config.Client(nil), cfg.Clients...)
+	removed := runIPerf(t, ctx, namespace, false, func() {
+		cfg.Clients = nil
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	added := runIPerf(t, ctx, namespace, false, func() {
+		cfg.Clients = limits
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if removed < 1_000_000 || added < 1_000_000 || removed > 10_000_000 || added > 10_000_000 {
+		t.Fatalf("add/remove transfer outside bounds: add %.0f remove %.0f", added, removed)
+	}
+	t.Logf("TCP survived first limit add/last limit removal: add %.0f remove %.0f bit/s", added, removed)
 	cfg.Clients = nil
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -229,6 +252,9 @@ func runIPerf(t *testing.T, ctx context.Context, namespace string, reverse bool,
 	t.Cleanup(func() { _ = server.Process.Kill() })
 	time.Sleep(250 * time.Millisecond)
 	args := []string{"-c", "192.0.2.2", "-p", port, "-t", "3", "-J"}
+	if len(during) > 0 {
+		args = append(args, "-b", "8M")
+	}
 	if reverse {
 		args = append(args, "-R")
 	}

@@ -53,11 +53,47 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := New(r, t.TempDir())
+	for _, name := range []string{"qos-repair0", "qos-repair1"} {
+		if _, err := r.Run(ctx, "ip", "link", "set", "dev", name, "up"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := config.Default()
 	cfg.Interfaces = []config.Interface{{ID: "lan", Name: "qos-repair0", Type: "physical", Enabled: true}}
 	cfg.Networks = []config.Network{{ID: "home", Interface: "lan", RouterAddress: "192.0.2.1/24", Enabled: true}}
 	cfg.Clients = []config.Client{{ID: "client", MAC: "02:00:00:00:00:01", Network: "home", DownKbit: 5000, UpKbit: 1000}}
 	cfg.Clients = append(cfg.Clients, config.Client{ID: "other", MAC: "02:00:00:00:00:02", Network: "home", DownKbit: 7000, UpKbit: 2000})
+	planCtx := apply.WithManagementConnection(ctx, netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"))
+	empty := *cfg
+	empty.Clients = nil
+	if _, err := r.Run(ctx, "ip", "neigh", "replace", "192.0.2.2", "lladdr", "02:00:00:00:00:99", "nud", "permanent", "dev", "qos-repair0"); err != nil {
+		t.Fatal(err)
+	}
+	if actions, err := s.PlanContext(planCtx, &empty, cfg); err != nil || len(actions) != 1 || apply.NeedsConfirmation(actions) {
+		out, _ := r.Run(ctx, "tc", "-j", "qdisc", "show", "dev", "qos-repair0")
+		t.Logf("initial qdisc %s; admin %q; health %v", out, s.managementMAC(planCtx, cfg), s.Health(ctx, &empty))
+		t.Fatalf("first limit plan: %v %v", actions, err)
+	}
+	if _, err := r.Run(ctx, "ip", "neigh", "replace", "192.0.2.2", "lladdr", cfg.Clients[0].MAC, "nud", "permanent", "dev", "qos-repair0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]*config.Config{{&empty, cfg}, {cfg, &empty}} {
+		if actions, err := s.PlanContext(planCtx, pair[0], pair[1]); err != nil || !apply.NeedsConfirmation(actions) {
+			t.Fatalf("administrator limit lifecycle lost confirmation: %v %v", actions, err)
+		}
+	}
+	if _, err := r.Run(ctx, "ip", "neigh", "replace", "192.0.2.2", "lladdr", "02:00:00:00:00:99", "nud", "permanent", "dev", "qos-repair0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run(ctx, "tc", "qdisc", "add", "dev", "qos-repair0", "clsact"); err != nil {
+		t.Fatal(err)
+	}
+	if actions, err := s.PlanContext(planCtx, &empty, cfg); err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("foreign qdisc ignored: %v %v", actions, err)
+	}
+	if _, err := r.Run(ctx, "tc", "qdisc", "del", "dev", "qos-repair0", "clsact"); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +106,6 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	old.Clients = append([]config.Client(nil), cfg.Clients...)
 	cfg.Clients[0].DownKbit = 6000
 	cfg.Clients[0].UpKbit = 1500
-	planCtx := apply.WithManagementConnection(ctx, netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"))
 	for _, tc := range []struct {
 		mac  string
 		safe bool
@@ -149,6 +184,12 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	}
 	if counted.qdiscDeletes == 0 {
 		t.Fatal("changed topology did not use repair path")
+	}
+	if _, err := r.Run(ctx, "ip", "neigh", "replace", "192.0.2.2", "lladdr", "02:00:00:00:00:99", "nud", "permanent", "dev", "qos-repair0"); err != nil {
+		t.Fatal(err)
+	}
+	if actions, err := s.PlanContext(planCtx, cfg, &empty); err != nil || len(actions) != 1 || apply.NeedsConfirmation(actions) {
+		t.Fatalf("final removal plan: %v %v", actions, err)
 	}
 	cfg.Clients = nil
 	if err := s.Apply(ctx, cfg); err != nil {
