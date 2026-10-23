@@ -50,7 +50,17 @@ type Action struct {
 	// Disruptive помечает изменения, которые кратковременно рвут связность.
 	// UI показывает такие отдельно и предупреждает.
 	Disruptive bool `json:"disruptive"`
+	// Confirmation overrides the legacy subsystem classification only for
+	// explicitly audited actions. Disruptive actions always require confirmation.
+	Confirmation Confirmation `json:"confirmation,omitempty"`
 }
+
+type Confirmation string
+
+const (
+	ConfirmationSafe     Confirmation = "safe"
+	ConfirmationRequired Confirmation = "required"
+)
 
 // Order задаёт порядок применения подсистем. Он не случаен: правила файрволла
 // и политики маршрутизации ссылаются на интерфейсы, которых до создания
@@ -141,7 +151,17 @@ var connectivitySubsystems = map[string]bool{
 // нечему.
 func NeedsConfirmation(actions []Action) bool {
 	for _, a := range actions {
-		if a.Disruptive || connectivitySubsystems[a.Subsystem] {
+		if a.Disruptive {
+			return true
+		}
+		switch a.Confirmation {
+		case ConfirmationSafe:
+			continue
+		case "": // Existing planners retain their protection until audited.
+			if connectivitySubsystems[a.Subsystem] {
+				return true
+			}
+		default: // Required or unknown classifications must fail closed.
 			return true
 		}
 	}

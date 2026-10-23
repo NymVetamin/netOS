@@ -86,6 +86,17 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 		}
 		actions = append(actions, apply.Action{Kind: "update", Target: "ip6tables", Detail: detail})
 	}
+	if len(actions) > 0 && annotationsOnly(old, new) {
+		// A harmless config diff can accompany a live firewall repair. Never
+		// suppress its rollback timer unless the previous rules really match.
+		s.runtimeRules(old, oldRS)
+		ipv4OK, ipv6OK, err := s.liveMatches(ctx, oldRS)
+		if err == nil && ipv4OK && ipv6OK {
+			for i := range actions {
+				actions[i].Confirmation = apply.ConfirmationSafe
+			}
+		}
+	}
 	if len(actions) == 0 {
 		s.runtimeRules(new, newRS)
 		ipv4OK, ipv6OK, err := s.liveMatches(ctx, newRS)
