@@ -1832,7 +1832,13 @@ pre.output {
 }
 .client-reservation { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 .client-reservation > strong { display: block; margin-bottom: .75rem; }
-.client-reservation-error { color: var(--danger); margin-bottom: .5rem; }
+.client-reservation-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .75rem; }
+.client-reservation-controls > .field { flex: 0 1 240px; min-width: 0; max-width: 100%; margin: 0; }
+.client-reservation-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.client-reservation-actions .btn { min-height: 34px; }
+.client-reservation-segment { margin-top: .5rem; color: var(--text-faint); font-size: .85rem; overflow-wrap: anywhere; }
+.client-reservation-hint { margin: .75rem 0 0; color: var(--text-faint); font-size: .85rem; line-height: 1.5; }
+.client-reservation-error { color: var(--danger); margin-top: .75rem; }
 
 .spinner {
   width: 15px;

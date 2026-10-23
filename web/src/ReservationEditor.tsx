@@ -11,13 +11,10 @@ export function ReservationEditor({ config, client, reservation, devices, patch 
   const enabled = !!reservation?.enabled;
   return <div className="client-reservation">
     <strong>Закрепление адреса DHCP</strong>
-    <div className="form-grid">
-      <Cap label="Сегмент DHCP"><span>{segment ? `${segment.name || segment.id} (${segment.router_address})` : 'Не удалось однозначно определить сегмент клиента'}</span></Cap>
+    <div className="client-reservation-controls">
       <Cap label="Закреплённый IPv4-адрес"><input aria-label="Закреплённый IPv4-адрес" className="mono" value={ip}
         aria-invalid={!!error} onChange={e => setIP(e.target.value.trim())} /></Cap>
-    </div>
-    {error && <div className="client-reservation-error" role="alert">{network ? error : 'Закрепление недоступно: не удалось однозначно определить сегмент клиента'}</div>}
-    <div className="row-actions">
+    <div className="client-reservation-actions">
       <button className="btn sm" disabled={!!error || (enabled && ip === reservation.ip && network === reservation.network)} onClick={() => patch((d: any) => {
         d.dhcp ||= {};
         const list = d.dhcp.reservations ||= [];
@@ -29,6 +26,9 @@ export function ReservationEditor({ config, client, reservation, devices, patch 
         d.dhcp.reservations = d.dhcp.reservations.filter((r: any) => String(r.mac).toLowerCase() !== client.mac.toLowerCase());
       })}>Снять закрепление</button>}
     </div>
-    <div className="hint">После применения клиент получит адрес при следующем обновлении аренды DHCP.</div>
+    </div>
+    <div className="client-reservation-segment">{segment ? `${segment.name || segment.id} (${segment.router_address})` : 'Не удалось однозначно определить сегмент клиента'}</div>
+    {error && <div className="client-reservation-error" role="alert">{network ? error : 'Закрепление недоступно: не удалось однозначно определить сегмент клиента'}</div>}
+    <p className="client-reservation-hint">Адрес начнёт действовать после применения настроек и обновления аренды DHCP.</p>
   </div>;
 }
