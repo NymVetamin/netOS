@@ -63,6 +63,36 @@ func TestIntegrationWireGuardLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	ch.Probe.FailThreshold = 1
+	linkBefore, err := s.Runner.Run(context.Background(), "ip", "-o", "link", "show", "dev", InterfaceName(ch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	confBefore, err := s.Runner.Run(context.Background(), "wg", "showconf", InterfaceName(ch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Renamed WireGuard", "Renamed WireGuard", ch.Name} {
+		cfg.Channels[len(cfg.Channels)-1].Name = name
+		if err := s.Apply(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Runner.Run(context.Background(), "ip", "-o", "link", "show", "dev", InterfaceName(ch))
+		if err != nil || got != linkBefore {
+			t.Fatal("rename changed link identity")
+		}
+		got, err = s.Runner.Run(context.Background(), "wg", "showconf", InterfaceName(ch))
+		if err != nil || got != confBefore {
+			for _, line := range strings.Split(got, "\n") {
+				if line != "" && !strings.Contains(confBefore, line) {
+					t.Logf("changed directive: %s", strings.SplitN(line, "=", 2)[0])
+				}
+			}
+			t.Fatal("rename changed kernel WireGuard settings")
+		}
+	}
 	ch.Probe.RiseThreshold = 1
 	state := &channelState{}
 	s.record(context.Background(), cfg, ch, state, false)

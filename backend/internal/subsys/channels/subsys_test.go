@@ -34,6 +34,8 @@ func (r *channelRunner) Run(_ context.Context, name string, args ...string) (str
 		return "", errors.New("injected failure: " + r.failOnce)
 	}
 	switch {
+	case command == "wg show wg-ch1 listen-port":
+		return "51820\n", nil
 	case command == "ip link add name wg-ch1 type wireguard":
 		if err := os.MkdirAll(filepath.Join(r.s.SysClassNet, "wg-ch1"), 0o755); err != nil {
 			return "", err

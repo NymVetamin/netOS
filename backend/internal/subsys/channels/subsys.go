@@ -539,7 +539,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 		}
 	}
 	if len(snapshots) > 0 && snapshots[0].existed {
-		if _, err := s.Runner.Run(rollbackCtx, "wg", "syncconf", name, confPath); err != nil {
+		if err := s.syncWireGuard(rollbackCtx, name, confPath); err != nil {
 			return false, fmt.Errorf("%v; rollback WireGuard config: %w", retErr, err)
 		}
 	}
@@ -612,7 +612,7 @@ func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, 
 			return fmt.Errorf("создание интерфейса: %w", err)
 		}
 	}
-	if _, err := s.Runner.Run(ctx, "wg", "syncconf", name, confPath); err != nil {
+	if err := s.syncWireGuard(ctx, name, confPath); err != nil {
 		return fmt.Errorf("настройка WireGuard: %w", err)
 	}
 	if err := s.ensureAddress(ctx, name, wg.Address); err != nil {
