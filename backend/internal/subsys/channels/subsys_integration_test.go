@@ -140,6 +140,47 @@ func TestIntegrationXrayLifecycle(t *testing.T) {
 	if out, err := s.Runner.Run(context.Background(), "systemctl", "is-active", xrayUnitName(ch)); err != nil || strings.TrimSpace(out) != "active" {
 		t.Fatalf("Xray unit is not active: %q (%v)", out, err)
 	}
+	stamp, err := s.Runner.Run(context.Background(), "systemctl", "show", xrayUnitName(ch), "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := s.Runner.Run(context.Background(), "ip", "-o", "link", "show", "dev", InterfaceName(ch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Renamed Xray", "Renamed Xray", ch.Name} {
+		cfg.Channels[len(cfg.Channels)-1].Name = name
+		if err := s.Apply(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Runner.Run(context.Background(), "systemctl", "show", xrayUnitName(ch), "-p", "ActiveEnterTimestampMonotonic", "--value")
+		if err != nil || got != stamp {
+			t.Fatalf("rename restarted Xray: %v", err)
+		}
+		got, err = s.Runner.Run(context.Background(), "ip", "-o", "link", "show", "dev", InterfaceName(ch))
+		if err != nil || got != link {
+			t.Fatalf("rename recreated TUN: %v", err)
+		}
+		got, err = s.Runner.Run(context.Background(), "systemctl", "show", xrayUnitName(ch), "-p", "Description", "--value")
+		if err != nil || !strings.Contains(got, name) {
+			t.Fatalf("description not updated: %v", err)
+		}
+	}
+	// A real configuration change must still restart the process.
+	cfg.Channels[len(cfg.Channels)-1].Config["mtu"] = 1400
+	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	updatedStamp, err := s.Runner.Run(context.Background(), "systemctl", "show", xrayUnitName(ch), "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil || updatedStamp == stamp {
+		t.Fatalf("configuration change did not restart Xray: %v", err)
+	}
 	if err := s.failChannel(context.Background(), cfg, ch); err != nil {
 		t.Fatal(err)
 	}
