@@ -29,7 +29,7 @@ func clientRoutingOnly(old, next *config.Config) bool {
 		out.VPNServers = append([]config.VPNServer(nil), c.VPNServers...)
 		for i := range out.VPNServers {
 			s := &out.VPNServers[i]
-			if s.Type != "wireguard" && s.Type != "ocserv" {
+			if s.Type != "wireguard" && s.Type != "ocserv" && s.Type != "ikev2" {
 				continue
 			}
 			kernelVPN[s.ID] = true
@@ -147,7 +147,7 @@ func (s *Subsystem) managementReverseRoutesSafe(ctx context.Context, cfg *config
 	}
 	kernelVPN := map[string]bool{}
 	for _, server := range cfg.VPNServers {
-		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv") {
+		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv" && server.Type != "ikev2") {
 			continue
 		}
 		kernelVPN[server.ID] = true

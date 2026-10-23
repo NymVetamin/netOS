@@ -136,7 +136,7 @@ func TestClientRoutingAllowlistPreservesOtherChanges(t *testing.T) {
 }
 
 func TestKernelVPNRoutingConfirmation(t *testing.T) {
-	for _, vpnType := range []string{"wireguard", "ocserv"} {
+	for _, vpnType := range []string{"wireguard", "ocserv", "ikev2"} {
 		for _, mode := range []string{"default", "peer", "policy", "unknown management", "blackhole", "mixed port", "live drift"} {
 			t.Run(vpnType+"/"+mode, func(t *testing.T) {
 				old, _ := configuredFirewall(t)
