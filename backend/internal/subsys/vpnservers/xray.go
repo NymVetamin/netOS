@@ -367,6 +367,7 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 	}
 	unit := []byte(renderXrayUnit(server, confPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(unitPath, unit)
+	restart := system.FileChanged(confPath, conf) || system.UnitRuntimeChanged(unitPath, unit)
 	if err := os.Rename(candidate, confPath); err != nil {
 		return false, err
 	}
@@ -387,7 +388,7 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
-	if changed || strings.TrimSpace(active) != "active" {
+	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
 			return false, fmt.Errorf("запуск сервера Xray: %w", err)
 		}
