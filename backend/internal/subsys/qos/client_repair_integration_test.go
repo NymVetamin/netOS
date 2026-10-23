@@ -18,6 +18,7 @@ type rateCountingRunner struct {
 	system.Runner
 	qdiscDeletes, classChanges, filterChanges int
 	failClassChange                           bool
+	failFilterChange                          bool
 }
 
 func (r *rateCountingRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -33,6 +34,9 @@ func (r *rateCountingRunner) Run(ctx context.Context, name string, args ...strin
 		}
 		if args[0] == "filter" && args[1] == "replace" {
 			r.filterChanges++
+			if r.failFilterChange {
+				return "", errors.New("injected filter change failure")
+			}
 		}
 	}
 	return r.Runner.Run(ctx, name, args...)
@@ -196,6 +200,50 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clients = []config.Client{{ID: "upload", MAC: "02:00:00:00:00:01", Network: "home", UpKbit: 1000}}
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	old = *cfg
+	old.Clients = append([]config.Client(nil), cfg.Clients...)
+	cfg.Clients[0].UpKbit = 2000
+	for _, tc := range []struct {
+		mac  string
+		safe bool
+	}{{"02:00:00:00:00:99", true}, {"02:00:00:00:00:01", false}} {
+		if _, err := r.Run(ctx, "ip", "neigh", "replace", "192.0.2.2", "lladdr", tc.mac, "nud", "permanent", "dev", "qos-repair0"); err != nil {
+			t.Fatal(err)
+		}
+		actions, err := s.PlanContext(planCtx, &old, cfg)
+		if err != nil || len(actions) != 1 || !apply.NeedsConfirmation(actions) != tc.safe {
+			t.Fatalf("upload-only safe=%v actions=%v err=%v", tc.safe, actions, err)
+		}
+	}
+	if actions, err := s.Plan(&old, cfg); err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("upload-only unknown path: %v %v", actions, err)
+	}
+	counted.qdiscDeletes = 0
+	counted.failFilterChange = true
+	if err := s.Apply(ctx, cfg); err == nil {
+		t.Fatal("upload failure swallowed")
+	}
+	if counted.qdiscDeletes != 0 {
+		t.Fatal("upload failure rebuilt queues")
+	}
+	counted.failFilterChange = false
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counted.qdiscDeletes != 0 {
+		t.Fatal("upload retry rebuilt queues")
+	}
+	cfg.Clients = nil
+	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 }

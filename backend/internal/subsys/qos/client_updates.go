@@ -45,7 +45,7 @@ func (s *Subsystem) readClientJSON(ctx context.Context, target any, args ...stri
 // A matching topology lets us change rates without discarding the queues of
 // other clients. Unknown state takes the ordinary reconstruction path.
 func (s *Subsystem) clientRateUpdates(ctx context.Context, item clientInterface) ([][]string, bool) {
-	if len(item.Download) == 0 {
+	if len(item.Download) == 0 && len(item.Upload) == 0 {
 		return nil, false
 	}
 	var qdiscs []struct {
@@ -60,7 +60,9 @@ func (s *Subsystem) clientRateUpdates(ctx context.Context, item clientInterface)
 	root, ingress := false, false
 	for _, q := range qdiscs {
 		switch {
-		case q.Kind == "htb" && q.Handle == "1:" && q.Root && !root:
+		case len(item.Download) == 0 && q.Kind == "noqueue" && q.Handle == "0:" && q.Root && q.Parent == "" && len(q.Options) == 0 && !root:
+			root = true
+		case len(item.Download) > 0 && q.Kind == "htb" && q.Handle == "1:" && q.Root && !root:
 			var def string
 			if json.Unmarshal(q.Options["default"], &def) != nil || (def != "0x1" && def != "1") {
 				return nil, false
@@ -87,7 +89,11 @@ func (s *Subsystem) clientRateUpdates(ctx context.Context, item clientInterface)
 		return nil, false
 	}
 	var classes []clientClass
-	if !s.readClientJSON(ctx, &classes, "class", "show", "dev", item.Name) || len(classes) != len(item.Download)+1 {
+	wantClasses := 0
+	if len(item.Download) > 0 {
+		wantClasses = len(item.Download) + 1
+	}
+	if !s.readClientJSON(ctx, &classes, "class", "show", "dev", item.Name) || len(classes) != wantClasses {
 		return nil, false
 	}
 	byID := map[string]clientClass{}
@@ -101,7 +107,7 @@ func (s *Subsystem) clientRateUpdates(ctx context.Context, item clientInterface)
 		byID[c.Handle] = c
 	}
 	parent := byID["1:1"]
-	if !parent.Root || parent.Rate != 1250000000 || parent.Ceil != 1250000000 {
+	if len(item.Download) > 0 && (!parent.Root || parent.Rate != 1250000000 || parent.Ceil != 1250000000) {
 		return nil, false
 	}
 	var updates [][]string

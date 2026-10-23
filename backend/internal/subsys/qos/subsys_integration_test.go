@@ -223,6 +223,35 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 		t.Fatalf("add/remove transfer outside bounds: add %.0f remove %.0f", added, removed)
 	}
 	t.Logf("TCP survived first limit add/last limit removal: add %.0f remove %.0f bit/s", added, removed)
+	// Upload-only shaping has no HTB root; updating its policer must still
+	// preserve the established TCP connection and the ingress qdisc.
+	cfg.Clients[0].DownKbit = 0
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	counted.qdiscDeletes, counted.classChanges, counted.filterChanges = 0, 0, 0
+	upload = runIPerf(t, ctx, namespace, true, func() {
+		cfg.Clients[0].UpKbit = 1000
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if counted.qdiscDeletes != 0 || counted.classChanges != 0 || counted.filterChanges != 1 {
+		t.Fatalf("upload-only update rebuilt queues: %+v", counted)
+	}
+	if upload < 100_000 || upload > 2_500_000 {
+		t.Fatalf("upload-only rate %.0f", upload)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counted.qdiscDeletes != 0 || counted.filterChanges != 1 {
+		t.Fatal("repeat mutated upload-only queues")
+	}
+	t.Logf("TCP survived upload-only update: %.0f bit/s", upload)
 	cfg.Clients = nil
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
