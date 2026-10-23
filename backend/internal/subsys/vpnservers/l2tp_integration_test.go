@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
@@ -89,7 +90,15 @@ func TestIntegrationL2TPChannelPreservesSession(t *testing.T) {
 		}
 	})
 	cfg := config.Default()
+	cfg.Components = []config.Component{{ID: "l2tp", Installed: true}}
+	cfg.VPNServers = []config.VPNServer{server}
 	if _, err := s.applyL2TP(ctx, server, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeOwned(ownedServersFor(cfg.VPNServers)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	stamp := run("systemctl", "show", l2tpUnitName(server), "-p", "ActiveEnterTimestampMonotonic", "--value")
@@ -127,8 +136,36 @@ func TestIntegrationL2TPChannelPreservesSession(t *testing.T) {
 		t.Fatalf("no PPP session: %s", data)
 	}
 	link := run("ip", "-o", "link", "show", "dev", "ppp-srv996")
+	changed := *cfg
+	changed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	changed.VPNServers[0].Name = "Renamed L2TP"
+	changed.VPNServers[0].Config = map[string]any{"listen": "192.0.2.9", "mtu": 1380}
+	actions, err := s.Plan(cfg, &changed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("MTU change lost confirmation: %+v %v", actions, err)
+	}
+	changed.VPNServers[0].Config = server.Config
+	savedUnit, err := os.ReadFile(unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unit, []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = s.Plan(cfg, &changed)
+	restoreErr := os.WriteFile(unit, savedUnit, 0644)
+	if err != nil || restoreErr != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("repair lost confirmation: %+v %v restore=%v", actions, err, restoreErr)
+	}
 	for _, name := range []string{"Renamed L2TP", "Renamed L2TP", server.Name} {
+		previous := *cfg
+		previous.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
 		server.Name = name
+		cfg.VPNServers[0] = server
+		actions, err := s.Plan(&previous, cfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("rename confirmation: %+v %v", actions, err)
+		}
 		if _, err := s.applyL2TP(ctx, server, cfg, true); err != nil {
 			t.Fatal(err)
 		}

@@ -308,10 +308,14 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		action := apply.Action{Kind: kind, Target: server.Name, Detail: resourceName(server), Disruptive: true}
 		comparison := before
 		comparison.Name = server.Name
-		if exists && server.Type == "xray" && reflect.DeepEqual(comparison, server) {
-			oldConfig, oldErr := RenderXray(before, old)
-			newConfig, newErr := RenderXray(server, next)
-			if oldErr == nil && newErr == nil && bytes.Equal(oldConfig, newConfig) {
+		if exists && reflect.DeepEqual(comparison, server) {
+			unchanged := server.Type == "l2tp"
+			if server.Type == "xray" {
+				oldConfig, oldErr := RenderXray(before, old)
+				newConfig, newErr := RenderXray(server, next)
+				unchanged = oldErr == nil && newErr == nil && bytes.Equal(oldConfig, newConfig)
+			}
+			if unchanged {
 				if !healthChecked {
 					oldHealthy = s.Health(ctx, old) == nil
 					healthChecked = true
