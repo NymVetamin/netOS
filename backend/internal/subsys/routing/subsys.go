@@ -78,7 +78,31 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 			Kind: "update", Target: "правила маршрутизации", Disruptive: true,
 		})
 	}
+	if len(actions) > 0 && routingNamesOnly(old, new) && s.unusedTablesOnly(ctx, old, old) {
+		// Identical table registries leave only the helper's exact live-state
+		// checks: a name edit must not silently exempt concurrent route repair.
+		for i := range actions {
+			actions[i].Disruptive = false
+			actions[i].Confirmation = apply.ConfirmationSafe
+		}
+	}
 	return actions, nil
+}
+
+func routingNamesOnly(old, next *config.Config) bool {
+	strip := func(cfg *config.Config) config.Routing {
+		out := cfg.Routing
+		out.Static = append([]config.StaticRoute(nil), out.Static...)
+		out.Rules = append([]config.RouteRule(nil), out.Rules...)
+		for i := range out.Static {
+			out.Static[i].Name = ""
+		}
+		for i := range out.Rules {
+			out.Rules[i].Name = ""
+		}
+		return out
+	}
+	return reflect.DeepEqual(strip(old), strip(next))
 }
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {

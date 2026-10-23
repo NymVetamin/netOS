@@ -75,6 +75,37 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 	t.Log("IPv4 before repeat:", mustRoutingNS(t, "ip", "-4", "route", "show", "table", "all", "proto", "static"))
 	t.Log("IPv6 before repeat:", mustRoutingNS(t, "ip", "-6", "route", "show", "table", "all", "proto", "static"))
 	s.Runner = counted
+	renamed := *cfg
+	renamed.Routing.Static = append([]config.StaticRoute(nil), cfg.Routing.Static...)
+	renamed.Routing.Rules = append([]config.RouteRule(nil), cfg.Routing.Rules...)
+	renamed.Routing.Static[0].Name = "renamed IPv4 route"
+	renamed.Routing.Static[1].Name = "renamed IPv6 route"
+	renamed.Routing.Rules[0].Name = "renamed rule"
+	for _, pair := range [][2]*config.Config{{cfg, &renamed}, {&renamed, cfg}} {
+		actions, err := s.Plan(pair[0], pair[1])
+		if err != nil || len(actions) != 2 {
+			t.Fatalf("name plan: %v %v", actions, err)
+		}
+		for _, action := range actions {
+			if action.Disruptive || action.Confirmation != apply.ConfirmationSafe {
+				t.Fatalf("name edit requires confirmation: %v", actions)
+			}
+		}
+		for i := 0; i < 2; i++ {
+			if err := s.applyRoutes(context.Background(), pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.applyRules(context.Background(), pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Health(context.Background(), pair[1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if counted.routeMutations != 0 || counted.mutations != 0 {
+		t.Fatal("name edits mutated kernel routing")
+	}
 	if err := s.applyRoutes(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
