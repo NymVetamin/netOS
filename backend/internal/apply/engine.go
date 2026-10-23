@@ -421,7 +421,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 	previous := e.current
 	e.mu.Unlock()
 
-	actions, err := e.Plan(cfg)
+	actions, err := e.PlanContext(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

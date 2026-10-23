@@ -153,6 +153,8 @@ func TestConcurrentApplyIsSerialized(t *testing.T) {
 }
 
 func TestFailedApplyRollsBackWithLiveContext(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	rollbackHadLiveContext := false
 	initialApplied := false
 	sub := &testSubsystem{apply: func(ctx context.Context, cfg *config.Config) error {
@@ -163,14 +165,13 @@ func TestFailedApplyRollsBackWithLiveContext(t *testing.T) {
 			initialApplied = true
 			return nil
 		}
+		cancel()
 		return ctx.Err()
 	}}
 	e := newTestEngine(t, sub)
 	if _, err := e.Apply(context.Background(), validConfig("initial"), 1, false); err != nil {
 		t.Fatal(err)
 	}
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
 	if _, err := e.Apply(cancelled, validConfig("broken"), 2, true); err == nil {
 		t.Fatal("ожидалась ошибка отменённого применения")
 	}
