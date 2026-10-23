@@ -1171,7 +1171,7 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	// already left instead of accumulating behind CPU saturation.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	actions, err := s.Engine.PlanContext(ctx, cfg)
+	actions, err := s.Engine.PlanContext(managementContext(ctx, r), cfg)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			writeError(w, http.StatusServiceUnavailable, "построение плана превысило лимит 15 секунд; повторите после снижения нагрузки")
@@ -1304,7 +1304,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	// подтверждения или собственного отката независимо от соединения браузера.
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	result, err := s.Engine.Apply(applyCtx, cfg, revID, true)
+	result, err := s.Engine.Apply(managementContext(applyCtx, r), cfg, revID, true)
 	if errors.Is(err, apply.ErrPendingConfirmation) {
 		// Здесь ничего не менялось: предыдущая транзакция всё ещё ждёт
 		// подтверждения. Сообщать об откате было бы неправдой.

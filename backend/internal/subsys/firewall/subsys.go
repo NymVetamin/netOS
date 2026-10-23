@@ -86,7 +86,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 		}
 		actions = append(actions, apply.Action{Kind: "update", Target: "ip6tables", Detail: detail})
 	}
-	if len(actions) > 0 && annotationsOnly(old, new) {
+	if len(actions) > 0 && (annotationsOnly(old, new) || (clientRoutingOnly(old, new) && s.managementRoutingSafe(ctx, new))) {
 		// A harmless config diff can accompany a live firewall repair. Never
 		// suppress its rollback timer unless the previous rules really match.
 		s.runtimeRules(old, oldRS)

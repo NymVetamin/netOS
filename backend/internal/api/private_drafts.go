@@ -151,7 +151,7 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		actions, err := s.Engine.PlanContext(ctx, cfg)
+		actions, err := s.Engine.PlanContext(managementContext(ctx, r), cfg)
 		if err != nil {
 			writeError(w, 500, "не удалось построить план")
 			return
