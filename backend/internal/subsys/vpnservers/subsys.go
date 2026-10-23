@@ -232,6 +232,9 @@ func ownedServersEqual(left, right []ownedServer) bool {
 
 // Client TLS fingerprints affect exported profiles, not the server process.
 func sameServerRuntime(a, b config.VPNServer) bool {
+	if a.Type == "ikev2" && b.Type == "ikev2" {
+		a.Name, b.Name = "", ""
+	}
 	if a.Type == b.Type && (a.Type == "ocserv" || a.Type == "ikev2" || a.Type == "l2tp") {
 		a.DefaultChannel, b.DefaultChannel = "", ""
 		a.Peers = peersWithoutExitChannels(a.Peers)

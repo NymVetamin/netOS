@@ -74,6 +74,7 @@ func TestRenderIKEv2(t *testing.T) {
 func TestIKEv2ChannelDoesNotChangeServerRuntime(t *testing.T) {
 	cfg, server := ikev2TestConfig()
 	next := server
+	next.Name = "Renamed IKEv2"
 	next.DefaultChannel = "alternate"
 	next.Peers = append([]config.VPNPeer(nil), server.Peers...)
 	next.Peers[0].Channel = "alternate"

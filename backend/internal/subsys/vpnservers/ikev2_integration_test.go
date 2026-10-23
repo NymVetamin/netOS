@@ -176,6 +176,61 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 		t.Fatalf("traffic did not cross the IKEv2 tunnel: %q (%v); link=%s states=%s policies=%s input=%s client-routes=%s client-states=%s client-policies=%s client=%s", out, err, links, states, policies, rules, clientRoutes, clientStates, clientPolicies, clientLog.String())
 	}
 	changed := *cfg
+	// Sequence numbers and last-use age change with traffic; other SA fields, including
+	// SPI and keys, must remain identical. Never print the state (it contains keys).
+	stableState := func(state string) string {
+		var lines []string
+		for _, line := range strings.Split(state, "\n") {
+			if field := strings.TrimSpace(line); !strings.HasPrefix(field, "anti-replay context:") && !strings.HasPrefix(field, "lastused ") {
+				lines = append(lines, line)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+	statesBefore, err := runner.Run(ctx, "ip", "xfrm", "state")
+	if err != nil || statesBefore == "" {
+		t.Fatal("missing XFRM states")
+	}
+	rename := *cfg
+	rename.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	rename.VPNServers[0].Name = "Renamed IKEv2"
+	confPath := s.ikev2Paths().conf
+	confBefore, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(confPath, []byte("# drift\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	actions, planErr := s.Plan(cfg, &rename)
+	if err := os.WriteFile(confPath, confBefore, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if planErr != nil || len(actions) == 0 || !actions[0].Disruptive {
+		t.Fatalf("name-only repair must remain protected: %+v %v", actions, planErr)
+	}
+	for _, pair := range [][2]*config.Config{{cfg, &rename}, {&rename, &rename}, {&rename, cfg}} {
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("name-only plan: %+v %v", actions, err)
+		}
+		if err := s.Apply(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		started, err := runner.Run(ctx, "systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", ikev2Unit)
+		if err != nil || started != startedBefore {
+			t.Fatal("rename restarted IKEv2")
+		}
+		if _, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "2", "10.97.0.1"); err != nil {
+			t.Fatalf("rename lost tunnel: %v", err)
+		}
+		statesAfter, err := runner.Run(ctx, "ip", "xfrm", "state")
+		if err != nil || stableState(statesAfter) != stableState(statesBefore) {
+			t.Fatal("rename replaced XFRM state")
+		}
+	}
 	changed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
 	changed.VPNServers[0].DefaultChannel = "alternate"
 	changed.VPNServers[0].Peers = append([]config.VPNPeer(nil), cfg.VPNServers[0].Peers...)
