@@ -61,3 +61,42 @@ func TestUnusedStaticSetConfirmation(t *testing.T) {
 		})
 	}
 }
+
+func TestUnchangedDomainSetsConfirmation(t *testing.T) {
+	for _, scenario := range []string{"channel", "priority", "domains", "missing", "read failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			r := newPolicyRunner()
+			s := New(r, t.TempDir())
+			old := domainPolicyConfig("domains")
+			if err := s.Apply(context.Background(), old); err != nil {
+				t.Fatal(err)
+			}
+			next := *old
+			next.Policies = append([]config.Policy(nil), old.Policies...)
+			next.Policies[0].Channel = "other"
+			safe := scenario == "channel" || scenario == "priority"
+			switch scenario {
+			case "priority":
+				next.Policies[0].Priority++
+			case "domains":
+				next.Policies[0].Domains = []string{"changed.example"}
+			case "missing":
+				delete(r.sets, IPv4SetName("domains"))
+			case "read failure":
+				r.failContains = "ipset list"
+			}
+			actions, err := s.Plan(old, &next)
+			if err != nil || len(actions) != 1 {
+				t.Fatalf("plan: %v %v", actions, err)
+			}
+			actions[0].Subsystem = "policy"
+			if got := !apply.NeedsConfirmation(actions); got != safe {
+				t.Fatalf("safe=%v want %v: %v", got, safe, actions)
+			}
+			mixed := append(actions, apply.Action{Subsystem: "firewall", Confirmation: apply.ConfirmationRequired})
+			if !apply.NeedsConfirmation(mixed) {
+				t.Fatal("policy exemption masked risky firewall action")
+			}
+		})
+	}
+}

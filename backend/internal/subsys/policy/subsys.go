@@ -135,7 +135,9 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 			kind = "delete"
 		}
 		action := apply.Action{Kind: kind, Target: "наборы адресов и доменные политики", Detail: fmt.Sprintf("%d IPv4 ipset", len(after))}
-		if s.unusedStaticSetsOnly(ctx, old, next) {
+		// Channel and selector changes are enforced by firewall/VPN actions.
+		// This subsystem cannot disrupt them when its live sets need no repair.
+		if (old != nil && reflect.DeepEqual(before, after) && s.Health(ctx, next) == nil) || s.unusedStaticSetsOnly(ctx, old, next) {
 			action.Confirmation = apply.ConfirmationSafe
 		}
 		return []apply.Action{action}, nil

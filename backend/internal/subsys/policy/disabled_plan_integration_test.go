@@ -104,6 +104,30 @@ func TestIntegrationDisabledPolicyPreservesActiveSet(t *testing.T) {
 			t.Fatalf("learned entry lost: %v", err)
 		}
 	}
+	changed := *base
+	changed.Policies = append([]config.Policy(nil), base.Policies...)
+	changed.Policies[0].Channel = "another-channel"
+	changed.Policies[0].Priority++
+	for _, pair := range [][2]*config.Config{{base, &changed}, {&changed, base}} {
+		actions, err := s.Plan(pair[0], pair[1])
+		if err != nil || len(actions) != 1 || actions[0].Confirmation != apply.ConfirmationSafe {
+			t.Fatalf("unchanged domain sets: %v %v", actions, err)
+		}
+		for i := 0; i < 2; i++ {
+			if err := s.Apply(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := cleanup.Apply(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Health(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Run(ctx, "ipset", "test", name, "192.0.2.5"); err != nil {
+				t.Fatalf("channel change lost learned entry: %v", err)
+			}
+		}
+	}
 	if _, err := r.Run(ctx, "ipset", "destroy", name); err != nil {
 		t.Fatal(err)
 	}
