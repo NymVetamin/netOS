@@ -19,10 +19,14 @@ type routingNamespaceRunner struct{}
 
 type routingCountingRunner struct {
 	routingNamespaceRunner
-	mutations int
+	mutations      int
+	routeMutations int
 }
 
 func (r *routingCountingRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if len(args) > 2 && args[1] == "route" && (args[2] == "replace" || args[2] == "del") {
+		r.routeMutations++
+	}
 	if len(args) > 2 && args[1] == "rule" && (args[2] == "add" || args[2] == "del") {
 		r.mutations++
 	}
@@ -67,7 +71,22 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	counted := &routingCountingRunner{}
+	t.Log("IPv4 before repeat:", mustRoutingNS(t, "ip", "-4", "route", "show", "table", "all", "proto", "static"))
+	t.Log("IPv6 before repeat:", mustRoutingNS(t, "ip", "-6", "route", "show", "table", "all", "proto", "static"))
 	s.Runner = counted
+	if err := s.applyRoutes(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counted.routeMutations != 0 {
+		t.Fatalf("unchanged routes rewritten: %d", counted.routeMutations)
+	}
+	mustRoutingNS(t, "ip", "-4", "route", "del", "blackhole", "10.77.0.0/16", "table", "200", "metric", "7")
+	if err := s.applyRoutes(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counted.routeMutations != 1 {
+		t.Fatalf("missing route not restored: %d", counted.routeMutations)
+	}
 	if err := s.applyRules(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}

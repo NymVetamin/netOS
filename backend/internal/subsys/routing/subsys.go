@@ -113,6 +113,7 @@ func (s *Subsystem) writeProtos() error {
 // Маршруты аплинков с proto 201, а также DHCP и маршруты ядра не затрагиваются.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	wanted := map[string]map[string]bool{"-4": {}, "-6": {}}
+	live := map[string]map[string]string{"-4": {}, "-6": {}}
 	for _, r := range enabledRoutes(cfg) {
 		wanted[routeFamily(r)][staticRouteKey(r)] = true
 	}
@@ -126,6 +127,9 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 			}
 			for _, line := range strings.Split(out, "\n") {
 				line = strings.TrimSpace(line)
+				if protocol == "static" && line != "" {
+					live[family][routeLineKey(line)] = line
+				}
 				if line == "" || wanted[family][routeLineKey(line)] {
 					continue
 				}
@@ -138,6 +142,9 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	}
 
 	for _, r := range enabledRoutes(cfg) {
+		if staticRouteAlreadyApplied(live[routeFamily(r)][staticRouteKey(r)], r) {
+			continue
+		}
 		args := []string{routeFamily(r), "route", "replace"}
 
 		switch r.Type {
@@ -180,6 +187,11 @@ func routeFamily(r config.StaticRoute) string {
 }
 
 func routeKey(table, destination, routeType, gateway, iface string, metric int) string {
+	// IPv6 reject routes report the kernel's synthetic loopback device.
+	// No device is passed when creating these routes.
+	if routeType == "blackhole" || routeType == "unreachable" || routeType == "prohibit" {
+		iface = ""
+	}
 	if table == "main" {
 		table = ""
 	}

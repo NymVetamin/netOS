@@ -179,7 +179,7 @@ func TestApplyRoutesDeletesUnconfiguredStaticRoutes(t *testing.T) {
 	}
 }
 
-func TestApplyRoutesMigratesConfiguredStaticRouteWithoutDeletingIt(t *testing.T) {
+func TestApplyRoutesPreservesConfiguredStaticRoute(t *testing.T) {
 	runner := &recordingRunner{responses: map[string]runnerResponse{
 		"ip -4 route show table all proto static": {out: "203.0.113.0/24 via 192.0.2.1 dev eth0 proto static\n"},
 	}}
@@ -188,8 +188,8 @@ func TestApplyRoutesMigratesConfiguredStaticRouteWithoutDeletingIt(t *testing.T)
 		t.Fatal(err)
 	}
 	got := commandStrings(runner.commands)
-	if strings.Contains(got, "route del 203.0.113.0/24") || !strings.Contains(got, "ip -4 route replace 203.0.113.0/24 via 192.0.2.1 dev eth0 proto static") {
-		t.Fatalf("configured static route should migrate in place:\n%s", got)
+	if strings.Contains(got, "route del 203.0.113.0/24") || strings.Contains(got, "route replace") {
+		t.Fatalf("configured static route should remain unchanged:\n%s", got)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestApplyRoutesMigratesLegacyProto202(t *testing.T) {
 	}
 }
 
-func TestApplyRoutesKeepsConfiguredHostRouteBeforeReplace(t *testing.T) {
+func TestApplyRoutesKeepsConfiguredHostRoute(t *testing.T) {
 	for _, tc := range []struct {
 		family  string
 		address string
@@ -226,8 +226,8 @@ func TestApplyRoutesKeepsConfiguredHostRouteBeforeReplace(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := commandStrings(runner.commands)
-			if strings.Contains(got, "route del "+tc.address) || !strings.Contains(got, "route replace "+tc.prefix+" dev lo proto static") {
-				t.Fatalf("configured host route should migrate in place:\n%s", got)
+			if strings.Contains(got, "route del "+tc.address) || strings.Contains(got, "route replace") {
+				t.Fatalf("configured host route should remain unchanged:\n%s", got)
 			}
 		})
 	}
@@ -240,7 +240,7 @@ func TestApplyRoutesKeepsConfiguredRouteAndInfersDefaultFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := commandStrings(runner.commands)
-	if strings.Contains(got, "route del default") || !strings.Contains(got, "ip -6 route replace default") {
+	if strings.Contains(got, "route del default") || strings.Contains(got, "route replace") {
 		t.Fatalf("unexpected commands:\n%s", got)
 	}
 }
