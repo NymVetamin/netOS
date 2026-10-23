@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -257,6 +258,116 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	}
 	_ = client.Process.Kill()
 	<-clientDone
+	// The netOS outbound client must connect to a separate network namespace.
+	// Recreate its XFRM interface there: a moved XFRM interface still uses
+	// the SA namespace in which it was created.
+	if _, err := runner.Run(ctx, "systemctl", "stop", ikev2Unit); err != nil {
+		t.Fatal(err)
+	}
+	dropDir := "/etc/systemd/system/" + ikev2Unit + ".d"
+	if _, err := os.Stat(dropDir); !os.IsNotExist(err) {
+		t.Fatal("test drop-in already exists")
+	}
+	if err := os.Mkdir(dropDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	dropFile := filepath.Join(dropDir, "qa-namespace.conf")
+	t.Cleanup(func() {
+		_ = os.Remove(dropFile)
+		_ = os.Remove(dropDir)
+		_, _ = runner.Run(context.Background(), "systemctl", "daemon-reload")
+	})
+	if err := os.WriteFile(dropFile, []byte("[Service]\nNetworkNamespacePath=/run/netns/"+namespace+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"link", "delete", "xfrm-srv997"},
+		{"netns", "exec", namespace, "ip", "link", "add", "xfrm-srv997", "type", "xfrm", "if_id", "50997"},
+		{"netns", "exec", namespace, "ip", "link", "set", "xfrm-srv997", "up"},
+		{"netns", "exec", namespace, "ip", "addr", "replace", "10.97.0.1/24", "dev", "xfrm-srv997"},
+	} {
+		if _, err := runner.Run(ctx, "ip", args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(ctx, "systemctl", "start", ikev2Unit); err != nil {
+		t.Fatal(err)
+	}
+	ca, err := os.ReadFile(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelRoot, err := os.MkdirTemp("/var/lib", "netos-ikev2-channel-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(channelRoot) })
+	channelSubsystem := channels.New(runner, channelRoot)
+	channelSubsystem.RTTablesPath = filepath.Join(channelRoot, "rt_tables")
+	channel := config.Channel{ID: "test-ikev2", Index: 997, Name: "Test IKEv2", Enabled: true, Type: "ikev2", Mode: "tun", FailMode: "block",
+		Config: map[string]any{"server": "192.0.2.2", "server_identity": "netos-ikev2-integration", "username": "integration", "password": "integration-secret", "ca_cert": string(ca), "mtu": 1380}}
+	channelCfg := config.Default()
+	channelCfg.Components = []config.Component{{ID: "strongswan", Installed: true}}
+	channelCfg.Channels = append(channelCfg.Channels, channel)
+	t.Cleanup(func() { _ = channelSubsystem.Apply(context.Background(), config.Default()) })
+	if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := channelSubsystem.Health(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	const channelUnit = "netos-ikev2-ch997.service"
+	stamp, err := runner.Run(ctx, "systemctl", "show", channelUnit, "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelStates, err := runner.Run(ctx, "ip", "xfrm", "state")
+	if err != nil || channelStates == "" {
+		t.Fatal("missing outbound SA")
+	}
+	for _, name := range []string{"Renamed IKEv2 channel", "Renamed IKEv2 channel", channel.Name} {
+		channelCfg.Channels[len(channelCfg.Channels)-1].Name = name
+		if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := channelSubsystem.Health(ctx, channelCfg); err != nil {
+			t.Fatal(err)
+		}
+		after, err := runner.Run(ctx, "systemctl", "show", channelUnit, "-p", "ActiveEnterTimestampMonotonic", "--value")
+		if err != nil || after != stamp {
+			t.Fatal("rename restarted outgoing IKEv2")
+		}
+		if _, err := runner.Run(ctx, "ping", "-I", channels.InterfaceName(channel), "-c", "1", "-W", "2", "10.97.0.1"); err != nil {
+			t.Fatalf("outgoing IKEv2 ping: %v", err)
+		}
+		afterStates, err := runner.Run(ctx, "ip", "xfrm", "state")
+		if err != nil || stableState(channelStates) != stableState(afterStates) {
+			t.Fatal("outgoing rename replaced SA")
+		}
+	}
+	// A real service failure still needs recovery, even with unchanged config.
+	if _, err := runner.Run(ctx, "systemctl", "stop", channelUnit); err != nil {
+		t.Fatal(err)
+	}
+	if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := channelSubsystem.Health(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(ctx, "ping", "-I", channels.InterfaceName(channel), "-c", "1", "-W", "2", "10.97.0.1"); err != nil {
+		t.Fatalf("recovered IKEv2 ping: %v", err)
+	}
+	newStamp, err := runner.Run(ctx, "systemctl", "show", channelUnit, "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil || newStamp == stamp {
+		t.Fatal("stopped IKEv2 was not restarted")
+	}
+	if err := channelSubsystem.Apply(ctx, config.Default()); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

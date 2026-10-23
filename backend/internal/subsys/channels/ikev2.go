@@ -220,6 +220,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 	conf, daemon, ca, unit := renderIKEv2Client(ch, ike), renderIKEv2ClientDaemon(ch), []byte(ike.CACert), renderIKEv2ClientUnit(ch, p)
 	helper := renderIKEv2DNSUpdate(ch)
 	changed := system.FileChanged(p.conf, conf) || system.FileChanged(p.daemon, daemon) || system.FileChanged(p.ca, ca) || system.FileChanged(p.unit, unit) || system.FileChanged(dnsUpdate, helper)
+	restart := system.FileChanged(p.conf, conf) || system.FileChanged(p.daemon, daemon) || system.FileChanged(p.ca, ca) || system.UnitRuntimeChanged(p.unit, unit) || system.FileChanged(dnsUpdate, helper)
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -242,7 +243,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 		return created, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2UnitName(ch))
-	if changed || strings.TrimSpace(active) != "active" {
+	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", ikev2UnitName(ch)); err != nil {
 			return created, fmt.Errorf("запуск IKEv2: %w", err)
 		}
