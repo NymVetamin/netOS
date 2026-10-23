@@ -11,6 +11,9 @@ import (
 
 func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 	base, _ := configuredFirewall(t)
+	base.Networks[0].Name = "Before"
+	base.Networks[0].DefaultChannel = "qa-vpn"
+	base.Channels = append(base.Channels, config.Channel{ID: "qa-vpn", Index: 91, Type: "wireguard", Enabled: true})
 	base.Clients = []config.Client{{ID: "routed", Name: "Routed", MAC: "02:00:00:00:00:02", Channel: "direct"}, {ID: "blocked", Name: "Blocked", MAC: "02:00:00:00:00:03", Blocked: true}}
 	base.Policies = []config.Policy{{ID: "named", Name: "Before", Enabled: true, SrcIP: "192.0.2.8", Channel: "direct"}}
 	base.Firewall.Rules = []config.FirewallRule{{ID: "a", Name: "allow", Enabled: true, Zone: "lan", Flow: "forward", Action: "accept"}, {ID: "b", Name: "deny", Enabled: true, Zone: "lan", Flow: "forward", Action: "drop"}}
@@ -20,6 +23,8 @@ func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 		change func(*config.Config)
 		safe   bool
 	}{
+		{"rename segment", func(c *config.Config) { c.Networks[0].Name = "After" }, true},
+		{"mixed segment channel", func(c *config.Config) { c.Networks[0].Name = "After"; c.Networks[0].DefaultChannel = "" }, false},
 		{"rename routed client", func(c *config.Config) { c.Clients[0].Name = "After" }, true},
 		{"rename blocked client", func(c *config.Config) { c.Clients[1].Name = "After" }, true},
 		{"mixed client block", func(c *config.Config) { c.Clients[0].Name = "After"; c.Clients[0].Blocked = true }, false},

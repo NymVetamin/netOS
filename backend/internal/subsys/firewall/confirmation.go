@@ -17,6 +17,10 @@ func annotationsOnly(old, next *config.Config) bool {
 
 func withoutRuleAnnotations(cfg *config.Config) *config.Config {
 	copy := *cfg
+	copy.Networks = append([]config.Network(nil), cfg.Networks...)
+	for i := range copy.Networks {
+		copy.Networks[i].Name = "annotation"
+	}
 	copy.Clients = append([]config.Client(nil), cfg.Clients...)
 	for i := range copy.Clients {
 		copy.Clients[i].Name = "annotation"

@@ -198,11 +198,16 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 		freshIn, freshOut, closeFresh := start()
 		check(freshIn, freshOut, "new-"+mode)
 		closeFresh()
-		if mode == "client" {
+		if mode == "client" || mode == "segment" {
 			for _, name := range []string{"Renamed client", ""} {
 				previous := *cfg
 				previous.Clients = append([]config.Client(nil), cfg.Clients...)
-				cfg.Clients[0].Name = name
+				previous.Networks = append([]config.Network(nil), cfg.Networks...)
+				if mode == "client" {
+					cfg.Clients[0].Name = name
+				} else {
+					cfg.Networks[0].Name = name
+				}
 				actions, err := s.Plan(&previous, cfg)
 				if err != nil || len(actions) == 0 {
 					t.Fatalf("rename plan: %v %v", actions, err)
