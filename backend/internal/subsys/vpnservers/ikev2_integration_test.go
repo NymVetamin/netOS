@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/system"
@@ -328,8 +329,45 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	if err != nil || channelStates == "" {
 		t.Fatal("missing outbound SA")
 	}
+	for _, edit := range []func(*config.Config){
+		func(c *config.Config) { c.Channels[len(c.Channels)-1].FailMode = "direct" },
+		func(c *config.Config) { c.IPv6.Mode = "passthrough" },
+	} {
+		mixed := *channelCfg
+		mixed.Channels = append([]config.Channel(nil), channelCfg.Channels...)
+		mixed.Channels[len(mixed.Channels)-1].Name = "Renamed"
+		edit(&mixed)
+		actions, err := channelSubsystem.Plan(channelCfg, &mixed)
+		if err != nil || !apply.NeedsConfirmation(actions) {
+			t.Fatalf("mixed change unprotected: %+v %v", actions, err)
+		}
+	}
+	unitPath := "/etc/systemd/system/" + channelUnit
+	unitBefore, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mixed := *channelCfg
+	mixed.Channels = append([]config.Channel(nil), channelCfg.Channels...)
+	mixed.Channels[len(mixed.Channels)-1].Name = "Renamed"
+	repairActions, repairErr := channelSubsystem.Plan(channelCfg, &mixed)
+	if err := os.WriteFile(unitPath, unitBefore, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if repairErr != nil || !apply.NeedsConfirmation(repairActions) {
+		t.Fatalf("repair unprotected: %+v %v", repairActions, repairErr)
+	}
 	for _, name := range []string{"Renamed IKEv2 channel", "Renamed IKEv2 channel", channel.Name} {
+		previous := *channelCfg
+		previous.Channels = append([]config.Channel(nil), channelCfg.Channels...)
 		channelCfg.Channels[len(channelCfg.Channels)-1].Name = name
+		actions, err := channelSubsystem.Plan(&previous, channelCfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("rename requires confirmation: %+v %v", actions, err)
+		}
 		if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
 			t.Fatal(err)
 		}

@@ -292,7 +292,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 			action := apply.Action{Kind: "update", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true}
 			comparison := before
 			comparison.Name = ch.Name
-			if (ch.Type == "xray" || ch.Type == "wireguard" || ch.Type == "l2tp" || (ch.Type == "openconnect" && old.IPv6.Mode == new.IPv6.Mode)) && reflect.DeepEqual(comparison, ch) {
+			if (ch.Type == "xray" || ch.Type == "wireguard" || ch.Type == "l2tp" || ((ch.Type == "openconnect" || ch.Type == "ikev2") && old.IPv6.Mode == new.IPv6.Mode)) && reflect.DeepEqual(comparison, ch) {
 				if !healthChecked {
 					oldHealthy = s.Health(ctx, old) == nil
 					healthChecked = true
