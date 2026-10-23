@@ -110,6 +110,29 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 			t.Fatalf("export edit reset handshake: %v", err)
 		}
 	}
+	channelEdit := next
+	channelEdit.VPNServers = append([]config.VPNServer(nil), next.VPNServers...)
+	channelEdit.VPNServers[0].DefaultChannel = "alternate"
+	channelEdit.VPNServers[0].Peers = append([]config.VPNPeer(nil), next.VPNServers[0].Peers...)
+	channelEdit.VPNServers[0].Peers[0].Channel = "peer-channel"
+	for _, pair := range [][2]*config.Config{{&next, &channelEdit}, {&channelEdit, &next}} {
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("routing-only server plan: %v %v", actions, err)
+		}
+		for i := 0; i < 2; i++ {
+			if err := s.Apply(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Health(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "1", "-W", "2", "10.253.97.1")
+			after, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+			if err != nil || after != handshake {
+				t.Fatalf("channel edit reset handshake: %v", err)
+			}
+		}
+	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

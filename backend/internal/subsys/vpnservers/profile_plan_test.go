@@ -40,3 +40,34 @@ func TestWireGuardExportSettingsDoNotPlanServerChange(t *testing.T) {
 		t.Fatalf("runtime repair lost protection: %v %v", actions, err)
 	}
 }
+
+func TestWireGuardChannelDoesNotPlanServerRestart(t *testing.T) {
+	s, runner := newTestSubsystem(t)
+	old := serverConfig()
+	if err := s.Apply(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	next := serverConfig()
+	next.VPNServers[0].DefaultChannel = "alternate"
+	next.VPNServers[0].Peers[0].Channel = "peer-channel"
+	before, _ := RenderWireGuard(old.VPNServers[0])
+	after, _ := RenderWireGuard(next.VPNServers[0])
+	if before != after {
+		t.Fatal("channel changed WireGuard runtime configuration")
+	}
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 0 {
+		t.Fatalf("routing-only server plan: %v %v", actions, err)
+	}
+	if !reflect.DeepEqual(old, serverConfig()) || next.VPNServers[0].Peers[0].Channel != "peer-channel" {
+		t.Fatal("comparison mutated configuration")
+	}
+	next.VPNServers[0].Port++
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("mixed port change: %v %v", actions, err)
+	}
+	next.VPNServers[0].Port--
+	runner.up = false
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("runtime repair: %v %v", actions, err)
+	}
+}

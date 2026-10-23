@@ -232,8 +232,8 @@ func ownedServersEqual(left, right []ownedServer) bool {
 // Client TLS fingerprints affect exported profiles, not the server process.
 func sameServerRuntime(a, b config.VPNServer) bool {
 	if a.Type == "wireguard" && b.Type == "wireguard" {
-		a = withoutWireGuardExportSettings(a)
-		b = withoutWireGuardExportSettings(b)
+		a = wireGuardRuntimeSettings(a)
+		b = wireGuardRuntimeSettings(b)
 	}
 	if a.Type == "xray" && b.Type == "xray" {
 		a.Peers = append([]config.VPNPeer(nil), a.Peers...)
@@ -248,10 +248,13 @@ func sameServerRuntime(a, b config.VPNServer) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-func withoutWireGuardExportSettings(server config.VPNServer) config.VPNServer {
+func wireGuardRuntimeSettings(server config.VPNServer) config.VPNServer {
+	// Kernel routing is reconciled by firewall, not by wg syncconf.
+	server.DefaultChannel = ""
 	server.Peers = append([]config.VPNPeer(nil), server.Peers...)
 	for i := range server.Peers {
 		server.Peers[i].WireGuardProfile = nil
+		server.Peers[i].Channel = ""
 	}
 	settings := make(map[string]any, len(server.Config))
 	for key, value := range server.Config {
