@@ -3,6 +3,7 @@
 package qos
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -175,6 +176,30 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 	if download < 1_000_000 || download > 7_000_000 {
 		t.Fatalf("download shaper is outside tolerance: %.0f bit/s", download)
 	}
+	counted := &rateCountingRunner{Runner: runner}
+	s.Runner = counted
+	download = runIPerf(t, ctx, namespace, false, func() {
+		cfg.Clients[0].DownKbit = 3000
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+	upload = runIPerf(t, ctx, namespace, true, func() {
+		cfg.Clients[0].UpKbit = 500
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if counted.qdiscDeletes != 0 || counted.classChanges != 1 || counted.filterChanges != 1 {
+		t.Fatalf("live update rebuilt shared queues: %+v", counted)
+	}
+	if download < 1_000_000 || download > 6_000_000 || upload < 100_000 || upload > 1_500_000 {
+		t.Fatalf("live update throughput: down %.0f up %.0f", download, upload)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("TCP sessions survived rate updates: down %.0f up %.0f bit/s", download, upload)
 	cfg.Clients = nil
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -185,7 +210,7 @@ func TestIntegrationClientRateLimits(t *testing.T) {
 	}
 }
 
-func runIPerf(t *testing.T, ctx context.Context, namespace string, reverse bool) float64 {
+func runIPerf(t *testing.T, ctx context.Context, namespace string, reverse bool, during ...func()) float64 {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -207,7 +232,20 @@ func runIPerf(t *testing.T, ctx context.Context, namespace string, reverse bool)
 	if reverse {
 		args = append(args, "-R")
 	}
-	out, err := exec.CommandContext(runCtx, "iperf3", args...).Output()
+	var output bytes.Buffer
+	client := exec.CommandContext(runCtx, "iperf3", args...)
+	client.Stdout = &output
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if len(during) > 0 {
+		time.Sleep(time.Second)
+		for _, action := range during {
+			action()
+		}
+	}
+	err := client.Wait()
+	out := output.Bytes()
 	_ = server.Wait()
 	if err != nil {
 		t.Fatalf("iperf3 failed: %v: %s", err, out)
