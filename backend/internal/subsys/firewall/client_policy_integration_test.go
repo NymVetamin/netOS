@@ -70,6 +70,7 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 	cfg.Channels = []config.Channel{{ID: "direct", Type: "direct", Enabled: true}, {ID: "vpn", Type: "wireguard", Index: 1, Enabled: true}}
 	cfg.Clients = []config.Client{{ID: "client", MAC: "02:00:00:00:00:02", Channel: "direct"}}
 	cfg.VPNServers = []config.VPNServer{{ID: "wg", Index: 2, Type: "wireguard", Enabled: true, Subnet: "10.9.0.1/24", Port: 51820, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.9.0.2"}}}}
+	cfg.VPNServers = append(cfg.VPNServers, config.VPNServer{ID: "oc", Index: 3, Type: "ocserv", Enabled: true, Subnet: "10.10.0.1/24", Port: 14443, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.10.0.2"}}})
 	s := New(r, t.TempDir())
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -125,7 +126,7 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 	input, output, finish := start()
 	defer finish()
 	check(input, output, "initial")
-	for _, mode := range []string{"client", "segment", "policy", "wg default", "wg peer", "wg policy", "direct"} {
+	for _, mode := range []string{"client", "segment", "policy", "wg default", "wg peer", "wg policy", "oc default", "oc peer", "oc policy", "direct"} {
 		data, _ := json.Marshal(cfg)
 		var before config.Config
 		if err := json.Unmarshal(data, &before); err != nil {
@@ -136,6 +137,8 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 		cfg.Policies = nil
 		cfg.VPNServers[0].DefaultChannel = "direct"
 		cfg.VPNServers[0].Peers[0].Channel = ""
+		cfg.VPNServers[1].DefaultChannel = "direct"
+		cfg.VPNServers[1].Peers[0].Channel = ""
 		switch mode {
 		case "client":
 			cfg.Clients[0].Channel = "vpn"
@@ -149,6 +152,12 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 			cfg.VPNServers[0].Peers[0].Channel = "vpn"
 		case "wg policy":
 			cfg.Policies = []config.Policy{{ID: "p", Enabled: true, Channel: "vpn", VPNServer: "wg", VPNPeer: "peer"}}
+		case "oc default":
+			cfg.VPNServers[1].DefaultChannel = "vpn"
+		case "oc peer":
+			cfg.VPNServers[1].Peers[0].Channel = "vpn"
+		case "oc policy":
+			cfg.Policies = []config.Policy{{ID: "p", Enabled: true, Channel: "vpn", VPNServer: "oc", VPNPeer: "peer"}}
 		}
 		actions, err := s.PlanContext(ctx, &before, cfg)
 		if err != nil {

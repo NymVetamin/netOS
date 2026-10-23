@@ -135,62 +135,65 @@ func TestClientRoutingAllowlistPreservesOtherChanges(t *testing.T) {
 	}
 }
 
-func TestWireGuardRoutingConfirmation(t *testing.T) {
-	for _, mode := range []string{"default", "peer", "policy", "unknown management", "blackhole", "mixed port", "live drift"} {
-		t.Run(mode, func(t *testing.T) {
-			old, _ := configuredFirewall(t)
-			old.Channels = []config.Channel{{ID: "direct", Type: "direct", Enabled: true}, {ID: "vpn", Type: "wireguard", Index: 1, Enabled: true}}
-			old.VPNServers = []config.VPNServer{{ID: "wg", Type: "wireguard", Index: 2, Enabled: true, Subnet: "10.9.0.1/24", Port: 51820, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.9.0.2"}}}}
-			next := *old
-			next.VPNServers = append([]config.VPNServer(nil), old.VPNServers...)
-			next.VPNServers[0].Peers = append([]config.VPNPeer(nil), old.VPNServers[0].Peers...)
-			next.VPNServers[0].DefaultChannel = "vpn"
-			if mode == "peer" {
-				next.VPNServers[0].DefaultChannel = "direct"
-				next.VPNServers[0].Peers[0].Channel = "vpn"
-			}
-			if mode == "policy" {
-				next.VPNServers[0].DefaultChannel = "direct"
-				next.Policies = []config.Policy{{ID: "p", Enabled: true, Channel: "vpn", VPNServer: "wg", VPNPeer: "peer"}}
-			}
-			rs, err := Build(old)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r := &confirmationRunner{firewallRunner: cleanFirewallRunner(rs), rules: "0: from all lookup local\n32766: from all lookup main\n", rpf: "2\n2\n", route: `[{"dev":"lan0"}]`}
-			ctx := apply.WithManagementConnection(context.Background(), netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"))
-			switch mode {
-			case "unknown management":
-				ctx = context.Background()
-			case "blackhole":
-				r.route = `[{"type":"blackhole"}]`
-			case "mixed port":
-				next.VPNServers[0].Port++
-			case "live drift":
-				r.outputs["iptables-save"] = ""
-			}
-			actions, err := New(r, t.TempDir()).PlanContext(ctx, old, &next)
-			if err != nil || len(actions) == 0 {
-				t.Fatalf("plan: %v %v", actions, err)
-			}
-			for i := range actions {
-				actions[i].Subsystem = "firewall"
-			}
-			if mode == "mixed port" {
-				// The VPN subsystem owns the listening port and marks its change disruptive.
-				actions = append(actions, apply.Action{Subsystem: "vpn-servers", Disruptive: true})
-			}
-			safe := mode == "default" || mode == "peer" || mode == "policy"
-			if !apply.NeedsConfirmation(actions) != safe {
-				t.Fatalf("safe=%v: %v", safe, actions)
-			}
-			if safe && r.queries != 2 {
-				t.Fatalf("selected VPN mark not checked: %d", r.queries)
-			}
-			if old.VPNServers[0].DefaultChannel != "direct" || next.VPNServers[0].DefaultChannel == "" {
-				t.Fatal("comparison mutated configuration")
-			}
-		})
+func TestKernelVPNRoutingConfirmation(t *testing.T) {
+	for _, vpnType := range []string{"wireguard", "ocserv"} {
+		for _, mode := range []string{"default", "peer", "policy", "unknown management", "blackhole", "mixed port", "live drift"} {
+			t.Run(vpnType+"/"+mode, func(t *testing.T) {
+				old, _ := configuredFirewall(t)
+				old.Channels = []config.Channel{{ID: "direct", Type: "direct", Enabled: true}, {ID: "vpn", Type: "wireguard", Index: 1, Enabled: true}}
+				old.VPNServers = []config.VPNServer{{ID: "wg", Type: "wireguard", Index: 2, Enabled: true, Subnet: "10.9.0.1/24", Port: 51820, DefaultChannel: "direct", Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.9.0.2"}}}}
+				old.VPNServers[0].Type = vpnType
+				next := *old
+				next.VPNServers = append([]config.VPNServer(nil), old.VPNServers...)
+				next.VPNServers[0].Peers = append([]config.VPNPeer(nil), old.VPNServers[0].Peers...)
+				next.VPNServers[0].DefaultChannel = "vpn"
+				if mode == "peer" {
+					next.VPNServers[0].DefaultChannel = "direct"
+					next.VPNServers[0].Peers[0].Channel = "vpn"
+				}
+				if mode == "policy" {
+					next.VPNServers[0].DefaultChannel = "direct"
+					next.Policies = []config.Policy{{ID: "p", Enabled: true, Channel: "vpn", VPNServer: "wg", VPNPeer: "peer"}}
+				}
+				rs, err := Build(old)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r := &confirmationRunner{firewallRunner: cleanFirewallRunner(rs), rules: "0: from all lookup local\n32766: from all lookup main\n", rpf: "2\n2\n", route: `[{"dev":"lan0"}]`}
+				ctx := apply.WithManagementConnection(context.Background(), netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"))
+				switch mode {
+				case "unknown management":
+					ctx = context.Background()
+				case "blackhole":
+					r.route = `[{"type":"blackhole"}]`
+				case "mixed port":
+					next.VPNServers[0].Port++
+				case "live drift":
+					r.outputs["iptables-save"] = ""
+				}
+				actions, err := New(r, t.TempDir()).PlanContext(ctx, old, &next)
+				if err != nil || len(actions) == 0 {
+					t.Fatalf("plan: %v %v", actions, err)
+				}
+				for i := range actions {
+					actions[i].Subsystem = "firewall"
+				}
+				if mode == "mixed port" {
+					// The VPN subsystem owns the listening port and marks its change disruptive.
+					actions = append(actions, apply.Action{Subsystem: "vpn-servers", Disruptive: true})
+				}
+				safe := mode == "default" || mode == "peer" || mode == "policy"
+				if !apply.NeedsConfirmation(actions) != safe {
+					t.Fatalf("safe=%v: %v", safe, actions)
+				}
+				if safe && r.queries != 2 {
+					t.Fatalf("selected VPN mark not checked: %d", r.queries)
+				}
+				if old.VPNServers[0].DefaultChannel != "direct" || next.VPNServers[0].DefaultChannel == "" {
+					t.Fatal("comparison mutated configuration")
+				}
+			})
+		}
 	}
 }
 

@@ -25,14 +25,14 @@ func clientRoutingOnly(old, next *config.Config) bool {
 		for i := range out.Networks {
 			out.Networks[i].DefaultChannel = ""
 		}
-		wireguard := map[string]bool{}
+		kernelVPN := map[string]bool{}
 		out.VPNServers = append([]config.VPNServer(nil), c.VPNServers...)
 		for i := range out.VPNServers {
 			s := &out.VPNServers[i]
-			if s.Type != "wireguard" {
+			if s.Type != "wireguard" && s.Type != "ocserv" {
 				continue
 			}
-			wireguard[s.ID] = true
+			kernelVPN[s.ID] = true
 			s.DefaultChannel = ""
 			s.Peers = append([]config.VPNPeer(nil), s.Peers...)
 			for j := range s.Peers {
@@ -41,7 +41,7 @@ func clientRoutingOnly(old, next *config.Config) bool {
 		}
 		out.Policies = nil
 		for _, p := range c.Policies {
-			if p.VPNServer != "" && !wireguard[p.VPNServer] {
+			if p.VPNServer != "" && !kernelVPN[p.VPNServer] {
 				out.Policies = append(out.Policies, p)
 			}
 		}
@@ -145,12 +145,12 @@ func (s *Subsystem) managementReverseRoutesSafe(ctx context.Context, cfg *config
 			wanted[n.DefaultChannel] = true
 		}
 	}
-	wireguard := map[string]bool{}
+	kernelVPN := map[string]bool{}
 	for _, server := range cfg.VPNServers {
-		if !server.Enabled || server.Type != "wireguard" {
+		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv") {
 			continue
 		}
-		wireguard[server.ID] = true
+		kernelVPN[server.ID] = true
 		if server.DefaultChannel != "" {
 			wanted[server.DefaultChannel] = true
 		}
@@ -161,7 +161,7 @@ func (s *Subsystem) managementReverseRoutesSafe(ctx context.Context, cfg *config
 		}
 	}
 	for _, p := range cfg.Policies {
-		if p.Enabled && (p.VPNServer == "" || wireguard[p.VPNServer]) && p.Channel != "" {
+		if p.Enabled && (p.VPNServer == "" || kernelVPN[p.VPNServer]) && p.Channel != "" {
 			wanted[p.Channel] = true
 		}
 	}
