@@ -100,6 +100,34 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 			t.Fatalf("BSS %d (%s) is not present: %q", index, name, allInterfaces)
 		}
 	}
+	pidBefore, err := runner.Run(ctx, "systemctl", "show", unitName(cfg.WiFi[0]), "--property=MainPID", "--value")
+	if err != nil || strings.TrimSpace(pidBefore) == "0" {
+		t.Fatalf("hostapd PID: %q %v", pidBefore, err)
+	}
+	next := *cfg
+	next.WiFi = append([]config.WiFiRadio(nil), cfg.WiFi...)
+	next.WiFi[0].SSIDs = append([]config.WiFiSSID{{ID: "stored", SSID: "disabled", Network: "wifi-net", Security: "open"}}, cfg.WiFi[0].SSIDs...)
+	for _, operation := range []string{"add", "edit", "remove"} {
+		if operation == "edit" {
+			next.WiFi[0].SSIDs[0].SSID = "changed disabled"
+		}
+		if operation == "remove" {
+			next.WiFi[0].SSIDs = next.WiFi[0].SSIDs[1:]
+		}
+		if actions, err := s.Plan(cfg, &next); err != nil || len(actions) != 0 {
+			t.Fatalf("%s disabled: %v %v", operation, actions, err)
+		}
+		if err := s.Apply(ctx, &next); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, &next); err != nil {
+			t.Fatal(err)
+		}
+		pidAfter, err := runner.Run(ctx, "systemctl", "show", unitName(cfg.WiFi[0]), "--property=MainPID", "--value")
+		if err != nil || pidAfter != pidBefore {
+			t.Fatalf("%s restarted hostapd: %q -> %q %v", operation, pidBefore, pidAfter, err)
+		}
+	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

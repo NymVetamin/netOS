@@ -68,12 +68,28 @@ func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	return s.PlanContext(context.Background(), old, next)
 }
 
+// Keep disabled SSIDs in the saved configuration, but exclude them from the
+// runtime comparison just as RenderRadio does. Preserve active BSS ordering.
+func plannedRadios(cfg *config.Config) []config.WiFiRadio {
+	radios := enabledRadios(cfg)
+	for i := range radios {
+		var active []config.WiFiSSID
+		for _, ssid := range radios[i].SSIDs {
+			if ssid.Enabled {
+				active = append(active, ssid)
+			}
+		}
+		radios[i].SSIDs = active
+	}
+	return radios
+}
+
 func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) ([]apply.Action, error) {
 	var before []config.WiFiRadio
 	if old != nil {
-		before = enabledRadios(old)
+		before = plannedRadios(old)
 	}
-	after := enabledRadios(next)
+	after := plannedRadios(next)
 	if reflect.DeepEqual(before, after) {
 		if err := s.health(ctx, next, 1); err != nil {
 			return []apply.Action{{Subsystem: s.Name(), Kind: "restart", Target: "Wi-Fi", Detail: "исправление расхождения с живыми точками доступа", Disruptive: true}}, nil
