@@ -185,7 +185,7 @@ export function Clients({
         {vpnError && <Notice tone="warn" title="Состояние VPN-клиентов недоступно">Подключение не подтверждено. Проверка повторится автоматически.</Notice>}
         {!loaded && loading && <Empty>Загрузка локальных устройств…</Empty>}
         {loaded && devices.length + vpnCount === 0 && <Empty>Устройств пока не видно</Empty>}
-          <Rows cols={["Устройство", "Адрес", "Канал выхода", "Подключение", "Состояние"]}>
+          <Rows cols={["Устройство", "Подключение", "Адрес", "Канал выхода", "Состояние"]}>
           {devices.map((c) => {
                   const cfgClient: any = known.get(c.mac);
                   const lease = leaseByMAC.get(c.mac);
@@ -197,10 +197,10 @@ export function Clients({
                 icon="monitor-smartphone"
                 id={`lan:${c.mac}`}
                 cells={[<strong>{cfgClient?.name || c.hostname || "без имени"}</strong>,
+                  <span className="dim">{[c.interface, c.source === "dhcp" ? "DHCP" : c.source === "arp" ? "ARP" : c.source === "reservation" ? "Закреплённый адрес" : "DHCP + ARP", lease ? `до ${formatTime(lease.expires)}` : ""].filter(Boolean).join(" · ")}</span>,
                   <span className="mono">{c.ip || "—"}{pinButton(c)}</span>,
                   <ClientChannel config={config} value={cfgClient?.channel || ""} inherited={network?.default_channel || (network ? "direct" : "")}
                     source="По сегменту" label={`Канал для устройства ${c.mac}`} onChange={channel => updateClient(c.mac, { channel })} />,
-                  <span className="dim">{[c.interface, c.source === "dhcp" ? "DHCP" : c.source === "arp" ? "ARP" : c.source === "reservation" ? "Закреплённый адрес" : "DHCP + ARP", lease ? `до ${formatTime(lease.expires)}` : ""].filter(Boolean).join(" · ")}</span>,
                   loadError ? <Badge tone="neutral">данные устарели</Badge> : cfgClient?.blocked ? <Badge tone="danger">заблокирован</Badge> : <Badge tone={c.online ? "ok" : "neutral"}>{c.online ? "в сети" : "молчит"}</Badge>]}
               >
                 <div className="form-grid">
@@ -244,14 +244,15 @@ export function Clients({
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </a> : undefined}
-            cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>,
+            cells={[<strong>{peer.name}</strong>,
+              <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
+              <span className="mono">{peer.address || "—"}</span>,
               <ClientChannel config={config} value={peer.peer.channel || ""} inherited={server.server.default_channel || "direct"}
                 source="По серверу" label={`Канал VPN-клиента ${server.name} / ${peer.name}`}
                 onChange={channel => patch(draft => {
                   const target = (draft.vpn_servers || []).find((s: any) => s.id === server.id)?.peers?.find((p: any) => p.id === peer.id);
                   if (target) target.channel = channel;
                 })} />,
-              <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
               <Badge tone={["recent", "online"].includes(peer.state) ? "ok" : peer.state === "disabled" ? "danger" : "neutral"}>{peer.label}</Badge>]}>
             <div className="form-grid">
               <Cap label="VPN-сервер"><span>{server.name}</span></Cap>
