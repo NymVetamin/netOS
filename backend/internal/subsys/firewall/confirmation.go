@@ -17,6 +17,10 @@ func annotationsOnly(old, next *config.Config) bool {
 
 func withoutRuleAnnotations(cfg *config.Config) *config.Config {
 	copy := *cfg
+	copy.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	for i := range copy.VPNServers {
+		copy.VPNServers[i].Name = "annotation"
+	}
 	copy.Channels = append([]config.Channel(nil), cfg.Channels...)
 	for i := range copy.Channels {
 		copy.Channels[i].Name = "annotation"

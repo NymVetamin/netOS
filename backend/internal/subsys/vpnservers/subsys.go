@@ -2,6 +2,7 @@
 package vpnservers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -292,6 +293,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		}
 	}
 	var actions []apply.Action
+	var healthChecked, oldHealthy bool
 	for _, server := range wanted {
 		before, exists := previous[server.ID]
 		delete(previous, server.ID)
@@ -302,7 +304,24 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 			}
 			kind = "update"
 		}
-		actions = append(actions, apply.Action{Kind: kind, Target: server.Name, Detail: resourceName(server), Disruptive: true})
+		action := apply.Action{Kind: kind, Target: server.Name, Detail: resourceName(server), Disruptive: true}
+		comparison := before
+		comparison.Name = server.Name
+		if exists && server.Type == "xray" && reflect.DeepEqual(comparison, server) {
+			oldConfig, oldErr := RenderXray(before, old)
+			newConfig, newErr := RenderXray(server, next)
+			if oldErr == nil && newErr == nil && bytes.Equal(oldConfig, newConfig) {
+				if !healthChecked {
+					oldHealthy = s.Health(ctx, old) == nil
+					healthChecked = true
+				}
+				if oldHealthy {
+					action.Disruptive = false
+					action.Confirmation = apply.ConfirmationSafe
+				}
+			}
+		}
+		actions = append(actions, action)
 	}
 	for _, server := range previous {
 		actions = append(actions, apply.Action{Kind: "delete", Target: server.Name, Detail: resourceName(server), Disruptive: true})

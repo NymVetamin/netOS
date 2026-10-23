@@ -11,7 +11,10 @@ import (
 
 func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 	base, _ := configuredFirewall(t)
+	base.Interfaces = append(base.Interfaces, config.Interface{ID: "wan", Name: "wan0", Enabled: true})
+	base.WANs = []config.WAN{{ID: "wan", Interface: "wan", Enabled: true}}
 	base.Networks[0].Name = "Before"
+	base.VPNServers = []config.VPNServer{{ID: "xray", Name: "Before", Index: 92, Type: "xray", Enabled: true, Port: 51992, Subnet: "10.92.0.1/24"}}
 	base.Networks[0].DefaultChannel = "qa-vpn"
 	base.Channels = append(base.Channels, config.Channel{ID: "qa-vpn", Index: 91, Type: "wireguard", Enabled: true})
 	base.Clients = []config.Client{{ID: "routed", Name: "Routed", MAC: "02:00:00:00:00:02", Channel: "direct"}, {ID: "blocked", Name: "Blocked", MAC: "02:00:00:00:00:03", Blocked: true}}
@@ -23,6 +26,8 @@ func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 		change func(*config.Config)
 		safe   bool
 	}{
+		{"rename VPN server", func(c *config.Config) { c.VPNServers[0].Name = "After" }, true},
+		{"mixed VPN port", func(c *config.Config) { c.VPNServers[0].Name = "After"; c.VPNServers[0].Port++ }, false},
 		{"rename channel", func(c *config.Config) { c.Channels[len(c.Channels)-1].Name = "After" }, true},
 		{"mixed channel disable", func(c *config.Config) {
 			c.Channels[len(c.Channels)-1].Name = "After"

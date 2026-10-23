@@ -31,6 +31,9 @@ func TestIntegrationAnnotationConfirmation(t *testing.T) {
 	runner := system.NewExec()
 	s := New(runner, t.TempDir())
 	old, _ := configuredFirewall(t)
+	old.Interfaces = append(old.Interfaces, config.Interface{ID: "wan", Name: "wan0", Enabled: true})
+	old.WANs = []config.WAN{{ID: "wan", Interface: "wan", Enabled: true}}
+	old.VPNServers = []config.VPNServer{{ID: "named", Name: "Before", Index: 92, Type: "xray", Enabled: true, Port: 51992, Subnet: "10.92.0.1/24"}}
 	old.Channels = append(old.Channels, config.Channel{ID: "named", Name: "Before", Index: 91, Type: "xray", Enabled: true})
 	old.Clients = []config.Client{{ID: "routed", Name: "Before", MAC: "02:00:00:00:00:02", Channel: "direct"}, {ID: "blocked", Name: "Before", MAC: "02:00:00:00:00:03", Blocked: true}}
 	old.Policies = []config.Policy{{ID: "named", Name: "Before", Enabled: true, SrcIP: "192.0.2.8", Channel: "direct"}}
@@ -40,6 +43,12 @@ func TestIntegrationAnnotationConfirmation(t *testing.T) {
 	}
 	for _, logging := range []bool{true, false} {
 		next := *old
+		next.VPNServers = append([]config.VPNServer(nil), old.VPNServers...)
+		if logging {
+			next.VPNServers[0].Name = "After"
+		} else {
+			next.VPNServers[0].Name = "Before"
+		}
 		next.Channels = append([]config.Channel(nil), old.Channels...)
 		if logging {
 			next.Channels[len(next.Channels)-1].Name = "After"

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 	"golang.org/x/net/proxy"
@@ -42,6 +43,12 @@ func TestIntegrationXrayServerRename(t *testing.T) {
 	cfg.VPNServers = []config.VPNServer{server}
 	defer s.cleanupXray(ctx, server)
 	if _, err := s.applyXray(ctx, cfg, server, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeOwned(ownedServersFor(cfg.VPNServers)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	stamp, err := s.Runner.Run(ctx, "systemctl", "show", xrayUnitName(server), "-p", "ActiveEnterTimestampMonotonic", "--value")
@@ -90,9 +97,42 @@ func TestIntegrationXrayServerRename(t *testing.T) {
 		}
 	}
 	echo(conn)
+	changed := *cfg
+	changed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	changed.VPNServers[0].Name = "After"
+	changed.VPNServers[0].Port++
+	actions, err := s.PlanContext(ctx, cfg, &changed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("mixed port lost confirmation: %+v %v", actions, err)
+	}
+	changed.VPNServers[0].Port = server.Port
+	changed.TrafficMonitor.Enabled = !cfg.TrafficMonitor.Enabled
+	actions, err = s.PlanContext(ctx, cfg, &changed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("mixed monitoring lost confirmation: %+v %v", actions, err)
+	}
+	changed.TrafficMonitor = cfg.TrafficMonitor
+	unit, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, append(append([]byte(nil), unit...), []byte("# drift\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = s.PlanContext(ctx, cfg, &changed)
+	restoreErr := os.WriteFile(unitPath, unit, 0644)
+	if err != nil || restoreErr != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("drift lost confirmation: %+v %v restore=%v", actions, err, restoreErr)
+	}
 	for _, name := range []string{"After", "After", "Before"} {
+		previous := *cfg
+		previous.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
 		server.Name = name
 		cfg.VPNServers[0] = server
+		actions, err := s.PlanContext(ctx, &previous, cfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("healthy rename requires confirmation: %+v %v", actions, err)
+		}
 		if _, err := s.applyXray(ctx, cfg, server, true); err != nil {
 			t.Fatal(err)
 		}
