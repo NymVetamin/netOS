@@ -198,6 +198,33 @@ func TestIntegrationClientPolicyPreservesRouterAccess(t *testing.T) {
 		freshIn, freshOut, closeFresh := start()
 		check(freshIn, freshOut, "new-"+mode)
 		closeFresh()
+		if mode == "client" {
+			for _, name := range []string{"Renamed client", ""} {
+				previous := *cfg
+				previous.Clients = append([]config.Client(nil), cfg.Clients...)
+				cfg.Clients[0].Name = name
+				actions, err := s.Plan(&previous, cfg)
+				if err != nil || len(actions) == 0 {
+					t.Fatalf("rename plan: %v %v", actions, err)
+				}
+				for i := range actions {
+					actions[i].Subsystem = s.Name()
+				}
+				if apply.NeedsConfirmation(actions) {
+					t.Fatal("client rename requires confirmation")
+				}
+				if err := s.Apply(ctx, cfg); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Health(ctx, cfg); err != nil {
+					t.Fatal(err)
+				}
+				check(input, output, "existing-after-rename")
+				freshIn, freshOut, closeFresh := start()
+				check(freshIn, freshOut, "new-after-rename")
+				closeFresh()
+			}
+		}
 	}
 	for _, blocked := range []bool{true, false} {
 		t.Log(run("ip", "-4", "-j", "neigh", "show", "to", "192.0.2.2", "dev", "lan0"))
