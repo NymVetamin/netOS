@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/system"
@@ -171,8 +172,42 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mixed := *cfg
+	mixed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	mixed.VPNServers[0].Name = "Renamed"
+	mixed.System.Hostname = "another-hostname"
+	actions, err := s.Plan(cfg, &mixed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("hostname change lost confirmation: %+v %v", actions, err)
+	}
+	mixed.System.Hostname = cfg.System.Hostname
+	mixed.VPNServers[0].Port++
+	actions, err = s.Plan(cfg, &mixed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("port change lost confirmation: %+v %v", actions, err)
+	}
+	mixed.VPNServers[0].Port = cfg.VPNServers[0].Port
+	unitPath := s.ocservPaths(server).unit
+	savedUnit, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = s.Plan(cfg, &mixed)
+	restoreErr := os.WriteFile(unitPath, savedUnit, 0644)
+	if err != nil || restoreErr != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("server repair lost confirmation: %+v %v restore=%v", actions, err, restoreErr)
+	}
 	for _, name := range []string{"Renamed OpenConnect", "Renamed OpenConnect", server.Name} {
+		previous := *cfg
+		previous.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
 		cfg.VPNServers[0].Name = name
+		actions, err := s.Plan(&previous, cfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("healthy server rename requires confirmation: %+v %v", actions, err)
+		}
 		if err := s.Apply(ctx, cfg); err != nil {
 			t.Fatal(err)
 		}
@@ -288,8 +323,36 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mixedChannel := *channelCfg
+	mixedChannel.Channels = append([]config.Channel(nil), channelCfg.Channels...)
+	mixedChannel.Channels[len(mixedChannel.Channels)-1].Name = "Renamed"
+	mixedChannel.IPv6.Mode = "passthrough"
+	actions, err = channelSubsystem.Plan(channelCfg, &mixedChannel)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("IPv6 change lost confirmation: %+v %v", actions, err)
+	}
+	mixedChannel.IPv6 = channelCfg.IPv6
+	channelUnit := "/etc/systemd/system/netos-openconnect-ch997.service"
+	savedUnit, err = os.ReadFile(channelUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(channelUnit, []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = channelSubsystem.Plan(channelCfg, &mixedChannel)
+	restoreErr = os.WriteFile(channelUnit, savedUnit, 0644)
+	if err != nil || restoreErr != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("channel repair lost confirmation: %+v %v restore=%v", actions, err, restoreErr)
+	}
 	for _, name := range []string{"Renamed outbound", "Renamed outbound", channel.Name} {
+		previous := *channelCfg
+		previous.Channels = append([]config.Channel(nil), channelCfg.Channels...)
 		channelCfg.Channels[len(channelCfg.Channels)-1].Name = name
+		actions, err := channelSubsystem.Plan(&previous, channelCfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("healthy channel rename requires confirmation: %+v %v", actions, err)
+		}
 		if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
 			t.Fatal(err)
 		}

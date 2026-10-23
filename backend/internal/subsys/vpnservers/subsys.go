@@ -310,6 +310,15 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		comparison.Name = server.Name
 		if exists && reflect.DeepEqual(comparison, server) {
 			unchanged := server.Type == "l2tp"
+			if server.Type == "ocserv" && old.System.Hostname == next.System.Hostname {
+				oc, err := server.OcservConfig()
+				if err == nil && (oc.TLS == nil || oc.TLS.Mode == "" || oc.TLS.Mode == "selfsigned") {
+					oldConfig, oldErr := RenderOcserv(before, old, s.StateDir)
+					newConfig, newErr := RenderOcserv(server, next, s.StateDir)
+					unchanged = oldErr == nil && newErr == nil && bytes.Equal(oldConfig, newConfig) &&
+						bytes.Equal(renderOcservConnect(before, old, s.StateDir), renderOcservConnect(server, next, s.StateDir))
+				}
+			}
 			if server.Type == "xray" {
 				oldConfig, oldErr := RenderXray(before, old)
 				newConfig, newErr := RenderXray(server, next)
