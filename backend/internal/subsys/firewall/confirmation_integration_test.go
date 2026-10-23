@@ -31,6 +31,7 @@ func TestIntegrationAnnotationConfirmation(t *testing.T) {
 	runner := system.NewExec()
 	s := New(runner, t.TempDir())
 	old, _ := configuredFirewall(t)
+	old.Channels = append(old.Channels, config.Channel{ID: "named", Name: "Before", Index: 91, Type: "xray", Enabled: true})
 	old.Clients = []config.Client{{ID: "routed", Name: "Before", MAC: "02:00:00:00:00:02", Channel: "direct"}, {ID: "blocked", Name: "Before", MAC: "02:00:00:00:00:03", Blocked: true}}
 	old.Policies = []config.Policy{{ID: "named", Name: "Before", Enabled: true, SrcIP: "192.0.2.8", Channel: "direct"}}
 	old.Firewall.Rules = []config.FirewallRule{{ID: "annotation", Name: "before", Enabled: true, Zone: "lan", Flow: "forward", Action: "accept"}}
@@ -39,6 +40,12 @@ func TestIntegrationAnnotationConfirmation(t *testing.T) {
 	}
 	for _, logging := range []bool{true, false} {
 		next := *old
+		next.Channels = append([]config.Channel(nil), old.Channels...)
+		if logging {
+			next.Channels[len(next.Channels)-1].Name = "After"
+		} else {
+			next.Channels[len(next.Channels)-1].Name = "Before"
+		}
 		next.Clients = append([]config.Client(nil), old.Clients...)
 		for i := range next.Clients {
 			if logging {

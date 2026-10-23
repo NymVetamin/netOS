@@ -23,6 +23,11 @@ func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 		change func(*config.Config)
 		safe   bool
 	}{
+		{"rename channel", func(c *config.Config) { c.Channels[len(c.Channels)-1].Name = "After" }, true},
+		{"mixed channel disable", func(c *config.Config) {
+			c.Channels[len(c.Channels)-1].Name = "After"
+			c.Channels[len(c.Channels)-1].Enabled = false
+		}, false},
 		{"rename segment", func(c *config.Config) { c.Networks[0].Name = "After" }, true},
 		{"mixed segment channel", func(c *config.Config) { c.Networks[0].Name = "After"; c.Networks[0].DefaultChannel = "" }, false},
 		{"rename routed client", func(c *config.Config) { c.Clients[0].Name = "After" }, true},

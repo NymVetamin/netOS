@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
@@ -148,8 +149,36 @@ func TestIntegrationXrayLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	changed := *cfg
+	changed.Channels = append([]config.Channel(nil), cfg.Channels...)
+	changed.Channels[len(changed.Channels)-1].Name = "Renamed Xray"
+	changed.Channels[len(changed.Channels)-1].FailMode = "direct"
+	actions, err := s.PlanContext(context.Background(), cfg, &changed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("mixed runtime change lost confirmation: %+v %v", actions, err)
+	}
+	changed.Channels[len(changed.Channels)-1].FailMode = ch.FailMode
+	_, unitPath := s.xrayPaths(ch)
+	unit, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, append(append([]byte(nil), unit...), []byte("# runtime drift\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = s.PlanContext(context.Background(), cfg, &changed)
+	restoreErr := os.WriteFile(unitPath, unit, 0644)
+	if err != nil || restoreErr != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("runtime drift lost confirmation: %+v %v restore=%v", actions, err, restoreErr)
+	}
 	for _, name := range []string{"Renamed Xray", "Renamed Xray", ch.Name} {
+		previous := *cfg
+		previous.Channels = append([]config.Channel(nil), cfg.Channels...)
 		cfg.Channels[len(cfg.Channels)-1].Name = name
+		actions, err := s.PlanContext(context.Background(), &previous, cfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("healthy rename requires confirmation: %+v %v", actions, err)
+		}
 		if err := s.Apply(context.Background(), cfg); err != nil {
 			t.Fatal(err)
 		}

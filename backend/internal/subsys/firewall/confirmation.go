@@ -17,6 +17,10 @@ func annotationsOnly(old, next *config.Config) bool {
 
 func withoutRuleAnnotations(cfg *config.Config) *config.Config {
 	copy := *cfg
+	copy.Channels = append([]config.Channel(nil), cfg.Channels...)
+	for i := range copy.Channels {
+		copy.Channels[i].Name = "annotation"
+	}
 	copy.Networks = append([]config.Network(nil), cfg.Networks...)
 	for i := range copy.Networks {
 		copy.Networks[i].Name = "annotation"

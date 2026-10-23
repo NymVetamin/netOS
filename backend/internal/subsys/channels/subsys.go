@@ -282,13 +282,27 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 		previous[ch.ID] = ch
 	}
 	var actions []apply.Action
+	var healthChecked, oldHealthy bool
 	for _, ch := range wanted {
 		before, ok := previous[ch.ID]
 		delete(previous, ch.ID)
 		if !ok {
 			actions = append(actions, apply.Action{Kind: "create", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true})
 		} else if !reflect.DeepEqual(before, ch) {
-			actions = append(actions, apply.Action{Kind: "update", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true})
+			action := apply.Action{Kind: "update", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true}
+			comparison := before
+			comparison.Name = ch.Name
+			if ch.Type == "xray" && reflect.DeepEqual(comparison, ch) {
+				if !healthChecked {
+					oldHealthy = s.Health(ctx, old) == nil
+					healthChecked = true
+				}
+				if oldHealthy {
+					action.Disruptive = false
+					action.Confirmation = apply.ConfirmationSafe
+				}
+			}
+			actions = append(actions, action)
 		}
 	}
 	for _, ch := range previous {
