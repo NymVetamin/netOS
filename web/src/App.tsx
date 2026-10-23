@@ -372,7 +372,24 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     window.clearTimeout(saveTimer.current);
     try {
       await saveChain.current;
-      await api.discardDraft();
+      try {
+        await api.discardDraft();
+      } catch (err) {
+        if (!(err instanceof ApiError) || err.status !== 409) throw err;
+        // Rollback/restart may have already removed this draft. Never retry
+        // DELETE semantics blindly: another tab may have saved new edits.
+        const current = await api.getConfig();
+        if (generation !== syncGeneration.current) throw err;
+        applyServerState(current);
+        if (current.pending_confirmation) {
+          throw new ApiError(409, "Применение ожидает подтверждения; проверьте связь или откатите изменения.");
+        }
+        if (current.dirty) {
+          throw new ApiError(409, "Черновик изменился. Показаны актуальные настройки; проверьте их перед повторной отменой.");
+        }
+        setLoadError("");
+        return;
+      }
       const res = await api.getConfig();
       if (generation !== syncGeneration.current) throw new Error("Конфигурация обновилась во время отмены");
       applyServerState(res);
@@ -862,8 +879,14 @@ function ApplyBar({
             setPlan(null);
             try {
               await onFlush();
-              await api.apply("изменения из панели");
-              onReload();
+              try {
+                await api.apply("изменения из панели");
+              } finally {
+                // Network changes can lose the response after a successful
+                // apply or rollback. Refresh the authoritative draft/version
+                // even on failure, but never discard edits when flush failed.
+                await onReload();
+              }
             } catch (err) {
               setError(err instanceof ApiError ? err.message : "Применение не удалось");
             } finally {

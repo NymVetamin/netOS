@@ -22,6 +22,14 @@ const { ActionError } = load("ActionError.tsx", name => name === "react/jsx-runt
 const dns = "применение не удалось: подсистема components: не удалось изменить компоненты: Samba — диски и сетевые папки: установка пакетов samba: apt-get: exit status 100: " +
   "E: Failed to fetch https://deb.example/package.deb Temporary failure resolving 'deb.example' ".repeat(50);
 
+test("draft conflicts and lost response explain the result without inventing a rollback", () => {
+  assert.match(describeActionError("версия черновика изменилась; применение не началось").reason, /не выполнено/);
+  assert.match(describeActionError("применённая конфигурация изменилась").hint, /Отмените старый черновик/);
+  assert.match(describeActionError("черновик или применённая конфигурация изменились").title, /черновика/);
+  assert.match(describeActionError("Показаны актуальные настройки").hint, /ещё раз/);
+  assert.match(describeActionError("Нет связи с роутером: изменение не сохранено").reason, /неизвестен/);
+});
+
 test("repeated apt DNS output becomes a short cause and next step", () => {
   const result = describeActionError(dns);
   assert.match(result.title, /пакеты/);

@@ -1228,9 +1228,14 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			r = withPanelAccess(r, currentUser.Role, currentAccess)
 		}
 		d := s.privateDraftLocked(userOf(r))
-		if req.DraftVersion != d.Version || !sameConfig(d.Base, s.Engine.Current()) {
+		if req.DraftVersion != d.Version {
 			s.draftMu.Unlock()
-			writeError(w, 409, "черновик или применённая конфигурация изменились; обновите страницу и проверьте изменения")
+			writeError(w, 409, "версия черновика изменилась; применение не началось, обновите настройки и проверьте изменения")
+			return
+		}
+		if !sameConfig(d.Base, s.Engine.Current()) {
+			s.draftMu.Unlock()
+			writeError(w, 409, "применённая конфигурация изменилась; применение не началось, отмените устаревший черновик и повторите изменения")
 			return
 		}
 		if d.Config == nil && roleOf(r) != "admin" {

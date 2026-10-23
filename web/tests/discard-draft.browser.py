@@ -61,10 +61,15 @@ async def scenario(browser, mode):
                 state.update(config=req.post_data_json, dirty=True, version=state["version"] + 1)
                 body = config()
         elif path == "/api/config/apply":
+            if mode == "lost apply response":
+                state.update(config=copy.deepcopy(CLEAN), dirty=False, version=state["version"] + 1)
+                await route.abort("connectionreset")
+                return
             status, body = 500, {"error": "apt-get: Temporary failure resolving 'repo.example'"}
         elif path == "/api/config/discard":
-            assert req.headers["if-match"] == str(state["version"])
-            if mode == "discard failure" and not state["failed"]:
+            if req.headers["if-match"] != str(state["version"]):
+                status, body = 409, {"error": "черновик уже изменён"}
+            elif mode == "discard failure" and not state["failed"]:
                 state["failed"] = True
                 status, body = 500, {"error": "Отмена не удалась"}
             else:
@@ -85,7 +90,18 @@ async def scenario(browser, mode):
         await expect(toggle).not_to_be_checked()
     if mode.startswith("inflight"):
         await asyncio.wait_for(started.wait(), 5)
+    if mode in ("stale clean", "stale new draft"):
+        state["version"] += 1
+        state["dirty"] = mode == "stale new draft"
+        if not state["dirty"]:
+            state["config"] = copy.deepcopy(CLEAN)
     await page.get_by_role("button", name="Отменить", exact=True).click()
+    if mode == "stale new draft":
+        await expect(page.locator(".action-error")).to_contain_text("Настройки обновились")
+        assert state["dirty"], "new draft was silently discarded"
+        assert sum(path.endswith("/discard") for _, path in state["calls"]) == 1
+        await expect(toggle).to_be_checked()
+        await page.get_by_role("button", name="Отменить", exact=True).click()
     if mode.startswith("inflight"):
         await expect(toggle).to_be_disabled()
         assert not any(path.endswith("/discard") for _, path in state["calls"])
@@ -118,7 +134,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure"):
+        for mode in ("lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure"):
             await scenario(browser, mode)
         await browser.close()
 
