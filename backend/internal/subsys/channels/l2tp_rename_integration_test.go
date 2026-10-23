@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
@@ -99,8 +100,46 @@ func TestIntegrationL2TPChannelRename(t *testing.T) {
 	}
 	stamp := run("systemctl", "show", l2tpUnitName(ch), "-p", "ActiveEnterTimestampMonotonic", "--value")
 	link := run("ip", "-o", "link", "show", "dev", InterfaceName(ch))
+	changed := *cfg
+	changed.Channels = append([]config.Channel(nil), cfg.Channels...)
+	index := len(changed.Channels) - 1
+	changed.Channels[index].Name = "After"
+	changed.Channels[index].FailMode = "direct"
+	actions, err := s.Plan(cfg, &changed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("mixed fail mode lost confirmation: %+v %v", actions, err)
+	}
+	changed.Channels[index].FailMode = ch.FailMode
+	changed.Channels[index].Config = map[string]any{}
+	for k, v := range ch.Config {
+		changed.Channels[index].Config[k] = v
+	}
+	changed.Channels[index].Config["mtu"] = 1380
+	actions, err = s.Plan(cfg, &changed)
+	if err != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("mixed MTU lost confirmation: %+v %v", actions, err)
+	}
+	changed.Channels[index].Config = ch.Config
+	saved, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = s.Plan(cfg, &changed)
+	restoreErr := os.WriteFile(unitPath, saved, 0644)
+	if err != nil || restoreErr != nil || !apply.NeedsConfirmation(actions) {
+		t.Fatalf("repair lost confirmation: %+v %v restore=%v", actions, err, restoreErr)
+	}
 	for _, name := range []string{"After", "After", "Before"} {
+		previous := *cfg
+		previous.Channels = append([]config.Channel(nil), cfg.Channels...)
 		cfg.Channels[len(cfg.Channels)-1].Name = name
+		actions, err := s.Plan(&previous, cfg)
+		if err != nil || apply.NeedsConfirmation(actions) {
+			t.Fatalf("healthy rename requires confirmation: %+v %v", actions, err)
+		}
 		if err := s.Apply(ctx, cfg); err != nil {
 			t.Fatal(err)
 		}
