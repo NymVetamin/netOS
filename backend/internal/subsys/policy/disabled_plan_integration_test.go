@@ -88,6 +88,8 @@ func TestIntegrationDisabledPolicyPreservesActiveSet(t *testing.T) {
 	}
 	next := *base
 	next.Policies = append(append([]config.Policy(nil), base.Policies...), config.Policy{ID: "disabled", Domains: []string{"disabled.example"}, Channel: "direct"})
+	next.Policies[0].Name = "Renamed policy"
+	next.Policies[0].Comment = "Updated description"
 	for _, pair := range [][2]*config.Config{{base, &next}, {&next, &next}, {&next, base}} {
 		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
 			t.Fatalf("plan=%+v err=%v", actions, err)

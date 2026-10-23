@@ -31,12 +31,15 @@ func TestIntegrationAnnotationConfirmation(t *testing.T) {
 	runner := system.NewExec()
 	s := New(runner, t.TempDir())
 	old, _ := configuredFirewall(t)
+	old.Policies = []config.Policy{{ID: "named", Name: "Before", Enabled: true, SrcIP: "192.0.2.8", Channel: "direct"}}
 	old.Firewall.Rules = []config.FirewallRule{{ID: "annotation", Name: "before", Enabled: true, Zone: "lan", Flow: "forward", Action: "accept"}}
 	if err := s.Apply(ctx, old); err != nil {
 		t.Fatal(err)
 	}
 	for _, logging := range []bool{true, false} {
 		next := *old
+		next.Policies = append([]config.Policy(nil), old.Policies...)
+		next.Policies[0].Name = "After"
 		next.Firewall.Rules = append([]config.FirewallRule(nil), old.Firewall.Rules...)
 		next.Firewall.Rules[0].Name = "after"
 		next.Firewall.Rules[0].Log = logging

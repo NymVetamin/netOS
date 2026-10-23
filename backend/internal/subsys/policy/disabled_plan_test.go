@@ -37,3 +37,22 @@ func TestDisabledDomainPolicyDoesNotPlanRuntimeChange(t *testing.T) {
 		t.Fatalf("repair hidden by disabled edit: %+v %v", actions, err)
 	}
 }
+
+func TestPolicyDescriptionDoesNotPlanSetChange(t *testing.T) {
+	s := New(newPolicyRunner(), t.TempDir())
+	old := domainPolicyConfig("active")
+	if err := s.Apply(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	next := *old
+	next.Policies = append([]config.Policy(nil), old.Policies...)
+	next.Policies[0].Name = "New display name"
+	next.Policies[0].Comment = "New comment"
+	if actions, err := s.Plan(old, &next); err != nil || len(actions) != 0 {
+		t.Fatalf("description created runtime action: %v %v", actions, err)
+	}
+	next.Policies[0].Domains = []string{"different.example"}
+	if actions, err := s.Plan(old, &next); err != nil || len(actions) == 0 {
+		t.Fatalf("domain change lost: %v %v", actions, err)
+	}
+}

@@ -112,6 +112,7 @@ func domainPoliciesEqual(a, b *config.Config) bool {
 		var out []config.Policy
 		for _, item := range cfg.Policies {
 			if item.Enabled && len(item.Domains) > 0 {
+				item.Name, item.Comment = "", ""
 				out = append(out, item)
 			}
 		}

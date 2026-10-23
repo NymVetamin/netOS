@@ -11,6 +11,7 @@ import (
 
 func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 	base, _ := configuredFirewall(t)
+	base.Policies = []config.Policy{{ID: "named", Name: "Before", Enabled: true, SrcIP: "192.0.2.8", Channel: "direct"}}
 	base.Firewall.Rules = []config.FirewallRule{{ID: "a", Name: "allow", Enabled: true, Zone: "lan", Flow: "forward", Action: "accept"}, {ID: "b", Name: "deny", Enabled: true, Zone: "lan", Flow: "forward", Action: "drop"}}
 	base.Firewall.NAT = []config.NATRule{{ID: "nat", Name: "source", Enabled: true, Direction: "source", Interface: "eth0", Source: "192.0.2.0/24"}}
 	for _, tc := range []struct {
@@ -18,6 +19,8 @@ func TestAnnotationConfirmationAndMixedChanges(t *testing.T) {
 		change func(*config.Config)
 		safe   bool
 	}{
+		{"rename policy", func(c *config.Config) { c.Policies[0].Name = "After" }, true},
+		{"mixed policy selector", func(c *config.Config) { c.Policies[0].Name = "After"; c.Policies[0].SrcIP = "192.0.2.9" }, false},
 		{"rename rule", func(c *config.Config) { c.Firewall.Rules[0].Name = "new" }, true},
 		{"logging", func(c *config.Config) { c.Firewall.Rules[0].Log = true }, true},
 		{"rename nat", func(c *config.Config) { c.Firewall.NAT[0].Name = "new" }, true},
