@@ -111,6 +111,38 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 		}
 	}
 	channelEdit := next
+	rename := next
+	rename.VPNServers = append([]config.VPNServer(nil), next.VPNServers...)
+	rename.VPNServers[0].Name = "Renamed WireGuard"
+	serverConf := filepath.Join(root, serverName+".conf")
+	savedConf, err := os.ReadFile(serverConf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(serverConf, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	actions, planErr := s.Plan(&next, &rename)
+	restoreErr := os.WriteFile(serverConf, savedConf, 0600)
+	if planErr != nil || restoreErr != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("rename hid runtime repair: %+v %v restore=%v", actions, planErr, restoreErr)
+	}
+	for _, pair := range [][2]*config.Config{{&next, &rename}, {&rename, &rename}, {&rename, &next}} {
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("name-only plan: %v %v", actions, err)
+		}
+		if err := s.Apply(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, pair[1]); err != nil {
+			t.Fatal(err)
+		}
+		mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "1", "-W", "2", "10.253.97.1")
+		after, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+		if err != nil || after != handshake {
+			t.Fatalf("rename reset handshake: %v", err)
+		}
+	}
 	channelEdit.VPNServers = append([]config.VPNServer(nil), next.VPNServers...)
 	channelEdit.VPNServers[0].DefaultChannel = "alternate"
 	channelEdit.VPNServers[0].Peers = append([]config.VPNPeer(nil), next.VPNServers[0].Peers...)

@@ -41,6 +41,36 @@ func TestWireGuardExportSettingsDoNotPlanServerChange(t *testing.T) {
 	}
 }
 
+func TestWireGuardServerNameAndMixedChanges(t *testing.T) {
+	s, runner := newTestSubsystem(t)
+	old := serverConfig()
+	if err := s.Apply(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	next := serverConfig()
+	next.VPNServers[0].Name = "Renamed"
+	before, _ := RenderWireGuard(old.VPNServers[0])
+	after, _ := RenderWireGuard(next.VPNServers[0])
+	if before != after {
+		t.Fatal("name changed generated configuration")
+	}
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 0 {
+		t.Fatalf("rename plan: %+v %v", actions, err)
+	}
+	if !reflect.DeepEqual(old, serverConfig()) || next.VPNServers[0].Name != "Renamed" {
+		t.Fatal("comparison mutated input")
+	}
+	next.VPNServers[0].Port++
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("mixed port lost protection: %+v %v", actions, err)
+	}
+	next.VPNServers[0].Port--
+	runner.up = false
+	if actions, err := s.Plan(old, next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("repair lost protection: %+v %v", actions, err)
+	}
+}
+
 func TestWireGuardChannelDoesNotPlanServerRestart(t *testing.T) {
 	s, runner := newTestSubsystem(t)
 	old := serverConfig()

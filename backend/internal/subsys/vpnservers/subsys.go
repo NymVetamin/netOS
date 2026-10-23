@@ -255,6 +255,7 @@ func sameServerRuntime(a, b config.VPNServer) bool {
 }
 
 func wireGuardRuntimeSettings(server config.VPNServer) config.VPNServer {
+	server.Name = ""
 	// Kernel routing is reconciled by firewall, not by wg syncconf.
 	server.DefaultChannel = ""
 	var active []config.VPNPeer
