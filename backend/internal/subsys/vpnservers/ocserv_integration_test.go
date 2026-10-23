@@ -166,6 +166,31 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 	if out, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "2", "-W", "2", "10.98.0.1"); err != nil || !strings.Contains(out, "2 received") {
 		t.Fatalf("traffic did not cross the OpenConnect tunnel: %q (%v); client=%s", out, err, clientLog.String())
 	}
+	changed := *cfg
+	changed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	changed.VPNServers[0].DefaultChannel = "alternate"
+	changed.VPNServers[0].Peers = append([]config.VPNPeer(nil), cfg.VPNServers[0].Peers...)
+	changed.VPNServers[0].Peers[0].Channel = "alternate"
+	for _, pair := range [][2]*config.Config{{cfg, &changed}, {&changed, cfg}} {
+		if actions, err := s.Plan(pair[0], pair[1]); err != nil || len(actions) != 0 {
+			t.Fatalf("channel-only plan: %v %v", actions, err)
+		}
+		for i := 0; i < 2; i++ {
+			if err := s.Apply(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Health(ctx, pair[1]); err != nil {
+				t.Fatal(err)
+			}
+			started, err := runner.Run(ctx, "systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", "netos-ocserv-srv998.service")
+			if err != nil || started != startedBefore {
+				t.Fatalf("channel edit restarted ocserv: %v", err)
+			}
+			if out, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "2", "10.98.0.1"); err != nil {
+				t.Fatalf("channel edit lost tunnel: %s %v", out, err)
+			}
+		}
+	}
 	_ = client.Process.Kill()
 	_, _ = client.Process.Wait()
 

@@ -183,7 +183,7 @@ WantedBy=multi-user.target
 }
 
 func ocservStateFor(passwdPath, usersPath string, server config.VPNServer) (ocservAuthState, error) {
-	peersJSON, err := json.Marshal(server.Peers)
+	peersJSON, err := json.Marshal(peersWithoutExitChannels(server.Peers))
 	if err != nil {
 		return ocservAuthState{}, err
 	}
@@ -243,6 +243,18 @@ func ocservStateFor(passwdPath, usersPath string, server config.VPNServer) (ocse
 	}
 	passwdSum := sha256.Sum256(passwd)
 	return ocservAuthState{PeersSHA256: hex.EncodeToString(peersSum[:]), PasswdSHA256: hex.EncodeToString(passwdSum[:])}, nil
+}
+
+func peersWithoutExitChannels(peers []config.VPNPeer) []config.VPNPeer {
+	if peers == nil {
+		return nil
+	}
+	out := make([]config.VPNPeer, len(peers))
+	copy(out, peers)
+	for i := range out {
+		out[i].Channel = ""
+	}
+	return out
 }
 
 func secureRegularFile(path string, mode os.FileMode) ([]byte, error) {

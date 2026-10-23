@@ -231,6 +231,11 @@ func ownedServersEqual(left, right []ownedServer) bool {
 
 // Client TLS fingerprints affect exported profiles, not the server process.
 func sameServerRuntime(a, b config.VPNServer) bool {
+	if a.Type == "ocserv" && b.Type == "ocserv" {
+		a.DefaultChannel, b.DefaultChannel = "", ""
+		a.Peers = peersWithoutExitChannels(a.Peers)
+		b.Peers = peersWithoutExitChannels(b.Peers)
+	}
 	if a.Type == "wireguard" && b.Type == "wireguard" {
 		a = wireGuardRuntimeSettings(a)
 		b = wireGuardRuntimeSettings(b)
