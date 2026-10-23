@@ -167,6 +167,30 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 		t.Fatalf("traffic did not cross the OpenConnect tunnel: %q (%v); client=%s", out, err, clientLog.String())
 	}
 	changed := *cfg
+	authBefore, err := os.ReadFile(s.ocservPaths(server).passwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Renamed OpenConnect", "Renamed OpenConnect", server.Name} {
+		cfg.VPNServers[0].Name = name
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		started, err := runner.Run(ctx, "systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", "netos-ocserv-srv998.service")
+		if err != nil || started != startedBefore {
+			t.Fatal("rename restarted ocserv")
+		}
+		authAfter, err := os.ReadFile(s.ocservPaths(server).passwd)
+		if err != nil || !bytes.Equal(authBefore, authAfter) {
+			t.Fatal("rename changed password file")
+		}
+		if _, err := runner.Run(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "2", "10.98.0.1"); err != nil {
+			t.Fatalf("rename lost tunnel: %v", err)
+		}
+	}
 	changed.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
 	changed.VPNServers[0].DefaultChannel = "alternate"
 	changed.VPNServers[0].Peers = append([]config.VPNPeer(nil), cfg.VPNServers[0].Peers...)
@@ -193,6 +217,35 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 	}
 	_ = client.Process.Kill()
 	_, _ = client.Process.Wait()
+	// Put the server side in the peer namespace for the outbound-channel
+	// check: two tunnel endpoints in one namespace have overlapping local
+	// addresses, so they cannot prove packet delivery through the tunnel.
+	dropDir := "/etc/systemd/system/netos-ocserv-srv998.service.d"
+	if _, err := os.Stat(dropDir); !os.IsNotExist(err) {
+		t.Fatal("test drop-in directory already exists")
+	}
+	if err := os.Mkdir(dropDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	dropFile := filepath.Join(dropDir, "qa-namespace.conf")
+	t.Cleanup(func() {
+		_ = os.Remove(dropFile)
+		_ = os.Remove(dropDir)
+		_, _ = runner.Run(context.Background(), "systemctl", "daemon-reload")
+	})
+	if err := os.WriteFile(dropFile, []byte("[Service]\nNetworkNamespacePath=/run/netns/"+namespace+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(ctx, "systemctl", "restart", "netos-ocserv-srv998.service"); err != nil {
+		t.Fatal(err)
+	}
+	startedBefore, err = runner.Run(ctx, "systemctl", "show", "netos-ocserv-srv998.service", "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Repeat the same real handshake through the netOS outbound-channel
 	// lifecycle, not just the openconnect executable. This verifies the
@@ -208,7 +261,7 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 		ID: "integration-openconnect", Index: 997, Name: "Integration OpenConnect",
 		Enabled: true, Type: "openconnect", Mode: "tun", FailMode: "block",
 		Config: map[string]any{
-			"server": "https://192.0.2.1:14443", "username": "integration",
+			"server": "https://192.0.2.2:14443", "username": "integration",
 			"password": "integration-secret", "protocol": "anyconnect",
 			"servercert": pin, "no_system_trust": true, "mtu": 1380,
 		},
@@ -227,6 +280,48 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 	if err != nil || !strings.Contains(channelAddress, "10.98.0.2") {
 		t.Fatalf("netOS OpenConnect channel did not receive its address: %q (%v)", channelAddress, err)
 	}
+	channelStamp, err := runner.Run(ctx, "systemctl", "show", "netos-openconnect-ch997.service", "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelLink, err := runner.Run(ctx, "ip", "-o", "link", "show", "dev", "tun-ch997")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Renamed outbound", "Renamed outbound", channel.Name} {
+		channelCfg.Channels[len(channelCfg.Channels)-1].Name = name
+		if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := channelSubsystem.Health(ctx, channelCfg); err != nil {
+			t.Fatal(err)
+		}
+		stamp, err := runner.Run(ctx, "systemctl", "show", "netos-openconnect-ch997.service", "-p", "ActiveEnterTimestampMonotonic", "--value")
+		if err != nil || stamp != channelStamp {
+			t.Fatal("rename restarted outbound OpenConnect")
+		}
+		link, err := runner.Run(ctx, "ip", "-o", "link", "show", "dev", "tun-ch997")
+		if err != nil || link != channelLink {
+			t.Fatal("rename replaced OpenConnect TUN")
+		}
+		if _, err := runner.Run(ctx, "ping", "-I", "tun-ch997", "-c", "1", "-W", "2", "10.98.0.1"); err != nil {
+			t.Fatalf("outbound tunnel ping: %v", err)
+		}
+	}
+	channelCfg.Channels[len(channelCfg.Channels)-1].Config["mtu"] = 1360
+	if err := channelSubsystem.Apply(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := channelSubsystem.Health(ctx, channelCfg); err != nil {
+		t.Fatal(err)
+	}
+	newStamp, err := runner.Run(ctx, "systemctl", "show", "netos-openconnect-ch997.service", "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil || newStamp == channelStamp {
+		t.Fatal("MTU change did not restart outbound OpenConnect")
+	}
+	if _, err := runner.Run(ctx, "ping", "-I", "tun-ch997", "-c", "1", "-W", "2", "10.98.0.1"); err != nil {
+		t.Fatalf("MTU reconnect lost tunnel: %v", err)
+	}
 	if err := channelSubsystem.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}
@@ -234,6 +329,17 @@ func TestIntegrationOcservAndOpenConnect(t *testing.T) {
 		t.Fatalf("OpenConnect channel unit was not removed: %v", err)
 	}
 
+	cfg.VPNServers[0].Config["mtu"] = 1360
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	newStamp, err = runner.Run(ctx, "systemctl", "show", "netos-ocserv-srv998.service", "-p", "ActiveEnterTimestampMonotonic", "--value")
+	if err != nil || newStamp == startedBefore {
+		t.Fatal("MTU change did not restart ocserv")
+	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

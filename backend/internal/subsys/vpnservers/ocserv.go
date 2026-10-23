@@ -392,6 +392,7 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 	unit := []byte(renderOcservUnit(server, paths.conf))
 	connect := renderOcservConnect(server, cfg, s.StateDir)
 	changed := system.FileChanged(paths.conf, conf) || authChanged || certChanged || system.FileChanged(paths.unit, unit) || system.FileChanged(paths.connect, connect)
+	restart := system.FileChanged(paths.conf, conf) || authChanged || certChanged || system.UnitRuntimeChanged(paths.unit, unit) || system.FileChanged(paths.connect, connect)
 	if err := system.WriteFileAtomic(paths.connect, connect, 0o700); err != nil {
 		return false, err
 	}
@@ -431,7 +432,7 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", name)
-	if changed || strings.TrimSpace(active) != "active" {
+	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", name); err != nil {
 			return false, fmt.Errorf("запуск ocserv: %w", err)
 		}

@@ -142,6 +142,8 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 	unit := []byte(renderOpenConnectUnit(ch, confPath, passwordPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(passwordPath, password) ||
 		system.FileChanged(scriptPath, script) || system.FileChanged(unitPath, unit)
+	restart := system.FileChanged(confPath, conf) || system.FileChanged(passwordPath, password) ||
+		system.FileChanged(scriptPath, script) || system.UnitRuntimeChanged(unitPath, unit)
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -162,7 +164,7 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
-	if changed || strings.TrimSpace(active) != "active" {
+	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
 			return false, fmt.Errorf("запуск OpenConnect: %w", err)
 		}
