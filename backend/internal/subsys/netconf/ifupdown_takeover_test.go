@@ -61,7 +61,7 @@ func TestIfupdownContinuedDirectives(t *testing.T) {
 	}
 }
 
-func TestIfupdownTakeoverPreservesUnmanagedAndRestoresAfterSwitch(t *testing.T) {
+func TestIfupdownTakeoverPreservesUnmanagedAcrossSwitchAndRestoresOnUninstall(t *testing.T) {
 	useTemporaryPaths(t)
 	original := "# Debian\nsource interfaces.d/*\nauto lo eth0 spare\niface lo inet loopback\nallow-hotplug eth0 spare\niface eth0 inet dhcp\n    hostname router\niface eth0 inet6 auto\n    accept_ra 1\niface spare inet static\n    address 192.0.2.2/24\n    post-up echo keep\n"
 	if err := os.MkdirAll(ifupdownDir, 0755); err != nil {
@@ -97,6 +97,13 @@ func TestIfupdownTakeoverPreservesUnmanagedAndRestoresAfterSwitch(t *testing.T) 
 	}
 	cfg.System.NetworkBackend = "netos"
 	if err := s.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	retained, _ := os.ReadFile(ifupdownMain)
+	if strings.Contains(string(retained), "iface eth0") {
+		t.Fatal("backend switch restored competing DHCP")
+	}
+	if err := RestoreIfupdown(""); err != nil {
 		t.Fatal(err)
 	}
 	restored, _ := os.ReadFile(ifupdownMain)

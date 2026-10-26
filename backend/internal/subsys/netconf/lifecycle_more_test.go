@@ -31,6 +31,9 @@ func (r *failingCommandRunner) RunInput(ctx context.Context, input, name string,
 func useTemporaryPaths(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
+	oldState := ifupdownStatePath
+	ifupdownStatePath = filepath.Join(root, "ifstate")
+	t.Cleanup(func() { ifupdownStatePath = oldState })
 	oldBackup := ifupdownBackupPath
 	ifupdownBackupPath = filepath.Join(root, "ifupdown-backup.json")
 	t.Cleanup(func() { ifupdownBackupPath = oldBackup })

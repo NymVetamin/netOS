@@ -58,9 +58,7 @@ func conflictingIfupdown(t *testing.T) {
 }
 
 // Запись в /etc/network/interfaces.d при выключенной и неработающей
-// networking.service не делает ничего и не сделает после перезагрузки: читать
-// её некому. Требовать её убрать — значит звать администратора чинить то, что
-// не сломано, и делать это при каждом применении конфигурации.
+// networking.service не запускает auto-интерфейс. Это не относится к hotplug.
 func TestNoIfupdownWarningWhenNetworkingIsOff(t *testing.T) {
 	conflictingIfupdown(t)
 	logger := &recordingLogger{}
@@ -73,6 +71,17 @@ func TestNoIfupdownWarningWhenNetworkingIsOff(t *testing.T) {
 	}
 	if conflicts := s.IfupdownConflicts(context.Background(), routerConfig()); len(conflicts) != 0 {
 		t.Fatalf("панель получила безобидный конфликт: %v", conflicts)
+	}
+}
+
+func TestIfupdownHotplugConflictWithNetworkingOff(t *testing.T) {
+	conflictingIfupdown(t)
+	if err := os.WriteFile(filepath.Join(ifupdownDir, "eth0"), []byte("allow-hotplug eth0\niface eth0 inet dhcp\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(unitRunner{active: "inactive"}, nil)
+	if got := s.IfupdownConflicts(context.Background(), routerConfig()); len(got) != 1 {
+		t.Fatalf("hotplug ignored: %v", got)
 	}
 }
 

@@ -198,10 +198,16 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 		}
 	}
 	if backend == "ifupdown" {
-		undoInput, err = takeOverIfupdown(managedInterfaces(cfg))
-		if err != nil {
-			return fmt.Errorf("перенос конфигурации networking: %w", err)
-		}
+		undoInput, err = takeOverIfupdownAfter(managedInterfaces(cfg), true, func() error {
+			return s.releaseForeignIfupdown(ctx, cfg)
+		})
+	} else {
+		undoInput, err = takeOverIfupdownAfter(managedInterfaces(cfg), false, func() error {
+			return s.releaseIfupdown(ctx, cfg)
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("перенос конфигурации networking: %w", err)
 	}
 	if err := s.syncNetworkdOwnership(ctx); err != nil {
 		return err
@@ -239,12 +245,6 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	}
 	if err != nil {
 		return err
-	}
-	if backend != "ifupdown" {
-		// networking has stopped; now its original input can safely return.
-		if err := RestoreIfupdown(""); err != nil {
-			return err
-		}
 	}
 	if err := s.Health(ctx, cfg); err != nil {
 		return fmt.Errorf("verify network configuration: %w", err)
@@ -669,13 +669,8 @@ func (s *Subsystem) syncNetworkdFiles(ctx context.Context, files map[string]stri
 // не переопределение. Молча оставить чужую строку тоже неправильно: при
 // загрузке она поднимет второй клиент DHCP на интерфейсе netOS.
 //
-// Но только если этой загрузке есть чему случиться. Запись в
-// /etc/network/interfaces.d при выключенной и неработающей networking.service
-// не делает ничего и не сделает после перезагрузки: читать её некому.
-// Предупреждать о ней — значит требовать от администратора действий там, где
-// делать нечего, и делать это при каждом применении конфигурации. Ровно так
-// оно и выглядело: на машине с networking в inactive журнал заполнялся
-// требованием убрать безобидный файл.
+// auto зависит от networking.service, а allow-hotplug читается udev независимо
+// от состояния networking. Последний нельзя считать безобидным при disabled.
 func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 	if s.Logger == nil {
 		return
@@ -696,7 +691,7 @@ func (s *Subsystem) warnAboutIfupdown(ctx context.Context, cfg *config.Config) {
 	for _, conflict := range conflicts {
 		path, name, _ := strings.Cut(conflict, " → ")
 		s.Logger.Warnf(
-			"%s настраивает интерфейс %s, которым управляет netOS: перекрыть эту запись нельзя — уберите её или отключите networking.service",
+			"%s настраивает интерфейс %s через ifupdown одновременно с netOS; при применении требуется передача управления интерфейсом",
 			path, name)
 	}
 }
@@ -712,6 +707,7 @@ func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) [
 	managed := managedInterfaces(cfg)
 
 	var conflicts []string
+	hotplug := false
 	for _, path := range paths {
 		if path == ifupdownPath {
 			continue
@@ -724,12 +720,22 @@ func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) [
 			if mentionsInterface(string(data), name) {
 				conflicts = append(conflicts, path+" → "+name)
 			}
+			for _, line := range ifupdownLines(data) {
+				fields := ifupdownFields(line)
+				if len(fields) > 1 && fields[0] == "allow-hotplug" {
+					for _, candidate := range fields[1:] {
+						if candidate == name {
+							hotplug = true
+						}
+					}
+				}
+			}
 		}
 	}
 
 	// Without matching foreign declarations, service state cannot create a
 	// conflict. Avoid starting systemctl for those panel requests.
-	if len(conflicts) == 0 || (!s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service")) {
+	if len(conflicts) == 0 || (!hotplug && !s.unitActive(ctx, "networking.service") && !s.unitEnabled(ctx, "networking.service")) {
 		return nil
 	}
 	return conflicts
@@ -955,6 +961,11 @@ func (s *Subsystem) backendServicesDrift(ctx context.Context, backend string) bo
 // interfaces, networks and wan; this subsystem makes sure a second manager
 // cannot silently add another lease or default route after apply or reboot.
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
+	if cfg.System.NetworkBackend != "ifupdown" {
+		if err := s.ifupdownOwnershipHealth(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	if s.backendServicesDrift(ctx, cfg.System.NetworkBackend) {
 		return fmt.Errorf("службы настройки сети не соответствуют режиму %q", cfg.System.NetworkBackend)
 	}

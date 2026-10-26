@@ -43,8 +43,8 @@ func readIfupdownBackup(path string) (ifupdownBackup, error) {
 	return b, nil
 }
 
-// RestoreIfupdown restores the input saved before taking ownership. Used by
-// backend changes and uninstall, before deleting the system baseline directory.
+// RestoreIfupdown restores the input saved before taking ownership on uninstall.
+// Backend changes must retain ownership: hotplug does not depend on networking.
 func RestoreIfupdown(root string) error {
 	path := ifupdownBackupPath
 	if root != "" {
@@ -250,6 +250,12 @@ func withoutManagedIfupdown(data []byte, names []string) ([]byte, error) {
 // Persist originals before the first mutation. A failed Apply restores the
 // exact pre-call files and journal; a later rollback uses RestoreIfupdown.
 func takeOverIfupdown(names []string) (func() error, error) {
+	return takeOverIfupdownAfter(names, true, nil)
+}
+
+// release runs only after all input has been validated, but before removing the
+// stanzas which ifdown needs to release an existing lease.
+func takeOverIfupdownAfter(names []string, includeGenerated bool, release func() error) (func() error, error) {
 	previous, err := os.ReadFile(ifupdownBackupPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -294,7 +300,7 @@ func takeOverIfupdown(names []string) (func() error, error) {
 		if err != nil {
 			return nil, err
 		}
-		if name == ifupdownMain && !included {
+		if name == ifupdownMain && !included && includeGenerated {
 			filtered = append(filtered, []byte("\n# netOS: управляемые интерфейсы\nsource "+ifupdownPath+"\n")...)
 		}
 		current, err := os.ReadFile(name)
@@ -325,6 +331,11 @@ func takeOverIfupdown(names []string) (func() error, error) {
 	}
 	noop := func() error { return nil }
 	if len(before) == 0 {
+		if release != nil {
+			if err := release(); err != nil {
+				return nil, err
+			}
+		}
 		return noop, nil
 	}
 	data, err := json.Marshal(b)
@@ -350,6 +361,11 @@ func takeOverIfupdown(names []string) (func() error, error) {
 			return removeFile(ifupdownBackupPath)
 		}
 		return system.WriteFileAtomic(ifupdownBackupPath, previous, 0600)
+	}
+	if release != nil {
+		if err := release(); err != nil {
+			return nil, errors.Join(err, undo())
+		}
 	}
 	paths := make([]string, 0, len(before))
 	for name := range before {
