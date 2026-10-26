@@ -153,16 +153,50 @@ func TestReadOnlyRoutesAndKeypairHandlers(t *testing.T) {
 }
 
 type catalogComponentProbe struct {
-	installed map[string]bool
-	running   map[string]bool
+	installed     map[string]bool
+	running       map[string]bool
+	forbidRunning bool
 }
 
 type catalogQoSProbe bool
 
 func (p catalogQoSProbe) Active(context.Context, *config.Config) bool { return bool(p) }
 
-func (p catalogComponentProbe) Status(context.Context) map[string]bool  { return p.installed }
-func (p catalogComponentProbe) Running(context.Context) map[string]bool { return p.running }
+func (p catalogComponentProbe) Status(_ context.Context, ids ...string) map[string]bool {
+	if len(ids) == 0 {
+		return p.installed
+	}
+	out := map[string]bool{}
+	for _, id := range ids {
+		out[id] = p.installed[id]
+	}
+	return out
+}
+func (p catalogComponentProbe) Running(context.Context) map[string]bool {
+	if p.forbidRunning {
+		panic("installed-only request must not query running services")
+	}
+	return p.running
+}
+
+func TestCatalogInstalledSelectionKeepsFullAPIAndAuthentication(t *testing.T) {
+	s, cookie, _ := newAuthedServer(t)
+	s.Components = catalogComponentProbe{installed: map[string]bool{"xray": true, "dnsmasq": false}, forbidRunning: true}
+	h := s.Routes()
+	if w := serveAuthed(h, "GET", "/api/catalog?installed=xray", nil, nil, ""); w.Code != 401 {
+		t.Fatal(w.Code)
+	}
+	for _, query := range []string{"", "unknown", "xray,unknown"} {
+		if w := serveAuthed(h, "GET", "/api/catalog?installed="+query, nil, cookie, ""); w.Code != 400 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	w := serveAuthed(h, "GET", "/api/catalog?installed=xray", nil, cookie, "")
+	var out map[string]json.RawMessage
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || len(out) != 1 || string(out["installed"]) != `{"xray":true}` {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
 
 func TestCatalogReturnsMetadataAndIndependentLiveStates(t *testing.T) {
 	s, cookie, _ := newAuthedServer(t)

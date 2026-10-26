@@ -15,7 +15,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
  useEffect(()=>{
   let active=true;
   const load=async()=>{
-   const [catalog,status]=await Promise.allSettled([api.catalog(),api.socksStatus()]);
+   const [catalog,status]=await Promise.allSettled([api.componentStatus(["xray"]),api.socksStatus()]);
    if(!active)return;
    setReady(catalog.status==="fulfilled" ? !!catalog.value.installed?.xray : null);
    setCatalogError(catalog.status==="rejected");

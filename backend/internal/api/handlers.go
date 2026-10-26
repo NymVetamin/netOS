@@ -1545,6 +1545,28 @@ func draftPrecondition(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 // строит по нему раздел компонентов и подсказывает, чего не хватает для
 // нужной функции.
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("installed") {
+		ids := strings.Split(r.URL.Query().Get("installed"), ",")
+		for _, id := range ids {
+			known := false
+			for _, info := range config.Catalog {
+				if info.ID == id {
+					known = true
+					break
+				}
+			}
+			if !known {
+				writeError(w, http.StatusBadRequest, "неизвестный компонент: %s", id)
+				return
+			}
+		}
+		resp := map[string]any{}
+		if s.Components != nil {
+			resp["installed"] = s.Components.Status(r.Context(), ids...)
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	resp := map[string]any{"components": config.Catalog}
 	if s.Components != nil {
 		// installed — полностью ли готов компонент (весь payload на диске,

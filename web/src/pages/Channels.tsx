@@ -35,7 +35,7 @@ export function ChannelsPage({ config, patch }: Props) {
       controller = new AbortController();
       const timeout = window.setTimeout(() => controller?.abort(), 15000);
       try {
-        const catalog = await api.catalog(controller.signal);
+        const catalog = await api.componentStatus(channelComponents.map(c => c.id), controller.signal);
         if (active) { setInstalled(catalog.installed || {}); setComponentError(false); }
       } catch {
         if (active) { setInstalled(null); setComponentError(true); }

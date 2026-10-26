@@ -39,7 +39,7 @@ var webFS embed.FS
 // «пакет установлен» и «демон обслуживает сеть» есть разница, и по одному
 // только первому непонятно, кто из двух установленных серверов DHCP работает.
 type ComponentProbe interface {
-	Status(ctx context.Context) map[string]bool
+	Status(ctx context.Context, ids ...string) map[string]bool
 	Running(ctx context.Context) map[string]bool
 }
 

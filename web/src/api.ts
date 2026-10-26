@@ -316,6 +316,7 @@ export const api = {
   rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
 
   catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
+  componentStatus: (ids: string[], signal?: AbortSignal) => request<Pick<CatalogResponse, "installed">>("GET", `/api/catalog?installed=${encodeURIComponent(ids.join(","))}`, undefined, undefined, signal),
 	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),
   status: (overview = false) => request<any>("GET", overview ? "/api/status?overview=1" : "/api/status"),
   ddnsStatus: (signal?: AbortSignal) => request<any>("GET", "/api/ddns/status", undefined, undefined, signal),

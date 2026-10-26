@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -625,13 +626,31 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error { retu
 
 // Status сообщает, что из каталога реально присутствует на машине. Панель
 // показывает это рядом с желаемым состоянием, чтобы расхождение было видно.
-func (s *Subsystem) Status(ctx context.Context) map[string]bool {
+func (s *Subsystem) Status(ctx context.Context, ids ...string) map[string]bool {
 	out := map[string]bool{}
-	snapshot, snapshotErr := s.liveSnapshot(ctx)
+	catalog := config.Catalog
+	if len(ids) > 0 {
+		catalog = nil
+		for _, info := range config.Catalog {
+			if slices.Contains(ids, info.ID) {
+				catalog = append(catalog, info)
+			}
+		}
+	}
+	var snapshot componentLiveSnapshot
+	var snapshotErr error
+	for _, info := range catalog {
+		if !info.External && len(info.Packages) > 0 {
+			// Keep the established batched OS snapshot. Narrowing the unit-file
+			// query to absent optional units triggers systemd's costly fallback.
+			snapshot, snapshotErr = s.liveSnapshot(ctx)
+			break
+		}
+	}
 	if snapshotErr != nil && ctx.Err() != nil {
 		return out
 	}
-	for _, info := range config.Catalog {
+	for _, info := range catalog {
 		if !info.External && len(info.Packages) == 0 {
 			continue
 		}
