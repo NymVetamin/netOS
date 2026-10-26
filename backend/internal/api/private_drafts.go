@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 )
 
@@ -160,7 +161,19 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
 		old := s.Engine.Current()
-		actions, err := s.Engine.PlanFromContext(managementContext(ctx, r), old, cfg)
+		version := d.Version
+		// Draft edits replace Config rather than mutating the published snapshot.
+		// Slow OS reads in preview must not hold up unrelated draft operations.
+		s.draftMu.Unlock()
+		actions, err := func() ([]apply.Action, error) {
+			defer s.draftMu.Lock()
+			return s.Engine.PlanFromContext(managementContext(ctx, r), old, cfg)
+		}()
+		pending, _ := s.Engine.Pending()
+		if s.draftApplying || pending || s.privateDrafts[userOf(r)] != d || d.Version != version || s.Engine.Current() != old {
+			writeError(w, 409, "черновик или применённая конфигурация изменились; обновите страницу и проверьте изменения")
+			return
+		}
 		if err != nil {
 			writeError(w, 500, "не удалось построить план")
 			return
