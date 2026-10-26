@@ -27,7 +27,23 @@ export function reservationNetwork(config: any, client: any): string {
   return matches.length === 1 ? matches[0].id : '';
 }
 
-export function reservationError(config: any, mac: string, ip: string, networkID: string, devices: any[] = []): string {
+export function reservationAddressIndex(devices: any[]): ReadonlyMap<string, ReadonlySet<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const device of devices) {
+    if (typeof device.ip !== 'string') continue;
+    let owners = index.get(device.ip);
+    if (!owners) index.set(device.ip, owners = new Set());
+    owners.add(String(device.mac).toLowerCase());
+  }
+  return index;
+}
+
+export type ReservationConflicts = {
+  reserved: ReturnType<typeof reservationAddressIndex>;
+  devices: ReturnType<typeof reservationAddressIndex>;
+};
+
+export function reservationError(config: any, mac: string, ip: string, networkID: string, devices: any[] = [], conflicts?: ReservationConflicts): string {
   if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac)) return 'Введите MAC-адрес в формате aa:bb:cc:dd:ee:ff';
   const network = (config.networks || []).find((n: any) => n.id === networkID);
   if (!network) return 'Выберите сегмент для закрепления адреса';
@@ -38,8 +54,12 @@ export function reservationError(config: any, mac: string, ip: string, networkID
   if (address === range.router || ip === network.dhcp_pool?.gateway) return 'Нельзя закрепить адрес роутера или DHCP-шлюза';
   if (range.prefix <= 30 && (address === range.first || address === range.last)) return 'Нельзя закрепить адрес сети или широковещательный адрес';
   const other = (c: any) => String(c.mac).toLowerCase() !== mac.toLowerCase() && c.ip === ip;
-  if ((config.dhcp?.reservations || []).some(other)) return 'Адрес уже закреплён за другим устройством';
-  if (devices.some(other)) return 'Адрес уже используется другим устройством';
+  const occupied = (index: ReservationConflicts['devices']) => {
+    const owners = index.get(ip);
+    return !!owners && (owners.size > 1 || (owners.size === 1 && !owners.has(mac.toLowerCase())));
+  };
+  if (conflicts ? occupied(conflicts.reserved) : (config.dhcp?.reservations || []).some(other)) return 'Адрес уже закреплён за другим устройством';
+  if (conflicts ? occupied(conflicts.devices) : devices.some(other)) return 'Адрес уже используется другим устройством';
   return '';
 }
 

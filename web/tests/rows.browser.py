@@ -135,8 +135,11 @@ async def main():
                 await open_rows_above(preset)
                 await preset.select_option("custom")
             control = page.get_by_label(label, exact=True)
+            if name == "clients":
+                await expect(control).to_have_count(0)
+                await page.locator(".xrow").filter(has=page.get_by_role("combobox", name=f"Канал для устройства {MAC}", exact=True)).locator(":scope > details > summary").click()
             await expect(control).to_have_count(1)
-            if not custom_dns:
+            if not custom_dns and name != "clients":
                 assert not await control.is_visible(), f"{name}: «{label}» is visible while its row is collapsed"
             await open_rows_above(control)
             await expect(control).to_be_visible()
@@ -156,16 +159,17 @@ async def main():
             state["hostname"] = hostname
             await page.goto("http://netos-ui.test/#clients")
             await page.reload()
-            pin = page.get_by_role("button", name=f"Закрепить адрес за устройством {MAC}", exact=True)
+            await page.locator(".xrow").filter(has=page.get_by_role("combobox", name=f"Канал для устройства {MAC}", exact=True)).locator(":scope > details > summary").click()
+            pin = page.get_by_role("button", name="Закрепить адрес", exact=True)
             async with page.expect_response(is_put):
                 await pin.click()
             pinned = [item for item in state["config"]["dhcp"]["reservations"] if item["mac"] == MAC]
             assert len(pinned) == 1 and pinned[0]["ip"] == "192.168.10.23" and pinned[0]["network"] == "lan", pinned
             assert pinned[0]["hostname"] == expected, pinned
             assert state["config"]["clients"][0]["name"] == "Ноутбук мамы"
-            assert not await page.get_by_label(f"Комментарий устройства {MAC}", exact=True).is_visible()
+            assert await page.get_by_label(f"Комментарий устройства {MAC}", exact=True).is_visible()
             async with page.expect_response(is_put):
-                await page.get_by_role("button", name=f"Открепить адрес устройства {MAC}", exact=True).click()
+                await page.get_by_role("button", name="Снять закрепление", exact=True).click()
             assert not [item for item in state["config"]["dhcp"]["reservations"] if item["mac"] == MAC]
         print("clients pin hostname cases PASS")
 
@@ -190,7 +194,8 @@ async def main():
             await forget.click()
         assert state["config"]["samba"]["volumes"] == []
         await page.goto("http://netos-ui.test/#clients")
-        pin = page.get_by_role("button", name=f"Закрепить адрес за устройством {MAC}", exact=True)
+        await page.locator(".xrow").filter(has=page.get_by_role("combobox", name=f"Канал для устройства {MAC}", exact=True)).locator(":scope > details > summary").click()
+        pin = page.get_by_role("button", name="Закрепить адрес", exact=True)
         await expect(pin).to_be_visible()
         await open_rows_above(page.get_by_text(MAC, exact=True))
         await expect(page.get_by_text(MAC, exact=True)).to_be_visible()

@@ -1,7 +1,7 @@
 // Базовые элементы интерфейса. Держим их в одном месте, чтобы страницы
 // занимались данными, а не оформлением.
 
-import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useEffect, useId, useRef } from "react";
+import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useEffect, useId, useRef, useState } from "react";
 import { formatBitrate } from "./api";
 import { CARD_ICONS, Icon, IconName } from "./icons";
 
@@ -221,6 +221,7 @@ export function Row({
   className,
   icon,
   as: Tag = "div",
+  lazyBody = false,
   ...rest
 }: {
   id?: string;
@@ -231,11 +232,16 @@ export function Row({
   children?: ReactNode;
   className?: string;
   as?: "div" | "form";
+  lazyBody?: boolean;
   [attribute: string]: unknown;
 }) {
   const details = useRef<HTMLDetailsElement>(null);
+  const [visited, setVisited] = useState(false);
   useEffect(() => {
-    if (id && created.delete(id) && details.current) details.current.open = true;
+    if (id && created.delete(id) && details.current) {
+      details.current.open = true;
+      setVisited(true);
+    }
   }, [id]);
   const summary = [0, 1, 2, 3, 4].map((i) => i === 0 && icon
     ? <span key={i} className="xname"><Icon name={icon} />{cells[i]}</span>
@@ -246,7 +252,7 @@ export function Row({
       {/* Переключатель в документе первый: это «главный переключатель записи». */}
       {toggle && <div className="xsw">{toggle}</div>}
       {children
-        ? <details className="xd" ref={details}><summary className="xsum">{summary}</summary><div className="xbody">{children}</div></details>
+        ? <details className="xd" ref={details} onToggle={lazyBody ? e => { if (e.currentTarget.open) setVisited(true); } : undefined}><summary className="xsum">{summary}</summary><div className="xbody">{!lazyBody || visited ? children : null}</div></details>
         : <div className="xsum">{summary}</div>}
     </Wrapper>
   );

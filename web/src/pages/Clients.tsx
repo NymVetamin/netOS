@@ -1,5 +1,5 @@
 import { useAccess } from "../permissions";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatMiB, formatTime } from "../api";
 import { localDevices } from "../deviceList";
 import { vpnMapServers } from "../mapVPN";
@@ -7,7 +7,7 @@ import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
 import { Icon } from "../icons";
 import { ReservationEditor } from "../ReservationEditor";
-import { reservationError, reservationNetwork } from "../clientReservation";
+import { reservationAddressIndex, reservationError, reservationNetwork } from "../clientReservation";
 
 function ClientChannel({ config, value, inherited, source, label, onChange }: {
   config: any; value: string; inherited?: string; source: string; label: string; onChange: (value: string) => void;
@@ -39,6 +39,10 @@ export function Clients({
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const reservationDevices = useMemo(() => [...clients, ...leases], [clients, leases]);
+  const deviceAddresses = useMemo(() => reservationAddressIndex(reservationDevices), [reservationDevices]);
+  const reservedAddresses = useMemo(() => reservationAddressIndex(config.dhcp?.reservations || []), [config.dhcp?.reservations]);
+  const reservationConflicts = useMemo(() => ({ devices: deviceAddresses, reserved: reservedAddresses }), [deviceAddresses, reservedAddresses]);
 
   useEffect(() => {
     let stopped = false;
@@ -154,6 +158,7 @@ export function Clients({
                     : (config.interfaces || []).find((i: any) => i.id === n.interface)?.name === c.interface);
                   return (
               <Row
+                lazyBody
                 key={`lan:${c.mac}`}
                 icon="monitor-smartphone"
                 id={`lan:${c.mac}`}
@@ -183,7 +188,7 @@ export function Clients({
                         /></Cap>
                 </div>
                 <ReservationEditor key={`${c.mac}:${reserved.get(c.mac)?.id || ''}:${reserved.get(c.mac)?.ip || ''}:${reserved.get(c.mac)?.network || ''}`}
-                  config={config} client={c} reservation={reserved.get(c.mac)} baseReservations={baseReservations} devices={[...clients, ...leases]} patch={patch} />
+                  config={config} client={c} reservation={reserved.get(c.mac)} baseReservations={baseReservations} devices={reservationDevices} conflicts={reservationConflicts} patch={patch} />
                 <div className="row-actions end"><button
                           className={`btn sm ${cfgClient?.blocked ? "danger" : ""}`}
                           onClick={() => updateClient(c.mac, { blocked: !cfgClient?.blocked })}
@@ -193,7 +198,7 @@ export function Clients({
               </Row>
           );
                 })}
-          {vpn.flatMap(server => server.peers.map(peer => <Row icon="monitor-smartphone"
+          {vpn.flatMap(server => server.peers.map(peer => <Row lazyBody icon="monitor-smartphone"
             key={`vpn:${server.id}:${peer.id}`} id={`vpn:${server.id}:${peer.id}`}
             toggle={can("vpn-servers") ? <a className="btn client-settings-icon" href={`#vpn-servers?server=${encodeURIComponent(server.id)}&client=${encodeURIComponent(peer.id)}`} title="Настройки VPN-клиента" aria-label="Настройки VPN-клиента">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

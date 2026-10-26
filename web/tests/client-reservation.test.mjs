@@ -8,6 +8,25 @@ vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/clientReserva
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports });
 const { reservationNetwork, reservationError } = exports;
+
+test('indexed conflicts preserve validation and message precedence', () => {
+  const candidates = [undefined, mac, mac.toUpperCase(), '02:00:00:00:00:02'];
+  for (const reservedMac of candidates) for (const liveMac of candidates) {
+    const reservations = reservedMac === undefined ? [] : [{ mac: reservedMac, ip: '192.168.20.100', enabled: false }];
+    const devices = liveMac === undefined ? [] : [{ mac: liveMac, ip: '192.168.20.100' }, { mac: liveMac, ip: '192.168.20.100' }];
+    const config = { ...cfg, dhcp: { reservations } };
+    const conflicts = { reserved: exports.reservationAddressIndex(reservations), devices: exports.reservationAddressIndex(devices) };
+    for (const ip of ['', 'bad', '192.168.20.1', '192.168.20.0', '192.168.20.100', '192.168.20.101']) {
+      assert.equal(reservationError(config, mac, ip, 'second', devices, conflicts), reservationError(config, mac, ip, 'second', devices));
+    }
+  }
+  const devices = [{ mac, ip: '192.168.20.100' }, { mac: 'other', ip: '192.168.20.100' }];
+  const conflicts = { reserved: exports.reservationAddressIndex([]), devices: exports.reservationAddressIndex(devices) };
+  assert.equal(reservationError(cfg, mac, '192.168.20.100', 'second', [], conflicts), 'Адрес уже используется другим устройством');
+  devices.pop();
+  conflicts.devices = exports.reservationAddressIndex(devices);
+  assert.equal(reservationError(cfg, mac, '192.168.20.100', 'second', [], conflicts), '');
+});
 const mac = '02:00:00:00:00:01';
 const cfg = { interfaces: [{ id: 'a', name: 'br0' }, { id: 'b', name: 'br1' }], networks: [
   { id: 'first', interface: 'a', router_address: '192.168.10.1/24' },

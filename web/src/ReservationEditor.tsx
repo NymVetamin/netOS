@@ -3,12 +3,12 @@ import { Cap } from './ui';
 import { newID } from './id';
 import { reservationError, reservationHostname, reservationNetwork } from './clientReservation';
 
-export function ReservationEditor({ config, client, reservation, baseReservations = [], devices, patch }: any) {
+export function ReservationEditor({ config, client, reservation, baseReservations = [], devices, conflicts, patch }: any) {
   const original = baseReservations.find((r: any) => r.mac.toLowerCase() === client.mac.toLowerCase());
   const [ip, setIP] = useState(reservation?.ip || original?.ip || client.ip || '');
   const network = reservationNetwork(config, client);
   const segment = (config.networks || []).find((n: any) => n.id === network);
-  const error = reservationError(config, client.mac, ip, network, devices);
+  const error = reservationError(config, client.mac, ip, network, devices, conflicts);
   const enabled = !!reservation?.enabled;
   return <div className="client-reservation">
     <strong>Закрепление адреса DHCP</strong>
