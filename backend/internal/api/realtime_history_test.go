@@ -156,6 +156,52 @@ func TestSecondHistoryWindowCancellation(t *testing.T) {
 	}
 }
 
+func TestSecondHistoryReaderDoesNotBlockSampler(t *testing.T) {
+	h, err := openSecondHistory(filepath.Join(t.TempDir(), "seconds.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.close()
+	if err = h.append(historyFrame(1000, 1)); err != nil {
+		t.Fatal(err)
+	}
+	// Keep a real SQLite read transaction open, as window does while decoding.
+	rows, err := h.reader.Query(`SELECT summary FROM seconds`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatal("missing persisted sample", rows.Err())
+	}
+	done := make(chan error, 1)
+	go func() { done <- h.append(historyFrame(1011, 2)) }()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		rows.Close()
+		<-done
+		t.Fatal("sampler waited for the history reader")
+	}
+	// Another reader waits for this bounded pool, but honours cancellation.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, _, err = h.window(ctx, 1000, 1011); err == nil {
+		t.Fatal("waiting reader ignored cancellation")
+	}
+	rows.Close()
+	frames, step, err := h.window(context.Background(), 1000, 1011)
+	if err != nil || step != 1 || len(frames) != 2 {
+		t.Fatalf("retry after cancellation: frames=%d step=%d err=%v", len(frames), step, err)
+	}
+	if frames[1].At != 1011 || *frames[1].Values[0].RXBPS != 2 {
+		t.Fatal("concurrent flush lost the new sample", frames)
+	}
+}
+
 func TestSecondHistorySummaryWeightsAndPeaks(t *testing.T) {
 	a, b := historyFrame(1, 100), historyFrame(11, 1000)
 	a.Values[0].Seconds = 10

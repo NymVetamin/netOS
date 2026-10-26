@@ -23,6 +23,7 @@ import (
 type secondHistory struct {
 	mu      sync.Mutex
 	db      *sql.DB
+	reader  *sql.DB
 	tail    []realtimeSnapshot
 	flushed float64
 }
@@ -47,7 +48,20 @@ func openSecondHistory(path string) (*secondHistory, error) {
 		db.Close()
 		return nil, err
 	}
-	return &secondHistory{db: db}, nil
+	// A long history cursor must not occupy the sampler's connection. WAL
+	// allows this bounded reader pool to keep its snapshot while we flush.
+	reader, err := sql.Open("sqlite", path)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	reader.SetMaxOpenConns(1)
+	if _, err = reader.Exec(`PRAGMA busy_timeout=3000;`); err != nil {
+		reader.Close()
+		db.Close()
+		return nil, err
+	}
+	return &secondHistory{db: db, reader: reader}, nil
 }
 
 func (h *secondHistory) append(s realtimeSnapshot) error {
@@ -164,9 +178,13 @@ func (h *secondHistory) close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	err := h.flushLocked()
+	readerErr := h.reader.Close()
 	closeErr := h.db.Close()
 	if err != nil {
 		return err
+	}
+	if readerErr != nil {
+		return readerErr
 	}
 	return closeErr
 }
@@ -186,7 +204,7 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 	if len(tail) > 0 && tail[0].At < end {
 		end = tail[0].At - 0.000001
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT `+column+` FROM seconds WHERE finish>=? AND start<=? ORDER BY start`, from, end)
+	rows, err := h.reader.QueryContext(ctx, `SELECT `+column+` FROM seconds WHERE finish>=? AND start<=? ORDER BY start`, from, end)
 	if err != nil {
 		return nil, step, err
 	}
