@@ -1097,8 +1097,11 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 
 // sameConfig сравнивает содержимое с общей нормализацией пустых списков.
 func sameConfig(a, b *config.Config) bool {
+	if a == b {
+		return true
+	}
 	if a == nil || b == nil {
-		return a == b
+		return false
 	}
 	left, err := json.Marshal(comparisonValue(reflect.ValueOf(a)).Interface())
 	if err != nil {

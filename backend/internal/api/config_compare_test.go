@@ -8,6 +8,20 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
+func TestSameConfigIdentityAndDistinctSnapshots(t *testing.T) {
+	a, b := config.Default(), config.Default()
+	if !sameConfig(nil, nil) || sameConfig(a, nil) || sameConfig(nil, a) || !sameConfig(a, a) || !sameConfig(a, b) {
+		t.Fatal("identity, nil or equivalent snapshots differ")
+	}
+	b.System.Hostname = a.System.Hostname + "-changed"
+	if sameConfig(a, b) || sameConfig(b, a) {
+		t.Fatal("identity shortcut hid a real draft change")
+	}
+	if allocations := testing.AllocsPerRun(10, func() { sameConfig(a, a) }); allocations != 0 {
+		t.Fatalf("same snapshot needlessly allocates: %g", allocations)
+	}
+}
+
 func TestSameConfigAllTypedLists(t *testing.T) {
 	a, b := &config.Config{}, &config.Config{}
 	count := 0
