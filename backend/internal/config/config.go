@@ -13,6 +13,9 @@
 //   - всё, что netOS применяет к системе, обязано быть здесь видимым. Скрытых
 //     правил, которые генерируются мимо конфигурации, быть не должно:
 //     администратор должен видеть в панели ровно то, что окажется в ядре.
+//   - метаданные plan/sensitivity описывают поле в плане изменений; новое
+//     сериализуемое поле должно иметь название и явную классификацию значения.
+//     format/reference задают только отображение, не меняя единицы хранения.
 package config
 
 // Version — версия схемы конфигурации.
@@ -34,33 +37,33 @@ const maxInterfaceName = 15
 
 // Config — корень дерева конфигурации.
 type Config struct {
-	TrafficMonitor TrafficMonitor `json:"traffic_monitor"`
-	Socks          Socks          `json:"socks"`
-	Version        int            `json:"version"`
-	System         System         `json:"system"`
-	IPv6           IPv6Policy     `json:"ipv6"`
-	Components     []Component    `json:"components"`
-	Interfaces     []Interface    `json:"interfaces"`
-	Networks       []Network      `json:"networks"`
-	WANs           []WAN          `json:"wans"`
-	MultiWAN       MultiWAN       `json:"multiwan"`
-	Routing        Routing        `json:"routing"`
-	Firewall       Firewall       `json:"firewall"`
-	DHCP           DHCP           `json:"dhcp"`
-	DNS            DNS            `json:"dns"`
-	Clients        []Client       `json:"clients"`
-	Channels       []Channel      `json:"channels"`
-	Policies       []Policy       `json:"policies"`
-	VPNServers     []VPNServer    `json:"vpn_servers"`
-	WiFi           []WiFiRadio    `json:"wifi"`
-	QoS            QoS            `json:"qos"`
-	DDNS           DDNS           `json:"ddns"`
-	Samba          Samba          `json:"samba"`
+	TrafficMonitor TrafficMonitor `json:"traffic_monitor" plan:"Учёт трафика клиентов" sensitivity:"public"`
+	Socks          Socks          `json:"socks" plan:"Прокси SOCKS" sensitivity:"public"`
+	Version        int            `json:"version" plan:"Версия схемы" sensitivity:"public"`
+	System         System         `json:"system" plan:"Система" sensitivity:"public"`
+	IPv6           IPv6Policy     `json:"ipv6" plan:"IPv6" sensitivity:"public"`
+	Components     []Component    `json:"components" plan:"Компоненты" sensitivity:"public"`
+	Interfaces     []Interface    `json:"interfaces" plan:"Интерфейсы" sensitivity:"public"`
+	Networks       []Network      `json:"networks" plan:"Локальные сети" sensitivity:"public"`
+	WANs           []WAN          `json:"wans" plan:"Аплинки" sensitivity:"public"`
+	MultiWAN       MultiWAN       `json:"multiwan" plan:"Несколько аплинков" sensitivity:"public"`
+	Routing        Routing        `json:"routing" plan:"Маршрутизация" sensitivity:"public"`
+	Firewall       Firewall       `json:"firewall" plan:"Файрвол" sensitivity:"public"`
+	DHCP           DHCP           `json:"dhcp" plan:"DHCP" sensitivity:"public"`
+	DNS            DNS            `json:"dns" plan:"DNS" sensitivity:"public"`
+	Clients        []Client       `json:"clients" plan:"Клиенты" sensitivity:"public"`
+	Channels       []Channel      `json:"channels" plan:"Интернет-каналы" sensitivity:"public"`
+	Policies       []Policy       `json:"policies" plan:"Политики" sensitivity:"public"`
+	VPNServers     []VPNServer    `json:"vpn_servers" plan:"VPN-серверы" sensitivity:"public"`
+	WiFi           []WiFiRadio    `json:"wifi" plan:"Wi-Fi" sensitivity:"public"`
+	QoS            QoS            `json:"qos" plan:"Управление скоростью" sensitivity:"public"`
+	DDNS           DDNS           `json:"ddns" plan:"Динамический DNS" sensitivity:"public"`
+	Samba          Samba          `json:"samba" plan:"Общий доступ к файлам" sensitivity:"public"`
 }
 
 // TrafficMonitor is opt-in; disabling stops collection without erasing history.
 type TrafficMonitor struct {
-	Enabled bool `json:"enabled"`
+	Enabled bool `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 }
 
 // ---------------------------------------------------------------------------
@@ -68,46 +71,46 @@ type TrafficMonitor struct {
 // ---------------------------------------------------------------------------
 
 type System struct {
-	Hostname string `json:"hostname"`
-	Timezone string `json:"timezone"`
-	NTP      NTP    `json:"ntp"`
-	Panel    Panel  `json:"panel"`
+	Hostname string `json:"hostname" plan:"Имя устройства" sensitivity:"public"`
+	Timezone string `json:"timezone" plan:"Часовой пояс" sensitivity:"public"`
+	NTP      NTP    `json:"ntp" plan:"Синхронизация времени" sensitivity:"public"`
+	Panel    Panel  `json:"panel" plan:"Веб-панель" sensitivity:"public"`
 	// NetworkBackend — чем настраивать интерфейсы:
 	//   netos    — netOS управляет напрямую через iproute2 (по умолчанию);
 	//   ifupdown — генерировать /etc/network/interfaces для службы networking;
 	//   networkd — генерировать файлы для systemd-networkd.
 	// Выбор за администратором: на машине может быть принятый в организации
 	// способ настройки сети, и навязывать свой netOS не должен.
-	NetworkBackend string `json:"network_backend"`
+	NetworkBackend string `json:"network_backend" plan:"Управление интерфейсами" sensitivity:"public"`
 }
 
 type NTP struct {
-	Enabled bool     `json:"enabled"`
-	Servers []string `json:"servers"`
+	Enabled bool     `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Servers []string `json:"servers" plan:"Серверы" sensitivity:"public"`
 }
 
 // Panel — параметры самой веб-панели.
 type Panel struct {
-	Port int `json:"port"`
+	Port int `json:"port" plan:"Порт" sensitivity:"public"`
 	// CommitTimeout — сколько секунд ждать подтверждения от админа, прежде чем
 	// автоматически откатить применённую конфигурацию.
-	CommitTimeout int `json:"commit_timeout"`
-	TLS           TLS `json:"tls"`
+	CommitTimeout int `json:"commit_timeout" plan:"Ожидание подтверждения, с" sensitivity:"public"`
+	TLS           TLS `json:"tls" plan:"TLS" sensitivity:"public"`
 }
 
 type TLS struct {
-	Mode      string `json:"mode"` // selfsigned | custom | acme
-	CertFile  string `json:"cert_file,omitempty"`
-	KeyFile   string `json:"key_file,omitempty"`
-	Domain    string `json:"domain,omitempty"`
-	Email     string `json:"email,omitempty"`
-	AcceptTOS bool   `json:"accept_tos,omitempty"`
+	Mode      string `json:"mode" plan:"Режим" sensitivity:"public"` // selfsigned | custom | acme
+	CertFile  string `json:"cert_file,omitempty" plan:"Файл сертификата" sensitivity:"public"`
+	KeyFile   string `json:"key_file,omitempty" plan:"Файл ключа" sensitivity:"public"`
+	Domain    string `json:"domain,omitempty" plan:"Домен" sensitivity:"public"`
+	Email     string `json:"email,omitempty" plan:"Электронная почта" sensitivity:"public"`
+	AcceptTOS bool   `json:"accept_tos,omitempty" plan:"Согласие с условиями ACME" sensitivity:"public"`
 }
 
 // IPv6Policy управляет подавлением IPv6.
 type IPv6Policy struct {
-	Mode       string `json:"mode"` // off | passthrough
-	FilterAAAA bool   `json:"filter_aaaa"`
+	Mode       string `json:"mode" plan:"Режим" sensitivity:"public"` // off | passthrough
+	FilterAAAA bool   `json:"filter_aaaa" plan:"Фильтрация AAAA" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -122,10 +125,10 @@ type IPv6Policy struct {
 // службами, которые никто не просил, и поверхность атаки остаётся минимальной.
 type Component struct {
 	// ID из каталога компонентов: dnsmasq, unbound, wireguard, xray и так далее.
-	ID string `json:"id"`
+	ID string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
 	// Installed — желаемое состояние. Подсистема components доводит систему до
 	// него: ставит недостающее, убирает лишнее.
-	Installed bool `json:"installed"`
+	Installed bool `json:"installed" plan:"Установка компонента" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -134,40 +137,40 @@ type Component struct {
 
 // Interface — L2-сущность: физический порт, bridge, VLAN или bond.
 type Interface struct {
-	Label    string `json:"label,omitempty"`
-	LinkMode string `json:"link_mode,omitempty"`
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"` // physical | bridge | vlan | bond
+	Label    string `json:"label,omitempty" plan:"Подпись" sensitivity:"public"`
+	LinkMode string `json:"link_mode,omitempty" plan:"Режим соединения" sensitivity:"public"`
+	ID       string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name     string `json:"name" plan:"Название" sensitivity:"public"`
+	Type     string `json:"type" plan:"Тип" sensitivity:"public"` // physical | bridge | vlan | bond
 	// Members — идентификаторы портов, включённых в мост или агрегацию.
 	// Именно идентификаторы, а не имена: имя администратор меняет в панели, и
 	// ссылка по имени пережила бы переименование только на бумаге.
-	Members []string `json:"members,omitempty"`
+	Members []string `json:"members,omitempty" plan:"Участники" sensitivity:"public"`
 	// Parent — идентификатор интерфейса, поверх которого поднят VLAN.
-	Parent  string `json:"parent,omitempty"`
-	VLANID  int    `json:"vlan_id,omitempty"`
-	MTU     int    `json:"mtu,omitempty"`
-	MAC     string `json:"mac,omitempty"`
-	Enabled bool   `json:"enabled"`
+	Parent  string `json:"parent,omitempty" plan:"Родительский интерфейс" sensitivity:"public"`
+	VLANID  int    `json:"vlan_id,omitempty" plan:"Номер VLAN" sensitivity:"public"`
+	MTU     int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	MAC     string `json:"mac,omitempty" plan:"MAC-адрес" sensitivity:"public"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 }
 
 // Network — L3-сегмент: подсеть и адрес роутера в ней.
 type Network struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name string `json:"name" plan:"Название" sensitivity:"public"`
 	// Interface — ID интерфейса, на котором живёт сегмент.
-	Interface string `json:"interface"`
+	Interface string `json:"interface" plan:"Интерфейс" sensitivity:"public"`
 	// RouterAddress — адрес самого роутера в этом сегменте вместе с маской.
 	// Он же становится шлюзом по умолчанию для клиентов сегмента.
-	RouterAddress string `json:"router_address"`
-	Enabled       bool   `json:"enabled"`
+	RouterAddress string `json:"router_address" plan:"Адрес роутера" sensitivity:"public"`
+	Enabled       bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 	// Zone — зона файрволла, к которой относится сегмент.
-	Zone string `json:"zone"`
+	Zone string `json:"zone" plan:"Зона" sensitivity:"public"`
 	// Isolated запрещает трафик между этим сегментом и другими сегментами.
-	Isolated bool `json:"isolated"`
+	Isolated bool `json:"isolated" plan:"Изоляция" sensitivity:"public"`
 	// DefaultChannel — канал выхода для клиентов сегмента.
-	DefaultChannel string   `json:"default_channel,omitempty"`
-	DHCPPool       DHCPPool `json:"dhcp_pool"`
+	DefaultChannel string   `json:"default_channel,omitempty" plan:"Канал выхода по умолчанию" sensitivity:"public" reference:"channel"`
+	DHCPPool       DHCPPool `json:"dhcp_pool" plan:"Пул DHCP" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -175,88 +178,88 @@ type Network struct {
 // ---------------------------------------------------------------------------
 
 type WAN struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	ID        string `json:"id"`
-	Index     int    `json:"index"`
-	Name      string `json:"name"`
-	Interface string `json:"interface"`
-	Enabled   bool   `json:"enabled"`
+	ID        string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Index     int    `json:"index" plan:"Номер" sensitivity:"public"`
+	Name      string `json:"name" plan:"Название" sensitivity:"public"`
+	Interface string `json:"interface" plan:"Интерфейс" sensitivity:"public"`
+	Enabled   bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 	// Proto: dhcp | static | pppoe | l2tp
-	Proto string `json:"proto"`
+	Proto string `json:"proto" plan:"Протокол" sensitivity:"public"`
 	// Для static.
-	Address string `json:"address,omitempty"`
-	Gateway string `json:"gateway,omitempty"`
+	Address string `json:"address,omitempty" plan:"Адрес" sensitivity:"public"`
+	Gateway string `json:"gateway,omitempty" plan:"Шлюз" sensitivity:"public"`
 	// Для pppoe и l2tp.
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	Username string `json:"username,omitempty" plan:"Логин" sensitivity:"public"`
+	Password string `json:"password,omitempty" plan:"Пароль" sensitivity:"secret"`
 	// Server — адрес концентратора L2TP.
-	Server string `json:"server,omitempty"`
+	Server string `json:"server,omitempty" plan:"Сервер" sensitivity:"public"`
 	// Underlay — как получает адрес интерфейс, по которому идёт туннель L2TP.
 	//
 	// Провайдер сначала выдаёт адрес в своей локальной сети, и только поверх
 	// него поднимается туннель до концентратора. Обычно адрес приходит по
 	// DHCP — это и есть значение по умолчанию; при static берутся Address
 	// и Gateway.
-	Underlay string `json:"underlay,omitempty"` // dhcp | static
+	Underlay string `json:"underlay,omitempty" plan:"Транспортный канал" sensitivity:"public" reference:"channel"` // dhcp | static
 	// Service и AC — необязательные параметры PPPoE.
-	Service string `json:"service,omitempty"`
-	AC      string `json:"ac,omitempty"`
+	Service string `json:"service,omitempty" plan:"Служба" sensitivity:"public"`
+	AC      string `json:"ac,omitempty" plan:"Концентратор PPPoE" sensitivity:"public"`
 	// Metric задаёт приоритет аплинка: меньше — предпочтительнее.
-	Metric int   `json:"metric"`
-	Weight int   `json:"weight"`
-	MTU    int   `json:"mtu,omitempty"`
-	Probe  Probe `json:"probe"`
+	Metric int   `json:"metric" plan:"Метрика" sensitivity:"public"`
+	Weight int   `json:"weight" plan:"Вес" sensitivity:"public"`
+	MTU    int   `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	Probe  Probe `json:"probe" plan:"Проверка канала" sensitivity:"public"`
 }
 
 // Probe — проверка живости канала или аплинка.
 type Probe struct {
-	Enabled       bool     `json:"enabled"`
-	Type          string   `json:"type"` // icmp | tcp | http
-	Targets       []string `json:"targets"`
-	TCPRequest    string   `json:"tcp_request,omitempty"`
-	TCPResponse   string   `json:"tcp_response,omitempty"` // Required response prefix for an application-level TCP probe.
-	Interval      int      `json:"interval"`
-	Timeout       int      `json:"timeout"`
-	FailThreshold int      `json:"fail_threshold"`
-	RiseThreshold int      `json:"rise_threshold"`
+	Enabled       bool     `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Type          string   `json:"type" plan:"Тип" sensitivity:"public"` // icmp | tcp | http
+	Targets       []string `json:"targets" plan:"Цели проверки" sensitivity:"public"`
+	TCPRequest    string   `json:"tcp_request,omitempty" plan:"Запрос проверки TCP" sensitivity:"secret"`
+	TCPResponse   string   `json:"tcp_response,omitempty" plan:"Ожидаемый ответ TCP" sensitivity:"secret"` // Required response prefix for an application-level TCP probe.
+	Interval      int      `json:"interval" plan:"Интервал, с" sensitivity:"public"`
+	Timeout       int      `json:"timeout" plan:"Таймаут, с" sensitivity:"public"`
+	FailThreshold int      `json:"fail_threshold" plan:"Ошибок до отказа" sensitivity:"public"`
+	RiseThreshold int      `json:"rise_threshold" plan:"Успехов до возврата" sensitivity:"public"`
 }
 
 type MultiWAN struct {
-	Enabled           bool   `json:"enabled"`
-	Mode              string `json:"mode"` // failover | balance
-	StickyConnections bool   `json:"sticky_connections"`
+	Enabled           bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Mode              string `json:"mode" plan:"Режим" sensitivity:"public"` // failover | balance
+	StickyConnections bool   `json:"sticky_connections" plan:"Закрепление соединений" sensitivity:"public"`
 }
 
 // QoS управляет очередями на интернет-каналах. Скорости задаются немного ниже
 // тарифа провайдера, чтобы очередь находилась на роутере, а не у провайдера.
 type QoS struct {
-	Enabled bool     `json:"enabled"`
-	WANs    []QoSWAN `json:"wans"`
+	Enabled bool     `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	WANs    []QoSWAN `json:"wans" plan:"Аплинки" sensitivity:"public"`
 }
 
 type QoSWAN struct {
-	WAN          string `json:"wan"`
-	UploadKbit   int    `json:"upload_kbit"`
-	DownloadKbit int    `json:"download_kbit"`
-	Diffserv     string `json:"diffserv"` // besteffort | diffserv3 | diffserv4 | diffserv8
+	WAN          string `json:"wan" plan:"Аплинк" sensitivity:"public"`
+	UploadKbit   int    `json:"upload_kbit" plan:"Отдача, Мбит/с" sensitivity:"public" format:"mbit"`
+	DownloadKbit int    `json:"download_kbit" plan:"Загрузка, Мбит/с" sensitivity:"public" format:"mbit"`
+	Diffserv     string `json:"diffserv" plan:"Приоритизация трафика" sensitivity:"public"` // besteffort | diffserv3 | diffserv4 | diffserv8
 }
 
 // DDNS keeps one public DNS A record in sync with the router address.
 type DDNS struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	Enabled       bool   `json:"enabled"`
-	Provider      string `json:"provider"` // duckdns | cloudflare | noip
-	Hostname      string `json:"hostname"`
-	WAN           string `json:"wan,omitempty"`
-	AddressSource string `json:"address_source"` // interface | web
-	Interval      int    `json:"interval"`       // seconds
-	Token         string `json:"token,omitempty"`
-	Username      string `json:"username,omitempty"`
-	Password      string `json:"password,omitempty"`
-	ZoneID        string `json:"zone_id,omitempty"`
-	RecordID      string `json:"record_id,omitempty"`
+	Enabled       bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Provider      string `json:"provider" plan:"Служба" sensitivity:"public"` // duckdns | cloudflare | noip
+	Hostname      string `json:"hostname" plan:"Имя устройства" sensitivity:"public"`
+	WAN           string `json:"wan,omitempty" plan:"Аплинк" sensitivity:"public"`
+	AddressSource string `json:"address_source" plan:"Источник адреса" sensitivity:"public"` // interface | web
+	Interval      int    `json:"interval" plan:"Интервал, с" sensitivity:"public"`           // seconds
+	Token         string `json:"token,omitempty" plan:"Токен" sensitivity:"secret"`
+	Username      string `json:"username,omitempty" plan:"Логин" sensitivity:"public"`
+	Password      string `json:"password,omitempty" plan:"Пароль" sensitivity:"secret"`
+	ZoneID        string `json:"zone_id,omitempty" plan:"Идентификатор зоны" sensitivity:"public"`
+	RecordID      string `json:"record_id,omitempty" plan:"Идентификатор записи" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -270,57 +273,57 @@ type DDNS struct {
 // каждого клиента: канал получает свою таблицу, а правило направляет в неё
 // помеченный трафик.
 type Routing struct {
-	Static []StaticRoute `json:"static"`
-	Tables []RouteTable  `json:"tables"`
-	Rules  []RouteRule   `json:"rules"`
+	Static []StaticRoute `json:"static" plan:"Статические маршруты" sensitivity:"public"`
+	Tables []RouteTable  `json:"tables" plan:"Таблицы" sensitivity:"public"`
+	Rules  []RouteRule   `json:"rules" plan:"Правила" sensitivity:"public"`
 }
 
 // StaticRoute — маршрут, добавляемый вручную.
 type StaticRoute struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name    string `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 	// Destination — подсеть назначения либо default.
-	Destination string `json:"destination"`
-	Gateway     string `json:"gateway,omitempty"`
+	Destination string `json:"destination" plan:"Назначение" sensitivity:"public"`
+	Gateway     string `json:"gateway,omitempty" plan:"Шлюз" sensitivity:"public"`
 	// Interface — имя интерфейса для маршрутов без шлюза.
-	Interface string `json:"interface,omitempty"`
-	Metric    int    `json:"metric"`
+	Interface string `json:"interface,omitempty" plan:"Интерфейс" sensitivity:"public"`
+	Metric    int    `json:"metric" plan:"Метрика" sensitivity:"public"`
 	// Table — в какую таблицу добавить. Пусто — основная.
-	Table string `json:"table,omitempty"`
+	Table string `json:"table,omitempty" plan:"Таблица" sensitivity:"public"`
 	// Type: unicast | blackhole | unreachable | prohibit.
-	Type    string `json:"type,omitempty"`
-	Comment string `json:"comment,omitempty"`
+	Type    string `json:"type,omitempty" plan:"Тип" sensitivity:"public"`
+	Comment string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // RouteTable — дополнительная таблица маршрутизации.
 type RouteTable struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name string `json:"name" plan:"Название" sensitivity:"public"`
 	// Number — номер таблицы в ядре.
-	Number int `json:"number"`
+	Number int `json:"number" plan:"Номер таблицы" sensitivity:"public"`
 	// System помечает таблицы, созданные netOS под каналы: их номера завязаны
 	// на индексы каналов, менять их вручную нельзя.
-	System  bool   `json:"system"`
-	Comment string `json:"comment,omitempty"`
+	System  bool   `json:"system" plan:"Система" sensitivity:"public"`
+	Comment string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // RouteRule — правило выбора таблицы (ip rule).
 type RouteRule struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name    string `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 	// Priority — чем меньше, тем раньше правило проверяется.
-	Priority int `json:"priority"`
+	Priority int `json:"priority" plan:"Приоритет" sensitivity:"public"`
 	// Селекторы: пустое поле означает «любой».
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	FwMark    string `json:"fwmark,omitempty"`
-	Interface string `json:"interface,omitempty"`
+	From      string `json:"from,omitempty" plan:"Источник" sensitivity:"public"`
+	To        string `json:"to,omitempty" plan:"Назначение" sensitivity:"public"`
+	FwMark    string `json:"fwmark,omitempty" plan:"Метка трафика" sensitivity:"public"`
+	Interface string `json:"interface,omitempty" plan:"Интерфейс" sensitivity:"public"`
 	// Table — куда направить совпавший трафик.
-	Table   string `json:"table"`
-	System  bool   `json:"system"`
-	Comment string `json:"comment,omitempty"`
+	Table   string `json:"table" plan:"Таблица" sensitivity:"public"`
+	System  bool   `json:"system" plan:"Система" sensitivity:"public"`
+	Comment string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -337,52 +340,52 @@ type RouteRule struct {
 // выключить, но нельзя удалить — чтобы администратор понимал, что именно
 // защищает его доступ к роутеру, и мог это осознанно снять.
 type Firewall struct {
-	Enabled bool            `json:"enabled"`
-	IPSets  []FirewallIPSet `json:"ipsets,omitempty"`
+	Enabled bool            `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	IPSets  []FirewallIPSet `json:"ipsets,omitempty" plan:"Наборы адресов" sensitivity:"public"`
 	// Zones задают политику по умолчанию для трафика, не совпавшего ни с одним
 	// правилом зоны. Политика зоны действует на вход и на форвард.
-	Zones []Zone `json:"zones"`
+	Zones []Zone `json:"zones" plan:"Зоны" sensitivity:"public"`
 	// OutputPolicy — что делать с трафиком самого роутера, не совпавшим ни с
 	// одним правилом. Вынесено отдельно от зон намеренно: запретить роутеру
 	// исходящие — решение куда более серьёзное, чем закрыть вход, и прятать
 	// его в общую политику зоны нельзя.
-	OutputPolicy string `json:"output_policy"`
+	OutputPolicy string `json:"output_policy" plan:"Политика исходящего трафика" sensitivity:"public"`
 	// Rules — единый упорядоченный список правил.
-	Rules []FirewallRule `json:"rules"`
+	Rules []FirewallRule `json:"rules" plan:"Правила" sensitivity:"public"`
 	// NAT — трансляция адресов: и подмена источника на выходе, и проброс
 	// портов внутрь. Это две стороны одного механизма, и держать их в разных
 	// разделах панели было ошибкой.
-	NAT []NATRule `json:"nat"`
+	NAT []NATRule `json:"nat" plan:"NAT" sensitivity:"public"`
 }
 
 // FirewallIPSet is a user-maintained IPv4 address/prefix selector.
 type FirewallIPSet struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Entries []string `json:"entries"`
+	ID      string   `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name    string   `json:"name" plan:"Название" sensitivity:"public"`
+	Entries []string `json:"entries" plan:"Записи" sensitivity:"public"`
 }
 
 // Zone — группа интерфейсов с общей политикой.
 type Zone struct {
-	Name        string `json:"name"` // lan | wan | vpn
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
+	Name        string `json:"name" plan:"Название" sensitivity:"public"` // lan | wan | vpn
+	Title       string `json:"title" plan:"Название" sensitivity:"public"`
+	Description string `json:"description,omitempty" plan:"Описание" sensitivity:"public"`
 	// Policy — что делать с пакетом, не совпавшим ни с одним правилом зоны.
-	Policy string `json:"policy"` // accept | drop | reject
+	Policy string `json:"policy" plan:"Политика" sensitivity:"public"` // accept | drop | reject
 	// MSSClamp чинит проблемы с MTU на PPPoE и туннелях.
-	MSSClamp bool `json:"mss_clamp"`
+	MSSClamp bool `json:"mss_clamp" plan:"Коррекция MSS" sensitivity:"public"`
 }
 
 // FirewallRule — одно правило. Порядок в списке = порядок в цепочке.
 type FirewallRule struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name    string `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 	// System — правило создано netOS. Удалению не подлежит, выключению — да.
-	System bool `json:"system"`
+	System bool `json:"system" plan:"Система" sensitivity:"public"`
 	// Zone — цепочка, в которую попадает правило: определяется зоной входящего
 	// интерфейса.
-	Zone string `json:"zone"`
+	Zone string `json:"zone" plan:"Зона" sensitivity:"public"`
 	// Flow — направление трафика, теми же словами, что и цепочки ядра:
 	//   in      — вход: пакет адресован самому роутеру (INPUT);
 	//   out     — выход: пакет отправлен самим роутером (OUTPUT);
@@ -394,35 +397,35 @@ type FirewallRule struct {
 	//
 	// Zone означает зону того интерфейса, который у направления единственный:
 	// входящего для in и forward, исходящего для out.
-	Flow string `json:"flow"`
+	Flow string `json:"flow" plan:"Режим flow" sensitivity:"public"`
 	// DstZone задаёт зону выходного интерфейса и осмысленна только для
 	// форварда: у входа и выхода второй зоны просто нет.
-	DstZone string `json:"dst_zone,omitempty"`
-	Action  string `json:"action"` // accept | drop | reject | continue
+	DstZone string `json:"dst_zone,omitempty" plan:"Зона назначения" sensitivity:"public"`
+	Action  string `json:"action" plan:"Действие" sensitivity:"public"` // accept | drop | reject | continue
 	// Селекторы. Пустое поле означает «любой».
-	Interface    string    `json:"interface,omitempty"`
-	OutInterface string    `json:"out_interface,omitempty"` // Forward output; Interface remains the input selector.
-	Protocol     string    `json:"protocol,omitempty"`
-	SrcIP        string    `json:"src_ip,omitempty"`
-	DstIP        string    `json:"dst_ip,omitempty"`
-	SrcIPSet     string    `json:"src_ipset,omitempty"`
-	DstIPSet     string    `json:"dst_ipset,omitempty"`
-	SrcMAC       string    `json:"src_mac,omitempty"`
-	SrcPort      string    `json:"src_port,omitempty"`
-	DstPort      string    `json:"dst_port,omitempty"`
-	ConnState    string    `json:"conn_state,omitempty"` // new,established,related,invalid
-	Schedule     *Schedule `json:"schedule,omitempty"`
-	Log          bool      `json:"log"`
-	Comment      string    `json:"comment,omitempty"`
+	Interface    string    `json:"interface,omitempty" plan:"Интерфейс" sensitivity:"public"`
+	OutInterface string    `json:"out_interface,omitempty" plan:"Выходной интерфейс" sensitivity:"public"` // Forward output; Interface remains the input selector.
+	Protocol     string    `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
+	SrcIP        string    `json:"src_ip,omitempty" plan:"Адрес источника" sensitivity:"public"`
+	DstIP        string    `json:"dst_ip,omitempty" plan:"Адрес назначения" sensitivity:"public"`
+	SrcIPSet     string    `json:"src_ipset,omitempty" plan:"Набор адресов источника" sensitivity:"public"`
+	DstIPSet     string    `json:"dst_ipset,omitempty" plan:"Набор адресов назначения" sensitivity:"public"`
+	SrcMAC       string    `json:"src_mac,omitempty" plan:"MAC источника" sensitivity:"public"`
+	SrcPort      string    `json:"src_port,omitempty" plan:"Порт источника" sensitivity:"public"`
+	DstPort      string    `json:"dst_port,omitempty" plan:"Порт назначения" sensitivity:"public"`
+	ConnState    string    `json:"conn_state,omitempty" plan:"Состояния соединения" sensitivity:"public"` // new,established,related,invalid
+	Schedule     *Schedule `json:"schedule,omitempty" plan:"Расписание" sensitivity:"public"`
+	Log          bool      `json:"log" plan:"Журналирование" sensitivity:"public"`
+	Comment      string    `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 type Schedule struct {
 	// TimeStart and TimeStop are UTC. The iptables kernel-timezone mode is
 	// deliberately not used: its offset is commonly unset and is not kept in
 	// sync with daylight-saving transitions by Linux distributions.
-	Days      []string `json:"days"`
-	TimeStart string   `json:"time_start"`
-	TimeStop  string   `json:"time_stop"`
+	Days      []string `json:"days" plan:"Дни недели" sensitivity:"public"`
+	TimeStart string   `json:"time_start" plan:"Время начала" sensitivity:"public"`
+	TimeStop  string   `json:"time_stop" plan:"Время окончания" sensitivity:"public"`
 }
 
 // NATRule — правило трансляции адресов.
@@ -432,37 +435,37 @@ type Schedule struct {
 // Направление destination подменяет адрес получателя на входе: обращение
 // снаружи на порт роутера уезжает на устройство внутри сети.
 type NATRule struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
-	System  bool   `json:"system"`
+	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name    string `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	System  bool   `json:"system" plan:"Система" sensitivity:"public"`
 	// Direction: source (подмена отправителя) | destination (проброс внутрь).
-	Direction string `json:"direction"`
+	Direction string `json:"direction" plan:"Направление" sensitivity:"public"`
 
 	// --- подмена отправителя ---
 	//
 	// Interface — через какой интерфейс уходит трафик. Задаётся именно
 	// интерфейс, а не зона: в ядре правило всё равно привязано к интерфейсу,
 	// и лишний слой абстракции только мешает понять, что произойдёт.
-	Interface string `json:"interface,omitempty"`
+	Interface string `json:"interface,omitempty" plan:"Интерфейс" sensitivity:"public"`
 	// Source ограничивает правило отправителями из этой подсети.
-	Source string `json:"source,omitempty"`
+	Source string `json:"source,omitempty" plan:"Источник" sensitivity:"public"`
 	// ToSource — адрес, на который подменять. Пусто означает маскарад:
 	// подставится текущий адрес интерфейса, что и нужно на динамическом
 	// подключении, где адрес меняется.
-	ToSource string `json:"to_source,omitempty"`
+	ToSource string `json:"to_source,omitempty" plan:"Подмена адреса источника" sensitivity:"public"`
 
 	// --- проброс внутрь ---
-	Protocol string `json:"protocol,omitempty"`
+	Protocol string `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
 	// ExtPort — порт, на который обращаются снаружи.
-	ExtPort string `json:"ext_port,omitempty"`
+	ExtPort string `json:"ext_port,omitempty" plan:"Внешний порт" sensitivity:"public"`
 	// DestIP и DestPort — куда перенаправить.
-	DestIP   string `json:"dest_ip,omitempty"`
-	DestPort string `json:"dest_port,omitempty"`
+	DestIP   string `json:"dest_ip,omitempty" plan:"Адрес назначения" sensitivity:"public"`
+	DestPort string `json:"dest_port,omitempty" plan:"Порт назначения" sensitivity:"public"`
 	// AllowFrom ограничивает, с каких адресов принимать обращения.
-	AllowFrom string `json:"allow_from,omitempty"`
+	AllowFrom string `json:"allow_from,omitempty" plan:"Разрешённые источники" sensitivity:"public"`
 
-	Comment string `json:"comment,omitempty"`
+	Comment string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -472,31 +475,31 @@ type NATRule struct {
 type DHCP struct {
 	// Provider выбирается в разделе компонентов: здесь только то, что
 	// относится к самой выдаче адресов.
-	Provider        string        `json:"provider"`
-	Enabled         bool          `json:"enabled"`
-	Reservations    []Reservation `json:"reservations"`
-	AdvancedOptions string        `json:"advanced_options,omitempty"`
+	Provider        string        `json:"provider" plan:"Служба" sensitivity:"public"`
+	Enabled         bool          `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Reservations    []Reservation `json:"reservations" plan:"Закреплённые адреса DHCP" sensitivity:"public"`
+	AdvancedOptions string        `json:"advanced_options,omitempty" plan:"Дополнительные параметры" sensitivity:"secret"`
 }
 
 type DHCPPool struct {
-	Enabled    bool              `json:"enabled"`
-	Start      string            `json:"start"`
-	End        string            `json:"end"`
-	LeaseTime  int               `json:"lease_time"`
-	DNSServers []string          `json:"dns_servers,omitempty"`
-	Gateway    string            `json:"gateway,omitempty"`
-	Domain     string            `json:"domain,omitempty"`
-	Options    map[string]string `json:"options,omitempty"`
+	Enabled    bool              `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Start      string            `json:"start" plan:"Начало диапазона" sensitivity:"public"`
+	End        string            `json:"end" plan:"Конец диапазона" sensitivity:"public"`
+	LeaseTime  int               `json:"lease_time" plan:"Срок аренды" sensitivity:"public"`
+	DNSServers []string          `json:"dns_servers,omitempty" plan:"DNS-серверы" sensitivity:"public"`
+	Gateway    string            `json:"gateway,omitempty" plan:"Шлюз" sensitivity:"public"`
+	Domain     string            `json:"domain,omitempty" plan:"Домен" sensitivity:"public"`
+	Options    map[string]string `json:"options,omitempty" plan:"Дополнительные параметры" sensitivity:"public"`
 }
 
 type Reservation struct {
-	ID       string `json:"id"`
-	Enabled  bool   `json:"enabled"`
-	MAC      string `json:"mac"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname,omitempty"`
-	Network  string `json:"network"`
-	Comment  string `json:"comment,omitempty"`
+	ID       string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Enabled  bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	MAC      string `json:"mac" plan:"MAC-адрес" sensitivity:"public"`
+	IP       string `json:"ip" plan:"IP-адрес" sensitivity:"public"`
+	Hostname string `json:"hostname,omitempty" plan:"Имя устройства" sensitivity:"public"`
+	Network  string `json:"network" plan:"Локальная сеть" sensitivity:"public"`
+	Comment  string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -504,53 +507,53 @@ type Reservation struct {
 // ---------------------------------------------------------------------------
 
 type DNS struct {
-	Provider         string         `json:"provider"`
-	Enabled          bool           `json:"enabled"`
-	Port             int            `json:"port"`
-	Upstreams        []Upstream     `json:"upstreams"`
-	Bootstrap        []string       `json:"bootstrap"`
-	CacheSize        int            `json:"cache_size"`
-	DNSSEC           bool           `json:"dnssec"`
-	LocalDomain      string         `json:"local_domain"`
-	StaticRecords    []DNSRecord    `json:"static_records"`
-	SplitRules       []DNSSplitRule `json:"split_rules"`
-	Blocklists       []Blocklist    `json:"blocklists"`
-	RebindProtection bool           `json:"rebind_protection"`
-	ForceLocal       bool           `json:"force_local"`
-	QueryLog         bool           `json:"query_log"`
-	AdvancedOptions  string         `json:"advanced_options,omitempty"`
+	Provider         string         `json:"provider" plan:"Служба" sensitivity:"public"`
+	Enabled          bool           `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Port             int            `json:"port" plan:"Порт" sensitivity:"public"`
+	Upstreams        []Upstream     `json:"upstreams" plan:"Вышестоящие резолверы" sensitivity:"public"`
+	Bootstrap        []string       `json:"bootstrap" plan:"DNS для начального подключения" sensitivity:"public"`
+	CacheSize        int            `json:"cache_size" plan:"Размер кеша" sensitivity:"public"`
+	DNSSEC           bool           `json:"dnssec" plan:"Проверка DNSSEC" sensitivity:"public"`
+	LocalDomain      string         `json:"local_domain" plan:"Локальный домен" sensitivity:"public"`
+	StaticRecords    []DNSRecord    `json:"static_records" plan:"Статические записи" sensitivity:"public"`
+	SplitRules       []DNSSplitRule `json:"split_rules" plan:"Правила разделения трафика" sensitivity:"public"`
+	Blocklists       []Blocklist    `json:"blocklists" plan:"Списки блокировки" sensitivity:"public"`
+	RebindProtection bool           `json:"rebind_protection" plan:"Защита от DNS rebinding" sensitivity:"public"`
+	ForceLocal       bool           `json:"force_local" plan:"Принудительный локальный DNS" sensitivity:"public"`
+	QueryLog         bool           `json:"query_log" plan:"Журнал запросов" sensitivity:"public"`
+	AdvancedOptions  string         `json:"advanced_options,omitempty" plan:"Дополнительные параметры" sensitivity:"secret"`
 }
 
 type Upstream struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"` // plain | dot | doh | doq
-	Address string `json:"address"`
-	Channel string `json:"channel,omitempty"`
-	Enabled bool   `json:"enabled"`
-	Comment string `json:"comment,omitempty"`
+	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Type    string `json:"type" plan:"Тип" sensitivity:"public"` // plain | dot | doh | doq
+	Address string `json:"address" plan:"Адрес" sensitivity:"public"`
+	Channel string `json:"channel,omitempty" plan:"Канал" sensitivity:"public" reference:"channel"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Comment string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 type DNSRecord struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	ID    string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Type  string `json:"type" plan:"Тип" sensitivity:"public"`
+	Name  string `json:"name" plan:"Название" sensitivity:"public"`
+	Value string `json:"value" plan:"Значение" sensitivity:"public"`
 }
 
 type DNSSplitRule struct {
-	ID       string   `json:"id"`
-	Domains  []string `json:"domains"`
-	Upstream string   `json:"upstream,omitempty"`
-	Channel  string   `json:"channel,omitempty"`
-	Enabled  bool     `json:"enabled"`
+	ID       string   `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Domains  []string `json:"domains" plan:"Домены" sensitivity:"public"`
+	Upstream string   `json:"upstream,omitempty" plan:"Вышестоящий резолвер" sensitivity:"public"`
+	Channel  string   `json:"channel,omitempty" plan:"Канал" sensitivity:"public" reference:"channel"`
+	Enabled  bool     `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 }
 
 type Blocklist struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	CAFile  string `json:"ca_file,omitempty"`
-	Enabled bool   `json:"enabled"`
+	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name    string `json:"name" plan:"Название" sensitivity:"public"`
+	URL     string `json:"url" plan:"URL" sensitivity:"secret"`
+	CAFile  string `json:"ca_file,omitempty" plan:"Файл центра сертификации" sensitivity:"public"`
+	Enabled bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 }
 
 // ---------------------------------------------------------------------------
@@ -558,15 +561,15 @@ type Blocklist struct {
 // ---------------------------------------------------------------------------
 
 type Client struct {
-	ID       string `json:"id"`
-	MAC      string `json:"mac"`
-	Name     string `json:"name"`
-	Network  string `json:"network,omitempty"`
-	Channel  string `json:"channel,omitempty"`
-	Blocked  bool   `json:"blocked"`
-	DownKbit int    `json:"down_kbit"`
-	UpKbit   int    `json:"up_kbit"`
-	Comment  string `json:"comment,omitempty"`
+	ID       string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	MAC      string `json:"mac" plan:"MAC-адрес" sensitivity:"public"`
+	Name     string `json:"name" plan:"Название" sensitivity:"public"`
+	Network  string `json:"network,omitempty" plan:"Локальная сеть" sensitivity:"public"`
+	Channel  string `json:"channel,omitempty" plan:"Канал" sensitivity:"public" reference:"channel"`
+	Blocked  bool   `json:"blocked" plan:"Блокировка" sensitivity:"public"`
+	DownKbit int    `json:"down_kbit" plan:"Загрузка, Мбит/с" sensitivity:"public" format:"mbit"`
+	UpKbit   int    `json:"up_kbit" plan:"Отдача, Мбит/с" sensitivity:"public" format:"mbit"`
+	Comment  string `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -574,68 +577,68 @@ type Client struct {
 // ---------------------------------------------------------------------------
 
 type Channel struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	ID       string         `json:"id"`
-	Index    int            `json:"index"`
-	Name     string         `json:"name"`
-	Enabled  bool           `json:"enabled"`
-	Type     string         `json:"type"` // direct | wireguard | xray | openconnect | l2tp | ikev2
-	Mode     string         `json:"mode"` // tun | tproxy | socks
-	FailMode string         `json:"fail_mode"`
-	Fallback string         `json:"fallback,omitempty"`
-	Probe    Probe          `json:"probe"`
-	Config   map[string]any `json:"config,omitempty"`
+	ID       string         `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Index    int            `json:"index" plan:"Номер" sensitivity:"public"`
+	Name     string         `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled  bool           `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Type     string         `json:"type" plan:"Тип" sensitivity:"public"`   // direct | wireguard | xray | openconnect | l2tp | ikev2
+	Mode     string         `json:"mode" plan:"Режим" sensitivity:"public"` // tun | tproxy | socks
+	FailMode string         `json:"fail_mode" plan:"Действие при отказе" sensitivity:"public"`
+	Fallback string         `json:"fallback,omitempty" plan:"Запасной канал" sensitivity:"public" reference:"channel"`
+	Probe    Probe          `json:"probe" plan:"Проверка канала" sensitivity:"public"`
+	Config   map[string]any `json:"config,omitempty" plan:"Параметры подключения" sensitivity:"public"`
 }
 
 type Policy struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Enabled   bool      `json:"enabled"`
-	Priority  int       `json:"priority"`
-	Channel   string    `json:"channel"`
-	SrcIP     string    `json:"src_ip,omitempty"`
-	SrcMAC    string    `json:"src_mac,omitempty"`
-	Network   string    `json:"network,omitempty"`
-	VPNServer string    `json:"vpn_server,omitempty"`
-	VPNPeer   string    `json:"vpn_peer,omitempty"`
-	Protocol  string    `json:"protocol,omitempty"`
-	DstPort   string    `json:"dst_port,omitempty"`
-	DstIP     string    `json:"dst_ip,omitempty"`
-	Domains   []string  `json:"domains,omitempty"`
-	Schedule  *Schedule `json:"schedule,omitempty"`
-	Comment   string    `json:"comment,omitempty"`
+	ID        string    `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name      string    `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled   bool      `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Priority  int       `json:"priority" plan:"Приоритет" sensitivity:"public"`
+	Channel   string    `json:"channel" plan:"Канал" sensitivity:"public" reference:"channel"`
+	SrcIP     string    `json:"src_ip,omitempty" plan:"Адрес источника" sensitivity:"public"`
+	SrcMAC    string    `json:"src_mac,omitempty" plan:"MAC источника" sensitivity:"public"`
+	Network   string    `json:"network,omitempty" plan:"Локальная сеть" sensitivity:"public"`
+	VPNServer string    `json:"vpn_server,omitempty" plan:"VPN-сервер" sensitivity:"public"`
+	VPNPeer   string    `json:"vpn_peer,omitempty" plan:"VPN-клиент" sensitivity:"public"`
+	Protocol  string    `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
+	DstPort   string    `json:"dst_port,omitempty" plan:"Порт назначения" sensitivity:"public"`
+	DstIP     string    `json:"dst_ip,omitempty" plan:"Адрес назначения" sensitivity:"public"`
+	Domains   []string  `json:"domains,omitempty" plan:"Домены" sensitivity:"public"`
+	Schedule  *Schedule `json:"schedule,omitempty" plan:"Расписание" sensitivity:"public"`
+	Comment   string    `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 type VPNServer struct {
-	Isolated   bool            `json:"isolated"`              // Block access to and from other LAN/VPN segments.
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	Isolated   bool            `json:"isolated" plan:"Изоляция" sensitivity:"public"`       // Block access to and from other LAN/VPN segments.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	RealityKeySet  bool           `json:"reality_key_set,omitempty"` // Read response metadata; never a credential.
-	ID             string         `json:"id"`
-	Index          int            `json:"index"`
-	Name           string         `json:"name"`
-	Enabled        bool           `json:"enabled"`
-	Type           string         `json:"type"`
-	Subnet         string         `json:"subnet"`
-	Port           int            `json:"port"`
-	DefaultChannel string         `json:"default_channel,omitempty"`
-	Peers          []VPNPeer      `json:"peers"`
-	Config         map[string]any `json:"config,omitempty"`
+	RealityKeySet  bool           `json:"reality_key_set,omitempty" plan:"-" sensitivity:"public"` // Read response metadata; never a credential.
+	ID             string         `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Index          int            `json:"index" plan:"Номер" sensitivity:"public"`
+	Name           string         `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled        bool           `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Type           string         `json:"type" plan:"Тип" sensitivity:"public"`
+	Subnet         string         `json:"subnet" plan:"Подсеть" sensitivity:"public"`
+	Port           int            `json:"port" plan:"Порт" sensitivity:"public"`
+	DefaultChannel string         `json:"default_channel,omitempty" plan:"Канал выхода по умолчанию" sensitivity:"public" reference:"channel"`
+	Peers          []VPNPeer      `json:"peers" plan:"VPN-клиенты" sensitivity:"public"`
+	Config         map[string]any `json:"config,omitempty" plan:"Параметры подключения" sensitivity:"public"`
 }
 
 type VPNPeer struct {
-	TLSFingerprint string          `json:"tls_fingerprint,omitempty"`
-	SecretsSet     map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	TLSFingerprint string          `json:"tls_fingerprint,omitempty" plan:"Отпечаток TLS" sensitivity:"public"`
+	SecretsSet     map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	WireGuardProfile *WireGuardClientProfile `json:"wireguard_profile,omitempty"`
-	ID               string                  `json:"id"`
-	Name             string                  `json:"name"`
-	Enabled          bool                    `json:"enabled"`
-	Address          string                  `json:"address"`
-	Channel          string                  `json:"channel,omitempty"`
-	Credentials      map[string]string       `json:"credentials,omitempty"`
-	Comment          string                  `json:"comment,omitempty"`
+	WireGuardProfile *WireGuardClientProfile `json:"wireguard_profile,omitempty" plan:"Профиль WireGuard" sensitivity:"public"`
+	ID               string                  `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name             string                  `json:"name" plan:"Название" sensitivity:"public"`
+	Enabled          bool                    `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Address          string                  `json:"address" plan:"Адрес" sensitivity:"public"`
+	Channel          string                  `json:"channel,omitempty" plan:"Канал" sensitivity:"public" reference:"channel"`
+	Credentials      map[string]string       `json:"credentials,omitempty" plan:"Учётные данные" sensitivity:"public"`
+	Comment          string                  `json:"comment,omitempty" plan:"Комментарий" sensitivity:"public"`
 }
 
 // ---------------------------------------------------------------------------
@@ -643,26 +646,26 @@ type VPNPeer struct {
 // ---------------------------------------------------------------------------
 
 type WiFiRadio struct {
-	ID      string     `json:"id"`
-	Device  string     `json:"device"`
-	Enabled bool       `json:"enabled"`
-	Band    string     `json:"band"`
-	Channel int        `json:"channel"`
-	Width   int        `json:"width"`
-	Country string     `json:"country"`
-	TxPower int        `json:"tx_power,omitempty"`
-	SSIDs   []WiFiSSID `json:"ssids"`
+	ID      string     `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Device  string     `json:"device" plan:"Устройство" sensitivity:"public"`
+	Enabled bool       `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Band    string     `json:"band" plan:"Диапазон" sensitivity:"public"`
+	Channel int        `json:"channel" plan:"Канал" sensitivity:"public" reference:"channel"`
+	Width   int        `json:"width" plan:"Ширина канала" sensitivity:"public"`
+	Country string     `json:"country" plan:"Страна" sensitivity:"public"`
+	TxPower int        `json:"tx_power,omitempty" plan:"Мощность передатчика" sensitivity:"public"`
+	SSIDs   []WiFiSSID `json:"ssids" plan:"Сети Wi-Fi" sensitivity:"public"`
 }
 
 type WiFiSSID struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	ID       string `json:"id"`
-	SSID     string `json:"ssid"`
-	Enabled  bool   `json:"enabled"`
-	Security string `json:"security"`
-	Password string `json:"password,omitempty"`
-	Network  string `json:"network"`
-	Hidden   bool   `json:"hidden"`
-	Isolate  bool   `json:"isolate"`
+	ID       string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	SSID     string `json:"ssid" plan:"Имя сети Wi-Fi" sensitivity:"public"`
+	Enabled  bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Security string `json:"security" plan:"Защита" sensitivity:"public"`
+	Password string `json:"password,omitempty" plan:"Пароль" sensitivity:"secret"`
+	Network  string `json:"network" plan:"Локальная сеть" sensitivity:"public"`
+	Hidden   bool   `json:"hidden" plan:"Скрытая сеть" sensitivity:"public"`
+	Isolate  bool   `json:"isolate" plan:"Изоляция" sensitivity:"public"`
 }

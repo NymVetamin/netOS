@@ -8,35 +8,35 @@ import (
 
 // Samba publishes only explicitly selected volumes and LAN segments.
 type Samba struct {
-	Enabled   bool            `json:"enabled"`
-	Discovery bool            `json:"discovery"`
-	Workgroup string          `json:"workgroup"`
-	Networks  []string        `json:"networks"`
-	VPNs      []string        `json:"vpns"`
-	Volumes   []StorageVolume `json:"volumes"`
-	Users     []SambaUser     `json:"users"`
-	Shares    []SambaShare    `json:"shares"`
+	Enabled   bool            `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Discovery bool            `json:"discovery" plan:"Обнаружение в сети" sensitivity:"public"`
+	Workgroup string          `json:"workgroup" plan:"Рабочая группа" sensitivity:"public"`
+	Networks  []string        `json:"networks" plan:"Локальные сети" sensitivity:"public"`
+	VPNs      []string        `json:"vpns" plan:"VPN-сети" sensitivity:"public"`
+	Volumes   []StorageVolume `json:"volumes" plan:"Тома" sensitivity:"public"`
+	Users     []SambaUser     `json:"users" plan:"Пользователи" sensitivity:"public"`
+	Shares    []SambaShare    `json:"shares" plan:"Общие папки" sensitivity:"public"`
 }
 type StorageVolume struct {
-	ID         string `json:"id"`
-	UUID       string `json:"uuid"`
-	Filesystem string `json:"filesystem"`
-	Enabled    bool   `json:"enabled"`
+	ID         string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	UUID       string `json:"uuid" plan:"UUID" sensitivity:"secret"`
+	Filesystem string `json:"filesystem" plan:"Файловая система" sensitivity:"public"`
+	Enabled    bool   `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
 }
 type SambaUser struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"` // Read response metadata, stripped before saving.
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Password string `json:"password,omitempty"`
+	ID       string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name     string `json:"name" plan:"Название" sensitivity:"public"`
+	Password string `json:"password,omitempty" plan:"Пароль" sensitivity:"secret"`
 }
 type SambaShare struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Volume   string   `json:"volume"`
-	Enabled  bool     `json:"enabled"`
-	ReadOnly bool     `json:"read_only"`
-	Users    []string `json:"users"`
+	ID       string   `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Name     string   `json:"name" plan:"Название" sensitivity:"public"`
+	Volume   string   `json:"volume" plan:"Том" sensitivity:"public"`
+	Enabled  bool     `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	ReadOnly bool     `json:"read_only" plan:"Только чтение" sensitivity:"public"`
+	Users    []string `json:"users" plan:"Пользователи" sensitivity:"public"`
 }
 
 var sambaName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,19}$`)

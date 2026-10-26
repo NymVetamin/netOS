@@ -36,6 +36,13 @@ export type PlanAction = {
   disruptive: boolean;
 };
 
+export type PlanResponse = {
+  actions: PlanAction[] | null;
+  changes?: { path: string; label: string; kind: string; before: string; after: string }[];
+  needs_confirm?: boolean;
+  draft_version?: number;
+};
+
 export type ComponentInfo = {
   id: string;
   title: string;
@@ -289,7 +296,14 @@ export const api = {
     draftVersion = res.draft_version;
     return res;
   },
-  plan: () => request<{ actions: PlanAction[] | null }>("POST", "/api/config/plan"),
+  async plan() {
+    const version = draftVersion;
+    const result = await request<PlanResponse>("POST", "/api/config/plan");
+    if (result.draft_version !== undefined && (result.draft_version !== version || version !== draftVersion)) {
+      throw new ApiError(409, "версия черновика изменилась; постройте план повторно");
+    }
+    return result;
+  },
   apply: (comment: string) => {
     if (draftVersion === null) return Promise.reject(new ApiError(409, "Сначала обновите конфигурацию"));
     return request<{ needs_confirm: boolean; deadline?: string; revision: number }>(

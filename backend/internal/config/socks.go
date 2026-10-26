@@ -3,17 +3,17 @@ package config
 import "strings"
 
 type Socks struct {
-	Enabled    bool            `json:"enabled"`
-	Port       int             `json:"port"`
-	Networks   []string        `json:"networks"`
-	VPNs       []string        `json:"vpns"`
-	AllowWAN   bool            `json:"allow_wan"`
-	Auth       bool            `json:"auth"`
-	Username   string          `json:"username"`
-	Password   string          `json:"password,omitempty"`
-	SecretsSet map[string]bool `json:"secrets_set,omitempty"`
-	UDP        bool            `json:"udp"`
-	Channel    string          `json:"channel"`
+	Enabled    bool            `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Port       int             `json:"port" plan:"Порт" sensitivity:"public"`
+	Networks   []string        `json:"networks" plan:"Локальные сети" sensitivity:"public"`
+	VPNs       []string        `json:"vpns" plan:"VPN-сети" sensitivity:"public"`
+	AllowWAN   bool            `json:"allow_wan" plan:"Доступ из интернета" sensitivity:"public"`
+	Auth       bool            `json:"auth" plan:"Авторизация" sensitivity:"public"`
+	Username   string          `json:"username" plan:"Логин" sensitivity:"public"`
+	Password   string          `json:"password,omitempty" plan:"Пароль" sensitivity:"secret"`
+	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"`
+	UDP        bool            `json:"udp" plan:"UDP" sensitivity:"public"`
+	Channel    string          `json:"channel" plan:"Канал" sensitivity:"public" reference:"channel"`
 }
 
 func (c *Config) validateSocks(r *ValidationResult) {

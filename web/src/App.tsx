@@ -1,6 +1,7 @@
 import { PermissionContext, canAccess } from "./permissions";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, ApiError, ConfigResponse, formatUptime, PlanAction, Problem, Session } from "./api";
+import { api, ApiError, ConfigResponse, formatUptime, PlanResponse, Problem, Session } from "./api";
+import { PlanPreview } from "./PlanPreview";
 import { Notice, Spinner } from "./ui";
 import { ActionError } from "./ActionError";
 import { Icon, IconName } from "./icons";
@@ -638,6 +639,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
       {(session.role === "admin" || Object.values(session.permissions || {}).includes("manage")) && (
         <ApplyBar
+          config={cfg}
           dirty={dirty}
           pending={pending}
           errorCount={errors.length}
@@ -681,6 +683,7 @@ function ProblemList({ problems }: { problems: Problem[] }) {
 }
 
 function ApplyBar({
+  config,
   dirty,
   pending,
   errorCount,
@@ -689,6 +692,7 @@ function ApplyBar({
   onDiscard,
   onReload,
 }: {
+  config: any;
   dirty: boolean;
   pending: { until?: string } | null;
   errorCount: number;
@@ -699,7 +703,10 @@ function ApplyBar({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [plan, setPlan] = useState<PlanAction[] | null>(null);
+  const [plan, setPlan] = useState<PlanResponse | null>(null);
+  const latestConfig = useRef(config);
+  latestConfig.current = config;
+  useEffect(() => { setPlan(null); }, [config]);
   const [remaining, setRemaining] = useState(0);
   const timerRef = useRef<number | undefined>(undefined);
   const barRef = useRef<HTMLDivElement>(null);
@@ -811,24 +818,14 @@ function ApplyBar({
         <div className="dim">
           {errorCount > 0 ? (
             <ProblemList problems={problems} />
-          ) : error ? (
+          ) : error || plan ? (
             null
           ) : (
             "Изменения вступят в силу сразу, перезагрузка не нужна."
           )}
         </div>
         {error && <ActionError message={error} />}
-        {plan !== null && (
-          <div className="dim" style={{ marginTop: ".35rem" }}>
-            {plan.length === 0
-              ? "План пуст: фактических действий не требуется."
-              : plan.map((action, index) => (
-                <div key={`${action.subsystem}-${action.target}-${index}`}>
-                  {action.disruptive ? "⚠ " : ""}{action.subsystem}: {action.kind} — {action.target}{action.detail ? ` (${action.detail})` : ""}
-                </div>
-              ))}
-          </div>
-        )}
+        {plan !== null && <PlanPreview plan={plan} />}
       </div>
       <div className="actions">
         <button
@@ -856,10 +853,11 @@ function ApplyBar({
             setBusy(true);
             setError("");
             setPlan(null);
+            const requestedConfig = latestConfig.current;
             try {
               await onFlush();
               const response = await api.plan();
-              setPlan(response.actions || []);
+              if (requestedConfig === latestConfig.current) setPlan(response);
             } catch (err) {
               setPlan(null);
               setError(err instanceof ApiError ? err.message : "Не удалось построить план");

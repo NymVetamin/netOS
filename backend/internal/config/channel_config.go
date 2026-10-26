@@ -10,47 +10,47 @@ import (
 // Config у Channel остаётся расширяемой JSON-картой для разных технологий,
 // но каждая реализованная технология декодирует её в строгую структуру.
 type WireGuardChannelConfig struct {
-	Address             string   `json:"address"`
-	PrivateKey          string   `json:"private_key"`
-	PeerPublicKey       string   `json:"peer_public_key"`
-	PresharedKey        string   `json:"preshared_key,omitempty"`
-	Endpoint            string   `json:"endpoint"`
-	AllowedIPs          []string `json:"allowed_ips"`
-	PersistentKeepalive int      `json:"persistent_keepalive,omitempty"`
-	MTU                 int      `json:"mtu,omitempty"`
+	Address             string   `json:"address" plan:"Адрес" sensitivity:"public"`
+	PrivateKey          string   `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
+	PeerPublicKey       string   `json:"peer_public_key" plan:"Открытый ключ сервера" sensitivity:"public"`
+	PresharedKey        string   `json:"preshared_key,omitempty" plan:"Предварительно согласованный ключ" sensitivity:"secret"`
+	Endpoint            string   `json:"endpoint" plan:"Адрес подключения" sensitivity:"public"`
+	AllowedIPs          []string `json:"allowed_ips" plan:"Маршруты клиента" sensitivity:"public"`
+	PersistentKeepalive int      `json:"persistent_keepalive,omitempty" plan:"Интервал keepalive, с" sensitivity:"public"`
+	MTU                 int      `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
 }
 
 type OpenConnectChannelConfig struct {
-	Server        string `json:"server"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	Protocol      string `json:"protocol,omitempty"`
-	AuthGroup     string `json:"authgroup,omitempty"`
-	ServerCert    string `json:"servercert,omitempty"`
-	MTU           int    `json:"mtu,omitempty"`
-	NoDTLS        bool   `json:"no_dtls,omitempty"`
-	NoSystemTrust bool   `json:"no_system_trust,omitempty"`
+	Server        string `json:"server" plan:"Сервер" sensitivity:"public"`
+	Username      string `json:"username" plan:"Логин" sensitivity:"public"`
+	Password      string `json:"password" plan:"Пароль" sensitivity:"secret"`
+	Protocol      string `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
+	AuthGroup     string `json:"authgroup,omitempty" plan:"Группа авторизации" sensitivity:"public"`
+	ServerCert    string `json:"servercert,omitempty" plan:"Отпечаток сертификата сервера" sensitivity:"public"`
+	MTU           int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	NoDTLS        bool   `json:"no_dtls,omitempty" plan:"Отключить DTLS" sensitivity:"public"`
+	NoSystemTrust bool   `json:"no_system_trust,omitempty" plan:"Не использовать системные сертификаты" sensitivity:"public"`
 }
 
 type L2TPChannelConfig struct {
-	Server   string `json:"server"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	MTU      int    `json:"mtu,omitempty"`
+	Server   string `json:"server" plan:"Сервер" sensitivity:"public"`
+	Username string `json:"username" plan:"Логин" sensitivity:"public"`
+	Password string `json:"password" plan:"Пароль" sensitivity:"secret"`
+	MTU      int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
 }
 
 type IKEv2ChannelConfig struct {
-	Server         string `json:"server"`
-	ServerIdentity string `json:"server_identity"`
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	CACert         string `json:"ca_cert"`
-	MTU            int    `json:"mtu,omitempty"`
+	Server         string `json:"server" plan:"Сервер" sensitivity:"public"`
+	ServerIdentity string `json:"server_identity" plan:"Идентификатор сервера" sensitivity:"public"`
+	Username       string `json:"username" plan:"Логин" sensitivity:"public"`
+	Password       string `json:"password" plan:"Пароль" sensitivity:"secret"`
+	CACert         string `json:"ca_cert" plan:"Сертификат центра сертификации" sensitivity:"public"`
+	MTU            int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
 }
 
 type XrayChannelConfig struct {
-	MTU      int            `json:"mtu,omitempty"`
-	Outbound map[string]any `json:"outbound"`
+	MTU      int            `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	Outbound map[string]any `json:"outbound" plan:"Исходящее подключение Xray" sensitivity:"public"`
 }
 
 func (c Channel) WireGuardConfig() (WireGuardChannelConfig, error) {

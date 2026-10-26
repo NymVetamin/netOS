@@ -57,14 +57,20 @@ func selectList(v any, fields ...string) []any {
 }
 
 func scopedConfig(r *http.Request, cfg *config.Config) (*config.Config, error) {
-	if roleOf(r) == "admin" {
-		return redactAdminConfig(cfg)
-	}
 	redacted, err := redactAdminConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	full := configObject(redacted)
+	return projectConfig(r, redacted)
+}
+
+// projectConfig only selects fields permitted to this account. Redaction and
+// comparison are separate consumers; API configuration reads use scopedConfig.
+func projectConfig(r *http.Request, cfg *config.Config) (*config.Config, error) {
+	if roleOf(r) == "admin" {
+		return cfg, nil
+	}
+	full := configObject(cfg)
 	visible := configObject(&config.Config{Version: cfg.Version})
 	for key, sections := range rootSections {
 		if anySection(r, false, sections...) {

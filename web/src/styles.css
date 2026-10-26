@@ -1735,6 +1735,15 @@ summary:focus-visible {
   flex-shrink: 0;
 }
 
+.plan-preview { margin-top: .65rem; overflow-wrap: anywhere; padding-right: .5rem; }
+.plan-preview p { margin: .55rem 0; }
+.plan-changes { list-style: none; margin: .5rem 0; padding: 0; }
+.plan-changes li { padding: .45rem 0; border-bottom: 1px solid var(--border); }
+.plan-change-label { font-weight: 600; }
+.plan-change-values { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .2rem; }
+.plan-confirm { font-weight: 600; }
+.plan-preview details { margin-top: .65rem; }
+
 .apply-problems { display: grid; gap: 10px; margin-top: 10px; }
 .apply-problem-group { border-left: 2px solid var(--border); padding-left: 10px; }
 .apply-problem-group.error { border-color: var(--danger); }

@@ -1161,7 +1161,7 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 		s.handlePrivateConfig(w, r)
 		return
 	}
-	cfg := s.requestConfig(r)
+	cfg, _, version := s.draftSnapshot()
 	if cfg == nil {
 		writeError(w, http.StatusServiceUnavailable, "конфигурация недоступна")
 		return
@@ -1171,7 +1171,8 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	// already left instead of accumulating behind CPU saturation.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	actions, err := s.Engine.PlanContext(managementContext(ctx, r), cfg)
+	old := s.Engine.Current()
+	actions, err := s.Engine.PlanFromContext(managementContext(ctx, r), old, cfg)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			writeError(w, http.StatusServiceUnavailable, "построение плана превысило лимит 15 секунд; повторите после снижения нагрузки")
@@ -1180,7 +1181,12 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "не удалось построить план: %v", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"actions": actions})
+	response, err := describePlan(r, old, cfg, actions, version)
+	if err != nil {
+		writeError(w, 500, "не удалось описать изменения")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 type applyRequest struct {

@@ -145,18 +145,32 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p == "/api/config/plan" {
+		if s.draftApplying {
+			writeError(w, 409, "идёт применение конфигурации: дождитесь его окончания")
+			return
+		}
+		if pending, _ := s.Engine.Pending(); pending {
+			writeError(w, 409, "дождитесь подтверждения или отката текущего применения")
+			return
+		}
 		if !sameConfig(d.Base, s.Engine.Current()) {
 			writeError(w, 409, "применённая конфигурация изменилась; пересоздайте черновик")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		actions, err := s.Engine.PlanContext(managementContext(ctx, r), cfg)
+		old := s.Engine.Current()
+		actions, err := s.Engine.PlanFromContext(managementContext(ctx, r), old, cfg)
 		if err != nil {
 			writeError(w, 500, "не удалось построить план")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"actions": actions})
+		response, err := describePlan(r, old, cfg, actions, d.Version)
+		if err != nil {
+			writeError(w, 500, "не удалось описать изменения")
+			return
+		}
+		writeJSON(w, 200, response)
 		return
 	}
 	visible, err := scopedConfig(r, cfg)
