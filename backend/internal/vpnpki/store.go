@@ -384,6 +384,27 @@ func (s *Store) Get(serverID, peerID string) (Client, error) {
 	return client, nil
 }
 
+// ClientStatus deliberately excludes all certificate material and secrets.
+type ClientStatus struct {
+	Serial  string    `json:"serial"`
+	Expires time.Time `json:"expires"`
+	Revoked bool      `json:"revoked"`
+}
+
+func (s *Store) Statuses(serverID string) (map[string]ClientStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.load(serverID, false)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]ClientStatus, len(st.Clients))
+	for id, client := range st.Clients {
+		result[id] = ClientStatus{Serial: client.Serial, Expires: client.Expires, Revoked: client.Revoked}
+	}
+	return result, nil
+}
+
 func (s *Store) Revoke(server config.VPNServer, peerID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

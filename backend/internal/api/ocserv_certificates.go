@@ -12,6 +12,46 @@ import (
 	"github.com/netos-router/netos/internal/vpnpki"
 )
 
+func (s *Server) handleOCClientCertificates(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !may(r, "vpn-servers", true) {
+		writeError(w, http.StatusForbidden, "доступно только администратору")
+		return
+	}
+	if s.PKI == nil {
+		writeError(w, http.StatusServiceUnavailable, "хранилище сертификатов недоступно")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	result := map[string]any{}
+	err := s.Engine.Maintain(ctx, func(cfg *config.Config) error {
+		for _, server := range cfg.VPNServers {
+			if server.ID != r.PathValue("id") || server.Type != "ocserv" || server.OcservAuthMode() == "password" {
+				continue
+			}
+			statuses, err := s.PKI.Statuses(server.ID)
+			if err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("не удалось прочитать хранилище сертификатов: %w", err)
+			}
+			for _, peer := range server.Peers {
+				if status, ok := statuses[peer.ID]; ok {
+					result[peer.ID] = map[string]any{"serial": status.Serial, "expires": status.Expires, "revoked": status.Revoked, "username": server.OcservUsername(peer)}
+				} else {
+					result[peer.ID] = map[string]any{"pending": true}
+				}
+			}
+			break
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "%s", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleOCClientCertificate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !may(r, "vpn-servers", true) {

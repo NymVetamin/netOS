@@ -31,9 +31,12 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	cfg.Components = []config.Component{{ID: "ocserv", Installed: true}}
 	cfg.VPNServers = []config.VPNServer{{ID: "oc", Index: 1, Type: "ocserv", Name: "OC", Enabled: true, Port: 14443, Subnet: "10.99.0.1/24", DefaultChannel: "direct", Config: map[string]any{"auth_mode": "certificate"}, Peers: []config.VPNPeer{{ID: "phone", Address: "10.99.0.2", Enabled: true}}}}
 	pki := vpnpki.New(t.TempDir(), ocP12TestRunner{})
-	if err := pki.Sync(context.Background(), cfg.VPNServers[0]); err != nil {
+	storedServer := cfg.VPNServers[0]
+	storedServer.Peers = append(append([]config.VPNPeer{}, storedServer.Peers...), config.VPNPeer{ID: "removed", Enabled: true, Address: "10.99.0.3"})
+	if err := pki.Sync(context.Background(), storedServer); err != nil {
 		t.Fatal(err)
 	}
+	cfg.VPNServers[0].Peers = append(cfg.VPNServers[0].Peers, config.VPNPeer{ID: "pending", Address: "10.99.0.4"})
 	engine := apply.NewEngine(&lifecycleLogger{}, false)
 	if _, err := engine.Apply(context.Background(), cfg, 1, false); err != nil {
 		t.Fatal(err)
@@ -50,6 +53,32 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 		return w
 	}
 	client, _ := pki.Get("oc", "phone")
+	batch := func(role string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/certificates", nil)
+		r.SetPathValue("id", "oc")
+		r = r.WithContext(context.WithValue(r.Context(), ctxRole, role))
+		w := httptest.NewRecorder()
+		s.handleOCClientCertificates(w, r)
+		return w
+	}
+	if batch("viewer").Code != 403 {
+		t.Fatal("viewer read certificate batch")
+	}
+	assertBatch := func() {
+		t.Helper()
+		w := batch("admin")
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("batch unavailable", w.Code, w.Body.String())
+		}
+		var values map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &values); err != nil {
+			t.Fatal(err)
+		}
+		if len(values) != 2 || string(values["pending"]) != `{"pending":true}` || string(values["phone"]) != strings.TrimSpace(call("admin", "").Body.String()) {
+			t.Fatal("batch differs from individual status", w.Body.String())
+		}
+	}
+	assertBatch()
 	for _, action := range []string{"", "password", "download"} {
 		if w := call("viewer", action); w.Code != 403 {
 			t.Fatalf("viewer read %s", action)
@@ -72,6 +101,7 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	if err := pki.Revoke(cfg.VPNServers[0], "phone"); err != nil {
 		t.Fatal(err)
 	}
+	assertBatch()
 	for _, action := range []string{"password", "download"} {
 		if call("admin", action).Code != 409 {
 			t.Fatal("revoked profile exported")
@@ -83,6 +113,13 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	if w := call("admin", ""); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
 		t.Fatal("damaged PKI was presented as a pending draft")
 	}
+	if w := batch("admin"); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
+		t.Fatal("damaged PKI hidden by batch status")
+	}
+	if err := os.Remove(filepath.Join(pki.Dir("oc"), "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	assertBatch()
 }
 
 func TestOCUploadedKeyIsRetainedButNeverReturned(t *testing.T) {

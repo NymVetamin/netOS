@@ -1,22 +1,32 @@
 import { confirmAction } from "../confirm";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Field, Notice, Switch } from "../ui";
+import { createCertificateSubscriptions } from "../certificatePolling";
 
-export function OcservClientCertificate({ server, peer }: { server: any; peer: any }) {
+const subscribeCertificates = createCertificateSubscriptions(api.ocCertificates);
+
+export function OcservClientCertificate({ server, peer, active }: { server: any; peer: any; active: boolean }) {
   const [status, setStatus] = useState<any>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
+  const statusRevision = useRef(0);
   useEffect(() => {
-    let alive = true;
     setPassword(""); setStatus(null); setError("");
-    const refresh = () => api.ocCertificate(server.id, peer.id).then((value) => { if (alive) { setStatus(value); setLoadError(""); } }).catch((err) => { if (alive) setLoadError(err.message); });
-    void refresh();
-    const timer = window.setInterval(refresh, 15000);
-    return () => { alive = false; window.clearInterval(timer); };
   }, [server.id, peer.id, server.config?.auth_mode]);
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    const unsubscribe = subscribeCertificates(server.id, request => {
+      const revision = statusRevision.current;
+      void request.then(values => {
+        if (alive && revision === statusRevision.current) { setStatus(values[peer.id] || { pending: true }); setLoadError(""); }
+      }).catch(err => { if (alive && revision === statusRevision.current) setLoadError(err.message); });
+    });
+    return () => { alive = false; unsubscribe(); };
+  }, [active, server.id, peer.id, server.config?.auth_mode]);
   useEffect(() => { setPassword(""); }, [status?.serial, status?.revoked]);
   const run = async (fn: () => Promise<void>) => {
     setBusy(true); setError("");
@@ -33,7 +43,12 @@ export function OcservClientCertificate({ server, peer }: { server: any; peer: a
   const change = async (action: "revoke" | "reissue") => {
     const question = action === "revoke" ? "Отозвать сертификат? Старый P12 больше не будет работать." : "Перевыпустить профиль? Старый P12 будет отозван. Клиенту потребуется новый файл.";
     if (!await confirmAction(`${question} OpenConnect будет перезапущен; подключённые к этому серверу клиенты переподключатся.`, action === "revoke" ? "Отозвать сертификат" : "Перевыпустить профиль")) return;
-    void run(async () => { setPassword(""); setStatus(await api.ocCertificateAction(server.id, peer.id, action)); });
+    void run(async () => {
+      // An older shared read must not overwrite the result of a revocation.
+      statusRevision.current++;
+      try { setPassword(""); setStatus(await api.ocCertificateAction(server.id, peer.id, action)); }
+      finally { statusRevision.current++; }
+    });
   };
   return <div className="peer-profile">
     <strong>Сертификат клиента</strong>

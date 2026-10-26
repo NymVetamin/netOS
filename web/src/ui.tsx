@@ -222,6 +222,7 @@ export function Row({
   icon,
   as: Tag = "div",
   lazyBody = false,
+  onOpenChange,
   ...rest
 }: {
   id?: string;
@@ -233,6 +234,7 @@ export function Row({
   className?: string;
   as?: "div" | "form";
   lazyBody?: boolean;
+  onOpenChange?: (open: boolean) => void;
   [attribute: string]: unknown;
 }) {
   const details = useRef<HTMLDetailsElement>(null);
@@ -252,7 +254,7 @@ export function Row({
       {/* Переключатель в документе первый: это «главный переключатель записи». */}
       {toggle && <div className="xsw">{toggle}</div>}
       {children
-        ? <details className="xd" ref={details} onToggle={lazyBody ? e => { if (e.currentTarget.open) setVisited(true); } : undefined}><summary className="xsum">{summary}</summary><div className="xbody">{!lazyBody || visited ? children : null}</div></details>
+        ? <details className="xd" ref={details} onToggle={lazyBody || onOpenChange ? e => { if (e.currentTarget.open) setVisited(true); onOpenChange?.(e.currentTarget.open); } : undefined}><summary className="xsum">{summary}</summary><div className="xbody">{!lazyBody || visited ? children : null}</div></details>
         : <div className="xsum">{summary}</div>}
     </Wrapper>
   );

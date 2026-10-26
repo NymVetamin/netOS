@@ -1,0 +1,26 @@
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const {test} = require('node:test');
+const {buildSync} = require('esbuild');
+const code = buildSync({entryPoints:[path.join(__dirname,'../src/certificatePolling.ts')],bundle:true,platform:'node',format:'cjs',write:false});
+const loaded={exports:{}};
+new Function('module','exports',code.outputFiles[0].text)(loaded,loaded.exports);
+const {createCertificateSubscriptions}=loaded.exports;
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('visible peers share a bounded poll; closing and reopening does not reuse old status',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:0});
+ const tick=async ms=>{t.mock.timers.tick(ms);await settle();}, calls=[], values=[];
+ const subscribe=createCertificateSubscriptions((id,signal)=>new Promise(resolve=>calls.push({id,signal,resolve})));
+ await tick(15000);assert.equal(calls.length,0);
+ const receive=p=>void p.then(v=>values.push(v));
+ const a=subscribe('a',receive),b=subscribe('a',receive);
+ await tick(0);assert.equal(calls.length,1);
+ await tick(30000);assert.equal(calls.length,1);
+ a();assert.equal(calls[0].signal.aborted,false);
+ b();assert.equal(calls[0].signal.aborted,true);
+ const fresh=subscribe('a',receive),other=subscribe('b',receive);
+ await tick(0);assert.deepEqual(calls.map(c=>c.id),['a','a','b']);
+ calls[1].resolve('new');calls[2].resolve('other');await settle();
+ assert.deepEqual(values,['new','other']);
+ fresh();other();await tick(30000);assert.equal(calls.length,3);
+});
