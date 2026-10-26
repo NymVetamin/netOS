@@ -115,7 +115,7 @@ func historySelection(clients []ClientTotal, selected []string) []string {
 	return result
 }
 
-func (h *ClientHistory) reportTraffic(ctx context.Context, from, to time.Time, selected []string) (ClientReport, []string, error) {
+func (h *ClientHistory) reportTraffic(ctx context.Context, from, to time.Time, selected []string, includePoints bool) (ClientReport, []string, error) {
 	h.trafficMu.Lock()
 	defer h.trafficMu.Unlock()
 	report := ClientReport{Clients: []ClientTotal{}, Points: []ClientPoint{}}
@@ -128,7 +128,7 @@ func (h *ClientHistory) reportTraffic(ctx context.Context, from, to time.Time, s
 		}
 	}
 	if h.trafficCache == nil {
-		return h.reportTrafficSQL(ctx, from, to, selected)
+		return h.reportTrafficSQL(ctx, from, to, selected, includePoints)
 	}
 	start, end := from.Unix(), to.Unix()
 	for id, client := range h.trafficCache.clients {
@@ -157,7 +157,7 @@ func (h *ClientHistory) reportTraffic(ctx context.Context, from, to time.Time, s
 			// SQLite promotes individual rx+tx expressions to REAL but may
 			// reject an overflowing integer SUM. Preserve that rare behavior.
 			if total.RX > math.MaxInt64-total.TX {
-				return h.reportTrafficSQL(ctx, from, to, selected)
+				return h.reportTrafficSQL(ctx, from, to, selected, includePoints)
 			}
 			report.Clients = append(report.Clients, total)
 		}
@@ -175,6 +175,9 @@ func (h *ClientHistory) reportTraffic(ctx context.Context, from, to time.Time, s
 	selected = historySelection(report.Clients, selected)
 	if len(selected) > 16 {
 		return report, selected, fmt.Errorf("не более 16 клиентов")
+	}
+	if !includePoints {
+		return report, selected, ctx.Err()
 	}
 	step := int64(to.Sub(from).Seconds() / 400)
 	if step < 30 {

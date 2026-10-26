@@ -14,8 +14,8 @@ import (
 
 func compareHistoryTraffic(t *testing.T, h *ClientHistory, from, to time.Time, selected []string) {
 	t.Helper()
-	got, gs, ge := h.reportTraffic(context.Background(), from, to, selected)
-	want, ws, we := h.reportTrafficSQL(context.Background(), from, to, selected)
+	got, gs, ge := h.reportTraffic(context.Background(), from, to, selected, true)
+	want, ws, we := h.reportTrafficSQL(context.Background(), from, to, selected, true)
 	if (ge != nil) != (we != nil) {
 		t.Fatalf("error mismatch: cache=%v SQL=%v", ge, we)
 	}
@@ -141,7 +141,7 @@ func TestTrafficCacheCommittedWritesPruneAndReopen(t *testing.T) {
 	compareHistoryTraffic(t, h, now, now.Add(time.Hour), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := h.reportTraffic(ctx, now, now.Add(time.Hour), nil); err != context.Canceled {
+	if _, _, err := h.reportTraffic(ctx, now, now.Add(time.Hour), nil, true); err != context.Canceled {
 		t.Fatalf("cancellation: %v", err)
 	}
 	// Oversized histories use the original SQL path until pruning permits a cache.
@@ -181,7 +181,7 @@ func TestTrafficCacheConcurrentReaderAndWriter(t *testing.T) {
 	}
 	wg.Wait()
 	compareHistoryTraffic(t, h, now, now.Add(time.Hour), nil)
-	r, _, err := h.reportTraffic(context.Background(), now, now.Add(time.Hour), nil)
+	r, _, err := h.reportTraffic(context.Background(), now, now.Add(time.Hour), nil, true)
 	if err != nil || len(r.Clients) != 1 || r.Clients[0].RX != 4000 {
 		t.Fatalf("lost/doubled samples: %+v %v", r.Clients, err)
 	}
@@ -232,17 +232,17 @@ func BenchmarkTrafficReport(b *testing.B) {
 	if err := tx.Commit(); err != nil {
 		b.Fatal(err)
 	}
-	for _, variant := range []string{"sql", "cached", "cold"} {
+	for _, variant := range []string{"sql", "sql-summary", "cached", "cached-summary", "cold"} {
 		b.Run(variant, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				var err error
-				if variant == "sql" {
-					_, _, err = h.reportTrafficSQL(context.Background(), now.Add(-7*24*time.Hour), now, nil)
+				if variant == "sql" || variant == "sql-summary" {
+					_, _, err = h.reportTrafficSQL(context.Background(), now.Add(-7*24*time.Hour), now, nil, variant != "sql-summary")
 				} else {
 					if variant == "cold" {
 						h.trafficCache = nil
 					}
-					_, _, err = h.reportTraffic(context.Background(), now.Add(-7*24*time.Hour), now, nil)
+					_, _, err = h.reportTraffic(context.Background(), now.Add(-7*24*time.Hour), now, nil, variant != "cached-summary")
 				}
 				if err != nil {
 					b.Fatal(err)

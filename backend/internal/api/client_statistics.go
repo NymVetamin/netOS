@@ -65,7 +65,7 @@ func (s *Server) handleClientStatistics(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	report, err := s.ClientHistory.Report(ctx, from, to, ids, r.URL.Query().Get("details") == "1")
+	report, err := s.ClientHistory.Report(ctx, from, to, ids, r.URL.Query().Get("details") == "1", netosruntime.ClientReportOptions{OmitPoints: r.URL.Query().Get("points") == "0"})
 	if err != nil {
 		writeError(w, 500, "не удалось прочитать историю клиентов")
 		return

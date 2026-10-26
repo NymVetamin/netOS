@@ -477,14 +477,20 @@ type ClientReport struct {
 	To      int64         `json:"to"`
 }
 
-func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected []string, details bool) (ClientReport, error) {
+// ClientReportOptions lets consumers skip unused legacy chart aggregation.
+type ClientReportOptions struct {
+	OmitPoints bool
+}
+
+func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected []string, details bool, options ...ClientReportOptions) (ClientReport, error) {
+	includePoints := len(options) == 0 || !options[0].OmitPoints
 	h.mu.Lock()
 	report := ClientReport{Enabled: h.enabled, Problem: h.problem, Limited: h.limited, Clients: []ClientTotal{}, Points: []ClientPoint{}, Domains: []DNSCount{}, From: from.Unix(), To: to.Unix()}
 	if h.dnsProblem != "" {
 		report.Problem = strings.TrimSpace(report.Problem + " " + h.dnsProblem)
 	}
 	h.mu.Unlock()
-	traffic, selected, err := h.reportTraffic(ctx, from, to, selected)
+	traffic, selected, err := h.reportTraffic(ctx, from, to, selected, includePoints)
 	report.Clients, report.Points = traffic.Clients, traffic.Points
 	if err != nil {
 		return report, err
@@ -614,7 +620,7 @@ func (h *ClientHistory) setDNSProblem(s string) {
 	}
 }
 
-func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time, selected []string) (ClientReport, []string, error) {
+func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time, selected []string, includePoints bool) (ClientReport, []string, error) {
 	report := ClientReport{Clients: []ClientTotal{}, Points: []ClientPoint{}}
 	rows, err := h.db.QueryContext(ctx, "SELECT t.id,(SELECT name FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),(SELECT address FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),SUM(t.rx),SUM(t.tx) FROM traffic t WHERE t.at>=? AND t.at<=? GROUP BY t.id ORDER BY SUM(t.rx+t.tx) DESC LIMIT 512", from.Unix(), to.Unix())
 	if err != nil {
@@ -646,6 +652,9 @@ func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time
 	}
 	if len(selected) == 0 {
 		return report, selected, nil
+	}
+	if !includePoints {
+		return report, selected, ctx.Err()
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(selected)), ",")
 	args := []any{from.Unix(), to.Unix()}

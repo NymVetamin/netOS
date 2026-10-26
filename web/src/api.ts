@@ -324,7 +324,7 @@ export const api = {
   clientTrafficLive: () => request<any>("GET", "/api/statistics/clients/live"),
   realtime: (after: number, signal?: AbortSignal) => request<any>("GET", `/api/statistics/realtime?after=${after}`,undefined,undefined,signal),
   secondHistory: (query:string, signal?:AbortSignal) => request<any>("GET", `/api/statistics/realtime/history?${query}`,undefined,undefined,signal),
-  clientStatistics: (query: string, clients: string[], details: boolean, signal?: AbortSignal) => request<any>("GET", `/api/statistics/clients?${query}&clients=${encodeURIComponent(clients.join(","))}&details=${details?1:0}`, undefined, undefined, signal),
+  clientStatistics: (query: string, clients: string[], details: boolean, signal?: AbortSignal) => request<any>("GET", `/api/statistics/clients?${query}&clients=${encodeURIComponent(clients.join(","))}&details=${details?1:0}&points=0`, undefined, undefined, signal),
   statistics: (hours = 24, interfaces: string[] = []) =>
     request<any>("GET", `/api/statistics?hours=${hours}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
   backups: () => request<{ backups: any[] }>("GET", "/api/backups"),
