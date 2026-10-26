@@ -22,6 +22,7 @@ type vpnStatusCache struct {
 	fingerprint [32]byte
 	at          time.Time
 	rows        []vpnClientStatus
+	refreshing  chan struct{}
 }
 
 // Keep the last observed connection while the daemon runs, including when no
@@ -73,30 +74,52 @@ func (s *Server) vpnClients(ctx context.Context, server config.VPNServer) []vpnC
 }
 
 // Only the monitor refreshes a warm snapshot. Cold/configuration-changed reads
-// are coalesced under the same lock. A concurrent cold read can satisfy a cycle.
+// are coalesced without holding the snapshot lock across external commands.
+// A concurrent cold read can satisfy a cycle.
 func (s *Server) vpnClientSnapshot(ctx context.Context, server config.VPNServer, refreshAfter time.Time) ([]vpnClientStatus, time.Time) {
+	data, _ := json.Marshal(server)
+	fingerprint := sha256.Sum256(data)
 	s.vpnStatusMu.Lock()
 	if s.vpnStatus == nil {
 		s.vpnStatus = map[string]*vpnStatusCache{}
 	}
 	cache := s.vpnStatus[server.ID]
-	if cache == nil {
-		cache = &vpnStatusCache{}
+	if cache == nil || cache.fingerprint != fingerprint {
+		// An old configuration's in-flight result belongs only to its old entry.
+		cache = &vpnStatusCache{fingerprint: fingerprint}
 		s.vpnStatus[server.ID] = cache
 	}
 	s.vpnStatusMu.Unlock()
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	data, _ := json.Marshal(server)
-	fingerprint := sha256.Sum256(data)
-	if cache.fingerprint != fingerprint {
-		cache.rows = nil
-		cache.at = time.Time{}
-		cache.fingerprint = fingerprint
+	for {
+		cache.mu.Lock()
+		if !cache.at.IsZero() && (refreshAfter.IsZero() || !cache.at.Before(refreshAfter)) {
+			rows, at := append([]vpnClientStatus{}, cache.rows...), cache.at
+			cache.mu.Unlock()
+			return rows, at
+		}
+		if ctx.Err() != nil {
+			cache.mu.Unlock()
+			return nil, time.Time{}
+		}
+		if done := cache.refreshing; done != nil {
+			cache.mu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return nil, time.Time{}
+			}
+		}
+		cache.refreshing = make(chan struct{})
+		cache.mu.Unlock()
+		break
 	}
-	if !cache.at.IsZero() && (refreshAfter.IsZero() || !cache.at.Before(refreshAfter)) {
-		return append([]vpnClientStatus{}, cache.rows...), cache.at
-	}
+	defer func() {
+		cache.mu.Lock()
+		close(cache.refreshing)
+		cache.refreshing = nil
+		cache.mu.Unlock()
+	}()
 	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
@@ -108,9 +131,11 @@ func (s *Server) vpnClientSnapshot(ctx context.Context, server config.VPNServer,
 		rows = s.sessionClients(ctx, server)
 	}
 	previous := map[string]vpnClientStatus{}
+	cache.mu.Lock()
 	for _, row := range cache.rows {
 		previous[row.ID] = row
 	}
+	cache.mu.Unlock()
 	for i := range rows {
 		row := &rows[i]
 		row.LastSeen = previous[row.ID].LastSeen
@@ -124,8 +149,11 @@ func (s *Server) vpnClientSnapshot(ctx context.Context, server config.VPNServer,
 	if caller.Err() != nil {
 		return rows, time.Time{}
 	}
+	cache.mu.Lock()
 	cache.rows, cache.at = rows, time.Now()
-	return append([]vpnClientStatus{}, rows...), cache.at
+	at := cache.at
+	cache.mu.Unlock()
+	return append([]vpnClientStatus{}, rows...), at
 }
 
 func (s *Server) sessionClients(ctx context.Context, server config.VPNServer) []vpnClientStatus {

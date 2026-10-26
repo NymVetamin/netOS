@@ -171,6 +171,7 @@ func TestVPNReadersShareMonitorSnapshot(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	cache = s.vpnStatus[server.ID]
 	previous := cache.at
 	s.vpnClientSnapshot(ctx, server, time.Now())
 	if !cache.at.Equal(previous) {
