@@ -43,6 +43,37 @@ async def main():
   await expect(page.get_by_role('img',name='График скорости в реальном времени')).to_have_count(2)
   assert any(path=='/api/statistics/realtime/history' and q.get('minutes')==['5'] for path,q in calls)
   await expect(page.locator('.monitor-clients').get_by_text('Never used',exact=True)).to_have_count(0)
+  # Hold freezes the curves, stops unused live/history requests, but keeps
+  # domain detail/selection requests. Resume reloads the seconds missed on hold.
+  await page.get_by_role('button',name='Пауза',exact=True).click()
+  await page.wait_for_timeout(200)
+  held_paths=await page.locator('.rt-moving path').evaluate_all('(els)=>els.map(e=>e.getAttribute("d"))')
+  hold_start=len(calls)
+  await page.wait_for_timeout(31000)
+  assert not any(path in ['/api/statistics/realtime','/api/statistics/realtime/history'] for path,q in calls[hold_start:]),calls[hold_start:]
+  assert any(path=='/api/statistics/clients' for path,q in calls[hold_start:])
+  assert held_paths==await page.locator('.rt-moving path').evaluate_all('(els)=>els.map(e=>e.getAttribute("d"))')
+  await page.get_by_role('button',name='Подробнее',exact=True).click()
+  await expect(page.locator('.domain-legend li').filter(has_text='example.com')).to_have_text('example.com571.4%')
+  await page.get_by_label('Направление трафика клиентов').select_option('up')
+  laptop=page.locator('.monitor-clients label').filter(has_text='Laptop').get_by_role('checkbox')
+  await laptop.uncheck();await expect(laptop).not_to_be_checked()
+  await laptop.check();await expect(laptop).to_be_checked()
+  await page.get_by_label('Направление трафика клиентов').select_option('sum')
+  assert not any(path in ['/api/statistics/realtime','/api/statistics/realtime/history'] for path,q in calls[hold_start:])
+  await page.get_by_role('button',name='Скрыть подробности',exact=True).click()
+  resume_start=len(calls)
+  await page.get_by_role('button',name='Продолжить',exact=True).click()
+  await page.wait_for_timeout(2000)
+  assert any(path=='/api/statistics/realtime/history' and q.get('minutes')==['5'] for path,q in calls[resume_start:])
+  assert any(path=='/api/statistics/realtime' for path,q in calls[resume_start:])
+  # Both WAN lines contain all 300 one-second samples after catch-up.
+  for path in await page.locator('.rt-moving').first.locator('path').all():
+   d=await path.get_attribute('d');assert d.count('L')>=295,d[:120]
+  await page.get_by_role('button',name='Пауза',exact=True).click()
+  await page.get_by_label('Период статистики').select_option('10')
+  await expect(page.get_by_role('button',name='Пауза',exact=True)).to_be_visible()
+  await page.get_by_label('Период статистики').select_option('5')
   boxes=[await node.bounding_box() for node in await page.locator('.monitor-clients label').all()]
   assert boxes[1]['x']-boxes[0]['x']<=280,boxes
   chart=page.get_by_role('img',name='График скорости в реальном времени').last

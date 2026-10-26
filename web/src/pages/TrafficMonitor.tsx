@@ -23,14 +23,14 @@ export function TrafficMonitor({config,patch,interfaces}:{config:any;patch:(fn:(
  const [error,setError]=useState(""),[clientError,setClientError]=useState("");
  const [hold,setHold]=useState<{to:number;from:number;frames:any[];interval:number;clients:any;interfaces:string[]}|null>(null);
  const realtime=period===-1;
- const current=useRealtimeTraffic(!custom);
+ const current=useRealtimeTraffic(!custom&&!hold);
  const enabled=!!config.traffic_monitor?.enabled;
  const query=hold?`from=${Math.floor(hold.from)}&to=${Math.floor(hold.to)}`:custom?`from=${custom.from}&to=${custom.to}`:`minutes=${realtime?3:period||1440}`;
  useEffect(()=>{
   let cancelled=false,busy=false;
   const controller=new AbortController();
   const load=async()=>{if(busy)return;busy=true;await Promise.all([
-   api.secondHistory(query,controller.signal).then(v=>{if(!cancelled){setInternet(v);setError("")}}).catch(()=>{if(!cancelled)setError("Не удалось обновить скорость интернета")}),
+   hold?Promise.resolve():api.secondHistory(query,controller.signal).then(v=>{if(!cancelled){setInternet(v);setError("")}}).catch(()=>{if(!cancelled)setError("Не удалось обновить скорость интернета")}),
    api.clientStatistics(query,selected||[],details,controller.signal).then(v=>{if(!cancelled){setClients(v);setClientError("")}}).catch(()=>{if(!cancelled)setClientError("Не удалось обновить историю клиентов")})
   ]);busy=false;};void load();const timer=setInterval(load,30000);return()=>{cancelled=true;controller.abort();clearInterval(timer)};
  },[query,interfaces.join(","),(selected||[]).join(","),details]);
