@@ -82,14 +82,20 @@ func (s *Server) ProxyClientCounters(ctx context.Context, cfg *config.Config) []
 			continue
 		}
 		rows, sampledAt := s.vpnClientSnapshot(ctx, server, time.Time{})
+		var peersByID map[string][]int
 		for _, r := range rows {
 			if !r.TrafficKnown {
 				continue
 			}
-			for _, p := range server.Peers {
-				if p.ID == r.ID {
-					out = append(out, netosruntime.ClientCounter{ID: "vpn:" + server.ID + ":" + p.ID, Name: p.Name + " · " + server.Name, Address: "xray:" + server.ID + ":" + p.ID, RX: r.Sent, TX: r.Received, SampledAt: sampledAt})
+			if peersByID == nil {
+				peersByID = make(map[string][]int, len(server.Peers))
+				for i, peer := range server.Peers {
+					peersByID[peer.ID] = append(peersByID[peer.ID], i)
 				}
+			}
+			for _, i := range peersByID[r.ID] {
+				p := server.Peers[i]
+				out = append(out, netosruntime.ClientCounter{ID: "vpn:" + server.ID + ":" + p.ID, Name: p.Name + " · " + server.Name, Address: "xray:" + server.ID + ":" + p.ID, RX: r.Sent, TX: r.Received, SampledAt: sampledAt})
 			}
 		}
 	}
