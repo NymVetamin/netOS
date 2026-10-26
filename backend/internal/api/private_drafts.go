@@ -77,6 +77,7 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	var validation *config.ValidationResult
 	if r.Method == http.MethodPut || p == "/api/config/validate" {
 		if s.draftApplying {
 			writeError(w, 409, "идёт применение конфигурации")
@@ -111,6 +112,7 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result := next.Validate()
+		validation = result
 		if p == "/api/config/validate" {
 			writeJSON(w, 200, result)
 			return
@@ -197,7 +199,10 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		resp.BaseReservations = d.Base.DHCP.Reservations
 	}
 	if roleOf(r) == "admin" {
-		resp.Problems = cfg.Validate().Problems
+		if validation == nil {
+			validation = cfg.Validate()
+		}
+		resp.Problems = validation.Problems
 		resp.Rollback = s.Engine.LastRollback()
 	}
 	if resp.Pending {
