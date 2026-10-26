@@ -606,12 +606,30 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	b.line(":POSTROUTING ACCEPT [0:0]")
 	// Explicit source NAT must see the packet before the catch-all egress rules.
 	masqueraded := map[string]bool{}
+	// Saved system catch-alls are the WAN/channel NAT switches. Keep their
+	// desired state, but suspend them while their configured egress is disabled.
+	egress := map[string]bool{}
+	for _, wan := range cfg.WANs {
+		iface := wanInterface(cfg, wan)
+		if iface != "" {
+			egress[iface] = egress[iface] || wan.Enabled
+		}
+	}
+	for _, ch := range cfg.Channels {
+		iface := channels.InterfaceName(ch)
+		if iface != "" {
+			egress[iface] = egress[iface] || ch.Enabled
+		}
+	}
 	for _, n := range cfg.Firewall.NAT {
 		if n.Direction != "destination" {
 			// An explicit catch-all owns this interface's masquerade setting.
 			// Disabling it must not silently recreate NAT via the WAN fallback.
 			if n.Interface != "" && n.Source == "" && n.ToSource == "" {
 				masqueraded[n.Interface] = true
+				if enabled, known := egress[n.Interface]; n.System && known && !enabled {
+					continue
+				}
 			}
 			if n.Enabled {
 				b.natSource(n)
