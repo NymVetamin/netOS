@@ -203,6 +203,8 @@ type Subsystem struct {
 	Probe            func(context.Context, config.Channel, string) bool
 
 	mu          sync.Mutex
+	probeMu     sync.RWMutex
+	probeDown   map[string]bool
 	states      map[string]*channelState
 	pendingUDP  map[string]bool
 	pausedUntil time.Time
@@ -319,6 +321,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.publishProbeStatus()
 	wanted := enabledChannels(cfg)
 	if err := preflightChannels(wanted); err != nil {
 		return err

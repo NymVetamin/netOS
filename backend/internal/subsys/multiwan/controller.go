@@ -48,6 +48,8 @@ type Controller struct {
 	Probe     func(context.Context, config.WAN, string) bool
 
 	mu           sync.Mutex
+	probeMu      sync.RWMutex
+	probeDown    map[string]bool
 	states       map[string]*linkState
 	suppressed   map[string]string
 	knownRoutes  map[string]string
@@ -57,9 +59,29 @@ type Controller struct {
 
 // ProbeDown reports the last completed health decision for an uplink.
 func (c *Controller) ProbeDown(id string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.states[id] != nil && c.states[id].Down
+	c.probeMu.RLock()
+	defer c.probeMu.RUnlock()
+	return c.probeDown[id]
+}
+
+// Publish only after a completed operation, while mu still protects states.
+// Status readers must not wait for network probes or route reconciliation.
+func (c *Controller) publishProbeStatus() {
+	c.probeMu.Lock()
+	defer c.probeMu.Unlock()
+	for id := range c.probeDown {
+		if state := c.states[id]; state == nil || !state.Down {
+			delete(c.probeDown, id)
+		}
+	}
+	for id, state := range c.states {
+		if state.Down {
+			if c.probeDown == nil {
+				c.probeDown = make(map[string]bool)
+			}
+			c.probeDown[id] = true
+		}
+	}
 }
 
 const (
@@ -109,6 +131,7 @@ func (c *Controller) PlanContext(ctx context.Context, old, next *config.Config) 
 func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.publishProbeStatus()
 	if err := c.load(); err != nil {
 		return err
 	}
@@ -324,6 +347,7 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.publishProbeStatus()
 	if time.Now().Before(c.pausedUntil) {
 		return
 	}

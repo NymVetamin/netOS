@@ -19,9 +19,29 @@ type channelState struct {
 
 // ProbeDown reports the last completed health decision for a channel.
 func (s *Subsystem) ProbeDown(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.states[id] != nil && s.states[id].Down
+	s.probeMu.RLock()
+	defer s.probeMu.RUnlock()
+	return s.probeDown[id]
+}
+
+// Called with mu held after a monitor/apply operation. Readers need the last
+// completed decision, not the mutex protecting network and routing operations.
+func (s *Subsystem) publishProbeStatus() {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	for id := range s.probeDown {
+		if state := s.states[id]; state == nil || !state.Down {
+			delete(s.probeDown, id)
+		}
+	}
+	for id, state := range s.states {
+		if state.Down {
+			if s.probeDown == nil {
+				s.probeDown = make(map[string]bool)
+			}
+			s.probeDown[id] = true
+		}
+	}
 }
 
 // Run continuously verifies enabled channel probes. A channel transition is
@@ -46,6 +66,7 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.publishProbeStatus()
 	if time.Now().Before(s.pausedUntil) {
 		return
 	}
