@@ -43,6 +43,15 @@ func (e *Exec) Run(ctx context.Context, name string, args ...string) (string, er
 }
 
 func (e *Exec) RunInput(ctx context.Context, input string, name string, args ...string) (string, error) {
+	if name == "systemctl" && input == "" {
+		if out, err, handled := e.planUnitRead(ctx, args); handled {
+			return out, err
+		}
+	}
+	return e.runInput(ctx, input, name, args...)
+}
+
+func (e *Exec) runInput(ctx context.Context, input string, name string, args ...string) (string, error) {
 	if e.OnCommand != nil {
 		e.OnCommand(name, args)
 	}

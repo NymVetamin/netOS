@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 // Subsystem — часть системы, которую netosd приводит в соответствие конфигу.
@@ -337,6 +338,7 @@ func (e *Engine) PlanFrom(old, new *config.Config) ([]Action, error) {
 }
 
 func (e *Engine) PlanFromContext(ctx context.Context, old, new *config.Config) ([]Action, error) {
+	ctx = system.WithPlanUnitReads(ctx)
 	if err := validateLiveTransition(old, new); err != nil {
 		return nil, err
 	}
