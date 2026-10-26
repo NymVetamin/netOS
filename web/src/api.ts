@@ -318,7 +318,7 @@ export const api = {
   catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
   componentStatus: (ids: string[], signal?: AbortSignal) => request<Pick<CatalogResponse, "installed">>("GET", `/api/catalog?installed=${encodeURIComponent(ids.join(","))}`, undefined, undefined, signal),
 	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),
-  status: (overview = false) => request<any>("GET", overview ? "/api/status?overview=1" : "/api/status"),
+  status: (overview = false, signal?: AbortSignal) => request<any>("GET", overview ? "/api/status?overview=1" : "/api/status", undefined, undefined, signal),
   ddnsStatus: (signal?: AbortSignal) => request<any>("GET", "/api/ddns/status", undefined, undefined, signal),
   trafficWindow: (query: string, interfaces: string[], signal?: AbortSignal) => request<any>("GET", `/api/statistics?${query}&interfaces=${encodeURIComponent(interfaces.join(","))}`, undefined, undefined, signal),
   clientTrafficLive: () => request<any>("GET", "/api/statistics/clients/live"),

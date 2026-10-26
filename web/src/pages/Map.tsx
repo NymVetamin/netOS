@@ -1,4 +1,5 @@
 import { useAccess } from "../permissions";
+import { useStatusPolling } from "../StatusPollingContext";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBitrate, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Speed } from "../ui";
@@ -17,6 +18,7 @@ type Rates = Map<string, { down: number; up: number }>;
 type NodeID = string; // router | wan:<id> | channel:<id> | segment:<id>
 
 export function MapPage({ config }: { config: any }) {
+  const statusPolling = useStatusPolling();
   const [status, setStatus] = useState<any>(null);
   const [clients, setClients] = useState<any[]>([]);
   const [vpnTelemetry, setVPNTelemetry] = useState<Record<string, any[]>>({});
@@ -29,9 +31,9 @@ export function MapPage({ config }: { config: any }) {
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+    const load = async (request: Promise<any>) => {
       try {
-        const [next, list] = await Promise.all([api.status(), api.clients()]);
+        const [next, list] = await Promise.all([request, api.clients()]);
         if (cancelled) return;
         // Скорость — прирост счётчиков между двумя опросами. Первый опрос
         // скорости не даёт: сравнивать не с чем.
@@ -58,10 +60,9 @@ export function MapPage({ config }: { config: any }) {
         if (!cancelled) setError(true);
       }
     };
-    load();
-    const timer = window.setInterval(load, POLL_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
+    const unsubscribe = statusPolling.subscribe(POLL_MS, false, request => { void load(request); });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [statusPolling]);
 
   useEffect(() => {
     const controller = new AbortController();

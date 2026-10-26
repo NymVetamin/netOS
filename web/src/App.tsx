@@ -1,4 +1,5 @@
 import { PermissionContext, canAccess } from "./permissions";
+import { StatusPollingProvider, useStatusPolling } from "./StatusPollingContext";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, ConfigResponse, formatUptime, PlanResponse, Problem, Session } from "./api";
 import { PlanPreview } from "./PlanPreview";
@@ -124,7 +125,7 @@ export default function App() {
     return <Login onSuccess={onLogin} sessionEnded={sessionEnded} />;
   }
 
-  return <PermissionContext.Provider value={session}><Shell session={session} onLogout={onLogout} /></PermissionContext.Provider>;
+  return <PermissionContext.Provider value={session}><StatusPollingProvider key={session.username}><Shell session={session} onLogout={onLogout} /></StatusPollingProvider></PermissionContext.Provider>;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,16 +283,16 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     () => localStorage.getItem("netos-theme") || "auto",
   );
 
-  // Состояние для лицевой панели: огоньки портов и время работы. Сводка
-  // опрашивает то же самое чаще и сама; здесь хватает редкого опроса.
+  // Лицевая панель получает общий со страницами статус раз в десять секунд.
+  const statusPolling = useStatusPolling();
   const [status, setStatus] = useState<any>(null);
   useEffect(() => {
     let cancelled = false;
-    const load = () => api.status().then((next) => { if (!cancelled) setStatus(next); }).catch(() => {});
-    load();
-    const timer = window.setInterval(load, STATUS_POLL_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
+    const unsubscribe = statusPolling.subscribe(STATUS_POLL_MS, false, request => {
+      void request.then((next) => { if (!cancelled) setStatus(next); }).catch(() => {});
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [statusPolling]);
 
   // Меню не прокручивается: всё, что в нём есть, должно быть видно сразу.
   // Если по высоте не помещается, уплотняем его ступенями.

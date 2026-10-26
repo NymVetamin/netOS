@@ -1,4 +1,5 @@
 import { SectionLink } from "../permissions";
+import { useStatusPolling } from "../StatusPollingContext";
 import { channelReferences, canReplaceChannel } from "../channelReferences";
 import { secretInput } from "../secrets";
 import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
@@ -25,6 +26,7 @@ const POLICY_DAYS = [
 ];
 
 export function ChannelsPage({ config, patch }: Props) {
+  const statusPolling = useStatusPolling();
   const [installed, setInstalled] = useState<Record<string, boolean> | null>(null);
   const [componentError, setComponentError] = useState(false);
   useEffect(() => {
@@ -51,21 +53,15 @@ export function ChannelsPage({ config, patch }: Props) {
   const [liveError, setLiveError] = useState(false);
   useEffect(() => {
     let active = true;
-    let inFlight = false;
-    const load = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const status = await api.status();
+    const unsubscribe = statusPolling.subscribe(5000, false, request => {
+      void request.then(status => {
         if (active) { setLiveChannels(status.channels || []); setLiveError(false); }
-      } catch {
+      }).catch(() => {
         if (active) setLiveError(true);
-      } finally { inFlight = false; }
-    };
-    load();
-    const timer = window.setInterval(load, 5000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
+      });
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [statusPolling]);
   const channels = config.channels || [];
   const policies = config.policies || [];
   const ready = (type: string) => channelComponentReady(config, installed, type);

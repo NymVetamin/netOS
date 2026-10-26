@@ -1,4 +1,5 @@
 import { PanelUsers } from "../PanelUsers";
+import { useStatusPolling } from "../StatusPollingContext";
 import { TimezoneInput } from "../TimezoneInput";
 import { Updates } from "../Updates";
 import { confirmAction } from "../confirm";
@@ -298,6 +299,7 @@ export function SystemPage({
 }
 
 function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promise<void> }) {
+  const statusPolling = useStatusPolling();
   const [backups, setBackups] = useState<any[]>([]);
   const [status, setStatus] = useState<any>({ state: "idle" });
   const [busy, setBusy] = useState(false);
@@ -310,8 +312,8 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
   const restoreObservedRunning = useRef(false);
   const restoreScheduledAt = useRef(0);
 
-  async function load() {
-    const [list, live, router] = await Promise.all([api.backups(), api.maintenanceStatus(), api.status()]);
+  async function load(routerRequest = api.status()) {
+    const [list, live, router] = await Promise.all([api.backups(), api.maintenanceStatus(), routerRequest]);
     setBackups(list.backups || []);
     setStatus(live);
     setInstalledVersion(router.version || "");
@@ -331,17 +333,15 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
     }
   }
   useEffect(() => {
-    const poll = () => load().catch(() => {
+    const poll = (request: Promise<any>) => load(request).catch(() => {
       // Restore restarts netosd. Losing the polling request after the
       // scheduled unit had time to start is evidence that it is running.
       if (waitingForRestore && Date.now() - restoreScheduledAt.current > 1500) {
         restoreObservedRunning.current = true;
       }
     });
-    poll();
-    const timer = window.setInterval(poll, waitingForRestore ? 1000 : 5000);
-    return () => window.clearInterval(timer);
-  }, [waitingForRestore]);
+    return statusPolling.subscribe(waitingForRestore ? 1000 : 5000, false, request => { void poll(request); });
+  }, [waitingForRestore, statusPolling]);
 
   async function action(run: () => Promise<any>, success: string) {
     setBusy(true);

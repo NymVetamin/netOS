@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useStatusPolling } from "./StatusPollingContext";
 import { api } from "./api";
 import { Notice, Field } from "./ui";
 
@@ -48,6 +49,7 @@ function UpdateConfirmation({release, busy, onCancel, onConfirm}: {release: Rele
 export function Updates({ current, disabled, onBusyChange, onInstalled }: {
   current: string; disabled: boolean; onBusyChange: (busy: boolean) => void; onInstalled: (version: string) => void;
 }) {
+  const statusPolling = useStatusPolling();
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
@@ -71,11 +73,11 @@ export function Updates({ current, disabled, onBusyChange, onInstalled }: {
       sessionStorage.removeItem(UPDATE_KEY); setOperation(null); setComplete(!failed);
       if (failed) {setError(text); setMessage("");} else {setMessage(text); setError("");}
     };
-    const poll = async () => {
+    const poll = async (request: Promise<any>) => {
       if (polling) return;
       polling = true;
       try {
-        const [status, router] = await Promise.all([api.maintenanceStatus(), api.status()]);
+        const [status, router] = await Promise.all([api.maintenanceStatus(), request]);
         if (cancelled) return;
         const running = status.state === "active" || status.state === "activating";
         observedRunning ||= running;
@@ -94,9 +96,9 @@ export function Updates({ current, disabled, onBusyChange, onInstalled }: {
         if (!cancelled) setMessage("Связь с панелью прервана. Ожидаем её возвращения после обновления…");
       } finally { polling = false; }
     };
-    void poll(); const timer = window.setInterval(poll, 2000);
-    return () => {cancelled = true; window.clearInterval(timer);};
-  }, [operation]);
+    const unsubscribe = statusPolling.subscribe(2000, false, request => { void poll(request); });
+    return () => {cancelled = true; unsubscribe();};
+  }, [operation, statusPolling]);
   async function check() {
     setChecking(true); setError(""); setPending(null); setReleases(null);
     try { const result = await api.releases(); setReleases(result.releases || []); }

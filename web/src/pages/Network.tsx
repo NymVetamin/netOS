@@ -1,4 +1,5 @@
 import { SectionLink } from "../permissions";
+import { useStatusPolling } from "../StatusPollingContext";
 import { interfaceDisplay } from "../interfaceDisplay";
 import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
@@ -67,21 +68,22 @@ export function NetworkPage({
 // ---------------------------------------------------------------------------
 
 function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
+  const statusPolling = useStatusPolling();
   const wans: any[] = config.wans || [];
   const [liveWANs, setLiveWANs] = useState<Record<string, any>>({});
   const [networkConflicts, setNetworkConflicts] = useState<string[]>([]);
   useEffect(() => {
     let active = true;
-    const load = () => api.status().then((status) => {
-      if (active) {
-        setLiveWANs(Object.fromEntries((status.wans || []).map((wan: any) => [wan.id, wan])));
-        setNetworkConflicts(status.network_conflicts || []);
-      }
-    }).catch(() => {});
-    load();
-    const timer = window.setInterval(load, 5000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
+    const unsubscribe = statusPolling.subscribe(5000, false, request => {
+      void request.then((status) => {
+        if (active) {
+          setLiveWANs(Object.fromEntries((status.wans || []).map((wan: any) => [wan.id, wan])));
+          setNetworkConflicts(status.network_conflicts || []);
+        }
+      }).catch(() => {});
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [statusPolling]);
 
   return (
     <>

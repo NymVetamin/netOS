@@ -1,8 +1,9 @@
 import { TrafficMonitor } from "./TrafficMonitor";
+import { useStatusPolling } from "../StatusPollingContext";
 import { DashboardHealth } from "./DashboardHealth";
 import { linkSpeed } from "./PortLinkSettings";
 import { useEffect, useState } from "react";
-import { api, formatBytes, formatUptime } from "../api";
+import { formatBytes, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
 import { Icon } from "../icons";
 
@@ -10,6 +11,7 @@ import { Icon } from "../icons";
 // работает. Поэтому здесь состояние аплинка, клиенты и счётчики интерфейсов,
 // а не декоративные графики.
 export function Dashboard({ config, patch }: { config: any; patch: (change: (draft: any) => void) => void }) {
+  const statusPolling = useStatusPolling();
   const [status, setStatus] = useState<any>(null);
   const [statusError, setStatusError] = useState(false);
 
@@ -19,22 +21,13 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
 
   useEffect(() => {
     let cancelled = false;
-    let busy = false;
-    const load = async () => {
-      if (busy) return;
-      busy = true;
-      await Promise.all([
-        api.status(true).then((result) => {
-          if (!cancelled) { setStatus(result); setStatusError(false); }
-        }).catch(() => { if (!cancelled) setStatusError(true); }),
-
-      ]);
-      busy = false;
-    };
-    load();
-    const t = setInterval(load, 5000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [wanInterfaces.join(",")]);
+    const unsubscribe = statusPolling.subscribe(5000, true, request => {
+      void request.then((result) => {
+        if (!cancelled) { setStatus(result); setStatusError(false); }
+      }).catch(() => { if (!cancelled) setStatusError(true); });
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [statusPolling, wanInterfaces.join(",")]);
 
   const interfaces: any[] = status?.interfaces || [];
   const wanNames = new Set(wanInterfaces);
