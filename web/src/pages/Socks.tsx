@@ -13,16 +13,21 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
  const [loaded,setLoaded]=useState(false), [catalogError,setCatalogError]=useState(false);
  const [error,setError]=useState(""), [shown,setShown]=useState<string|null>(null);
  useEffect(()=>{
-  let active=true;
+  const controller=new AbortController();
+  let inFlight=false;
   const load=async()=>{
-   const [catalog,status]=await Promise.allSettled([api.componentStatus(["xray"]),api.socksStatus()]);
-   if(!active)return;
-   setReady(catalog.status==="fulfilled" ? !!catalog.value.installed?.xray : null);
-   setCatalogError(catalog.status==="rejected");
-   setLive(status.status==="fulfilled"?status.value:null);
-   setLoaded(true);
+   if(inFlight||controller.signal.aborted)return;
+   inFlight=true;
+   try {
+    const [catalog,status]=await Promise.allSettled([api.componentStatus(["xray"],controller.signal),api.socksStatus(controller.signal)]);
+    if(controller.signal.aborted)return;
+    setReady(catalog.status==="fulfilled" ? !!catalog.value.installed?.xray : null);
+    setCatalogError(catalog.status==="rejected");
+    setLive(status.status==="fulfilled"?status.value:null);
+    setLoaded(true);
+   } finally { inFlight=false; }
   };
-  void load();const timer=window.setInterval(load,5000);return()=>{active=false;clearInterval(timer)};
+  void load();const timer=window.setInterval(load,5000);return()=>{controller.abort();clearInterval(timer)};
  },[]);
  useEffect(()=>setShown(null),[p.enabled,p.password,p.username,p.secrets_set?.password]);
  const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values,udp:false}});
