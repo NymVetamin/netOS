@@ -700,14 +700,29 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 					return err
 				}
 				paths := s.ikev2Paths()
+				secret, err := readIKEv2AuthSecret(paths.root)
+				if err != nil {
+					return err
+				}
+				authUsers, err := renderIKEv2AuthUsers(servers)
+				if err != nil {
+					return err
+				}
+				if err := s.unitActiveEnabled(ctx, ikev2AuthUnit); err != nil {
+					return fmt.Errorf("авторизация IKEv2 не работает: %w", err)
+				}
 				for _, check := range []struct {
 					path string
 					data []byte
 					mode os.FileMode
 				}{
 					{paths.conf, conf, 0o600},
-					{paths.daemonConf, renderIKEv2DaemonConfig(), 0o600},
+					{paths.daemonConf, renderIKEv2DaemonConfig(secret), 0o600},
 					{paths.unit, renderIKEv2Unit(paths.conf, paths.daemonConf), 0o644},
+					{paths.authUnit, renderIKEv2AuthUnit(paths.authRoot), 0o644},
+					{filepath.Join(paths.authRoot, "radiusd.conf"), renderIKEv2AuthConfig(paths.authRoot, secret), 0o600},
+					{filepath.Join(paths.authRoot, "users"), authUsers, 0o600},
+					{filepath.Join(paths.authRoot, "dictionary"), []byte(ikev2AuthDictionary), 0o600},
 				} {
 					if err := healthyFile(check.path, check.data, check.mode); err != nil {
 						return err

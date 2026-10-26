@@ -2730,6 +2730,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			case "ikev2":
 				claimPort(path+".port", "udp", 500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
 				claimPort(path+".port", "udp", 4500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
+				claimPort(path+".enabled", "udp", IKEv2AuthPort, "локальная авторизация IKEv2")
 			case "l2tp":
 				claimPort(path+".port", "udp", 1701, fmt.Sprintf("L2TP-сервер %q", s.Name))
 			}
@@ -2861,14 +2862,7 @@ func (c *Config) validateIKEv2Server(r *ValidationResult, path string, s VPNServ
 		}
 	}
 	usernames := map[string]bool{}
-	enabledPeers := 0
 	for i, peer := range s.Peers {
-		if peer.Enabled {
-			enabledPeers++
-			if enabledPeers > 1 {
-				r.errf(fmt.Sprintf("%s.peers[%d].enabled", path, i), "в Debian strongSwan нельзя надёжно закрепить адрес за EAP-учётной записью; одновременно разрешён только один пользователь IKEv2")
-			}
-		}
 		username := peer.Credentials["username"]
 		if username == "" || !safeAccountName(username) {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя может содержать только буквы, цифры, точку, дефис и подчёркивание")

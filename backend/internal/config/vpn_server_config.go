@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// IKEv2AuthPort is the loopback-only UDP endpoint of netOS's EAP authenticator.
+const IKEv2AuthPort = 18128
+
 // WireGuardServerConfig contains server-only WireGuard settings. Peer keys are
 // stored with the peer so every client can be enabled and routed independently.
 type WireGuardServerConfig struct {

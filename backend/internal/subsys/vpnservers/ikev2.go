@@ -2,7 +2,6 @@ package vpnservers
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/netip"
 	"os"
@@ -19,6 +18,7 @@ const ikev2Unit = "netos-strongswan.service"
 
 type ikev2Paths struct {
 	root, conf, candidate, daemonConf, cert, key, sourceTLS, unit string
+	authRoot, authUnit                                            string
 }
 
 func (s *Subsystem) ikev2Paths() ikev2Paths {
@@ -28,6 +28,7 @@ func (s *Subsystem) ikev2Paths() ikev2Paths {
 		daemonConf: filepath.Join(root, "strongswan.conf"),
 		cert:       filepath.Join(root, "x509", "server.crt"), key: filepath.Join(root, "private", "server.key"),
 		sourceTLS: filepath.Join(root, "tls"), unit: filepath.Join(s.UnitDir, ikev2Unit),
+		authRoot: filepath.Join(root, "auth"), authUnit: filepath.Join(s.UnitDir, ikev2AuthUnit),
 	}
 }
 
@@ -53,36 +54,6 @@ func ikev2Identity(server config.VPNServer, cfg *config.Config) string {
 	return cfg.System.Hostname
 }
 
-func ikev2Pool(server config.VPNServer) (string, error) {
-	var address netip.Addr
-	enabled := 0
-	for _, peer := range server.Peers {
-		if !peer.Enabled {
-			continue
-		}
-		parsed, err := netip.ParseAddr(peer.Address)
-		if err != nil {
-			return "", err
-		}
-		enabled++
-		if enabled > 1 {
-			return "", fmt.Errorf("IKEv2 поддерживает только одного активного пользователя: пакет strongSwan не умеет фиксировать адрес пула за EAP-учётной записью")
-		}
-		address = parsed
-	}
-	if enabled == 0 {
-		prefix, err := netip.ParsePrefix(server.Subnet)
-		if err != nil {
-			return "", err
-		}
-		return prefix.Addr().Next().String(), nil
-	}
-	return address.String(), nil
-}
-
-// RenderIKEv2 returns one swanctl configuration for all listeners. strongSwan
-// owns the standard UDP ports globally, while each connection is tied to its
-// own XFRM interface ID and address pool.
 func ikev2RoutesWithDNS(routes, dns []string) []string {
 	out := append([]string(nil), routes...)
 	for _, value := range dns {
@@ -105,9 +76,11 @@ func ikev2RoutesWithDNS(routes, dns []string) []string {
 	return out
 }
 
+// RenderIKEv2 binds each server to its XFRM interface and RADIUS group.
+// RADIUS assigns the address from the authenticated account, not the IKE ID.
 func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error) {
 	var b strings.Builder
-	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит EAP-секреты; права 0600.")
+	fmt.Fprintln(&b, "# Сгенерировано netOS. Авторизация и закреплённые адреса: локальный RADIUS.")
 	fmt.Fprintln(&b, "connections {")
 	for _, server := range servers {
 		ike, err := server.IKEv2Config()
@@ -124,7 +97,8 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 		fmt.Fprintf(&b, "  netos-srv%d {\n", server.Index)
 		fmt.Fprintln(&b, "    version = 2")
 		fmt.Fprintln(&b, "    local_addrs = 0.0.0.0")
-		fmt.Fprintf(&b, "    pools = netos-srv%d\n", server.Index)
+		fmt.Fprintln(&b, "    pools = radius")
+		fmt.Fprintln(&b, "    unique = replace")
 		fmt.Fprintln(&b, "    proposals = aes256gcm16-prfsha384-ecp384,aes256-sha256-modp2048")
 		fmt.Fprintln(&b, "    fragmentation = yes")
 		fmt.Fprintln(&b, "    mobike = yes")
@@ -134,8 +108,9 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 		fmt.Fprintf(&b, "      id = %s\n", identity)
 		fmt.Fprintln(&b, "    }")
 		fmt.Fprintln(&b, "    remote {")
-		fmt.Fprintln(&b, "      auth = eap-mschapv2")
+		fmt.Fprintln(&b, "      auth = eap-radius")
 		fmt.Fprintln(&b, "      eap_id = %any")
+		fmt.Fprintf(&b, "      groups = netos-srv%d\n", server.Index)
 		fmt.Fprintln(&b, "    }")
 		fmt.Fprintln(&b, "    children {")
 		fmt.Fprintf(&b, "      netos-srv%d {\n", server.Index)
@@ -152,48 +127,28 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 		fmt.Fprintln(&b, "  }")
 	}
 	fmt.Fprintln(&b, "}")
-	fmt.Fprintln(&b, "pools {")
-	for _, server := range servers {
-		ike, _ := server.IKEv2Config()
-		pool, err := ikev2Pool(server)
-		if err != nil {
-			return nil, err
-		}
-		fmt.Fprintf(&b, "  netos-srv%d {\n", server.Index)
-		fmt.Fprintf(&b, "    addrs = %s\n", pool)
-		if len(ike.DNS) > 0 {
-			fmt.Fprintf(&b, "    dns = %s\n", strings.Join(ike.DNS, ", "))
-		}
-		if len(ike.SplitRoutes) > 0 {
-			fmt.Fprintf(&b, "    split_include = %s\n", strings.Join(ikev2RoutesWithDNS(ike.SplitRoutes, ike.DNS), ", "))
-		}
-		fmt.Fprintln(&b, "  }")
-	}
-	fmt.Fprintln(&b, "}")
-	fmt.Fprintln(&b, "secrets {")
-	for _, server := range servers {
-		for _, peer := range server.Peers {
-			if !peer.Enabled {
-				continue
-			}
-			secret := base64.StdEncoding.EncodeToString([]byte(peer.Credentials["password"]))
-			fmt.Fprintf(&b, "  eap-srv%d-%s {\n", server.Index, peer.Credentials["username"])
-			fmt.Fprintf(&b, "    id = %s\n", peer.Credentials["username"])
-			fmt.Fprintf(&b, "    secret = 0s%s\n", secret)
-			fmt.Fprintln(&b, "  }")
-		}
-	}
-	fmt.Fprintln(&b, "}")
 	return []byte(b.String()), nil
 }
 
-func renderIKEv2DaemonConfig() []byte {
+func renderIKEv2DaemonConfig(secret string) []byte {
 	return []byte(`charon {
 	load_modular = yes
   plugins {
 	include /etc/strongswan.d/charon/*.conf
     vici {
       socket = unix:///run/netos-strongswan/charon.vici
+    }
+    eap-radius {
+      load = yes
+      class_group = yes
+      servers {
+        netos {
+          address = 127.0.0.1
+          port = ` + fmt.Sprint(config.IKEv2AuthPort) + `
+          secret = ` + secret + `
+          sockets = 4
+        }
+      }
     }
   }
 }
@@ -204,8 +159,8 @@ include /etc/strongswan.d/*.conf
 func renderIKEv2Unit(conf, daemonConf string) []byte {
 	return []byte(`[Unit]
 Description=netOS: strongSwan IKEv2 servers
-After=network-online.target
-Wants=network-online.target
+After=network-online.target netos-ikev2-auth.service
+Wants=network-online.target netos-ikev2-auth.service
 
 [Service]
 Type=notify
@@ -267,12 +222,19 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	}
 	_, unitStatErr := os.Stat(paths.unit)
 	unitExisted := unitStatErr == nil
+	_, authStatErr := os.Stat(paths.authUnit)
+	authExisted := authStatErr == nil
+	if authExisted && !unitWasOwned {
+		return fmt.Errorf("служба %s уже существует и не принадлежит netOS", ikev2AuthUnit)
+	} else if authStatErr != nil && !os.IsNotExist(authStatErr) {
+		return authStatErr
+	}
 	if unitExisted && !unitWasOwned {
 		return fmt.Errorf("служба %s уже существует и не принадлежит netOS", ikev2Unit)
 	} else if unitStatErr != nil && !os.IsNotExist(unitStatErr) {
 		return unitStatErr
 	}
-	snapshotPaths := []string{paths.root, paths.unit}
+	snapshotPaths := []string{paths.root, paths.unit, paths.authUnit}
 	for _, profile := range ikeArmorProfiles {
 		snapshotPaths = append(snapshotPaths, filepath.Join(s.AppArmorDir, "local", profile))
 	}
@@ -280,9 +242,9 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err != nil {
 		return err
 	}
-	mutated := true
+	servicesTouched := false
 	defer func() {
-		if retErr == nil || !mutated {
+		if retErr == nil {
 			return
 		}
 		if !unitExisted {
@@ -295,19 +257,58 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 			retErr = fmt.Errorf("%v; восстановление IKEv2: %w", retErr, err)
 			return
 		}
+		if !authExisted {
+			_, _ = s.Runner.Run(context.Background(), "systemctl", "disable", "--now", ikev2AuthUnit)
+		}
 		if err := reloadIKEArmor(context.Background(), s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run); err != nil {
 			retErr = fmt.Errorf("%v; восстановление AppArmor: %w", retErr, err)
 			return
 		}
 		_, _ = s.Runner.Run(context.Background(), "systemctl", "daemon-reload")
-		_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", ikev2Unit)
+		if authExisted && servicesTouched {
+			_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", ikev2AuthUnit)
+		}
+		if servicesTouched {
+			_, _ = s.Runner.Run(context.Background(), "systemctl", "restart", ikev2Unit)
+		}
 	}()
 	if err := s.ensureIKEArmor(ctx); err != nil {
 		return fmt.Errorf("разрешения AppArmor IKEv2: %w", err)
 	}
-	for _, dir := range []string{paths.root, filepath.Dir(paths.cert), filepath.Dir(paths.key)} {
+	for _, dir := range []string{paths.root, paths.authRoot, filepath.Dir(paths.cert), filepath.Dir(paths.key)} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
+		}
+	}
+	authSecret, err := ensureIKEv2AuthSecret(paths.root)
+	if err != nil {
+		return err
+	}
+	authUsers, err := renderIKEv2AuthUsers(servers)
+	if err != nil {
+		return err
+	}
+	authConf := renderIKEv2AuthConfig(paths.authRoot, authSecret)
+	authUnit := renderIKEv2AuthUnit(paths.authRoot)
+	authChanged := false
+	for _, file := range []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{
+		{filepath.Join(paths.authRoot, "dictionary"), []byte(ikev2AuthDictionary), 0o600},
+		{filepath.Join(paths.authRoot, "users"), authUsers, 0o600},
+		{filepath.Join(paths.authRoot, "radiusd.conf"), authConf, 0o600},
+		{paths.authUnit, authUnit, 0o644},
+	} {
+		authChanged = authChanged || system.FileChanged(file.path, file.data)
+		if err := writeFile(file.path, file.data, file.mode); err != nil {
+			return err
+		}
+	}
+	if authChanged {
+		if _, err := s.Runner.Run(ctx, "/usr/sbin/freeradius", "-C", "-lstdout", "-d", paths.authRoot); err != nil {
+			return fmt.Errorf("проверка авторизации IKEv2: %w", err)
 		}
 	}
 	var names []string
@@ -341,7 +342,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 		return err
 	}
 	defer os.Remove(paths.candidate)
-	daemonConf := renderIKEv2DaemonConfig()
+	daemonConf := renderIKEv2DaemonConfig(authSecret)
 	daemonChanged := system.FileChanged(paths.daemonConf, daemonConf)
 	if err := writeFile(paths.daemonConf, daemonConf, 0o600); err != nil {
 		return err
@@ -356,7 +357,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err := writeFile(paths.conf, conf, 0o600); err != nil {
 		return err
 	}
-	if unitChanged {
+	if unitChanged || authChanged {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
@@ -364,12 +365,20 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err := s.ensureUnitEnabled(ctx, ikev2Unit); err != nil {
 		return err
 	}
-	// Loading a changed pool into a live daemon fails while it has online
-	// leases. Restarting also disconnects sessions whose credentials were
-	// revoked and lets ExecStartPost validate the complete new configuration.
-	// The deferred rollback restores the previous files and service if startup
-	// rejects the candidate.
-	if unitChanged || daemonChanged || confChanged || certChanged || strings.TrimSpace(active) != "active" {
+	if err := s.ensureUnitEnabled(ctx, ikev2AuthUnit); err != nil {
+		return err
+	}
+	authActive, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2AuthUnit)
+	if authChanged || strings.TrimSpace(authActive) != "active" {
+		servicesTouched = true
+		if _, err := s.Runner.Run(ctx, "systemctl", "restart", ikev2AuthUnit); err != nil {
+			return fmt.Errorf("запуск авторизации IKEv2: %w", err)
+		}
+	}
+	// Preserve the existing revocation semantics: credential/IP changes also
+	// disconnect established sessions. Rollback restores both services.
+	if unitChanged || daemonChanged || confChanged || authChanged || certChanged || strings.TrimSpace(active) != "active" {
+		servicesTouched = true
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", ikev2Unit); err != nil {
 			if strings.TrimSpace(active) != "active" {
 				s.cleanupIKEv2(ctx)
@@ -483,12 +492,17 @@ func (s *Subsystem) cleanupIKEv2(ctx context.Context) error {
 	paths := s.ikev2Paths()
 	if _, unitErr := os.Stat(paths.unit); os.IsNotExist(unitErr) {
 		if _, rootErr := os.Stat(paths.root); os.IsNotExist(rootErr) {
-			return RemoveIKEv2AppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run)
+			if _, authErr := os.Stat(paths.authUnit); os.IsNotExist(authErr) {
+				return RemoveIKEv2AppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run)
+			}
 		}
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "disable", ikev2Unit)
 	_, _ = s.Runner.Run(ctx, "systemctl", "stop", ikev2Unit)
+	_, _ = s.Runner.Run(ctx, "systemctl", "disable", ikev2AuthUnit)
+	_, _ = s.Runner.Run(ctx, "systemctl", "stop", ikev2AuthUnit)
 	_ = os.Remove(paths.unit)
+	_ = os.Remove(paths.authUnit)
 	_ = os.RemoveAll(paths.root)
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
 	return RemoveIKEv2AppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.Runner.Run)

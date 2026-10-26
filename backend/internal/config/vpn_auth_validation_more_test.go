@@ -52,7 +52,7 @@ func TestIKEv2EveryFieldValid(t *testing.T) {
 	}
 }
 
-func TestIKEv2RejectsSecondEnabledPeer(t *testing.T) {
+func TestIKEv2AllowsMultipleDistinctPeers(t *testing.T) {
 	cfg := validIKEv2Config()
 	second := cfg.VPNServers[0].Peers[0]
 	second.ID = "bob"
@@ -60,12 +60,29 @@ func TestIKEv2RejectsSecondEnabledPeer(t *testing.T) {
 	second.Address = "10.20.0.3"
 	second.Credentials = map[string]string{"username": "bob", "password": "long-password"}
 	cfg.VPNServers[0].Peers = append(cfg.VPNServers[0].Peers, second)
-	if !hasErrorAt(cfg.Validate(), "vpn_servers[0].peers[1].enabled") {
-		t.Fatalf("second enabled IKEv2 peer was accepted: %+v", cfg.Validate().Problems)
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("second enabled IKEv2 peer rejected: %+v", result.Problems)
 	}
 	cfg.VPNServers[0].Peers[1].Enabled = false
 	if result := cfg.Validate(); result.HasErrors() {
 		t.Fatalf("disabled IKEv2 draft peer was rejected: %+v", result.Problems)
+	}
+	cfg.VPNServers[0].Peers[1].Address = cfg.VPNServers[0].Peers[0].Address
+	if !hasErrorAt(cfg.Validate(), "vpn_servers[0].peers[1].address") {
+		t.Fatal("duplicate address accepted")
+	}
+}
+
+func TestIKEv2AuthListenerConflict(t *testing.T) {
+	cfg := validIKEv2Config()
+	cfg.DNS.Enabled = true
+	cfg.DNS.Port = IKEv2AuthPort
+	if !hasErrorAt(cfg.Validate(), "vpn_servers[0].enabled") {
+		t.Fatal("conflicting DNS and IKEv2 authentication listeners accepted")
+	}
+	cfg.VPNServers[0].Enabled = false
+	if hasErrorAt(cfg.Validate(), "vpn_servers[0].enabled") {
+		t.Fatal("disabled IKEv2 server reserves authentication port")
 	}
 }
 

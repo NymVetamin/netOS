@@ -2,6 +2,7 @@ package vpnservers
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,9 +59,8 @@ func TestRenderIKEv2(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"netos-srv4", "pools = netos-srv4", "id = vpn.example.test", "auth = eap-mschapv2",
-		"local_ts = 10.0.0.0/8", "if_id_in = 50004", "if_id_out = 50004", "addrs = 10.40.0.2",
-		"dns = 10.40.0.1", "id = alice", "secret = 0s",
+		"netos-srv4", "pools = radius", "id = vpn.example.test", "auth = eap-radius",
+		"local_ts = 10.0.0.0/8", "if_id_in = 50004", "if_id_out = 50004", "groups = netos-srv4",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("render lacks %q:\n%s", want, text)
@@ -98,14 +98,25 @@ func TestIKEv2ChannelDoesNotChangeServerRuntime(t *testing.T) {
 	}
 }
 
-func TestRenderIKEv2RejectsAmbiguousMultiUserPool(t *testing.T) {
+func TestRenderIKEv2MultiUserAddressesBelongToAuthenticatedAccounts(t *testing.T) {
 	cfg, server := ikev2TestConfig()
 	server.Peers = append(server.Peers, config.VPNPeer{
 		ID: "bob", Name: "Bob", Enabled: true, Address: "10.40.0.4",
 		Credentials: map[string]string{"username": "bob", "password": "bob-secret"},
 	})
-	if _, err := RenderIKEv2([]config.VPNServer{server}, cfg); err == nil || !strings.Contains(err.Error(), "только одного активного пользователя") {
-		t.Fatalf("ambiguous IKEv2 pool was accepted: %v", err)
+	out, err := RenderIKEv2([]config.VPNServer{server}, cfg)
+	if err != nil || strings.Contains(string(out), "addrs = 10.40.") {
+		t.Fatalf("multiuser server must not allocate an unauthenticated pool: %s, %v", out, err)
+	}
+	users, err := renderIKEv2AuthUsers([]config.VPNServer{server})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, peer := range server.Peers {
+		want := fmt.Sprintf("\"%s\" NT-Password := 0x%s\n    Framed-IP-Address = %s,", peer.Credentials["username"], ikev2NTPassword(peer.Credentials["password"]), peer.Address)
+		if !strings.Contains(string(users), want) {
+			t.Fatalf("missing account/IP binding: %s", users)
+		}
 	}
 }
 
@@ -128,12 +139,11 @@ func TestIKEv2SplitRoutesIncludePushedDNS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"local_ts = 192.0.3.0/24, 10.40.0.1/32",
-		"split_include = 192.0.3.0/24, 10.40.0.1/32",
-	} {
-		if !strings.Contains(string(out), want) {
-			t.Fatalf("missing %q in IKEv2 config", want)
-		}
+	if !strings.Contains(string(out), "local_ts = 192.0.3.0/24, 10.40.0.1/32") {
+		t.Fatal("DNS omitted from traffic selectors")
+	}
+	users, err := renderIKEv2AuthUsers([]config.VPNServer{server})
+	if err != nil || !strings.Contains(string(users), `CVPN3000-IPSec-Split-Tunnel-List = "192.0.3.0/24,10.40.0.1/32"`) {
+		t.Fatalf("DNS omitted from split attributes: %s, %v", users, err)
 	}
 }

@@ -132,9 +132,9 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "strongswan", Title: "strongSwan", Group: "VPN",
 		Description: "IPsec: каналы IKEv2 и приём подключений от встроенных клиентов iOS, macOS и Windows.",
-		Packages:    []string{"strongswan", "strongswan-swanctl", "charon-systemd", "libstrongswan-standard-plugins", "libcharon-extauth-plugins", "libcharon-extra-plugins"},
-		Units:       []string{"strongswan.service"},
-		RunUnits:    []string{"netos-strongswan.service", "netos-ikev2-ch*.service"},
+		Packages:    []string{"strongswan", "strongswan-swanctl", "charon-systemd", "libstrongswan-standard-plugins", "libcharon-extauth-plugins", "libcharon-extra-plugins", "freeradius"},
+		Units:       []string{"strongswan.service", "freeradius.service"},
+		RunUnits:    []string{"netos-strongswan.service", "netos-ikev2-auth.service", "netos-ikev2-ch*.service"},
 		Provides:    []string{"vpn-client", "vpn-server"},
 		SizeHint:    "около 15 МБ",
 	},

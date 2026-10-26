@@ -22,7 +22,7 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
 		t.Skip("NETOS_INTEGRATION=1 and root are required")
 	}
-	for _, command := range []string{"charon-systemd", "charon-cmd", "swanctl", "ip", "ping"} {
+	for _, command := range []string{"charon-systemd", "charon-cmd", "swanctl", "freeradius", "ip", "ping"} {
 		if _, err := exec.LookPath(command); err != nil {
 			t.Skipf("%s is not installed", command)
 		}
@@ -281,6 +281,20 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 	if err := os.WriteFile(dropFile, []byte("[Service]\nNetworkNamespacePath=/run/netns/"+namespace+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// Authentication is loopback-only, so move it with the isolated server.
+	authDropDir := "/etc/systemd/system/" + ikev2AuthUnit + ".d"
+	if err := os.Mkdir(authDropDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	authDropFile := filepath.Join(authDropDir, "qa-namespace.conf")
+	t.Cleanup(func() {
+		_ = os.Remove(authDropFile)
+		_ = os.Remove(authDropDir)
+		_, _ = runner.Run(context.Background(), "systemctl", "daemon-reload")
+	})
+	if err := os.WriteFile(authDropFile, []byte("[Service]\nNetworkNamespacePath=/run/netns/"+namespace+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{
 		{"link", "delete", "xfrm-srv997"},
 		{"netns", "exec", namespace, "ip", "link", "add", "xfrm-srv997", "type", "xfrm", "if_id", "50997"},
@@ -292,6 +306,9 @@ func TestIntegrationIKEv2EAPAndXFRM(t *testing.T) {
 		}
 	}
 	if _, err := runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(ctx, "systemctl", "restart", ikev2AuthUnit); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runner.Run(ctx, "systemctl", "start", ikev2Unit); err != nil {
