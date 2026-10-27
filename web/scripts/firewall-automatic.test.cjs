@@ -1,0 +1,36 @@
+﻿const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript');
+const source=fs.readFileSync(path.join(__dirname,'../src/pages/FirewallRules.tsx'),'utf8');
+const iface=fs.readFileSync(path.join(__dirname,'../src/interfaceDisplay.ts'),'utf8');
+const text=iface+'\n'+source.slice(source.indexOf('const actions:'),source.indexOf('export function AutomaticRuleRow'));
+const output=ts.transpileModule(text,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+const e={};new Function('exports',output)(e);const include=e.includeAutomatic;
+const saved=(id,i)=>({r:{id,enabled:i!==1},i});
+const config={interfaces:[],firewall:{zones:[]}};
+const line=(name)=>'-A LAN-FWD -m comment --comment "'+name+'" -j ACCEPT';
+function data(lines,ids={},family='IPv4',table='filter',chain='LAN-FWD'){
+ return {rule_ids:ids,families:[{family,tables:[{name:table,chains:[{name:chain,rules:lines}]}]}]};
+}
+const groups=[{key:'lan',chain:'LAN-FWD',description:'LAN',items:[saved('a',0),saved('disabled',1),saved('b',2),saved('draft',3)]}];
+const ids=items=>items.map(x=>x.automatic?x.r.comment:x.r.id);
+const live=data([line('first'),line('B'),line('middle'),line('A'),line('A'),line('last')],{[line('A')]:['a','a'],[line('B')]:['b']});
+const baseline=JSON.stringify({groups,live});
+const got=include(groups,live,config);
+assert.deepEqual(ids(got[0].items),['middle','a','disabled','first','b','draft','last']);
+assert.equal(got[0].key,'lan');assert.equal(got[0].items[1],groups[0].items[0]);
+assert.equal(JSON.stringify({groups,live}),baseline);
+assert.deepEqual(include(groups,live,config),got);
+assert.deepEqual(include(groups,{families:[]},config),groups);
+const duplicate=structuredClone(groups);duplicate[0].items.push(duplicate[0].items[0]);
+assert.deepEqual(ids(include(duplicate,live,config)[0].items),['middle','a','disabled','first','b','draft','a','last']);
+const changed=structuredClone(live);changed.rule_ids[line('A')]=['draft','draft'];
+assert.deepEqual(ids(include(groups,changed,config)[0].items),['a','disabled','first','b','middle','draft','last']);
+assert.deepEqual(include(groups,live,config),got);
+const v6=include(groups,data([line('A')],{[line('A')]:['a']},'IPv6'),config);
+assert.equal(v6.length,2);assert.equal(v6[1].items[0].automatic,true);
+const natGroups=[{key:'nat',chain:'POSTROUTING',description:'NAT',items:[saved('a',0),saved('off',1)]}];
+const nat=data([line('before'),line('A'),line('after')],{[line('A')]:['a']},'IPv4','nat','POSTROUTING');
+assert.deepEqual(ids(include(natGroups,nat,config,'nat')[0].items),['before','a','off','after']);
+assert.deepEqual(include(natGroups,nat,config),natGroups);
+const jump=data(['-A INPUT -j LAN-FWD']);jump.families[0].tables[0].chains.push({name:'INPUT',rules:[]});
+assert.deepEqual(include(groups,jump,config),groups);
+console.log('includeAutomatic: order, duplicate IDs/references, disabled/draft rows, keys, repeated calls, immutability, IPv6, NAT, zone jumps PASS');

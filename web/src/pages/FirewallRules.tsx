@@ -61,16 +61,19 @@ export function includeAutomatic(groups:RuleGroup[], data:any, config:any, scope
    group={key:`auto:${family.family}:${table.name}:${chain.name}`,chain:chain.name,description:`${chainTitle(chain.name,config)} · ${family.family}${table.name==='filter'?'':` · ${tableNames[table.name] || table.name}`}`,items:[]};
    result.push(group);
   }
+  const saved = new Map<string,number>();
+  group.items.forEach((item,index)=>{if(!item.automatic && !saved.has(item.r.id)) saved.set(item.r.id,index)});
+  const before = new Map<number,RuleGroup['items']>();
   let pending:RuleGroup['items']=[];
   const seen=new Set<string>();
   chain.rules.forEach((line:string,index:number)=>{
    const id=family.family==='IPv4' ? ids[line]?.shift() : undefined;
    const target=describe(line,config).target;
    if(scope === "rules" && table.chains.some((c:any)=>c.name===target) && /-(IN|FWD|OUT)$/.test(target)) return;
-   if(id && group!.items.some(item=>!item.automatic && item.r.id===id)) {
+   const at=id ? saved.get(id) : undefined;
+   if(id && at !== undefined) {
     if(!seen.has(id)) {
-     const at=group!.items.findIndex(item=>!item.automatic && item.r.id===id);
-     group!.items.splice(at,0,...pending);pending=[];seen.add(id);
+     before.set(at,pending);pending=[];seen.add(id);
     }
     return;
    }
@@ -79,7 +82,13 @@ export function includeAutomatic(groups:RuleGroup[], data:any, config:any, scope
    if(comment.startsWith('"')) {try{comment=JSON.parse(comment)}catch{}}
    pending.push({i:-1,automatic:true,r:{id:`auto:${family.family}:${table.name}:${chain.name}:${index}`,line,comment,savedID:id}});
   });
-  group.items.push(...pending);
+  const merged:RuleGroup['items']=[];
+  group.items.forEach((item,index)=>{
+   for(const automatic of before.get(index) || []) merged.push(automatic);
+   merged.push(item);
+  });
+  for(const automatic of pending) merged.push(automatic);
+  group.items=merged;
  }
  return result.filter(g=>g.items.length);
 }
