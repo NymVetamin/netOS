@@ -5,6 +5,7 @@ package system
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"syscall"
@@ -27,13 +28,23 @@ func (e *Exec) ChannelRouteState(ctx context.Context, table int, name string) (b
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req := make([]byte, unix.NLMSG_HDRLEN+unix.SizeofRtMsg)
+	req := make([]byte, unix.NLMSG_HDRLEN+unix.SizeofRtMsg+8)
 	binary.NativeEndian.PutUint32(req, uint32(len(req)))
 	binary.NativeEndian.PutUint16(req[4:], unix.RTM_GETROUTE)
 	binary.NativeEndian.PutUint16(req[6:], unix.NLM_F_REQUEST|unix.NLM_F_DUMP)
 	binary.NativeEndian.PutUint32(req[8:], 1)
 	req[unix.NLMSG_HDRLEN] = unix.AF_INET
+	// Ask the kernel for this table instead of copying every channel's routes.
+	// Keep channelRouteMatch's table check for kernels without strict filtering.
+	attr := req[unix.NLMSG_HDRLEN+unix.SizeofRtMsg:]
+	binary.NativeEndian.PutUint16(attr, 8)
+	binary.NativeEndian.PutUint16(attr[2:], unix.RTA_TABLE)
+	binary.NativeEndian.PutUint32(attr[4:], uint32(table))
 	messages, err := kernelDump(ctx, unix.NETLINK_ROUTE, req)
+	if errors.Is(err, unix.ENOENT) {
+		// A table with no routes may not exist yet. ensureRoutes creates it.
+		return false, false, nil
+	}
 	if err != nil {
 		return false, false, err
 	}

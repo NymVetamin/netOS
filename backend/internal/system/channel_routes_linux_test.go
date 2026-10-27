@@ -5,6 +5,7 @@ package system
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -12,6 +13,45 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// Each sample reads one channel with unrelated channel tables present, just as
+// the monitor does. Run only in an isolated namespace; no host routes are used.
+func BenchmarkChannelRouteStateKernel(b *testing.B) {
+	if os.Getenv("NETOS_TEST_NETWORK_NAMESPACE") != "1" {
+		b.Skip("requires isolated network namespace")
+	}
+	ip := func(args ...string) {
+		b.Helper()
+		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {
+			b.Fatalf("ip %v: %s %v", args, out, err)
+		}
+	}
+	ip("link", "add", "qa-bench0", "type", "dummy")
+	defer exec.Command("ip", "link", "del", "qa-bench0").Run()
+	ip("link", "set", "qa-bench0", "up")
+	for _, count := range []int{1, 20, 200} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			for i := 0; i < count; i++ {
+				table := fmt.Sprint(1001 + i)
+				ip("route", "replace", "default", "dev", "qa-bench0", "table", table, "metric", "100")
+				ip("route", "replace", "blackhole", "default", "table", table, "metric", "1000")
+			}
+			e := NewExec()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				normal, blackhole, err := e.ChannelRouteState(context.Background(), 1001, "qa-bench0")
+				if err != nil || !normal || !blackhole {
+					b.Fatalf("got %v %v %v", normal, blackhole, err)
+				}
+			}
+			b.StopTimer()
+			for i := 0; i < count; i++ {
+				ip("route", "flush", "table", fmt.Sprint(1001+i))
+			}
+		})
+	}
+}
 
 func TestChannelRouteMatch(t *testing.T) {
 	for _, tc := range []struct {
@@ -66,6 +106,14 @@ func TestChannelRouteStateKernel(t *testing.T) {
 	ip("link", "add", "qa-route0", "type", "dummy")
 	defer exec.Command("ip", "link", "del", "qa-route0").Run()
 	ip("link", "set", "qa-route0", "up")
+	ip("link", "add", "qa-route1", "type", "dummy")
+	defer exec.Command("ip", "link", "del", "qa-route1").Run()
+	ip("link", "set", "qa-route1", "up")
+	// Neither foreign-table defaults nor a subnet in the requested table may
+	// hide missing channel defaults. Cover table IDs beyond the rtmsg byte.
+	for _, table := range []string{"254", "1235", "70000"} {
+		ip("route", "add", "default", "dev", "qa-route0", "table", table)
+	}
 	e := NewExec()
 	check := func(want, black bool) {
 		t.Helper()
@@ -75,7 +123,14 @@ func TestChannelRouteStateKernel(t *testing.T) {
 		}
 	}
 	check(false, false)
+	ip("route", "add", "192.0.2.0/24", "dev", "qa-route0", "table", "1234")
+	ip("route", "add", "default", "dev", "qa-route1", "table", "1234", "metric", "200")
+	check(false, false)
 	ip("route", "add", "default", "dev", "qa-route0", "table", "1234", "metric", "100")
+	ip("route", "add", "blackhole", "default", "table", "1234", "metric", "1000")
+	check(true, true)
+	ip("route", "del", "blackhole", "default", "table", "1234", "metric", "1000")
+	check(true, false)
 	ip("route", "add", "blackhole", "default", "table", "1234", "metric", "1000")
 	check(true, true)
 	ip("route", "del", "default", "dev", "qa-route0", "table", "1234", "metric", "100")
@@ -90,5 +145,8 @@ func TestChannelRouteStateKernel(t *testing.T) {
 	cancel()
 	if _, _, err := e.ChannelRouteState(ctx, 1234, "qa-route0"); err == nil {
 		t.Fatal("cancellation ignored")
+	}
+	if _, _, err := e.ChannelRouteState(context.Background(), 1234, "qa-missing"); err == nil {
+		t.Fatal("missing interface accepted")
 	}
 }

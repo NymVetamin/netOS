@@ -19,6 +19,13 @@ func kernelDump(ctx context.Context, protocol int, req []byte) ([]syscall.Netlin
 	}
 	f := os.NewFile(uintptr(fd), "netos-netlink")
 	defer f.Close()
+	if protocol == unix.NETLINK_ROUTE {
+		// Route dump filters are only honored with strict checking enabled.
+		// Older kernels can still return the full dump for caller-side filtering.
+		if err = unix.SetsockoptInt(fd, unix.SOL_NETLINK, unix.NETLINK_GET_STRICT_CHK, 1); err != nil && err != unix.ENOPROTOOPT {
+			return nil, err
+		}
+	}
 	if err = unix.Bind(fd, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
 		return nil, err
 	}
@@ -90,7 +97,7 @@ func kernelDump(ctx context.Context, protocol int, req []byte) ([]syscall.Netlin
 				return nil, fmt.Errorf("route dump error: %x", m.Data)
 			case unix.NLMSG_DONE:
 				if len(m.Data) >= 4 && binary.NativeEndian.Uint32(m.Data) != 0 {
-					return nil, fmt.Errorf("failed route dump")
+					return nil, fmt.Errorf("failed route dump: %w", syscall.Errno(-int32(binary.NativeEndian.Uint32(m.Data))))
 				}
 				return result, nil
 			default:
