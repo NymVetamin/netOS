@@ -192,10 +192,11 @@ func ocservStateFor(passwdPath, usersPath string, server config.VPNServer) (ocse
 	if err != nil {
 		return ocservAuthState{}, fmt.Errorf("passwd ocserv: %w", err)
 	}
+	oc, _ := server.OcservConfig()
 	wantedUsers := map[string][]byte{}
 	for _, peer := range server.Peers {
 		if peer.Enabled {
-			wantedUsers[server.OcservUsername(peer)] = []byte("explicit-ipv4 = " + peer.Address + "\n")
+			wantedUsers[oc.Username(peer)] = []byte("explicit-ipv4 = " + peer.Address + "\n")
 		}
 	}
 	seenUsers := map[string]bool{}
@@ -212,7 +213,7 @@ func ocservStateFor(passwdPath, usersPath string, server config.VPNServer) (ocse
 		}
 		seenUsers[fields[0]] = true
 	}
-	if server.OcservAuthMode() != "certificate" && len(seenUsers) != len(wantedUsers) {
+	if oc.AuthMode != "certificate" && len(seenUsers) != len(wantedUsers) {
 		return ocservAuthState{}, fmt.Errorf("набор пользователей passwd ocserv расходится с конфигурацией")
 	}
 	usersInfo, err := os.Lstat(usersPath)
