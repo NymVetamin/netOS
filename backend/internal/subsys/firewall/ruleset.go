@@ -475,6 +475,16 @@ func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
 // policies early. Each source enters only its own zone's isolation chain.
 func (b *builder) isolation(cfg *config.Config) {
 	segments := cfg.InternalSegments()
+	hasIsolation := false
+	for _, segment := range segments {
+		if segment.Isolated {
+			hasIsolation = true
+			break
+		}
+	}
+	if !hasIsolation {
+		return
+	}
 	declared := map[string]bool{}
 	for _, source := range segments {
 		if source.Proxy {
