@@ -253,7 +253,7 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
 // в кавычках, флаги, адреса и вердикты файрволла. Текст не меняется — копируется
 // исходный. Разбор построчный и общий для всех артефактов: это не парсер
 // формата, а помощь глазу.
-const TOKEN = /("(?:[^"\\]|\\.)*")|((?<![\w.-])-{1,2}[A-Za-z][\w-]*)|((?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?(?![\w.]))|(\b(?:ACCEPT|MASQUERADE)\b)|(\b(?:DROP|REJECT)\b)/g;
+const TOKEN = /(")|((?<![\w.-])-{1,2}[A-Za-z][\w-]*)|((?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?(?![\w.]))|(\b(?:ACCEPT|MASQUERADE)\b)|(\b(?:DROP|REJECT)\b)/g;
 
 function Highlight({ text }: { text: string }) {
   return <>{text.split("\n").map((line, n) => {
@@ -262,11 +262,35 @@ function Highlight({ text }: { text: string }) {
     if (/^(\[.*\]|\*\w+|COMMIT)$/.test(trimmed)) return <span key={n} className="hl-head">{line}{"\n"}</span>;
     const parts: ReactNode[] = [];
     let last = 0;
-    for (const match of line.matchAll(TOKEN)) {
-      const at = match.index ?? 0;
+    let unclosedUntil = 0;
+    TOKEN.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = TOKEN.exec(line)) !== null) {
+      const at = match.index;
+      let token = match[0];
+      if (match[1]) {
+        if (at < unclosedUntil) continue;
+        let end = at + 1;
+        for (; end < line.length; end++) {
+          if (line[end] === '"') break;
+          if (line[end] === '\\') {
+            const escaped = line.charCodeAt(end + 1);
+            if (end + 1 === line.length || escaped === 10 || escaped === 13 || escaped === 0x2028 || escaped === 0x2029) break;
+            end++;
+          }
+        }
+        if (line[end] !== '"') {
+          // Quotes inside this failed scan were escaped and share its failing suffix.
+          // Skip their repeated scans, but still highlight other tokens in that text.
+          unclosedUntil = end + 1;
+          continue;
+        }
+        token = line.slice(at, end + 1);
+        TOKEN.lastIndex = end + 1;
+      }
       parts.push(line.slice(last, at));
-      parts.push(<span key={at} className={match[1] ? "hl-string" : match[2] ? "hl-flag" : match[3] ? "hl-number" : match[4] ? "hl-ok" : "hl-bad"}>{match[0]}</span>);
-      last = at + match[0].length;
+      parts.push(<span key={at} className={match[1] ? "hl-string" : match[2] ? "hl-flag" : match[3] ? "hl-number" : match[4] ? "hl-ok" : "hl-bad"}>{token}</span>);
+      last = at + token.length;
     }
     parts.push(line.slice(last));
     return <span key={n}>{parts}{"\n"}</span>;
