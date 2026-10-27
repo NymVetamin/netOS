@@ -29,7 +29,7 @@ func (ocP12TestRunner) RunInput(_ context.Context, _, _ string, args ...string) 
 func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	cfg := config.Default()
 	cfg.Components = []config.Component{{ID: "ocserv", Installed: true}}
-	cfg.VPNServers = []config.VPNServer{{ID: "oc", Index: 1, Type: "ocserv", Name: "OC", Enabled: true, Port: 14443, Subnet: "10.99.0.1/24", DefaultChannel: "direct", Config: map[string]any{"auth_mode": "certificate"}, Peers: []config.VPNPeer{{ID: "phone", Address: "10.99.0.2", Enabled: true}}}}
+	cfg.VPNServers = []config.VPNServer{{ID: "oc", Index: 1, Type: "ocserv", Name: "OC", Enabled: true, Port: 14443, Subnet: "10.99.0.1/24", DefaultChannel: "direct", Config: map[string]any{"auth_mode": "certificate"}, Peers: []config.VPNPeer{{ID: "phone", Address: "10.99.0.2", Enabled: true}, {ID: "laptop", Address: "10.99.0.5", Enabled: true}}}}
 	pki := vpnpki.New(t.TempDir(), ocP12TestRunner{})
 	storedServer := cfg.VPNServers[0]
 	storedServer.Peers = append(append([]config.VPNPeer{}, storedServer.Peers...), config.VPNPeer{ID: "removed", Enabled: true, Address: "10.99.0.3"})
@@ -64,6 +64,7 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	if batch("viewer").Code != 403 {
 		t.Fatal("viewer read certificate batch")
 	}
+	storeMissing := false
 	assertBatch := func() {
 		t.Helper()
 		w := batch("admin")
@@ -74,10 +75,32 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &values); err != nil {
 			t.Fatal(err)
 		}
-		if len(values) != 2 || string(values["pending"]) != `{"pending":true}` || string(values["phone"]) != strings.TrimSpace(call("admin", "").Body.String()) {
+		if len(values) != 3 || string(values["pending"]) != `{"pending":true}` || string(values["phone"]) != strings.TrimSpace(call("admin", "").Body.String()) {
 			t.Fatal("batch differs from individual status", w.Body.String())
 		}
+
+		for _, id := range []string{"phone", "laptop"} {
+			var value struct {
+				Username string `json:"username"`
+			}
+			if storeMissing {
+				if string(values[id]) != `{"pending":true}` {
+					t.Fatalf("missing store returned issued identity for %s", id)
+				}
+				continue
+			}
+			if err := json.Unmarshal(values[id], &value); err != nil || value.Username != "netos-"+id {
+				t.Fatalf("wrong batch identity for %s", id)
+			}
+		}
 	}
+	assertBatch()
+	applied := engine.Current().VPNServers[0].Config
+	applied["auth_mode"] = "password"
+	if w := batch("admin"); w.Code != 200 || strings.TrimSpace(w.Body.String()) != "{}" {
+		t.Fatal("stale certificate mode")
+	}
+	applied["auth_mode"] = "certificate"
 	assertBatch()
 	for _, action := range []string{"", "password", "download"} {
 		if w := call("viewer", action); w.Code != 403 {
@@ -107,7 +130,12 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 			t.Fatal("revoked profile exported")
 		}
 	}
-	if err := os.WriteFile(filepath.Join(pki.Dir("oc"), "state.json"), []byte("broken"), 0600); err != nil {
+	stateFile := filepath.Join(pki.Dir("oc"), "state.json")
+	stateBeforeCorruption, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if w := call("admin", ""); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
@@ -119,6 +147,12 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	if err := os.Remove(filepath.Join(pki.Dir("oc"), "state.json")); err != nil {
 		t.Fatal(err)
 	}
+	storeMissing = true
+	assertBatch()
+	if err := os.WriteFile(stateFile, stateBeforeCorruption, 0600); err != nil {
+		t.Fatal(err)
+	}
+	storeMissing = false
 	assertBatch()
 }
 

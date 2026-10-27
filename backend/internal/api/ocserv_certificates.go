@@ -34,9 +34,14 @@ func (s *Server) handleOCClientCertificates(w http.ResponseWriter, r *http.Reque
 			if err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("не удалось прочитать хранилище сертификатов: %w", err)
 			}
+			var oc *config.OcservServerConfig
 			for _, peer := range server.Peers {
 				if status, ok := statuses[peer.ID]; ok {
-					result[peer.ID] = map[string]any{"serial": status.Serial, "expires": status.Expires, "revoked": status.Revoked, "username": server.OcservUsername(peer)}
+					if oc == nil {
+						decoded, _ := server.OcservConfig()
+						oc = &decoded
+					}
+					result[peer.ID] = map[string]any{"serial": status.Serial, "expires": status.Expires, "revoked": status.Revoked, "username": oc.Username(peer)}
 				} else {
 					result[peer.ID] = map[string]any{"pending": true}
 				}
