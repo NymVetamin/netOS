@@ -36,6 +36,8 @@ export type Matrix = {
   cells: (Access | null)[][];
 };
 
+type RuleGroups = { in: any[]; forward: any[] };
+
 type Subnet = { net: number; bits: number };
 
 export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>): Matrix {
@@ -68,18 +70,30 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
 
   const sources = [...segments, ...vpn, ...internet];
   const destinations = [...internet, ...segments, ...vpn, router];
+  const globalRules: RuleGroups = { in: [], forward: [] };
+  const zoneRules = new Map<any, RuleGroups>();
+  if (sources.length && config.firewall?.enabled) for (const r of config.firewall.rules || []) {
+    if (!r.enabled || !appliesToNew(r)) continue;
+    if (r.zone === "global") {
+      if (r.flow === "in" || r.flow === "any") globalRules.in.push(r);
+      if (r.flow === "forward" || r.flow === "any") globalRules.forward.push(r);
+    }
+    if (r.flow !== "in" && r.flow !== "forward") continue;
+    let group = zoneRules.get(r.zone);
+    if (!group) { group = { in: [], forward: [] }; zoneRules.set(r.zone, group); }
+    group[r.flow as "in" | "forward"].push(r);
+  }
   const cells = sources.map((src) =>
-    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments))),
+    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments, globalRules, zoneRules))),
   );
   return { sources, destinations, cells };
 }
 
-function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Access {
+function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>): Access {
   const fw = config.firewall || {};
   if (!fw.enabled) return { verdict: "y", reason: "файрволл выключен", exceptions: [] };
 
   const flow = dst.kind === "router" ? "in" : "forward";
-  const rules: any[] = (fw.rules || []).filter((r: any) => r.enabled && appliesToNew(r));
   const partial: { accept: boolean; text: string }[] = [];
   if (flow === "in" && config.samba?.enabled) {
     const local = src.kind === "segment" && (config.samba.networks || []).includes(src.id.replace("segment:", ""));
@@ -109,7 +123,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
     return finish(false, `изоляция сегмента «${src.isolated ? src.title : dst.title}»`);
   }
 
-  const global = walk(rules.filter((r) => r.zone === "global" && (r.flow === flow || r.flow === "any")));
+  const global = walk(globalRules[flow]);
   if (global) return global;
 
   const zone = (fw.zones || []).find((z: any) => z.name === src.zone);
@@ -117,7 +131,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[]): Ac
 
 
 
-  const own = walk(rules.filter((r) => r.zone === src.zone && r.flow === flow));
+  const own = walk(zoneRules.get(src.zone)?.[flow] || []);
   if (own) return own;
 
   if (flow === "forward" && src.zone === "wan" && dst.subnet) {

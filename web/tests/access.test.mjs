@@ -155,3 +155,40 @@ test("explicit output interface restricts a destination zone", () => {
  assert.equal(to("segment:cams").verdict,"y");
  assert.equal(to("segment:guest").verdict,"n");
 });
+
+test("prepared rules preserve global any, exact zone flow and fresh edits", () => {
+ const cfg=config();
+ const own={name:"own",enabled:true,zone:"lan",flow:"forward",action:"accept"};
+ const global={name:"global",enabled:true,zone:"global",flow:"any",action:"drop",conn_state:"new"};
+ cfg.firewall.rules=[own,global];
+ assert.equal(cell(cfg,"Офис","Интернет").reason,'правило «global»');
+ global.enabled=false;
+ assert.equal(cell(cfg,"Офис","Интернет").reason,'правило «own»');
+ global.enabled=true;global.conn_state="established,related";
+ assert.equal(cell(cfg,"Офис","Интернет").reason,'правило «own»');
+ global.conn_state="NEW";
+ assert.equal(cell(cfg,"Офис","Интернет").reason,'правило «global»');
+ global.flow="out";own.flow="any";
+ assert.equal(cell(cfg,"Офис","Интернет").reason,'политика зоны «Локальная сеть»');
+ global.flow="any";global.action="accept";
+ assert.equal(cell(cfg,"Офис","Интернет").verdict,"y");
+});
+
+test("grouping preserves partial exception order and first full match", () => {
+ const cfg=config();
+ cfg.firewall.rules=[
+  {name:"first",enabled:true,zone:"global",flow:"forward",action:"drop",protocol:"tcp"},
+  {name:"second",enabled:true,zone:"global",flow:"any",action:"drop",protocol:"udp"},
+  {name:"full",enabled:true,zone:"lan",flow:"forward",action:"accept"},
+  {name:"late",enabled:true,zone:"lan",flow:"forward",action:"drop"},
+ ];
+ const result=cell(cfg,"Офис","Интернет");
+ assert.equal(result.reason,'правило «full»');
+ assert.equal(JSON.stringify(result.exceptions),JSON.stringify(['«first»: TCP','«second»: UDP']));
+});
+
+test("empty matrices and disabled firewall do not inspect irrelevant rules", () => {
+ assert.equal(accessMatrix({firewall:{enabled:true,rules:[null]}},{}).sources.length,0);
+ const cfg=config();cfg.firewall.enabled=false;cfg.firewall.rules=[null];
+ assert.equal(cell(cfg,"Офис","Интернет").verdict,"y");
+});
