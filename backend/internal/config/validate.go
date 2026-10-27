@@ -1602,20 +1602,6 @@ func (c *Config) reachableForManagement() bool {
 // помогут администратору, оставшемуся без доступа, а ложное «всё в порядке»
 // от защиты хуже её отсутствия.
 func (c *Config) ruleGrantsManagement(r FirewallRule) bool {
-	for _, id := range []string{r.SrcIPSet, r.DstIPSet} {
-		if id == "" {
-			continue
-		}
-		nonempty := false
-		for _, set := range c.Firewall.IPSets {
-			if set.ID == id && len(set.Entries) > 0 {
-				nonempty = true
-			}
-		}
-		if !nonempty {
-			return false
-		}
-	}
 	if !r.Enabled || r.Action != "accept" {
 		return false
 	}
@@ -1630,25 +1616,36 @@ func (c *Config) ruleGrantsManagement(r FirewallRule) bool {
 	if r.Interface == "lo" {
 		return false
 	}
+
+	// Reject rules that cannot carry management traffic before scanning references.
+	switch r.Protocol {
+	case "", "any":
+	case "tcp":
+		if r.DstPort != "" && !portSpecContains(r.DstPort, 22) && !portSpecContains(r.DstPort, c.System.Panel.Port) {
+			return false
+		}
+	default:
+		return false
+	}
 	// Правило в зоне без интерфейсов не превращается ни в одну строку правил.
 	if r.Zone != "global" && !c.zoneHasInterfaces(r.Zone) {
 		return false
 	}
-
-	switch r.Protocol {
-	case "", "any":
-		// Ограничения по протоколу нет — пройдёт в том числе и SSH.
-		return true
-	case "tcp":
-		if r.DstPort == "" {
-			return true
+	for _, id := range []string{r.SrcIPSet, r.DstIPSet} {
+		if id == "" {
+			continue
 		}
-		// Управление возможно только через порт SSH или порт панели.
-		return portSpecContains(r.DstPort, 22) ||
-			portSpecContains(r.DstPort, c.System.Panel.Port)
+		nonempty := false
+		for _, set := range c.Firewall.IPSets {
+			if set.ID == id && len(set.Entries) > 0 {
+				nonempty = true
+			}
+		}
+		if !nonempty {
+			return false
+		}
 	}
-	// UDP и ICMP интерактивного доступа не дают.
-	return false
+	return true
 }
 
 // zoneHasInterfaces сообщает, есть ли в зоне хоть один действующий интерфейс.
