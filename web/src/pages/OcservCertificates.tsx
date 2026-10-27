@@ -2,9 +2,10 @@ import { confirmAction } from "../confirm";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Field, Notice, Switch } from "../ui";
-import { createCertificateSubscriptions } from "../certificatePolling";
+import { createCertificateSubscriptions, createServerCertificateSubscriptions } from "../certificatePolling";
 
 const subscribeCertificates = createCertificateSubscriptions(api.ocCertificates);
+const subscribeServerCertificates = createServerCertificateSubscriptions(api.certificates);
 
 export function OcservClientCertificate({ server, peer, active }: { server: any; peer: any; active: boolean }) {
   const [status, setStatus] = useState<any>(null);
@@ -74,10 +75,10 @@ export function OcservTLSSettings({ server, setConfig }: { server: any; setConfi
   const edit = (field: string, value: unknown) => setConfig("tls", { ...tls, [field]: value });
   useEffect(() => {
     let alive = true;
-    const refresh = () => api.certificates().then((items) => { if (alive && Array.isArray(items)) setStatus(items.find((item) => item.domain === `vpn:${server.id}`)); }).catch(() => {});
-    void refresh();
-    const timer = window.setInterval(refresh, 30000);
-    return () => { alive = false; window.clearInterval(timer); };
+    const unsubscribe = subscribeServerCertificates(request => {
+      void request.then(items => { if (alive) setStatus(items.get(`vpn:${server.id}`)); }).catch(() => {});
+    });
+    return () => { alive = false; unsubscribe(); };
   }, [server.id]);
   const upload = async (field: string, file?: File) => {
     if (!file) return;

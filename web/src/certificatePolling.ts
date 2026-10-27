@@ -1,5 +1,19 @@
 import { createStatusPoller } from './statusPolling';
 
+// Every TLS editor reads the same server-certificate catalog.
+export function createServerCertificateSubscriptions(fetchStatuses: (signal: AbortSignal) => Promise<any[]>) {
+  const poller = createStatusPoller(async (_, signal) => {
+    const items = await fetchStatuses(signal);
+    if (!Array.isArray(items)) throw new Error('Invalid certificate response');
+    const byDomain = new Map<string, any>();
+    for (const item of items) {
+      if (!byDomain.has(item.domain)) byDomain.set(item.domain, item);
+    }
+    return byDomain;
+  });
+  return (receive: (request: Promise<Map<string, any>>) => void) => poller.subscribe(30000, false, receive);
+}
+
 // Share only current requests, not persisted certificate state. Revocations
 // and file errors are read afresh on every poll and every new subscription.
 export function createCertificateSubscriptions(fetchStatuses: (id: string, signal: AbortSignal) => Promise<any>) {

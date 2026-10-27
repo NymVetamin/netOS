@@ -6,6 +6,7 @@ const code = buildSync({entryPoints:[path.join(__dirname,'../src/certificatePoll
 const loaded={exports:{}};
 new Function('module','exports',code.outputFiles[0].text)(loaded,loaded.exports);
 const {createCertificateSubscriptions}=loaded.exports;
+const {createServerCertificateSubscriptions}=loaded.exports;
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('visible peers share a bounded poll; closing and reopening does not reuse old status',async t=>{
  t.mock.timers.enable({apis:['setTimeout','Date'],now:0});
@@ -23,4 +24,27 @@ test('visible peers share a bounded poll; closing and reopening does not reuse o
  calls[1].resolve('new');calls[2].resolve('other');await settle();
  assert.deepEqual(values,['new','other']);
  fresh();other();await tick(30000);assert.equal(calls.length,3);
+});
+
+test('TLS editors share the catalog, preserve first match and refresh after failures and reopen',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:0});
+ const tick=async ms=>{t.mock.timers.tick(ms);await settle();},calls=[],values=[],errors=[];
+ const subscribe=createServerCertificateSubscriptions(signal=>new Promise((resolve,reject)=>calls.push({signal,resolve,reject})));
+ const receive=p=>void p.then(v=>values.push(v),e=>errors.push(e));
+ const a=subscribe(receive),b=subscribe(receive),c=subscribe(receive);
+ await tick(0);assert.equal(calls.length,1);
+ calls[0].resolve([{domain:'vpn:a',fingerprint:'first'},{domain:'vpn:a',fingerprint:'duplicate'},{domain:'vpn:b',error:'failed'}]);await settle();
+ assert.equal(values.length,3);assert.equal(values[0],values[1]);
+ assert.equal(values[0].get('vpn:a').fingerprint,'first');assert.equal(values[0].get('vpn:b').error,'failed');assert.equal(values[0].get('vpn:c'),undefined);
+ await tick(29999);assert.equal(calls.length,1);
+ await tick(1);assert.equal(calls.length,2);
+ calls[1].reject(new Error('offline'));await settle();assert.equal(errors.length,3);
+ await tick(30000);assert.equal(calls.length,3);
+ calls[2].resolve([{domain:'vpn:a',fingerprint:'renewed'}]);await settle();assert.equal(values[3].get('vpn:a').fingerprint,'renewed');
+ a();b();c();await tick(60000);assert.equal(calls.length,3);
+ const reopened=subscribe(receive);await tick(0);assert.equal(calls.length,4);
+ reopened();assert.equal(calls[3].signal.aborted,true);
+ const again=subscribe(receive);await tick(0);assert.equal(calls.length,5);
+ calls[4].resolve({});await settle();assert.equal(errors.length,4);
+ again();
 });

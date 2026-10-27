@@ -181,7 +181,7 @@ export const api = {
   ocCertificates: (id: string, signal?: AbortSignal) => request<Record<string, any>>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificates`, undefined, undefined, signal),
   ocCertificatePassword: (id: string, peer: string) => request<{password: string}>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate/password`),
   ocCertificateAction: (id: string, peer: string, action: "revoke" | "reissue") => request<any>("POST", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate/${action}`, {}),
-  certificates: () => request<any[]>("GET", "/api/certificates"),
+  certificates: (signal?: AbortSignal) => request<any[]>("GET", "/api/certificates", undefined, undefined, signal),
   onUnauthorized(listener: () => void) {
     unauthorizedListeners.add(listener);
     return () => { unauthorizedListeners.delete(listener); };
