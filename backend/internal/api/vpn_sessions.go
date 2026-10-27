@@ -187,6 +187,10 @@ func (s *Server) sessionClients(ctx context.Context, server config.VPNServer) []
 			}
 		}
 	}
+	var oc config.OcservServerConfig
+	var xr config.XrayServerConfig
+	var xrayErr error
+	decoded := false
 	for _, peer := range server.Peers {
 		row := vpnClientStatus{ID: peer.ID, PublicKey: peer.Credentials["public_key"], State: "unknown"}
 		switch {
@@ -195,15 +199,24 @@ func (s *Server) sessionClients(ctx context.Context, server config.VPNServer) []
 		case !peer.Enabled:
 			row.State = "disabled"
 		case available:
+			// Decode once per snapshot, and only if an enabled peer needs it.
+			if !decoded {
+				switch server.Type {
+				case "ocserv":
+					oc, _ = server.OcservConfig()
+				case "xray":
+					xr, xrayErr = server.XrayConfig()
+				}
+				decoded = true
+			}
 			identity := peer.Credentials["username"]
 			switch server.Type {
 			case "ocserv":
-				identity = server.OcservUsername(peer)
+				identity = oc.Username(peer)
 			case "l2tp":
 				identity = peer.Address
 			case "xray":
-				xr, err := server.XrayConfig()
-				if err != nil {
+				if xrayErr != nil {
 					rows = append(rows, row)
 					continue
 				}
