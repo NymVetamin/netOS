@@ -1,3 +1,4 @@
+import { networkInterfaceView } from "../networkInterfaceView";
 import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { interfaceDisplay } from "../interfaceDisplay";
@@ -12,6 +13,7 @@ import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Row
 import { Icon, INTERFACE_ICONS } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
+type InterfaceView = ReturnType<typeof networkInterfaceView>;
 
 // Типы подключения к провайдеру. Названия — те, которыми провайдер объясняет
 // настройку по телефону, а не термины из документации.
@@ -49,6 +51,7 @@ export function NetworkPage({
   patch: Patch;
   problems: Problem[];
 }) {
+  const interfaceView = networkInterfaceView(config);
   return (
     <>
       <div className="page-head">
@@ -58,16 +61,16 @@ export function NetworkPage({
 
       <ProblemsFor problems={problems} prefixes={["wans", "multiwan", "networks", "interfaces"]} />
 
-      <UplinkSection config={config} patch={patch} />
-      <SegmentSection config={config} patch={patch} />
-      <InterfaceSection config={config} patch={patch} />
+      <UplinkSection config={config} patch={patch} interfaceView={interfaceView} />
+      <SegmentSection config={config} patch={patch} interfaceView={interfaceView} />
+      <InterfaceSection config={config} patch={patch} interfaceView={interfaceView} />
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
 
-function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
+function UplinkSection({ config, patch, interfaceView }: { config: any; patch: Patch; interfaceView: InterfaceView }) {
   const statusPolling = useStatusPolling();
   const wans: any[] = config.wans || [];
   const [liveWANs, setLiveWANs] = useState<Record<string, any>>({});
@@ -186,10 +189,10 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
                       onChange={(e) => patch((d) => (d.wans[idx].interface = e.target.value))}
                     >
                       {!w.interface && <option value="">не выбран</option>}
-                      {ifaceOptions(config, w.interface).map((i: any) => (
+                      {interfaceView.options(w.interface).map((i: any) => (
                         <option key={i.id} value={i.id}>
                           {i.label ? `${i.label} (${i.name})` : i.name}
-                          {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
+                          {interfaceView.usage(i) ? " — " + interfaceView.usage(i) : ""}
                         </option>
                       ))}
                     </select>
@@ -412,7 +415,7 @@ function UplinkSection({ config, patch }: { config: any; patch: Patch }) {
 
 // ---------------------------------------------------------------------------
 
-function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
+function SegmentSection({ config, patch, interfaceView }: { config: any; patch: Patch; interfaceView: InterfaceView }) {
   const networks: any[] = config.networks || [];
   const channels: any[] = config.channels || [];
 
@@ -514,10 +517,10 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
                       onChange={(e) => patch((d) => (d.networks[idx].interface = e.target.value))}
                     >
                       {!n.interface && <option value="">не выбран</option>}
-                      {ifaceOptions(config, n.interface).map((i: any) => (
+                      {interfaceView.options(n.interface).map((i: any) => (
                         <option key={i.id} value={i.id}>
                           {i.label ? `${i.label} (${i.name})` : i.name}
-                          {usageOf(config, i) ? " — " + usageOf(config, i) : ""}
+                          {interfaceView.usage(i) ? " — " + interfaceView.usage(i) : ""}
                         </option>
                       ))}
                     </select>
@@ -668,7 +671,7 @@ function SegmentSection({ config, patch }: { config: any; patch: Patch }) {
 
 // ---------------------------------------------------------------------------
 
-function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
+function InterfaceSection({ config, patch, interfaceView }: { config: any; patch: Patch; interfaceView: InterfaceView }) {
   const interfaces: any[] = config.interfaces || [];
   const [liveInterfaces, setLiveInterfaces] = useState<any[]>([]);
   const [scanError, setScanError] = useState("");
@@ -786,7 +789,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
               cells={[
                 <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="neutral">{typeLabel(i.type)}</Badge>,
-                <span className="dim">{usageOf(config, i) || "свободен"}</span>,
+                <span className="dim">{interfaceView.usage(i) || "свободен"}</span>,
                 <span className="mono">{i.mac || liveInterfaces.find((live: any) => live.name === i.name)?.mac || "—"}</span>,
                 (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?(<span title={linkSpeed(live)}>{linkSpeed(live,true) || "Линк есть"}</span>):"Включён, нет линка"}</Badge> : <Badge tone="neutral">Нет в ОС</Badge>; })(),
               ]}
@@ -796,7 +799,7 @@ function InterfaceSection({ config, patch }: { config: any; patch: Patch }) {
                     ariaLabel={`Интерфейс ${i.name || idx + 1} включён`}
                     onChange={async (v) => {
                       if (!v) {
-                        const usage = usageOf(config, i);
+                        const usage = interfaceView.usage(i);
                         const children = interfaces.filter((child:any)=>child.parent===i.id).map((child:any)=>child.name);
                         const detail = [usage, children.length?`VLAN: ${children.join(", ")}`:""].filter(Boolean).join("; ");
                         if (!(await confirmAction(`Отключить интерфейс ${i.name}? ${detail?`Используется: ${detail}. `:""}Передача через него и зависимые подключения прекратится. Настройки сохранятся. Если доступ к панели пропадёт, не подтверждайте применение — прежняя конфигурация восстановится автоматически.`, "Отключить интерфейс"))) return;
@@ -1063,22 +1066,6 @@ function masterOf(config: any, id: string): any {
   );
 }
 
-// usageOf объясняет одной строкой, кем интерфейс занят. Без этого непонятно,
-// почему порт нельзя выбрать, и почему настройка не даёт ожидаемого результата.
-function usageOf(config: any, iface: any): string {
-  const parts: string[] = [];
-  const master = masterOf(config, iface.id);
-  if (master) parts.push((master.type === "bond" ? "в агрегации " : "в мосту ") + master.name);
-  const wan = (config.wans || []).find((w: any) => w.interface === iface.id);
-  if (wan) parts.push("аплинк «" + wan.name + "»");
-  const net = (config.networks || []).find((n: any) => n.interface === iface.id);
-  if (net) parts.push("сегмент «" + net.name + "»");
-  const vlans = (config.interfaces || []).filter(
-    (i: any) => i.type === "vlan" && i.parent === iface.id,
-  );
-  if (vlans.length > 0) parts.push("VLAN " + vlans.map((v: any) => v.name).join(", "));
-  return parts.join(", ");
-}
 
 // whyUnavailable объясняет, почему порт нельзя включить в этот мост.
 function whyUnavailable(config: any, candidate: any, target: any): string {
@@ -1209,13 +1196,4 @@ function removeInterface(draft: any, id: string) {
   }
   draft.networks = (draft.networks || []).filter((n: any) => n.interface !== id);
   draft.wans = (draft.wans || []).filter((w: any) => w.interface !== id);
-}
-
-// ifaceOptions — интерфейсы, которым можно назначить адрес: сегмент или
-// аплинк. Подчинённый порт своего адреса не имеет, поэтому в список не идёт,
-// но уже выбранный показывается, чтобы настройка не подменилась молча.
-function ifaceOptions(config: any, selected: string): any[] {
-  return (config.interfaces || []).filter(
-    (i: any) => i.id === selected || !masterOf(config, i.id),
-  );
 }
