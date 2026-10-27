@@ -192,3 +192,31 @@ test("empty matrices and disabled firewall do not inspect irrelevant rules", () 
  const cfg=config();cfg.firewall.enabled=false;cfg.firewall.rules=[null];
  assert.equal(cell(cfg,"Офис","Интернет").verdict,"y");
 });
+
+test("parsed addresses are fresh after rule and address-set edits", () => {
+ const rule={name:"address",enabled:true,zone:"global",flow:"forward",action:"accept",dst_ip:"192.168.10.0/24"};
+ const cfg=config([rule]);
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"y");
+ rule.dst_ip="10.50.0.0/24";
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"n");
+ rule.dst_ip="192.168.10.0/24,bad";
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"p");
+ rule.dst_ip="0.0.0.0/0";
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"y");
+ rule.dst_ip="";rule.dst_ipset="set";
+ cfg.firewall.ipsets=[{id:"set",entries:["192.168.10.0/24"]}];
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"y");
+ cfg.firewall.ipsets[0].entries=["192.168.10.42/32"];
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"p");
+ cfg.firewall.ipsets[0].entries=[];
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"n");
+ cfg.firewall.ipsets[0].entries=["192.168.10.0/24"];
+ assert.equal(cell(cfg,"Интернет","Офис").verdict,"y");
+});
+
+test("invalid CSV and IPv4 masks keep partial-match semantics", () => {
+ for(const spec of ["bad", "192.168.10.0/33", "256.1.1.1", "192.168.10.0/24,", ",", " "]){
+  const cfg=config([{name:"invalid",enabled:true,zone:"global",flow:"forward",action:"accept",dst_ip:spec}]);
+  assert.equal(cell(cfg,"Интернет","Офис").verdict,"p",spec);
+ }
+});

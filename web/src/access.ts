@@ -36,6 +36,8 @@ export type Matrix = {
   cells: (Access | null)[][];
 };
 
+type ParsedAddresses = Map<string, (Subnet | undefined)[]>;
+
 type RuleGroups = { in: any[]; forward: any[] };
 
 type Subnet = { net: number; bits: number };
@@ -83,13 +85,14 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
     if (!group) { group = { in: [], forward: [] }; zoneRules.set(r.zone, group); }
     group[r.flow as "in" | "forward"].push(r);
   }
+  const parsedAddresses: ParsedAddresses = new Map();
   const cells = sources.map((src) =>
-    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments, globalRules, zoneRules))),
+    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments, globalRules, zoneRules, parsedAddresses))),
   );
   return { sources, destinations, cells };
 }
 
-function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>): Access {
+function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>, parsedAddresses: ParsedAddresses): Access {
   const fw = config.firewall || {};
   if (!fw.enabled) return { verdict: "y", reason: "файрволл выключен", exceptions: [] };
 
@@ -110,7 +113,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], glo
   const walk = (list: any[]): Access | null => {
     for (const r of list) {
       if (r.action === "continue") continue;
-      const match = matchRule(r, src, dst, flow, segments, fw.ipsets || []);
+      const match = matchRule(r, src, dst, flow, segments, fw.ipsets || [], parsedAddresses);
       if (match === "none") continue;
       const accept = r.action === "accept";
       if (match === "part") partial.push({ accept, text: `«${r.name}»${conditions(r)}` });
@@ -161,7 +164,7 @@ function appliesToNew(r: any): boolean {
   return states.length === 0 || states.includes("new");
 }
 
-function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Entity[], sets: any[]): "full" | "part" | "none" {
+function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Entity[], sets: any[], parsedAddresses: ParsedAddresses): "full" | "part" | "none" {
   let part = false;
 
   if (flow === "forward" && r.dst_zone && r.dst_zone !== dst.zone) return "none";
@@ -176,9 +179,9 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
     if (dst.ifaces.length > 1) part = true;
   }
 
-  const from = side(r.src_ip, src);
+  const from = side(r.src_ip, src, [], parsedAddresses);
   if (from === "none") return "none";
-  const to = flow === "in" ? (r.dst_ip ? "part" : "full") : side(r.dst_ip, dst, segments);
+  const to = flow === "in" ? (r.dst_ip ? "part" : "full") : side(r.dst_ip, dst, segments, parsedAddresses);
   if (to === "none") return "none";
   if (from === "part" || to === "part") part = true;
 
@@ -186,7 +189,7 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
     if (!id) continue;
     const entries: string[] = sets.find((s) => s.id === id)?.entries || [];
     if (!entries.length) return "none";
-    const match = entity.kind === "router" ? "part" : side(entries.join(","), entity, segments);
+    const match = entity.kind === "router" ? "part" : side(entries.join(","), entity, segments, parsedAddresses);
     if (match === "none") return "none";
     if (match === "part") part = true;
   }
@@ -197,9 +200,11 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
 
 // side сравнивает адрес из правила с точкой матрицы. Про зоны без подсети
 // (интернет, VPN) доказать ничего нельзя — такое условие сужает правило.
-function side(spec: string, entity: Entity, segments: Entity[] = []): "full" | "part" | "none" {
+function side(spec: string, entity: Entity, segments: Entity[], parsedAddresses: ParsedAddresses): "full" | "part" | "none" {
   if (!spec) return "full";
-  const nets = String(spec).split(",").map((s) => parseCIDR(s.trim()));
+  const key = String(spec);
+  let nets = parsedAddresses.get(key);
+  if (!nets) { nets = key.split(",").map((s) => parseCIDR(s.trim())); parsedAddresses.set(key, nets); }
   if (nets.some((n) => !n)) return "part";
   if (entity.subnet) {
     if (nets.some((n) => within(entity.subnet!, n!))) return "full";
