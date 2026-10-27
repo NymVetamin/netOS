@@ -29,9 +29,11 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 		{ID: "wg-server", Index: 1, Name: "WG server", Type: "wireguard", Enabled: true, Port: 51821, Subnet: "10.10.0.1/24", Config: map[string]any{"private_key": "server-private"}, Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.10.0.2", Credentials: map[string]string{"public_key": "client-public", "preshared_key": "server-psk"}}}},
 		{ID: "xr-server", Index: 2, Name: "XR server", Type: "xray", Enabled: true, Port: 443, Subnet: "10.20.0.1/24", Config: map[string]any{"private_key": "server-reality-private", "destination": "www.example.com:443", "server_names": []string{"www.example.com"}, "short_ids": []string{"server-short-secret"}}, Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Address: "10.20.0.2", Credentials: map[string]string{"uuid": "server-uuid"}}}},
 		{ID: "ike", Index: 3, Name: "IKE", Type: "ikev2", Enabled: true, Port: 500, Subnet: "10.30.0.1/24", Config: map[string]any{"server_identity": "vpn.example"}, Peers: []config.VPNPeer{{ID: "alice", Enabled: true, Address: "10.30.0.2", Credentials: map[string]string{"username": "alice", "password": "ike-secret"}}}},
+		{ID: "l2tp", Index: 4, Name: "L2TP", Type: "l2tp", Enabled: true, Port: 1701, Subnet: "10.40.0.1/24", Config: map[string]any{"ipsec": true, "listen": "0.0.0.0", "preshared_key": "l2tp-diagnostic-shared-key"}},
 	}
 	secrets := []string{"wan-secret", "ddns-token", "ddns-secret", "wifi-secret", "wg-private", "wg-psk", "xray-uuid", "reality-private", "short-secret", "header-secret", "oc-secret", "server-private", "server-psk", "server-reality-private", "server-short-secret", "server-uuid", "ike-secret", base64.StdEncoding.EncodeToString([]byte("ike-secret"))}
 	before, _ := json.Marshal(cfg)
+	secrets = append(secrets, "l2tp-diagnostic-shared-key", base64.StdEncoding.EncodeToString([]byte("l2tp-diagnostic-shared-key")))
 	secrets = append(secrets, "samba-diagnostic-fixture")
 	s := &Server{draft: cfg}
 	for _, artifact := range render.All() {
@@ -60,6 +62,10 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 	raw, err := render.Render("wireguard", cfg)
 	if err != nil || !strings.Contains(raw, "wg-private") {
 		t.Fatal("native/CLI rendering lost the operational key")
+	}
+	raw, err = render.Render("strongswan", cfg)
+	if err != nil || !strings.Contains(raw, "version = 1") || !strings.Contains(raw, "version = 2") || !strings.Contains(raw, base64.StdEncoding.EncodeToString([]byte("l2tp-diagnostic-shared-key"))) {
+		t.Fatal("native IPsec rendering lost a protocol or PSK")
 	}
 }
 

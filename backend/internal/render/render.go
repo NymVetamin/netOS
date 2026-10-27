@@ -219,7 +219,7 @@ func renderOcserv(cfg *config.Config) (string, error) {
 
 func ikev2Active(cfg *config.Config) bool {
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && server.Type == "ikev2" {
+		if server.Enabled && (server.Type == "ikev2" || server.UsesL2TPIPsec()) {
 			return true
 		}
 	}
@@ -227,13 +227,7 @@ func ikev2Active(cfg *config.Config) bool {
 }
 
 func renderIKEv2(cfg *config.Config) (string, error) {
-	var servers []config.VPNServer
-	for _, server := range cfg.VPNServers {
-		if server.Enabled && server.Type == "ikev2" {
-			servers = append(servers, server)
-		}
-	}
-	text, err := vpnservers.RenderIKEv2(servers, cfg)
+	text, err := vpnservers.RenderIPsec(cfg)
 	return string(text), err
 }
 
@@ -280,7 +274,7 @@ var artifacts = []Artifact{
 		Active: ocservActive, Render: renderOcserv,
 	},
 	{
-		ID: "strongswan", Title: "Серверы IKEv2",
+		ID: "strongswan", Title: "Серверы IPsec (IKEv2, L2TP)",
 		Active: ikev2Active, Render: renderIKEv2,
 	},
 	{

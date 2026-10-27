@@ -27,6 +27,7 @@ type ownedServer struct {
 	Index int    `json:"index"`
 	Type  string `json:"type,omitempty"`
 	Unit  string `json:"unit,omitempty"`
+	IPsec bool   `json:"ipsec,omitempty"`
 }
 
 type snapshotEntry struct {
@@ -213,6 +214,7 @@ func ownedServersFor(servers []config.VPNServer) []ownedServer {
 			item.Unit = ikev2Unit
 		case "l2tp":
 			item.Unit = l2tpUnitName(server)
+			item.IPsec = server.UsesL2TPIPsec()
 		}
 		items = append(items, item)
 	}
@@ -372,7 +374,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	retained := map[string]bool{}
 	ikeUnitOwned := false
 	for _, item := range owned {
-		if item.Type == "ikev2" && (item.Unit == "" || item.Unit == ikev2Unit) {
+		if (item.Type == "ikev2" && (item.Unit == "" || item.Unit == ikev2Unit)) || (item.Type == "l2tp" && item.IPsec) {
 			ikeUnitOwned = true
 		}
 		expected, exists := wantedOwned[item.Name]
@@ -403,6 +405,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			createdNow, err = s.ensureIKEv2Interface(ctx, server, retained[item.Name])
 		case "l2tp":
 			item.Unit = l2tpUnitName(server)
+			item.IPsec = server.UsesL2TPIPsec()
 			createdNow, err = s.applyL2TP(ctx, server, cfg, retained[item.Name])
 		}
 		if err != nil {
@@ -420,7 +423,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		for _, provisional := range created {
 			s.remove(ctx, provisional)
 		}
-		return fmt.Errorf("сервер IKEv2: %w", err)
+		return fmt.Errorf("сервер IPsec: %w", err)
 	}
 	if err := s.writeOwned(nextOwned); err != nil {
 		for _, provisional := range created {
@@ -585,6 +588,11 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	if !ownedServersEqual(owned, ownedServersFor(wanted)) {
 		return fmt.Errorf("список принадлежащих netOS VPN-серверов расходится с конфигурацией")
 	}
+	if len(ikev2Servers(cfg)) > 0 || len(l2tpIPsecServers(cfg)) > 0 {
+		if err := s.healthIPsec(ctx, cfg); err != nil {
+			return err
+		}
+	}
 	ikeChecked := false
 	for _, server := range wanted {
 		if server.Type == "l2tp" {
@@ -596,6 +604,11 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 				return err
 			}
 			conf, ppp, unit := s.l2tpPaths(server)
+			if l2tp.IPsec {
+				if err := healthyFile(conf+".ipsec-guard", renderL2TPIPsecGuard(server), 0o700); err != nil {
+					return err
+				}
+			}
 			for _, file := range []struct {
 				path string
 				data []byte
@@ -696,10 +709,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			}
 			if !ikeChecked {
 				servers := ikev2Servers(cfg)
-				conf, err := RenderIKEv2(servers, cfg)
-				if err != nil {
-					return err
-				}
+
 				paths := s.ikev2Paths()
 				secret, err := readIKEv2AuthSecret(paths.root)
 				if err != nil {
@@ -717,9 +727,6 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 					data []byte
 					mode os.FileMode
 				}{
-					{paths.conf, conf, 0o600},
-					{paths.daemonConf, renderIKEv2DaemonConfig(secret), 0o600},
-					{paths.unit, renderIKEv2Unit(paths.conf, paths.daemonConf), 0o644},
 					{paths.authUnit, renderIKEv2AuthUnit(paths.authRoot), 0o644},
 					{filepath.Join(paths.authRoot, "radiusd.conf"), renderIKEv2AuthConfig(paths.authRoot, secret), 0o600},
 					{filepath.Join(paths.authRoot, "users"), authUsers, 0o600},
@@ -834,7 +841,7 @@ func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
 			return err
 		}
 		conf, ppp, unit := s.l2tpPaths(server)
-		return pathsAbsent(conf, ppp, unit, s.l2tpPreUpPath(server), s.l2tpPreUpLink(server))
+		return pathsAbsent(conf, conf+".ipsec-guard", ppp, unit, s.l2tpPreUpPath(server), s.l2tpPreUpLink(server))
 	}
 	if item.Type == "xray" {
 		server := config.VPNServer{Index: item.Index, Type: "xray"}

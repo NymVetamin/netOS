@@ -40,6 +40,22 @@ func TestAdminConfigRedactsXrayCredentialsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestL2TPIPsecKeyUsesExistingSecretRoundTrip(t *testing.T) {
+	c := config.Default()
+	c.VPNServers = []config.VPNServer{{ID: "l2tp", Type: "l2tp", Config: map[string]any{"ipsec": true, "preshared_key": "test-ipsec-shared-secret"}}}
+	visible, err := redactAdminConfig(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visible.VPNServers[0].Config["preshared_key"] != "" || !visible.VPNServers[0].SecretsSet["preshared_key"] {
+		t.Fatal("IPsec key leaked or presence lost")
+	}
+	mergeRedactedSecrets(visible, c)
+	if !reflect.DeepEqual(visible, c) {
+		t.Fatal("saving redacted configuration changed IPsec key")
+	}
+}
+
 func TestAdminConfigRedactsSecretsAndPreservesThemOnSave(t *testing.T) {
 	original := config.Default()
 	original.Channels = append(original.Channels, config.Channel{ID: "wg", Type: "wireguard", Config: map[string]any{

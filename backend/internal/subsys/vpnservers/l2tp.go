@@ -37,7 +37,15 @@ func renderL2TPPPP(server config.VPNServer, l2tp config.L2TPServerConfig) string
 	if mtu == 0 {
 		mtu = 1400
 	}
-	return fmt.Sprintf("name %s\nauth\nrequire-chap\nrefuse-pap\nnodefaultroute\nmtu %d\nmru %d\nnoipv6\nlcp-echo-interval 20\nlcp-echo-failure 3\n", l2tpAuthName(server), mtu, mtu)
+	auth := "require-chap"
+	if l2tp.IPsec {
+		auth = "require-mschap-v2"
+	}
+	text := fmt.Sprintf("name %s\nauth\n%s\nrefuse-pap\nnodefaultroute\nmtu %d\nmru %d\nnoipv6\nlcp-echo-interval 20\nlcp-echo-failure 3\n", l2tpAuthName(server), auth, mtu, mtu)
+	for _, address := range l2tp.DNS {
+		text += "ms-dns " + address + "\n"
+	}
+	return text
 }
 
 func (s *Subsystem) l2tpPreUpPath(server config.VPNServer) string {
@@ -83,6 +91,10 @@ exit 0
 }
 
 func renderL2TPUnit(server config.VPNServer, conf string) string {
+	preStart := ""
+	if server.UsesL2TPIPsec() {
+		preStart = "ExecStartPre=/bin/sh " + conf + ".ipsec-guard\n"
+	}
 	return fmt.Sprintf(`[Unit]
 Description=netOS: L2TP server %s
 After=network-online.target
@@ -90,13 +102,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/xl2tpd -D -c %s -p /run/netos-l2tp-srv%d.pid -C /run/netos-l2tp-srv%d.ctl
+%sExecStart=/usr/sbin/xl2tpd -D -c %s -p /run/netos-l2tp-srv%d.pid -C /run/netos-l2tp-srv%d.ctl
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, server.Name, conf, server.Index, server.Index)
+`, server.Name, preStart, conf, server.Index, server.Index)
 }
 
 func l2tpChapBlock(server config.VPNServer) string {
@@ -143,7 +155,7 @@ func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg 
 	if _, err := os.Stat(unitPath); err == nil && !wasOwned {
 		return false, fmt.Errorf("служба %s существует и не принадлежит netOS", l2tpUnitName(server))
 	}
-	snapshots, err := capturePaths(confPath, pppPath, unitPath, preUpPath, preUpLink, l2tpChapSecrets)
+	snapshots, err := capturePaths(confPath, confPath+".ipsec-guard", pppPath, unitPath, preUpPath, preUpLink, l2tpChapSecrets)
 	if err != nil {
 		return false, err
 	}
@@ -168,6 +180,16 @@ func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg 
 	l2tp, err := server.L2TPConfig()
 	if err != nil {
 		return false, err
+	}
+	if l2tp.IPsec {
+		if err := writeFile(confPath+".ipsec-guard", renderL2TPIPsecGuard(server), 0o700); err != nil {
+			return false, err
+		}
+		mutated = true
+	} else if err := os.Remove(confPath + ".ipsec-guard"); err != nil && !os.IsNotExist(err) {
+		return false, err
+	} else if err == nil {
+		mutated = true
 	}
 	chap, err := os.ReadFile(l2tpChapSecrets)
 	if os.IsNotExist(err) {
@@ -230,7 +252,7 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) {
 	_, _ = s.Runner.Run(ctx, "systemctl", "stop", unit)
 	_ = removePreUpLink(s.l2tpPreUpLink(server), s.l2tpPreUpPath(server))
 	conf, ppp, unitPath := s.l2tpPaths(server)
-	for _, path := range []string{conf, ppp, unitPath, s.l2tpPreUpPath(server)} {
+	for _, path := range []string{conf, conf + ".ipsec-guard", ppp, unitPath, s.l2tpPreUpPath(server)} {
 		_ = os.Remove(path)
 	}
 	if chap, err := os.ReadFile(l2tpChapSecrets); err == nil {

@@ -14,7 +14,7 @@ const nestedSAs = `list-sa event {netos-srv4 {uniqueid=7 version=2 state=ESTABLI
 list-sa event {netos-srv4 {uniqueid=9 remote-id=192.0.2.3 remote-eap-id=bob child-sas {netos-srv4-2 {uniqueid=2}}}}`
 
 func TestReport1953ParseNestedIKEv2SAs(t *testing.T) {
-	want := []ikev2SA{{uniqueID: "7", identity: "alice"}, {uniqueID: "9", identity: "bob"}}
+	want := []ikev2SA{{uniqueID: "7", identity: "alice", version: "2"}, {uniqueID: "9", identity: "bob"}}
 	if got := parseIKEv2SAs(nestedSAs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("SAs = %+v, want %+v", got, want)
 	}
@@ -28,7 +28,7 @@ func TestReport1953TerminateOnlyRevokedIKE(t *testing.T) {
 		case "is-active":
 			return "active", nil
 		case "--list-sas":
-			return nestedSAs, nil
+			return nestedSAs + ` list-sa event {netos-l2tp-srv5 {uniqueid=12 version=1 remote-id=192.0.2.8}}`, nil
 		case "--terminate":
 			terminated = append(terminated, args[2])
 			if args[2] != "9" {

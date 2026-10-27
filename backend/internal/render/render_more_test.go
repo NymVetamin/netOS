@@ -94,7 +94,7 @@ func TestConditionalArtifactsRenderEnabledInstances(t *testing.T) {
 		"wireguard":  {"wg-ch3", "PrivateKey = private", "PersistentKeepalive = 25"},
 		"hostapd":    {"interface=wlan0", "ssid=Office", "bridge=br0"},
 		"ocserv":     {"TCP/UDP 443", "device = vpns4", "dns = 1.1.1.1"},
-		"strongswan": {"netos-srv5", "id = vpn.example", "id = alice"},
+		"strongswan": {"netos-srv5", "id = vpn.example", "auth = eap-radius", "pools = radius"},
 	}
 	active := ids(Active(cfg))
 	for id, fragments := range cases {
@@ -156,7 +156,7 @@ func TestIKEv2CatalogAliasDoesNotDuplicateTab(t *testing.T) {
 		cfg.VPNServers[0].Enabled = enabled
 		count := 0
 		for _, a := range Active(cfg) {
-			if a.Title == "Серверы IKEv2" {
+			if a.ID == "strongswan" {
 				count++
 			}
 			if a.ID == "ikev2" {

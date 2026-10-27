@@ -383,6 +383,10 @@ func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 			b.line("-A %s -p udp --dport 4500 -m comment --comment %q -j ACCEPT", chain, comment)
 			b.line("-A %s -p esp -m comment --comment %q -j ACCEPT", chain, comment)
 		case "l2tp":
+			if server.UsesL2TPIPsec() {
+				b.line("-A %s -p udp -m multiport --dports 500,4500 -m comment --comment %q -j ACCEPT", chain, comment)
+				b.line("-A %s -p esp -m comment --comment %q -j ACCEPT", chain, comment)
+			}
 			b.line("-A %s -p udp --dport 1701 -m comment --comment %q -j ACCEPT", chain, comment)
 		}
 	}
@@ -783,6 +787,23 @@ func (b *builder) l2tpPeerSources(cfg *config.Config) {
 	}
 }
 
+// IPsec is part of the chosen transport, independent of optional zone rules.
+// Inspect secpath before global ESTABLISHED or user ACCEPT can admit plaintext.
+func (b *builder) l2tpIPsecTransport(cfg *config.Config) {
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || !server.UsesL2TPIPsec() {
+			continue
+		}
+		match, rules := vpnservers.L2TPIPsecGuard(server)
+		b.line(":%s - [0:0]", vpnservers.L2TPIPsecGuardChain)
+		b.line("-A PREROUTING %s -j %s", match, vpnservers.L2TPIPsecGuardChain)
+		for _, rule := range rules {
+			b.line("%s", rule)
+		}
+		return // validation permits one active UDP1701 listener
+	}
+}
+
 func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line("*mangle")
 	b.line(":PREROUTING ACCEPT [0:0]")
@@ -791,6 +812,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
+	b.l2tpIPsecTransport(cfg)
 	b.l2tpPeerSources(cfg)
 	b.channelPolicies(cfg)
 	b.channelLocalReplies(cfg)

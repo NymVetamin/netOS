@@ -79,6 +79,10 @@ func ikev2RoutesWithDNS(routes, dns []string) []string {
 // RenderIKEv2 binds each server to its XFRM interface and RADIUS group.
 // RADIUS assigns the address from the authenticated account, not the IKE ID.
 func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error) {
+	return renderIPsecServers(servers, cfg, nil)
+}
+
+func renderIPsecServers(servers []config.VPNServer, cfg *config.Config, l2tp []config.VPNServer) ([]byte, error) {
 	var b strings.Builder
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Авторизация и закреплённые адреса: локальный RADIUS.")
 	fmt.Fprintln(&b, "connections {")
@@ -126,19 +130,18 @@ func RenderIKEv2(servers []config.VPNServer, cfg *config.Config) ([]byte, error)
 		fmt.Fprintln(&b, "    }")
 		fmt.Fprintln(&b, "  }")
 	}
+	for _, server := range l2tp {
+		renderL2TPIPsecConnection(&b, server)
+	}
 	fmt.Fprintln(&b, "}")
+	renderL2TPIPsecSecrets(&b, l2tp)
 	return []byte(b.String()), nil
 }
 
 func renderIKEv2DaemonConfig(secret string) []byte {
-	return []byte(`charon {
-	load_modular = yes
-  plugins {
-	include /etc/strongswan.d/charon/*.conf
-    vici {
-      socket = unix:///run/netos-strongswan/charon.vici
-    }
-    eap-radius {
+	radius := ""
+	if secret != "" {
+		radius = `    eap-radius {
       load = yes
       class_group = yes
       servers {
@@ -150,17 +153,34 @@ func renderIKEv2DaemonConfig(secret string) []byte {
         }
       }
     }
-  }
+`
+	}
+	return []byte(`charon {
+ load_modular = yes
+ plugins {
+ include /etc/strongswan.d/charon/*.conf
+ vici {
+  socket = unix:///run/netos-strongswan/charon.vici
+ }
+` + radius + ` }
 }
 include /etc/strongswan.d/*.conf
 `)
 }
 
 func renderIKEv2Unit(conf, daemonConf string) []byte {
+	return renderIPsecUnit(conf, daemonConf, true)
+}
+
+func renderIPsecUnit(conf, daemonConf string, hasIKEv2 bool) []byte {
+	dependencies := "network-online.target"
+	if hasIKEv2 {
+		dependencies += " netos-ikev2-auth.service"
+	}
 	return []byte(`[Unit]
-Description=netOS: strongSwan IKEv2 servers
-After=network-online.target netos-ikev2-auth.service
-Wants=network-online.target netos-ikev2-auth.service
+Description=netOS: IPsec servers
+After=` + dependencies + `
+Wants=` + dependencies + `
 
 [Service]
 Type=notify
@@ -217,7 +237,8 @@ func (s *Subsystem) ensureIKEv2Interface(ctx context.Context, server config.VPNS
 
 func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers []config.VPNServer, unitWasOwned bool) (retErr error) {
 	paths := s.ikev2Paths()
-	if len(servers) == 0 {
+	l2tp := l2tpIPsecServers(cfg)
+	if len(servers) == 0 && len(l2tp) == 0 {
 		return s.cleanupIKEv2(ctx)
 	}
 	_, unitStatErr := os.Stat(paths.unit)
@@ -275,66 +296,85 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err := s.ensureIKEArmor(ctx); err != nil {
 		return fmt.Errorf("разрешения AppArmor IKEv2: %w", err)
 	}
-	for _, dir := range []string{paths.root, paths.authRoot, filepath.Dir(paths.cert), filepath.Dir(paths.key)} {
+	dirs := []string{paths.root}
+	if len(servers) > 0 {
+		dirs = append(dirs, paths.authRoot, filepath.Dir(paths.cert), filepath.Dir(paths.key))
+	}
+	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 	}
-	authSecret, err := ensureIKEv2AuthSecret(paths.root)
-	if err != nil {
-		return err
-	}
-	authUsers, err := renderIKEv2AuthUsers(servers)
-	if err != nil {
-		return err
-	}
-	authConf := renderIKEv2AuthConfig(paths.authRoot, authSecret)
-	authUnit := renderIKEv2AuthUnit(paths.authRoot)
-	authChanged := false
-	for _, file := range []struct {
-		path string
-		data []byte
-		mode os.FileMode
-	}{
-		{filepath.Join(paths.authRoot, "dictionary"), []byte(ikev2AuthDictionary), 0o600},
-		{filepath.Join(paths.authRoot, "users"), authUsers, 0o600},
-		{filepath.Join(paths.authRoot, "radiusd.conf"), authConf, 0o600},
-		{paths.authUnit, authUnit, 0o644},
-	} {
-		authChanged = authChanged || system.FileChanged(file.path, file.data)
-		if err := writeFile(file.path, file.data, file.mode); err != nil {
+	authSecret := ""
+	authChanged, certChanged := false, false
+	if len(servers) > 0 {
+		authSecret, err = ensureIKEv2AuthSecret(paths.root)
+		if err != nil {
 			return err
 		}
-	}
-	if authChanged {
-		if _, err := s.Runner.Run(ctx, "/usr/sbin/freeradius", "-C", "-lstdout", "-d", paths.authRoot); err != nil {
-			return fmt.Errorf("проверка авторизации IKEv2: %w", err)
+		authUsers, err := renderIKEv2AuthUsers(servers)
+		if err != nil {
+			return err
 		}
+		authConf := renderIKEv2AuthConfig(paths.authRoot, authSecret)
+		authUnit := renderIKEv2AuthUnit(paths.authRoot)
+		for _, file := range []struct {
+			path string
+			data []byte
+			mode os.FileMode
+		}{
+			{filepath.Join(paths.authRoot, "dictionary"), []byte(ikev2AuthDictionary), 0o600},
+			{filepath.Join(paths.authRoot, "users"), authUsers, 0o600},
+			{filepath.Join(paths.authRoot, "radiusd.conf"), authConf, 0o600},
+			{paths.authUnit, authUnit, 0o644},
+		} {
+			authChanged = authChanged || system.FileChanged(file.path, file.data)
+			if err := writeFile(file.path, file.data, file.mode); err != nil {
+				return err
+			}
+		}
+		if authChanged {
+			if _, err := s.Runner.Run(ctx, "/usr/sbin/freeradius", "-C", "-lstdout", "-d", paths.authRoot); err != nil {
+				return fmt.Errorf("проверка авторизации IKEv2: %w", err)
+			}
+		}
+		var names []string
+		for _, server := range servers {
+			names = append(names, ikev2Identity(server, cfg))
+		}
+		sourceCert, sourceKey, _, err := tlsutil.EnsureSelfSignedForNames(paths.sourceTLS, cfg.System.Hostname, names...)
+		if err != nil {
+			return fmt.Errorf("сертификат IKEv2: %w", err)
+		}
+		certData, err := os.ReadFile(sourceCert)
+		if err != nil {
+			return err
+		}
+		keyData, err := os.ReadFile(sourceKey)
+		if err != nil {
+			return err
+		}
+		certChanged = system.FileChanged(paths.cert, certData) || system.FileChanged(paths.key, keyData)
+		if err := writeFile(paths.cert, certData, 0o644); err != nil {
+			return err
+		}
+		if err := writeFile(paths.key, keyData, 0o600); err != nil {
+			return err
+		}
+	} else if authExisted {
+		servicesTouched = true
+		if _, err := s.Runner.Run(ctx, "systemctl", "disable", "--now", ikev2AuthUnit); err != nil {
+			return err
+		}
+		for _, path := range []string{paths.authUnit, paths.authRoot, paths.sourceTLS, paths.cert, paths.key, filepath.Join(paths.root, "radius.secret")} {
+			if err := os.RemoveAll(path); err != nil {
+				return err
+			}
+		}
+		authChanged = true
 	}
-	var names []string
-	for _, server := range servers {
-		names = append(names, ikev2Identity(server, cfg))
-	}
-	sourceCert, sourceKey, _, err := tlsutil.EnsureSelfSignedForNames(paths.sourceTLS, cfg.System.Hostname, names...)
-	if err != nil {
-		return fmt.Errorf("сертификат IKEv2: %w", err)
-	}
-	certData, err := os.ReadFile(sourceCert)
-	if err != nil {
-		return err
-	}
-	keyData, err := os.ReadFile(sourceKey)
-	if err != nil {
-		return err
-	}
-	certChanged := system.FileChanged(paths.cert, certData) || system.FileChanged(paths.key, keyData)
-	if err := writeFile(paths.cert, certData, 0o644); err != nil {
-		return err
-	}
-	if err := writeFile(paths.key, keyData, 0o600); err != nil {
-		return err
-	}
-	conf, err := RenderIKEv2(servers, cfg)
+
+	conf, err := renderIPsecServers(servers, cfg, l2tp)
 	if err != nil {
 		return err
 	}
@@ -347,7 +387,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err := writeFile(paths.daemonConf, daemonConf, 0o600); err != nil {
 		return err
 	}
-	unit := renderIKEv2Unit(paths.conf, paths.daemonConf)
+	unit := renderIPsecUnit(paths.conf, paths.daemonConf, len(servers) > 0)
 	unitChanged := system.FileChanged(paths.unit, unit)
 	confChanged := system.FileChanged(paths.conf, conf)
 	if err := writeFile(paths.unit, unit, 0o644); err != nil {
@@ -365,16 +405,19 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, cfg *config.Config, servers 
 	if err := s.ensureUnitEnabled(ctx, ikev2Unit); err != nil {
 		return err
 	}
-	if err := s.ensureUnitEnabled(ctx, ikev2AuthUnit); err != nil {
-		return err
-	}
-	authActive, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2AuthUnit)
-	if authChanged || strings.TrimSpace(authActive) != "active" {
-		servicesTouched = true
-		if _, err := s.Runner.Run(ctx, "systemctl", "restart", ikev2AuthUnit); err != nil {
-			return fmt.Errorf("запуск авторизации IKEv2: %w", err)
+	if len(servers) > 0 {
+		if err := s.ensureUnitEnabled(ctx, ikev2AuthUnit); err != nil {
+			return err
+		}
+		authActive, _ := s.Runner.Run(ctx, "systemctl", "is-active", ikev2AuthUnit)
+		if authChanged || strings.TrimSpace(authActive) != "active" {
+			servicesTouched = true
+			if _, err := s.Runner.Run(ctx, "systemctl", "restart", ikev2AuthUnit); err != nil {
+				return fmt.Errorf("запуск авторизации IKEv2: %w", err)
+			}
 		}
 	}
+
 	// Preserve the existing revocation semantics: credential/IP changes also
 	// disconnect established sessions. Rollback restores both services.
 	if unitChanged || daemonChanged || confChanged || authChanged || certChanged || strings.TrimSpace(active) != "active" {
@@ -415,7 +458,7 @@ func (s *Subsystem) terminateRevokedIKEv2(ctx context.Context, servers []config.
 		return fmt.Errorf("чтение установленных соединений IKEv2: %w", err)
 	}
 	for _, sa := range parseIKEv2SAs(list) {
-		if sa.uniqueID == "" || allowed[sa.identity] {
+		if sa.version == "1" || sa.uniqueID == "" || allowed[sa.identity] {
 			continue
 		}
 		if output, err := s.Runner.Run(ctx, "/usr/sbin/swanctl", "--terminate", "--ike-id", sa.uniqueID,
@@ -433,6 +476,7 @@ func (s *Subsystem) terminateRevokedIKEv2(ctx context.Context, servers []config.
 type ikev2SA struct {
 	uniqueID string
 	identity string
+	version  string
 }
 
 // parseIKEv2SAs достаёт из машинного вывода swanctl номер соединения и то, под
@@ -468,6 +512,8 @@ func parseIKEv2SAs(raw string) []ikev2SA {
 		}
 		value = strings.Trim(value, `"`)
 		switch key {
+		case "version":
+			current.version = value
 		case "uniqueid":
 			current.uniqueID = value
 		case "remote-eap-id", "remote-xauth-id", "remote-id":

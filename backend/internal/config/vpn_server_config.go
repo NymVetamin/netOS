@@ -134,8 +134,19 @@ type IKEv2ServerConfig struct {
 }
 
 type L2TPServerConfig struct {
-	Listen string `json:"listen" plan:"Адрес прослушивания" sensitivity:"public"`
-	MTU    int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	Listen       string   `json:"listen" plan:"Адрес прослушивания" sensitivity:"public"`
+	MTU          int      `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	IPsec        bool     `json:"ipsec,omitempty" plan:"Защита IPsec" sensitivity:"public"`
+	PresharedKey string   `json:"preshared_key,omitempty" plan:"Общий ключ IPsec" sensitivity:"secret"`
+	DNS          []string `json:"dns,omitempty" plan:"DNS для клиентов" sensitivity:"public"`
+}
+
+func (s VPNServer) UsesL2TPIPsec() bool {
+	if s.Type != "l2tp" {
+		return false
+	}
+	c, err := s.L2TPConfig()
+	return err == nil && c.IPsec
 }
 
 func (s VPNServer) WireGuardConfig() (WireGuardServerConfig, error) {

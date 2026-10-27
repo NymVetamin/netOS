@@ -576,6 +576,9 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		if server.Enabled && server.Type == "l2tp" && !c.HasComponent("l2tp") {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i), "для сервера L2TP нужен компонент «L2TP»")
 		}
+		if server.Enabled && server.UsesL2TPIPsec() && !c.HasComponent("strongswan") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i), "для защиты L2TP/IPsec нужен компонент «strongSwan»")
+		}
 	}
 }
 
@@ -2654,6 +2657,15 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 		ports[key] = owner
 	}
+	// Both protocols use the same owned charon process, so claim its sockets once.
+	ipsecClaimed := false
+	claimIPsec := func(path string) {
+		if !ipsecClaimed {
+			claimPort(path, "udp", 500, "IPsec-сервер strongSwan")
+			claimPort(path, "udp", 4500, "IPsec-сервер strongSwan")
+			ipsecClaimed = true
+		}
+	}
 	if c.Samba.Enabled {
 		claimPort("samba.enabled", "tcp", 445, "Samba")
 		if c.Samba.Discovery && len(c.Samba.Networks) > 0 {
@@ -2728,11 +2740,13 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 				claimPort(path+".port", "tcp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 				claimPort(path+".port", "udp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 			case "ikev2":
-				claimPort(path+".port", "udp", 500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
-				claimPort(path+".port", "udp", 4500, fmt.Sprintf("IKEv2-сервер %q", s.Name))
+				claimIPsec(path + ".port")
 				claimPort(path+".enabled", "udp", IKEv2AuthPort, "локальная авторизация IKEv2")
 			case "l2tp":
 				claimPort(path+".port", "udp", 1701, fmt.Sprintf("L2TP-сервер %q", s.Name))
+				if s.UsesL2TPIPsec() {
+					claimIPsec(path + ".port")
+				}
 			}
 		}
 		if s.DefaultChannel != "" && !channels[s.DefaultChannel] {
@@ -2802,8 +2816,23 @@ func (c *Config) validateL2TPServer(r *ValidationResult, path string, s VPNServe
 		r.errf(path+".port", "L2TP использует UDP-порт 1701")
 	}
 	addr, err := netip.ParseAddr(l2tp.Listen)
-	if err != nil || !addr.Is4() || !(addr.IsPrivate() || addr.IsLoopback() || netip.MustParsePrefix("198.18.0.0/15").Contains(addr)) {
+	if l2tp.IPsec {
+		if err != nil || !addr.Is4() || addr.IsMulticast() || addr == netip.MustParseAddr("255.255.255.255") {
+			r.errf(path+".config.listen", "укажите IPv4-адрес интерфейса или 0.0.0.0 для всех интерфейсов")
+		}
+		if len(l2tp.PresharedKey) < 16 || unsafeConfigText(l2tp.PresharedKey) {
+			r.errf(path+".config.preshared_key", "общий ключ IPsec должен содержать не меньше 16 символов без управляющих символов")
+		}
+	} else if err != nil || !addr.Is4() || !(addr.IsPrivate() || addr.IsLoopback() || netip.MustParsePrefix("198.18.0.0/15").Contains(addr)) {
 		r.errf(path+".config.listen", "L2TP без IPsec должен слушать конкретный частный IPv4-адрес")
+	}
+	if len(l2tp.DNS) > 2 {
+		r.errf(path+".config.dns", "PPP поддерживает не больше двух DNS-серверов")
+	}
+	for _, value := range l2tp.DNS {
+		if ip, err := netip.ParseAddr(value); err != nil || !ip.Is4() || ip.IsUnspecified() || ip.IsMulticast() || ip == netip.MustParseAddr("255.255.255.255") {
+			r.errf(path+".config.dns", "некорректный IPv4-адрес DNS: %q", value)
+		}
 	}
 	if l2tp.MTU != 0 && (l2tp.MTU < 576 || l2tp.MTU > 1460) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-1460")

@@ -195,7 +195,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         config: { public_endpoint: "", dns: [], use_router_dns: true, routes: [], mtu: 1380, banner: "netOS VPN" },
 		} : type === "l2tp" ? {
 			...common, name: `L2TP ${index}`, port: 1701,
-			config: { listen: "", mtu: 1400 },
+			config: { listen: "0.0.0.0", mtu: 1400, ipsec: true, preshared_key: "", dns: [] },
 		} : {
 			...common, name: `IKEv2 ${index}`, port: 500,
 			config: { public_endpoint: "", server_identity: config.system?.hostname || "netos", dns: [], split_routes: [], mtu: 1400 },
@@ -289,17 +289,23 @@ function serverTools(server: any, config: any, patch: any) {
 
 function L2TPServer({ server, config, installed, patch }: any) {
   const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
-  return <ServerRow server={server} type="L2TP" endpoint={cfg.listen} installed={installed} referenced={referenced} update={update} patch={patch}>
+  const ipsecReady = !cfg.ipsec || (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
+  return <ServerRow server={server} type={cfg.ipsec ? "L2TP/IPsec" : "L2TP"} endpoint={cfg.listen === "0.0.0.0" ? "" : cfg.listen} installed={installed} referenced={referenced} update={update} patch={patch}>
     {!installed && <Notice tone="info" title="Нужен компонент L2TP">Установите L2TP перед включением сервера.</Notice>}
-    <Notice tone="warn" title="L2TP без шифрования">Сервер слушает только выбранный частный адрес. Подключайте клиентов из доверенной сети или через отдельный защищённый транспорт.</Notice>
+    {!ipsecReady && <Notice tone="info" title="Нужен компонент strongSwan">Установите strongSwan для защиты L2TP/IPsec.</Notice>}
+    {!cfg.ipsec && <Notice tone="warn" title="L2TP без шифрования">Сервер слушает только выбранный частный адрес. Подключайте клиентов из доверенной сети или через отдельный защищённый транспорт.</Notice>}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-подсеть"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
-      <Field label="Адрес прослушивания" hint="Частный IPv4 адрес интерфейса, без порта"><input className="mono" placeholder="192.168.1.1" value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>
+      <Field label="Адрес прослушивания" hint={cfg.ipsec ? "IPv4 интерфейса; 0.0.0.0 — все интерфейсы" : "Частный IPv4 адрес интерфейса, без порта"}><input className="mono" placeholder={cfg.ipsec ? "0.0.0.0" : "192.168.1.1"} value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>
+      <Field label="Защита IPsec"><Switch checked={!!cfg.ipsec} onChange={(value) => setConfig("ipsec", value)} label="Включена" /></Field>
+      {cfg.ipsec && <Field label="Общий ключ IPsec (PSK)" hint="Не меньше 16 символов"><input type="password" autoComplete="new-password" {...secretInput(server, "preshared_key")} value={cfg.preshared_key || ""} onChange={(e) => setConfig("preshared_key", e.target.value)} /></Field>}
       <Field label="UDP-порт"><input type="number" value={1701} readOnly /></Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="MTU"><input type="number" min={576} max={1460} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
+      <Field label="DNS для клиентов" hint="До двух IPv4-адресов, по одному в строке"><textarea className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
     </div>
+    {cfg.ipsec && <Notice tone="info" title="Подключение L2TP/IPsec">На клиенте укажите адрес роутера, общий ключ IPsec и личный логин с паролем. Несколько Windows-клиентов за одним общим NAT могут конфликтовать — для них используйте IKEv2.</Notice>}
   </ServerRow>;
 }
 
