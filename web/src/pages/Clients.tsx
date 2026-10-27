@@ -1,7 +1,7 @@
 import { useAccess } from "../permissions";
 import { useEffect, useMemo, useState } from "react";
 import { api, formatMiB, formatTime } from "../api";
-import { localDevices } from "../deviceList";
+import { clientNetworkLookup, localDevices } from "../deviceList";
 import { vpnMapServers } from "../mapVPN";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
@@ -94,6 +94,7 @@ export function Clients({
     return () => { controller.abort(); clearTimeout(timer); };
   }, [vpnIDs]);
   const devices = localDevices(clients, config);
+  const findNetwork = clientNetworkLookup(config);
   const vpn = vpnMapServers(config, vpnTelemetry);
   const vpnCount = vpn.reduce((n, s) => n + s.peers.length, 0);
 
@@ -154,8 +155,7 @@ export function Clients({
           {devices.map((c) => {
                   const cfgClient: any = known.get(c.mac);
                   const lease = leaseByMAC.get(c.mac);
-                  const network = (config.networks || []).find((n: any) => cfgClient?.network ? n.id === cfgClient.network
-                    : (config.interfaces || []).find((i: any) => i.id === n.interface)?.name === c.interface);
+                  const network = findNetwork(cfgClient?.network, c.interface);
                   return (
               <Row
                 lazyBody

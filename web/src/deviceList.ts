@@ -18,3 +18,18 @@ export function localDevices(clients: any[], config: any): any[] {
   }
   return [...rows.values()];
 }
+
+// Row labels use the first matching network; reservation validation is separate.
+export function clientNetworkLookup(config: any) {
+  const interfaces = new Map<string, any>();
+  const byID = new Map<string, any>();
+  const byInterface = new Map<string | undefined, any>();
+  for (const i of config.interfaces || []) if (!interfaces.has(i.id)) interfaces.set(i.id, i);
+  for (const n of config.networks || []) {
+    if (!byID.has(n.id)) byID.set(n.id, n);
+    const name = interfaces.get(n.interface)?.name;
+    if (!byInterface.has(name)) byInterface.set(name, n);
+  }
+  return (networkID: string | undefined, interfaceName: string | undefined) =>
+    networkID ? byID.get(networkID) : byInterface.get(interfaceName);
+}

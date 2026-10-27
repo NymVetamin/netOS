@@ -49,3 +49,27 @@ test('partial configuration and no missing reservations remain supported', () =>
     }
   }
 });
+
+test('client network lookup preserves explicit selection and first interface matches', () => {
+  const { clientNetworkLookup } = loaded.exports;
+  const config = {
+    interfaces: [{ id: 'i1', name: 'br1' }, { id: 'i1', name: 'duplicate' }, { id: 'i2', name: 'br1' }],
+    networks: [{ id: 'n1', interface: 'i1' }, { id: 'n1', interface: 'i2' },
+      { id: 'n2', interface: 'i2' }, { id: 'missing', interface: 'absent' }],
+  };
+  for (const c of [config, {}, { ...config, networks: [...config.networks].reverse() },
+    { ...config, interfaces: [...config.interfaces].reverse() }]) {
+    const lookup = clientNetworkLookup(c);
+    for (const id of [undefined, '', 'n1', 'n2', 'missing', 'not-found']) {
+      for (const name of [undefined, '', 'br1', 'duplicate', 'not-found']) {
+        const expected = (c.networks || []).find(n => id ? n.id === id
+          : (c.interfaces || []).find(i => i.id === n.interface)?.name === name);
+        assert.equal(lookup(id, name), expected);
+      }
+    }
+  }
+  const first = clientNetworkLookup(config);
+  const changed = { ...config, interfaces: [{ id: 'i1', name: 'new-name' }] };
+  assert.equal(clientNetworkLookup(changed)(undefined, 'new-name'), config.networks[0]);
+  assert.equal(first(undefined, 'new-name'), undefined);
+});
