@@ -80,7 +80,10 @@ function saveClientFile(name: string, body: string) {
 }
 
 async function certificateFingerprint(pem: string) {
-  const encoded = pem.match(/-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/)?.[1].replace(/\s/g, "");
+  const begin = "-----BEGIN CERTIFICATE-----", end = "-----END CERTIFICATE-----";
+  const start = pem.indexOf(begin);
+  const finish = start < 0 ? -1 : pem.indexOf(end, start + begin.length);
+  const encoded = finish < 0 ? "" : pem.slice(start + begin.length, finish).replace(/\s/g, "");
   if (!encoded) throw new Error("Не удалось прочитать TLS-сертификат сервера");
   const der = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", der));
