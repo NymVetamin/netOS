@@ -2923,7 +2923,11 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 	if !s.Enabled {
 		return
 	}
-	switch s.OcservAuthMode() {
+	authMode := oc.AuthMode
+	if authMode == "" {
+		authMode = "password"
+	}
+	switch authMode {
 	case "password", "certificate", "certificate_password":
 	default:
 		r.errf(path+".config.auth_mode", "неизвестный способ авторизации")
@@ -2979,7 +2983,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 	}
 	usernames := map[string]bool{}
 	for i, peer := range s.Peers {
-		username := s.OcservUsername(peer)
+		username := oc.Username(peer)
 		if username == "" || !safeAccountName(username) {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя может содержать только буквы, цифры, точку, дефис и подчёркивание")
 		}
@@ -2987,7 +2991,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.username", path, i), "имя пользователя уже используется")
 		}
 		usernames[username] = true
-		if s.OcservAuthMode() != "certificate" && peer.Enabled && len(peer.Credentials["password"]) < 8 {
+		if authMode != "certificate" && peer.Enabled && len(peer.Credentials["password"]) < 8 {
 			r.errf(fmt.Sprintf("%s.peers[%d].credentials.password", path, i), "пароль должен содержать не меньше 8 символов")
 		}
 		if unsafeConfigText(peer.Credentials["password"]) {

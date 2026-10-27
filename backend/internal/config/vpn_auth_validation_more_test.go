@@ -176,3 +176,40 @@ func TestOcservEveryInvalidField(t *testing.T) {
 		})
 	}
 }
+
+func TestOcservValidationAuthModesPreservePeerRequirements(t *testing.T) {
+	for _, mode := range []string{"", "password", "certificate", "certificate_password", "invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := validOcservConfig()
+			server := cfg.VPNServers[0]
+			server.Config["auth_mode"] = mode
+			server.Peers = []VPNPeer{
+				{ID: "first", Enabled: true, Credentials: map[string]string{"username": "!bad", "password": "x"}},
+				{ID: "second", Enabled: false, Credentials: map[string]string{"username": "!bad", "password": "x"}},
+			}
+			var result ValidationResult
+			cfg.validateOcservServer(&result, "vpn", server)
+			passwordIdentity := mode == "" || mode == "password"
+			if hasErrorAt(&result, "vpn.peers[0].credentials.username") != passwordIdentity || hasErrorAt(&result, "vpn.peers[1].credentials.username") != passwordIdentity {
+				t.Fatalf("wrong username requirements: %+v", result.Problems)
+			}
+			if hasErrorAt(&result, "vpn.peers[0].credentials.password") != (mode != "certificate") || hasErrorAt(&result, "vpn.peers[1].credentials.password") {
+				t.Fatalf("wrong enabled/password requirements: %+v", result.Problems)
+			}
+			if hasErrorAt(&result, "vpn.config.auth_mode") != (mode == "invalid") {
+				t.Fatalf("wrong auth mode error: %+v", result.Problems)
+			}
+			if passwordIdentity {
+				count := 0
+				for _, p := range result.Problems {
+					if p.Message == "имя пользователя уже используется" {
+						count++
+					}
+				}
+				if count != 1 {
+					t.Fatalf("duplicate username not preserved: %+v", result.Problems)
+				}
+			}
+		})
+	}
+}
