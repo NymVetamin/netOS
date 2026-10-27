@@ -416,11 +416,20 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	// through a vanished PPP device from our client tables; when it returns,
 	// rebuild those tables even if the Multi-WAN switch is off. A second WAN
 	// still uses these tables to keep forwarded flows on their selected path.
-	if len(enabledWANs(cfg)) > 1 {
+	enabledCount := 0
+	for _, wan := range cfg.WANs {
+		if wan.Enabled {
+			enabledCount++
+		}
+	}
+	keepPPP := map[string]bool{}
+	if enabledCount > 1 {
 		for _, wan := range cfg.WANs {
 			if !wan.Enabled || (wan.Proto != "pppoe" && wan.Proto != "l2tp") {
 				continue
 			}
+			// Retain the last route even if its refresh fails, for the next retry.
+			keepPPP[wan.ID] = true
 			line, err := c.defaultRoute(ctx, interfaceName(cfg, wan))
 			if err != nil {
 				c.pppRoutesDirty = true
@@ -454,16 +463,7 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 		_ = c.save()
 	}
 	for id := range c.knownRoutes {
-		keepPPP := false
-		if len(enabledWANs(cfg)) > 1 {
-			for _, wan := range cfg.WANs {
-				if wan.ID == id && wan.Enabled && (wan.Proto == "pppoe" || wan.Proto == "l2tp") {
-					keepPPP = true
-					break
-				}
-			}
-		}
-		if !wanted[id] && !keepPPP {
+		if !wanted[id] && !keepPPP[id] {
 			delete(c.knownRoutes, id)
 		}
 	}
