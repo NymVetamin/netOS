@@ -271,11 +271,16 @@ func (s *Store) publish(st *state, server config.VPNServer) error {
 		return err
 	}
 	var allowed []string
+	var oc *config.OcservServerConfig
 	if server.Enabled && server.OcservAuthMode() != "password" {
 		for _, peer := range server.Peers {
 			client, ok := st.Clients[peer.ID]
 			if peer.Enabled && ok && !client.Revoked && time.Now().Before(client.Expires) {
-				allowed = append(allowed, server.OcservUsername(peer))
+				if oc == nil {
+					decoded, _ := server.OcservConfig()
+					oc = &decoded
+				}
+				allowed = append(allowed, oc.Username(peer))
 			}
 		}
 	}
