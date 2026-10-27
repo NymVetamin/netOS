@@ -57,7 +57,7 @@ func TestEmptyAddressSetCannotGrantManagement(t *testing.T) {
 	c := Default()
 	c.Firewall.IPSets = []FirewallIPSet{{ID: "empty", Name: "Empty"}}
 	r := FirewallRule{Enabled: true, Action: "accept", Flow: "in", Zone: "global", SrcIPSet: "empty"}
-	if c.ruleGrantsManagement(r) {
+	if c.ruleGrantsManagement(r, managementTestSets(c)) {
 		t.Fatal("empty selector counted as management access")
 	}
 }

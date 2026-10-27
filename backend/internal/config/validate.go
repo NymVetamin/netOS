@@ -1368,13 +1368,14 @@ func validFwMark(value string) bool {
 }
 
 func (c *Config) validateFirewall(r *ValidationResult) {
+	// Presence records a defined set; the value records whether any matching set has entries.
 	sets := map[string]bool{}
 	for i, set := range c.Firewall.IPSets {
 		path := fmt.Sprintf("firewall.ipsets[%d]", i)
-		if strings.TrimSpace(set.ID) == "" || len(set.ID) > 128 || sets[set.ID] {
+		if _, exists := sets[set.ID]; strings.TrimSpace(set.ID) == "" || len(set.ID) > 128 || exists {
 			r.errf(path+".id", "нужен уникальный идентификатор набора длиной до 128 символов")
 		}
-		sets[set.ID] = true
+		sets[set.ID] = sets[set.ID] || len(set.Entries) > 0
 		if strings.TrimSpace(set.Name) == "" || len(set.Name) > 128 {
 			r.errf(path+".name", "укажите название набора длиной до 128 символов")
 		}
@@ -1488,7 +1489,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		validateCIDR(r, path+".src_ip", rule.SrcIP)
 		validateCIDR(r, path+".dst_ip", rule.DstIP)
 		for field, id := range map[string]string{"src_ipset": rule.SrcIPSet, "dst_ipset": rule.DstIPSet} {
-			if id != "" && !sets[id] {
+			if _, exists := sets[id]; id != "" && !exists {
 				r.errf(path+"."+field, "неизвестный набор адресов %q", id)
 			}
 		}
@@ -1504,7 +1505,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		}
 	}
 
-	c.validateAccessRules(r)
+	c.validateAccessRules(r, sets)
 
 	ifaceNames := map[string]bool{}
 	for _, i := range c.Interfaces {
@@ -1588,7 +1589,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 // единого разрешающего правила отвечать перестаёт совсем: ни SSH, ни панель,
 // ни пинг. Восстановить его можно только с физической или аварийной консоли,
 // а у виртуальной машины в чужом дата-центре её может не быть вовсе.
-func (c *Config) reachableForManagement() bool {
+func (c *Config) reachableForManagement(sets map[string]bool) bool {
 	// Зона с политикой accept и хотя бы одним живым интерфейсом уже означает
 	// доступность: правило по умолчанию пропустит подключение.
 	for _, z := range c.Firewall.Zones {
@@ -1598,7 +1599,7 @@ func (c *Config) reachableForManagement() bool {
 	}
 
 	for _, r := range c.Firewall.Rules {
-		if c.ruleGrantsManagement(r) {
+		if c.ruleGrantsManagement(r, sets) {
 			return true
 		}
 	}
@@ -1611,7 +1612,7 @@ func (c *Config) reachableForManagement() bool {
 // Важно не засчитывать лишнего: разрешённый DHCP на UDP 67 или пинг ничем не
 // помогут администратору, оставшемуся без доступа, а ложное «всё в порядке»
 // от защиты хуже её отсутствия.
-func (c *Config) ruleGrantsManagement(r FirewallRule) bool {
+func (c *Config) ruleGrantsManagement(r FirewallRule, sets map[string]bool) bool {
 	if !r.Enabled || r.Action != "accept" {
 		return false
 	}
@@ -1645,12 +1646,7 @@ func (c *Config) ruleGrantsManagement(r FirewallRule) bool {
 		if id == "" {
 			continue
 		}
-		nonempty := false
-		for _, set := range c.Firewall.IPSets {
-			if set.ID == id && len(set.Entries) > 0 {
-				nonempty = true
-			}
-		}
+		nonempty := sets[id]
 		if !nonempty {
 			return false
 		}
@@ -1724,11 +1720,11 @@ func parsePort(s string) (int, error) {
 // validateAccessRules следит за правилами, от которых зависит доступ к самому
 // роутеру. Запрещать администратору их выключать мы не вправе, но обязаны
 // сказать вслух, что он делает.
-func (c *Config) validateAccessRules(r *ValidationResult) {
+func (c *Config) validateAccessRules(r *ValidationResult, sets map[string]bool) {
 	if !c.Firewall.Enabled {
 		return
 	}
-	if !c.reachableForManagement() {
+	if !c.reachableForManagement(sets) {
 		r.errf("firewall.rules",
 			"конфигурация не оставляет ни одного способа подключиться к роутеру: политика зон запрещает входящие соединения, и нет ни одного разрешающего правила. Применение отрезало бы доступ к машине без возможности восстановить его по сети")
 	}

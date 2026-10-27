@@ -8,7 +8,7 @@ import "testing"
 
 func TestDefaultConfigIsReachable(t *testing.T) {
 	cfg := Default()
-	if !cfg.reachableForManagement() {
+	if !cfg.reachableForManagement(managementTestSets(cfg)) {
 		t.Fatal("конфигурация по умолчанию не оставляет доступа к роутеру")
 	}
 	res := cfg.Validate()
@@ -47,7 +47,7 @@ func TestEmptyRulesWithDropPolicyIsRejected(t *testing.T) {
 		cfg.Firewall.Zones[i].Policy = "drop"
 	}
 
-	if cfg.reachableForManagement() {
+	if cfg.reachableForManagement(managementTestSets(cfg)) {
 		t.Fatal("конфигурация без правил и с политикой drop признана доступной")
 	}
 
@@ -70,7 +70,7 @@ func TestDisablingAccessRulesIsRejected(t *testing.T) {
 		}
 	}
 
-	if cfg.reachableForManagement() {
+	if cfg.reachableForManagement(managementTestSets(cfg)) {
 		t.Fatal("доступ признан возможным, хотя все входящие правила выключены")
 	}
 }
@@ -92,7 +92,7 @@ func TestEstablishedAndLoopbackDoNotCount(t *testing.T) {
 			Action: "accept", Interface: "lo",
 		},
 	}
-	if cfg.reachableForManagement() {
+	if cfg.reachableForManagement(managementTestSets(cfg)) {
 		t.Fatal("established и петля ошибочно засчитаны за доступ к роутеру")
 	}
 }
@@ -111,7 +111,7 @@ func TestAcceptZonePolicyCounts(t *testing.T) {
 			cfg.Firewall.Zones[i].Policy = "drop"
 		}
 	}
-	if !cfg.reachableForManagement() {
+	if !cfg.reachableForManagement(managementTestSets(cfg)) {
 		t.Fatal("зона wan с политикой accept не засчитана за доступ")
 	}
 }

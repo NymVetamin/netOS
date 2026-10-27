@@ -48,7 +48,7 @@ func TestManagementRuleRequiresEveryAccessCondition(t *testing.T) {
 			c.Firewall.IPSets = []FirewallIPSet{{ID: "empty"}, {ID: "yes", Entries: []string{"192.0.2.1"}}}
 			r := FirewallRule{Enabled: true, Action: "accept", Flow: "in", Zone: "global", Protocol: "tcp", DstPort: "22", ConnState: "new"}
 			tc.change(c, &r)
-			if got := c.ruleGrantsManagement(r); got != tc.want {
+			if got := c.ruleGrantsManagement(r, managementTestSets(c)); got != tc.want {
 				t.Fatalf("got %v want %v", got, tc.want)
 			}
 		})
@@ -63,7 +63,7 @@ func TestManagementRuleUsesCurrentConfig(t *testing.T) {
 	c.Firewall.IPSets = []FirewallIPSet{{ID: "allowed", Entries: []string{"192.0.2.1"}}}
 	check := func(want bool) {
 		t.Helper()
-		if got := c.ruleGrantsManagement(r); got != want {
+		if got := c.ruleGrantsManagement(r, managementTestSets(c)); got != want {
 			t.Fatalf("got %v want %v", got, want)
 		}
 	}
@@ -80,4 +80,49 @@ func TestManagementRuleUsesCurrentConfig(t *testing.T) {
 	check(false)
 	c.System.Panel.Port = 9443
 	check(true)
+}
+
+func managementTestSets(c *Config) map[string]bool {
+	sets := map[string]bool{}
+	for _, set := range c.Firewall.IPSets {
+		sets[set.ID] = sets[set.ID] || len(set.Entries) > 0
+	}
+	return sets
+}
+
+func TestManagementIPSetValidationTransitions(t *testing.T) {
+	c := Default()
+	c.Components = append(c.Components, Component{ID: "ipset", Installed: true})
+	for i := range c.Firewall.Zones {
+		c.Firewall.Zones[i].Policy = "drop"
+	}
+	c.Firewall.Rules = []FirewallRule{{ID: "management", Enabled: true, Action: "accept", Flow: "in", Zone: "global", Protocol: "tcp", DstPort: "22", SrcIPSet: "allowed"}}
+	check := func(unknown, blocked, duplicate bool) {
+		t.Helper()
+		for _, tc := range []struct {
+			path string
+			want bool
+		}{{"firewall.rules[0].src_ipset", unknown}, {"firewall.rules", blocked}, {"firewall.ipsets[1].id", duplicate}} {
+			if got := hasRemainingProblem(c, tc.path, "error"); got != tc.want {
+				t.Fatalf("%s error=%t want=%t", tc.path, got, tc.want)
+			}
+		}
+	}
+	check(true, true, false)
+	c.Firewall.IPSets = []FirewallIPSet{{ID: "allowed", Name: "Allowed"}}
+	check(false, true, false)
+	c.Firewall.IPSets[0].Entries = []string{"192.0.2.1"}
+	check(false, false, false)
+	c.Firewall.IPSets[0].Entries = nil
+	check(false, true, false)
+	c.Firewall.IPSets = append(c.Firewall.IPSets, FirewallIPSet{ID: "allowed", Name: "Duplicate", Entries: []string{"192.0.2.2"}})
+	check(false, false, true)
+	c.Firewall.IPSets[0], c.Firewall.IPSets[1] = c.Firewall.IPSets[1], c.Firewall.IPSets[0]
+	check(false, false, true)
+	c.Firewall.IPSets = c.Firewall.IPSets[:1]
+	check(false, false, false)
+	c.Firewall.IPSets[0].ID = "renamed"
+	check(true, true, false)
+	c.Firewall.IPSets[0].ID = "allowed"
+	check(false, false, false)
 }
