@@ -66,6 +66,38 @@ func TestPPPReturnRestoresClientRouting(t *testing.T) {
 	}
 }
 
+func TestPPPReconcileFailureRetriesWhenMainRouteReturnsUnchanged(t *testing.T) {
+	r := &balanceStateRunner{
+		routes: map[string]string{}, rules: map[string]string{},
+		main: map[string]string{"eth1": "default dev eth1 metric 200", "ppp-wan2": "default dev ppp-wan2 metric 100"},
+	}
+	c := New(r, t.TempDir(), nil)
+	cfg := config.Default()
+	cfg.MultiWAN.Enabled = false
+	cfg.Interfaces = []config.Interface{{ID: "underlay", Name: "eth1", Type: "physical"}}
+	cfg.WANs = []config.WAN{
+		{ID: "wan1", Index: 1, Interface: "underlay", Enabled: true, Proto: "static"},
+		{ID: "wan2", Index: 2, Enabled: true, Proto: "l2tp"},
+	}
+	if err := c.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	c.pausedUntil = time.Time{}
+	old := c.knownRoutes["wan2"]
+	r.main["ppp-wan2"] = ""
+	r.routes["3002"] = "blackhole default metric 32767\n"
+	r.failOnce = "rule show"
+	c.tick(context.Background(), cfg)
+	if !r.failed || !c.pppRoutesDirty || c.knownRoutes["wan2"] != old {
+		t.Fatalf("failed rebuild lost retry/history: %+v", c)
+	}
+	r.main["ppp-wan2"] = old
+	c.tick(context.Background(), cfg)
+	if c.pppRoutesDirty || !strings.Contains(r.routes["3002"], "default dev ppp-wan2") {
+		t.Fatalf("same route did not retry: %s", r.routes["3002"])
+	}
+}
+
 func (r *balanceStateRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	command := name + " " + strings.Join(args, " ")
 	if r.failOnce != "" && !r.failed && strings.Contains(command, r.failOnce) {

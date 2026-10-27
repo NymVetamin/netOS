@@ -47,14 +47,15 @@ type Controller struct {
 	Logger    Logger
 	Probe     func(context.Context, config.WAN, string) bool
 
-	mu           sync.Mutex
-	probeMu      sync.RWMutex
-	probeDown    map[string]bool
-	states       map[string]*linkState
-	suppressed   map[string]string
-	knownRoutes  map[string]string
-	pausedUntil  time.Time
-	balanceDirty bool
+	mu             sync.Mutex
+	probeMu        sync.RWMutex
+	probeDown      map[string]bool
+	states         map[string]*linkState
+	suppressed     map[string]string
+	knownRoutes    map[string]string
+	pausedUntil    time.Time
+	balanceDirty   bool
+	pppRoutesDirty bool
 }
 
 // ProbeDown reports the last completed health decision for an uplink.
@@ -187,6 +188,7 @@ func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	c.balanceDirty = false
+	c.pppRoutesDirty = false
 	return nil
 }
 
@@ -421,16 +423,21 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 			}
 			line, err := c.defaultRoute(ctx, interfaceName(cfg, wan))
 			if err != nil {
+				c.pppRoutesDirty = true
 				c.Logger.Warnf("Multi-WAN: маршрут PPP %s: %v", wan.Name, err)
 				continue
 			}
-			if line == c.knownRoutes[wan.ID] {
+			if line == c.knownRoutes[wan.ID] && !c.pppRoutesDirty {
 				continue
 			}
+			// A vanished PPP device removes client-table routes. After a failed
+			// read/rebuild, the same main route text does not prove those survived.
+			c.pppRoutesDirty = true
 			if err := c.reconcileBalance(ctx, cfg); err != nil {
 				c.Logger.Warnf("Multi-WAN: таблица PPP %s не пересобрана: %v", wan.Name, err)
 				continue
 			}
+			c.pppRoutesDirty = false
 			c.knownRoutes[wan.ID] = line
 		}
 	}

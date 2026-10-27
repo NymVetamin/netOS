@@ -84,6 +84,57 @@ func TestIntegrationFailoverRemovesAndRestoresRealRoute(t *testing.T) {
 	}
 }
 
+func TestIntegrationPPPHistoryAfterInterfaceRecreation(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root required")
+	}
+	for _, proto := range []string{"pppoe", "l2tp"} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/multiwan=%v", proto, enabled), func(t *testing.T) {
+				mustHost(t, "ip", "netns", "add", multiWANTestNS)
+				t.Cleanup(func() { exec.Command("ip", "netns", "del", multiWANTestNS).Run() })
+				for _, dev := range []string{"eth1", "ppp-wan2"} {
+					mustNS(t, "ip", "link", "add", dev, "type", "dummy")
+					mustNS(t, "ip", "link", "set", dev, "up")
+				}
+				mustNS(t, "ip", "route", "add", "default", "dev", "eth1", "metric", "200")
+				mustNS(t, "ip", "route", "add", "default", "dev", "ppp-wan2", "metric", "100")
+				cfg := config.Default()
+				cfg.MultiWAN.Enabled, cfg.MultiWAN.Mode = enabled, "failover"
+				cfg.Interfaces = []config.Interface{{ID: "underlay", Name: "eth1", Type: "physical"}}
+				cfg.WANs = []config.WAN{
+					{ID: "wan1", Index: 1, Interface: "underlay", Enabled: true, Proto: "static", Metric: 200},
+					{ID: "wan2", Index: 2, Enabled: true, Proto: proto, Metric: 100},
+				}
+				c := New(namespaceRunner{}, t.TempDir(), integrationLogger{t})
+				if err := c.Apply(context.Background(), cfg); err != nil {
+					t.Fatal(err)
+				}
+				c.pausedUntil = time.Time{}
+				for repeat := 0; repeat < 2; repeat++ {
+					mustNS(t, "ip", "link", "del", "ppp-wan2")
+					c.tick(context.Background(), cfg)
+					mustNS(t, "ip", "link", "add", "ppp-wan2", "type", "dummy")
+					mustNS(t, "ip", "link", "set", "ppp-wan2", "up")
+					mustNS(t, "ip", "route", "add", "default", "dev", "ppp-wan2", "metric", "100")
+					c.tick(context.Background(), cfg)
+					out := mustNS(t, "ip", "route", "show", "table", "3002")
+					if !strings.Contains(out, "default dev ppp-wan2") {
+						t.Fatalf("client route not restored: %s", out)
+					}
+					if !strings.Contains(c.knownRoutes["wan2"], "ppp-wan2") {
+						t.Fatalf("PPP history missing: %v", c.knownRoutes)
+					}
+					c.tick(context.Background(), cfg)
+					if got := mustNS(t, "ip", "route", "show", "table", "3002"); got != out {
+						t.Fatalf("unchanged tick changed routes: %s", got)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestIntegrationBalanceBuildsRealTablesAndRules(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
 		t.Skip("NETOS_INTEGRATION=1 и root")
