@@ -366,8 +366,8 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 			if !peer.Enabled {
 				continue
 			}
-			username, password := server.OcservUsername(peer), peer.Credentials["password"]
-			if server.OcservAuthMode() != "certificate" {
+			username, password := oc.Username(peer), peer.Credentials["password"]
+			if oc.AuthMode != "certificate" {
 				if _, err := s.Runner.RunInput(ctx, password+"\n"+password+"\n", "ocpasswd", "-c", passwdCandidate, username); err != nil {
 					return false, fmt.Errorf("пароль пользователя %s: %w", username, err)
 				}
