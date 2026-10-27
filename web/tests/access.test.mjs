@@ -220,3 +220,45 @@ test("invalid CSV and IPv4 masks keep partial-match semantics", () => {
   assert.equal(cell(cfg,"Интернет","Офис").verdict,"p",spec);
  }
 });
+
+test("address-set lookup preserves first match and observes edits on every calculation", () => {
+ const rule={name:"selected",enabled:true,zone:"global",flow:"forward",action:"accept",dst_ipset:"set"};
+ const cfg={networks:[{id:"lan",name:"LAN",enabled:true,zone:"lan",interface:"br0",router_address:"10.0.0.1/24"}],
+  firewall:{enabled:true,zones:[{name:"wan",policy:"drop"},{name:"lan",policy:"accept"}],rules:[rule],ipsets:[]}};
+ const zones={wan:["eth0"],lan:["br0"]};
+ const result=(src="zone:wan",dst="segment:lan")=>{
+  const before=JSON.stringify(cfg),m=accessMatrix(cfg,zones);
+  assert.equal(JSON.stringify(cfg),before);
+  return m.cells[m.sources.findIndex(s=>s.id===src)][m.destinations.findIndex(d=>d.id===dst)];
+ };
+ assert.equal(result().verdict,"n");
+ const first={id:"set",entries:[]},second={id:"set",entries:["10.0.0.0/24"]};
+ cfg.firewall.ipsets=[first,second];
+ assert.equal(result().verdict,"n");
+ first.entries.push("10.0.0.0/24");
+ assert.equal(result().verdict,"y");
+ first.entries[0]="10.0.0.7/32";
+ assert.equal(result().verdict,"p");
+ first.entries[0]="bad";
+ assert.equal(result().verdict,"p");
+ first.entries[0]="";
+ assert.equal(result().verdict,"y");
+ first.entries=[];
+ assert.equal(result().verdict,"n");
+ cfg.firewall.ipsets.reverse();
+ assert.equal(result().verdict,"y");
+ cfg.firewall.ipsets=[];
+ assert.equal(result().verdict,"n");
+ cfg.firewall.ipsets=[second];
+ rule.flow="in";
+ assert.equal(result("zone:wan","router").verdict,"p");
+ second.entries=[];
+ assert.equal(result("zone:wan","router").verdict,"n");
+ second.entries=["10.0.0.0/24"];
+ rule.dst_ipset="";rule.src_ipset="set";rule.action="drop";
+ assert.equal(result("segment:lan","router").verdict,"n");
+ second.entries=["192.0.2.0/24"];
+ assert.equal(result("segment:lan","router").verdict,"y");
+ cfg.firewall.enabled=false;cfg.firewall.ipsets=[null];
+ assert.equal(result().verdict,"y");
+});

@@ -86,13 +86,21 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
     group[r.flow as "in" | "forward"].push(r);
   }
   const parsedAddresses: ParsedAddresses = new Map();
+  const setSpecs = new Map<string, string | undefined>();
+  const setSpec = (id: string): string | undefined => {
+    if (!setSpecs.has(id)) {
+      const entries: string[] = (config.firewall?.ipsets || []).find((s: any) => s.id === id)?.entries || [];
+      setSpecs.set(id, entries.length ? entries.join(",") : undefined);
+    }
+    return setSpecs.get(id);
+  };
   const cells = sources.map((src) =>
-    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments, globalRules, zoneRules, parsedAddresses))),
+    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments, globalRules, zoneRules, parsedAddresses, setSpec))),
   );
   return { sources, destinations, cells };
 }
 
-function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>, parsedAddresses: ParsedAddresses): Access {
+function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>, parsedAddresses: ParsedAddresses, setSpec: (id: string) => string | undefined): Access {
   const fw = config.firewall || {};
   if (!fw.enabled) return { verdict: "y", reason: "файрволл выключен", exceptions: [] };
 
@@ -113,7 +121,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], glo
   const walk = (list: any[]): Access | null => {
     for (const r of list) {
       if (r.action === "continue") continue;
-      const match = matchRule(r, src, dst, flow, segments, fw.ipsets || [], parsedAddresses);
+      const match = matchRule(r, src, dst, flow, segments, setSpec, parsedAddresses);
       if (match === "none") continue;
       const accept = r.action === "accept";
       if (match === "part") partial.push({ accept, text: `«${r.name}»${conditions(r)}` });
@@ -164,7 +172,7 @@ function appliesToNew(r: any): boolean {
   return states.length === 0 || states.includes("new");
 }
 
-function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Entity[], sets: any[], parsedAddresses: ParsedAddresses): "full" | "part" | "none" {
+function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Entity[], setSpec: (id: string) => string | undefined, parsedAddresses: ParsedAddresses): "full" | "part" | "none" {
   let part = false;
 
   if (flow === "forward" && r.dst_zone && r.dst_zone !== dst.zone) return "none";
@@ -187,9 +195,9 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
 
   for (const [id, entity] of [[r.src_ipset, src], [r.dst_ipset, dst]] as [string, Entity][]) {
     if (!id) continue;
-    const entries: string[] = sets.find((s) => s.id === id)?.entries || [];
-    if (!entries.length) return "none";
-    const match = entity.kind === "router" ? "part" : side(entries.join(","), entity, segments, parsedAddresses);
+    const spec = setSpec(id);
+    if (spec === undefined) return "none";
+    const match = entity.kind === "router" ? "part" : side(spec, entity, segments, parsedAddresses);
     if (match === "none") return "none";
     if (match === "part") part = true;
   }
