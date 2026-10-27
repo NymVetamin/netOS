@@ -178,7 +178,7 @@ func (s *Server) sessionClients(ctx context.Context, server config.VPNServer) []
 		case "l2tp":
 			out, err = run(ctx, "ip", "-j", "-s", "address", "show")
 			if err == nil {
-				live, available = pppSessions(out, fmt.Sprintf("ppp-srv%d", server.Index))
+				live, available = pppSessions(out, config.L2TPInterfacePrefix(server.Index)+"+")
 			}
 		case "xray":
 			out, err = system.XrayUserStats(ctx, s.Collector.Runner, vpnservers.XrayStatsSocket(server))
@@ -373,7 +373,7 @@ func pppSessions(raw, name string) (map[string]vpnClientStatus, bool) {
 	}
 	rows := map[string]vpnClientStatus{}
 	for _, iface := range interfaces {
-		if iface.Name != name {
+		if iface.Name != name && !(strings.HasSuffix(name, "+") && strings.HasPrefix(iface.Name, strings.TrimSuffix(name, "+"))) {
 			continue
 		}
 		up, pointToPoint := false, false

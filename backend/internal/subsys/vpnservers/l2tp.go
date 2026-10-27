@@ -17,7 +17,7 @@ const l2tpChapSecrets = "/etc/ppp/chap-secrets"
 func l2tpUnitName(server config.VPNServer) string {
 	return fmt.Sprintf("netos-vpn-l2tp-srv%d.service", server.Index)
 }
-func l2tpPPPName(server config.VPNServer) string { return fmt.Sprintf("ppp-srv%d", server.Index) }
+func l2tpPPPName(server config.VPNServer) string { return config.L2TPInterfacePrefix(server.Index) }
 func l2tpAuthName(server config.VPNServer) string {
 	return fmt.Sprintf("netos-l2tp-srv%d", server.Index)
 }
@@ -27,19 +27,9 @@ func (s *Subsystem) l2tpPaths(server config.VPNServer) (conf, ppp, unit string) 
 	return base + ".conf", base + ".ppp", filepath.Join(s.UnitDir, l2tpUnitName(server))
 }
 
-func l2tpPeer(server config.VPNServer) config.VPNPeer {
-	for _, peer := range server.Peers {
-		if peer.Enabled {
-			return peer
-		}
-	}
-	return config.VPNPeer{}
-}
-
 func renderL2TPConf(server config.VPNServer, l2tp config.L2TPServerConfig, ppp string) string {
-	peer := l2tpPeer(server)
 	localIP := strings.Split(server.Subnet, "/")[0]
-	return fmt.Sprintf("[global]\nport = 1701\nlisten-addr = %s\naccess control = no\n\n[lns default]\nip range = %s-%s\nlocal ip = %s\nrequire chap = yes\nrefuse pap = yes\nrequire authentication = yes\nname = %s\npppoptfile = %s\nlength bit = yes\n", l2tp.Listen, peer.Address, peer.Address, localIP, l2tpAuthName(server), ppp)
+	return fmt.Sprintf("[global]\nport = 1701\nlisten-addr = %s\naccess control = no\n\n[lns default]\nassign ip = no\nlocal ip = %s\nrequire chap = yes\nrefuse pap = yes\nrequire authentication = yes\nname = %s\npppoptfile = %s\nlength bit = yes\n", l2tp.Listen, localIP, l2tpAuthName(server), ppp)
 }
 
 func renderL2TPPPP(server config.VPNServer, l2tp config.L2TPServerConfig) string {
@@ -47,34 +37,40 @@ func renderL2TPPPP(server config.VPNServer, l2tp config.L2TPServerConfig) string
 	if mtu == 0 {
 		mtu = 1400
 	}
-	return fmt.Sprintf("ifname %s\nname %s\nauth\nrequire-chap\nrefuse-pap\nnodefaultroute\nmtu %d\nmru %d\nnoipv6\nlcp-echo-interval 20\nlcp-echo-failure 3\n", l2tpPPPName(server), l2tpAuthName(server), mtu, mtu)
+	return fmt.Sprintf("name %s\nauth\nrequire-chap\nrefuse-pap\nnodefaultroute\nmtu %d\nmru %d\nnoipv6\nlcp-echo-interval 20\nlcp-echo-failure 3\n", l2tpAuthName(server), mtu, mtu)
 }
 
 func (s *Subsystem) l2tpPreUpPath(server config.VPNServer) string {
 	return filepath.Join(s.StateDir, fmt.Sprintf("vpn-l2tp-srv%d.pre-up", server.Index))
 }
 
-// pppd runs ip-pre-up synchronously after assigning the local address, before
-// passing IP traffic. Let Samba's owned-config reconciler bind that address
-// before the first SMB SYN can receive a refusal. Never restart Samba here:
-// an existing listener survives reconnects, and Apply owns access revocation.
-// Samba failure must not prevent the VPN itself from becoming usable.
+// pppd re-reads the interface name after synchronous ip-pre-up. Bind it to
+// the authenticated peer before enabling traffic, then optionally wait for
+// Samba's listener. Deleting a rejected new interface makes IPCP fail closed;
+// an already connected peer using the same address is left untouched.
 func renderL2TPPreUp(server config.VPNServer, cfg *config.Config) []byte {
-	noop := []byte("#!/bin/sh\nexit 0\n")
-	if !cfg.Samba.Enabled || !server.Enabled {
-		return noop
+	prefix, err := netip.ParsePrefix(server.Subnet)
+	if !server.Enabled || err != nil || !prefix.Addr().Is4() {
+		return []byte("#!/bin/sh\nexit 0\n")
 	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "#!/bin/sh\n[ \"$4\" = %q ] || exit 0\ncase \"$1\" in ppp[0-9]*) ;; *) exit 0 ;; esac\nname=''\ncase \"$PEERNAME/$5\" in\n", prefix.Addr().String())
+	for _, peer := range server.Peers {
+		if peer.Enabled {
+			identity := "'" + strings.ReplaceAll(peer.Credentials["username"]+"/"+peer.Address, "'", "'\"'\"'") + "'"
+			fmt.Fprintf(&out, "    %s) name=%s ;;\n", identity, config.L2TPPeerInterface(server.Index, peer.Address))
+		}
+	}
+	out.WriteString("esac\nif [ -z \"$name\" ] || ! ip link set dev \"$1\" name \"$name\"; then\n    ip link delete dev \"$1\"\n    exit 1\nfi\n")
 	selected := false
 	for _, id := range cfg.Samba.VPNs {
 		selected = selected || id == server.ID
 	}
-	prefix, err := netip.ParsePrefix(server.Subnet)
-	if !selected || err != nil || !prefix.Addr().Is4() {
-		return noop
+	if !cfg.Samba.Enabled || !selected {
+		out.WriteString("exit 0\n")
+		return []byte(out.String())
 	}
-	return []byte(fmt.Sprintf(`#!/bin/sh
-[ "$1" = %q ] && [ "$4" = %q ] || exit 0
-systemctl is-active --quiet netos-samba.service || exit 0
+	fmt.Fprintf(&out, `systemctl is-active --quiet netos-samba.service || exit 0
 timeout 10 /bin/sh -c '
 while :; do
     ss -H -lnt | awk '\''$4 == "%s:445" { found=1 } END { exit !found }'\'' && exit 0
@@ -82,7 +78,8 @@ while :; do
 done
 '
 exit 0
-`, l2tpPPPName(server), prefix.Addr().String(), prefix.Addr().String()))
+`, prefix.Addr().String())
+	return []byte(out.String())
 }
 
 func renderL2TPUnit(server config.VPNServer, conf string) string {
@@ -103,9 +100,16 @@ WantedBy=multi-user.target
 }
 
 func l2tpChapBlock(server config.VPNServer) string {
-	peer := l2tpPeer(server)
 	name := l2tpAuthName(server)
-	return fmt.Sprintf("# BEGIN %s\n%q %q %q %s\n# END %s\n", name, peer.Credentials["username"], name, peer.Credentials["password"], peer.Address, name)
+	var out strings.Builder
+	fmt.Fprintf(&out, "# BEGIN %s\n", name)
+	for _, peer := range server.Peers {
+		if peer.Enabled {
+			fmt.Fprintf(&out, "%q %q %q %s\n", peer.Credentials["username"], name, peer.Credentials["password"], peer.Address)
+		}
+	}
+	fmt.Fprintf(&out, "# END %s\n", name)
+	return out.String()
 }
 
 func updateL2TPChap(data []byte, server config.VPNServer, add bool) ([]byte, error) {

@@ -146,7 +146,7 @@ func serverInterface(s config.VPNServer) string {
 	case "ikev2":
 		return fmt.Sprintf("xfrm-srv%d", s.Index)
 	case "l2tp":
-		return fmt.Sprintf("ppp-srv%d", s.Index)
+		return config.L2TPInterfacePrefix(s.Index) + "+"
 	}
 	return ""
 }
@@ -759,6 +759,30 @@ func portMapBase(external, destination string) string {
 // mangle
 // ---------------------------------------------------------------------------
 
+// IPCP assigns an authenticated address, but a peer can still send forged IP
+// packets. Check the address against its pre-up interface before policy marks.
+func (b *builder) l2tpPeerSources(cfg *config.Config) {
+	created := false
+	for _, server := range cfg.VPNServers {
+		if server.Type != "l2tp" || !server.Enabled {
+			continue
+		}
+		if !created {
+			b.line(":NETOS-L2TP - [0:0]")
+			created = true
+		}
+		b.line("-A PREROUTING -i %s+ -j NETOS-L2TP", config.L2TPInterfacePrefix(server.Index))
+		for _, peer := range server.Peers {
+			if peer.Enabled {
+				b.line("-A NETOS-L2TP -i %s -s %s/32 -j RETURN", config.L2TPPeerInterface(server.Index, peer.Address), peer.Address)
+			}
+		}
+	}
+	if created {
+		b.line("-A NETOS-L2TP -j DROP")
+	}
+}
+
 func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line("*mangle")
 	b.line(":PREROUTING ACCEPT [0:0]")
@@ -767,6 +791,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":OUTPUT ACCEPT [0:0]")
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
+	b.l2tpPeerSources(cfg)
 	b.channelPolicies(cfg)
 	b.channelLocalReplies(cfg)
 	b.dnsChannelPolicies(cfg)

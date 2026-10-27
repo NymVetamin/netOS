@@ -54,7 +54,7 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
     }));
   const vpnSegments: Entity[] = (config.vpn_servers || []).filter((s: any) => s.enabled).map((s: any) => ({
     id: `vpn:${s.id}`, title: s.name || s.id, kind: "segment" as const, zone: "vpn", vpn: true,
-    ifaces: s.type === "wireguard" ? [`wg-srv${s.index}`] : s.type === "ikev2" ? [`xfrm-srv${s.index}`] : s.type === "ocserv" ? [`vpns${s.index}+`] : s.type === "l2tp" ? [`ppp-srv${s.index}`] : [],
+    ifaces: s.type === "wireguard" ? [`wg-srv${s.index}`] : s.type === "ikev2" ? [`xfrm-srv${s.index}`] : s.type === "ocserv" ? [`vpns${s.index}+`] : s.type === "l2tp" ? [`pp${s.index}-+`] : [],
     subnet: parseCIDR(s.subnet), isolated: !!s.isolated,
   }));
   const zoneEntity = (name: string): Entity[] => {

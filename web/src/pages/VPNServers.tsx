@@ -245,7 +245,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя IKEv2." /> :
-        server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} singleActive empty="Добавьте пользователя L2TP." /> : null)}</div></>}
+        server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя L2TP." /> : null)}</div></>}
     </Card></ClientCreators.Provider>
   </>;
 }
@@ -346,10 +346,9 @@ function OcservServer({ server, config, installed, patch }: any) {
 }
 
 // Пользователи с логином и паролем: OpenConnect, IKEv2 и L2TP устроены одинаково.
-function PasswordPeers({ server, config, patch, singleActive, empty }: any) {
+function PasswordPeers({ server, config, patch, empty }: any) {
   const { clientStatus } = useClientStatuses(server.id);
   const { channels, update } = serverTools(server, config, patch);
-  const enabledPeers = (server.peers || []).filter((item: any) => item.enabled).length;
   function addPeer() {
     const id = newID("peer");
     openOnCreate(id);
@@ -363,18 +362,18 @@ function PasswordPeers({ server, config, patch, singleActive, empty }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>{empty}</Empty> : (server.peers || []).map((peer: any) =>
-      <OcservPeer status={clientStatus.find(row => row.id === peer.id)} key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} canEnable={!singleActive || peer.enabled || enabledPeers === 0} />)}
+      <OcservPeer status={clientStatus.find(row => row.id === peer.id)} key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} />)}
   </PeerGroup>;
 }
 
-function OcservPeer({ status, server, peer, referenced, channels, update, canEnable = true }: any) {
+function OcservPeer({ status, server, peer, referenced, channels, update }: any) {
   const [open, setOpen] = useState(false);
   const certAuth = server.type === "ocserv" && ["certificate", "certificate_password"].includes(server.config?.auth_mode);
   const passwordAuth = !certAuth || server.config?.auth_mode === "certificate_password";
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   return <Row onOpenChange={setOpen} className="peer-card" icon="monitor-smartphone" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
-    toggle={<Switch checked={!!peer.enabled} disabled={!canEnable} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
+    toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} session />
     <div className="form-grid">
       <Field label="Название"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>

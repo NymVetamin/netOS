@@ -167,9 +167,10 @@ func InterfaceName(server config.VPNServer) string {
 // процесс дописывает свой номер, и первое же соединение приходит на vpns30, а
 // не на vpns3. Точный селектор не совпадал ни с чем, и разрешённый трафик
 // VPN-клиента упирался в запрет по умолчанию. Шаблон iptables с «+» покрывает
-// все процессы сервера.
+// все процессы сервера. У L2TP отдельный PPP-интерфейс каждого клиента
+// получает префикс сервера в синхронном pre-up hook.
 func MatchInterfaceName(server config.VPNServer) string {
-	if server.Type == "ocserv" {
+	if server.Type == "ocserv" || server.Type == "l2tp" {
 		return InterfaceName(server) + "+"
 	}
 	return InterfaceName(server)

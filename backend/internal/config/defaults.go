@@ -353,6 +353,7 @@ func (c *Config) Normalize() {
 	// прежней версии схемы хранит там имена — переводим, иначе мост остался бы
 	// без портов, а VLAN без родителя, и притом молча.
 	c.normalizeInterfaceLinks()
+	c.normalizeL2TPInterfaceLinks()
 
 	if legacy {
 		usedWANIndexes := map[int]bool{}

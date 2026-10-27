@@ -54,7 +54,7 @@ func TestL2TPHookRunsThroughDebianRunParts(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires Debian run-parts")
 	}
-	server := config.VPNServer{Index: 30, ID: "l2tp", Subnet: "10.99.1.1/24", Enabled: true}
+	server := config.VPNServer{Index: 30, ID: "l2tp", Subnet: "10.99.1.1/24", Enabled: true, Peers: []config.VPNPeer{{Enabled: true, Address: "10.99.1.2", Credentials: map[string]string{"username": "alice"}}}}
 	cfg := &config.Config{}
 	cfg.Samba.Enabled = true
 	cfg.Samba.VPNs = []string{server.ID}
@@ -63,6 +63,7 @@ func TestL2TPHookRunsThroughDebianRunParts(t *testing.T) {
 	log := filepath.Join(dir, "calls")
 	files := map[string]string{
 		target:                          string(renderL2TPPreUp(server, cfg)),
+		filepath.Join(dir, "ip"):        "#!/bin/sh\nexit 0\n",
 		filepath.Join(dir, "systemctl"): "#!/bin/sh\nexit 0\n",
 		filepath.Join(dir, "ss"):        "#!/bin/sh\necho checked >> \"$CALLS\"\necho 'LISTEN 0 50 10.99.1.1:445 0.0.0.0:*'\n",
 	}
@@ -74,8 +75,8 @@ func TestL2TPHookRunsThroughDebianRunParts(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(hooks, "netos-l2tp-srv30")); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("run-parts", hooks, "--arg=ppp-srv30", "--arg=tty", "--arg=0", "--arg=10.99.1.1", "--arg=10.99.1.2", "--arg=")
-	cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "CALLS="+log)
+	cmd := exec.Command("run-parts", hooks, "--arg=ppp0", "--arg=tty", "--arg=0", "--arg=10.99.1.1", "--arg=10.99.1.2", "--arg=")
+	cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "CALLS="+log, "PEERNAME=alice")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("run-parts: %v %s", err, out)
 	}

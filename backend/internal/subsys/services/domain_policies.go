@@ -26,7 +26,7 @@ func dnsFrontendNeeded(cfg *config.Config) bool {
 		return true
 	}
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && server.Type == "ocserv" {
+		if server.Enabled && (server.Type == "ocserv" || server.Type == "l2tp") {
 			return true
 		}
 	}

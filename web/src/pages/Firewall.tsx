@@ -1147,8 +1147,8 @@ function interfacesOfZone(config: any, zone: string): string[] {
 			if (!server.enabled) continue;
 			const prefix = server.type === "wireguard" ? "wg-srv" :
 				server.type === "ocserv" ? "vpns" :
-				server.type === "ikev2" ? "xfrm-srv" : server.type === "l2tp" ? "ppp-srv" : "";
-			if (prefix) names.push(`${prefix}${server.index}${server.type === "ocserv" ? "+" : ""}`);
+				server.type === "ikev2" ? "xfrm-srv" : server.type === "l2tp" ? "pp" : "";
+			if (prefix) names.push(`${prefix}${server.index}${server.type === "ocserv" ? "+" : server.type === "l2tp" ? "-+" : ""}`);
 		}
 	}
   return [...new Set(names.filter(Boolean))];

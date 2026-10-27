@@ -2755,6 +2755,9 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 		if s.Type == "l2tp" {
 			c.validateL2TPServer(r, path, s)
+			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
+				r.errf("dns.port", "порт 5355 занят внутренним DNS backend для клиентов L2TP")
+			}
 		}
 
 		seenAddr := map[string]bool{}
@@ -2805,12 +2808,11 @@ func (c *Config) validateL2TPServer(r *ValidationResult, path string, s VPNServe
 	if l2tp.MTU != 0 && (l2tp.MTU < 576 || l2tp.MTU > 1460) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-1460")
 	}
-	count := 0
+	usernames := map[string]bool{}
 	for i, peer := range s.Peers {
 		if !peer.Enabled {
 			continue
 		}
-		count++
 		ppath := fmt.Sprintf("%s.peers[%d].credentials", path, i)
 		if peer.Credentials["username"] == "" || unsafeConfigText(peer.Credentials["username"]) {
 			r.errf(ppath+".username", "укажите безопасный логин")
@@ -2818,9 +2820,11 @@ func (c *Config) validateL2TPServer(r *ValidationResult, path string, s VPNServe
 		if len(peer.Credentials["password"]) < 8 || unsafeConfigText(peer.Credentials["password"]) {
 			r.errf(ppath+".password", "пароль должен содержать не меньше 8 символов")
 		}
-	}
-	if count != 1 {
-		r.errf(path+".peers", "L2TP-сервер поддерживает ровно одного включённого клиента")
+		username := peer.Credentials["username"]
+		if usernames[username] {
+			r.errf(ppath+".username", "логин уже используется другим включённым клиентом")
+		}
+		usernames[username] = true
 	}
 }
 

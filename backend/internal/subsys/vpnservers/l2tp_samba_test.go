@@ -24,14 +24,14 @@ func TestL2TPPreUpWaitsForExactListenerWithoutRestart(t *testing.T) {
 		iface, address            string
 		readyAt, wantPolls        int
 	}{
-		{"cold connect", true, true, true, "ppp-srv30", "10.99.1.1", 3, 3},
-		{"reconnect", true, true, true, "ppp-srv30", "10.99.1.1", 1, 1},
-		{"unselected", false, true, true, "ppp-srv30", "10.99.1.1", 3, 0},
-		{"disabled", true, false, true, "ppp-srv30", "10.99.1.1", 3, 0},
-		{"stopped", true, true, false, "ppp-srv30", "10.99.1.1", 3, 0},
-		{"other interface", true, true, true, "ppp-srv31", "10.99.1.1", 3, 0},
-		{"other address", true, true, true, "ppp-srv30", "10.99.2.1", 3, 0},
-		{"unavailable listener", true, true, true, "ppp-srv30", "10.99.1.1", 0, -1},
+		{"cold connect", true, true, true, "ppp0", "10.99.1.1", 3, 3},
+		{"reconnect", true, true, true, "ppp0", "10.99.1.1", 1, 1},
+		{"unselected", false, true, true, "ppp0", "10.99.1.1", 3, 0},
+		{"disabled", true, false, true, "ppp0", "10.99.1.1", 3, 0},
+		{"stopped", true, true, false, "ppp0", "10.99.1.1", 3, 0},
+		{"other interface", true, true, true, "ppp-ch31", "10.99.1.1", 3, 0},
+		{"other address", true, true, true, "ppp0", "10.99.2.1", 3, 0},
+		{"unavailable listener", true, true, true, "ppp0", "10.99.1.1", 0, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -40,12 +40,13 @@ func TestL2TPPreUpWaitsForExactListenerWithoutRestart(t *testing.T) {
 			if tc.selected {
 				cfg.Samba.VPNs = []string{"l2tp"}
 			}
-			server := config.VPNServer{ID: "l2tp", Index: 30, Enabled: true, Subnet: "10.99.1.1/24"}
+			server := config.VPNServer{ID: "l2tp", Index: 30, Enabled: true, Subnet: "10.99.1.1/24", Peers: []config.VPNPeer{{Enabled: true, Address: "10.99.1.2", Credentials: map[string]string{"username": "alice"}}}}
 			active := "1"
 			if tc.active {
 				active = "0"
 			}
 			files := map[string]string{
+				"ip":        "#!/bin/sh\nexit 0\n",
 				"systemctl": "#!/bin/sh\necho \"$*\" >> \"$DIR/calls\"\n[ \"$1\" = is-active ] || exit 99\nexit " + active + "\n",
 				"ss":        "#!/bin/sh\nn=0; test ! -f \"$DIR/count\" || n=$(cat \"$DIR/count\")\nn=$((n+1)); echo $n > \"$DIR/count\"\necho 'LISTEN 0 50 10.99.1.10:445 0.0.0.0:*'\nif [ \"$READY\" -gt 0 ] && [ $n -ge \"$READY\" ]; then echo 'LISTEN 0 50 10.99.1.1:445 0.0.0.0:*'; fi\n",
 				"hook":      string(renderL2TPPreUp(server, cfg)),
@@ -57,8 +58,8 @@ func TestL2TPPreUpWaitsForExactListenerWithoutRestart(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 13*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, "/bin/sh", filepath.Join(dir, "hook"), tc.iface, "unused", "0", tc.address)
-			cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "DIR="+dir, fmt.Sprintf("READY=%d", tc.readyAt))
+			cmd := exec.CommandContext(ctx, "/bin/sh", filepath.Join(dir, "hook"), tc.iface, "unused", "0", tc.address, "10.99.1.2")
+			cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "DIR="+dir, "PEERNAME=alice", fmt.Sprintf("READY=%d", tc.readyAt))
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("VPN hook failed: %v %s", err, out)
 			}

@@ -12,6 +12,14 @@ import (
 	"github.com/netos-router/netos/internal/runtime"
 )
 
+func TestL2TPSessionsStayWithinServerPrefix(t *testing.T) {
+	raw := `[{"ifname":"pp2-0a090002","flags":["POINTOPOINT","UP"],"addr_info":[{"peer":"10.9.0.2/32"}],"stats64":{"rx":{"bytes":123},"tx":{"bytes":456}}},{"ifname":"pp2-0a090003","flags":["POINTOPOINT","UP"],"addr_info":[{"peer":"10.9.0.3/32"}]},{"ifname":"pp20-0a090004","flags":["POINTOPOINT","UP"],"addr_info":[{"peer":"10.9.0.4/32"}]}]`
+	rows, available := pppSessions(raw, "pp2-+")
+	if !available || len(rows) != 2 || rows["10.9.0.2"].Received != 123 || rows["10.9.0.3"].State != "online" {
+		t.Fatalf("incorrect server sessions: available=%v rows=%+v", available, rows)
+	}
+}
+
 func TestVPNSessionParsers(t *testing.T) {
 	ike := `list-sa event {netos-srv2 {uniqueid=1 state=ESTABLISHED remote-id=wrong remote-eap-id=alice remote-host=192.0.2.7 remote-port=4500 child-sas {child-1 {state=INSTALLED bytes-in=123 bytes-out=456}}}} list-sas reply {}`
 	for _, tc := range []struct {
@@ -21,7 +29,7 @@ func TestVPNSessionParsers(t *testing.T) {
 	}{
 		{"ocserv", `[{"Username":"alice","State":"connected","Remote IP":"192.0.2.7","RX":"123","TX":"456","Full session":"must-not-leak"}]`, "alice", "192.0.2.7", 123, ocservSessions},
 		{"ikev2", ike, "alice", "192.0.2.7:4500", 123, func(raw string) (map[string]vpnClientStatus, bool) { return ikev2Sessions(raw, "netos-srv2") }},
-		{"l2tp", `[{"ifname":"ppp-srv2","flags":["POINTOPOINT","UP"],"addr_info":[{"family":"inet","local":"10.9.0.1","address":"10.9.0.2","prefixlen":32}],"stats64":{"rx":{"bytes":123},"tx":{"bytes":456}}}]`, "10.9.0.2", "", 123, func(raw string) (map[string]vpnClientStatus, bool) { return pppSessions(raw, "ppp-srv2") }},
+		{"l2tp", `[{"ifname":"pp2-0a090002","flags":["POINTOPOINT","UP"],"addr_info":[{"family":"inet","local":"10.9.0.1","address":"10.9.0.2","prefixlen":32}],"stats64":{"rx":{"bytes":123},"tx":{"bytes":456}}}]`, "10.9.0.2", "", 123, func(raw string) (map[string]vpnClientStatus, bool) { return pppSessions(raw, "pp2-+") }},
 		{"xray", `{"users":[{"email":"srv/phone","ips":[{"ip":"192.0.2.7","lastSeen":1234}],"traffic":{"uplink":123,"downlink":456}}]}`, "srv/phone", "192.0.2.7", 123, xraySessions},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

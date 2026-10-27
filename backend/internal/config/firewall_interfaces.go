@@ -30,7 +30,10 @@ func (c *Config) FirewallInterfaceInZone(name, zone string) bool {
 			}
 		}
 		for _, s := range c.VPNServers {
-			prefix := map[string]string{"wireguard": "wg-srv", "l2tp": "ppp-srv", "ikev2": "xfrm-srv", "ocserv": "vpns"}[s.Type]
+			if s.Type == "l2tp" && name == L2TPInterfacePrefix(s.Index)+"+" {
+				return true
+			}
+			prefix := map[string]string{"wireguard": "wg-srv", "ikev2": "xfrm-srv", "ocserv": "vpns"}[s.Type]
 			suffix := ""
 			if s.Type == "ocserv" {
 				suffix = "+"

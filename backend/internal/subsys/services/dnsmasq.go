@@ -77,6 +77,8 @@ func dnsListenInterfaces(cfg *config.Config) []string {
 			add(fmt.Sprintf("xfrm-srv%d", server.Index))
 		case "ocserv":
 			add(fmt.Sprintf("vpns%d*", server.Index))
+		case "l2tp":
+			add(config.L2TPInterfacePrefix(server.Index) + "*")
 		}
 	}
 	return out

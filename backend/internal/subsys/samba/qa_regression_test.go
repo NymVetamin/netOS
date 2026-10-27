@@ -183,7 +183,7 @@ func TestBarePPPAddressRepairsSelectedSambaListener(t *testing.T) {
 	if err := s.Apply(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	r.address = "17: pp30-0a630102 inet 10.99.1.1 peer 10.99.1.2/32 scope global pp30-0a630102\n"
 	r.calls = nil
 	if err := s.ReconcileVPNListeners(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestL2TPSelectionBeforeFirstPPPDefersAddressBinding(t *testing.T) {
 	if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart netos-samba.service") {
 		t.Fatal("absent PPP caused a restart")
 	}
-	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	r.address = "17: pp30-0a630102 inet 10.99.1.1 peer 10.99.1.2/32 scope global pp30-0a630102\n"
 	r.calls = nil
 	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestVPNListenerUpdateValidatesBeforeReplacingWorkingSamba(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	r.address = "17: pp30-0a630102 inet 10.99.1.1 peer 10.99.1.2/32 scope global pp30-0a630102\n"
 	r.fail = "testparm"
 	r.calls = nil
 	if err := s.ReconcileVPNListeners(ctx, c); err == nil {
@@ -291,9 +291,9 @@ func TestPPPReconnectUpdatesBindingDuringListenerCooldown(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, address := range []string{
-		"17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n",
+		"17: pp30-0a630102 inet 10.99.1.1 peer 10.99.1.2/32 scope global pp30-0a630102\n",
 		"",
-		"18: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n",
+		"18: pp30-0a630102 inet 10.99.1.1 peer 10.99.1.2/32 scope global pp30-0a630102\n",
 	} {
 		r.address = address
 		r.calls = nil
@@ -332,7 +332,7 @@ func TestBoundL2TPListenerSurvivesDisconnectAndReconnect(t *testing.T) {
 	if err := s.Apply(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-	r.address = "17: ppp-srv30 inet 10.99.1.1 peer 10.99.1.2/32 scope global ppp-srv30\n"
+	r.address = "17: pp30-0a630102 inet 10.99.1.1 peer 10.99.1.2/32 scope global pp30-0a630102\n"
 	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
 		t.Fatal(err)
 	}
