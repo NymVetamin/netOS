@@ -64,15 +64,43 @@ func planFieldByJSON(t reflect.Type, key string) (reflect.StructField, bool) {
 	return reflect.StructField{}, false
 }
 
-func planArrayItem(raw any, key, id string) any {
+// Decoded plan trees are immutable and retained for this resolver's lifetime.
+// The element pointer distinguishes before/after arrays without serializing paths.
+type planArrayKey struct {
+	first    *any
+	length   int
+	identity string
+}
+
+type planResolver struct {
+	arrays map[planArrayKey]map[string]any
+}
+
+func (r *planResolver) arrayItem(raw any, key, id string) any {
 	list, _ := raw.([]any)
 	if key != "" {
-		for _, item := range list {
-			if m, ok := item.(map[string]any); ok && m[key] == id {
-				return item
-			}
+		if len(list) == 0 {
+			return nil
 		}
-		return nil
+		arrayKey := planArrayKey{&list[0], len(list), key}
+		index, found := r.arrays[arrayKey]
+		if !found {
+			index = make(map[string]any, len(list))
+			for _, item := range list {
+				if m, ok := item.(map[string]any); ok {
+					if value, ok := m[key].(string); ok {
+						if _, exists := index[value]; !exists {
+							index[value] = item
+						}
+					}
+				}
+			}
+			if r.arrays == nil {
+				r.arrays = map[planArrayKey]map[string]any{}
+			}
+			r.arrays[arrayKey] = index
+		}
+		return index[id]
 	}
 	index, err := strconv.Atoi(id)
 	if err == nil && index >= 0 && index < len(list) {
@@ -83,7 +111,7 @@ func planArrayItem(raw any, key, id string) any {
 
 // Resolve display metadata from schema tags. Values are used only to identify
 // typed objects and select provider schemas. Opaque JSON never supplies IDs.
-func resolvePlanField(after, before any, path []string) planField {
+func (r *planResolver) resolveField(after, before any, path []string) planField {
 	typ := reflect.TypeOf(config.Config{})
 	a, b := after, before
 	out := planField{}
@@ -94,8 +122,8 @@ func resolvePlanField(after, before any, path []string) planField {
 		typ = indirectPlanType(typ)
 		if typ != nil && typ.Kind() == reflect.Slice {
 			identity := planIdentity(typ)
-			a = planArrayItem(a, identity, part)
-			b = planArrayItem(b, identity, part)
+			a = r.arrayItem(a, identity, part)
+			b = r.arrayItem(b, identity, part)
 			name := part
 			for _, value := range []any{a, b} {
 				m, _ := value.(map[string]any)
@@ -122,8 +150,8 @@ func resolvePlanField(after, before any, path []string) planField {
 		_, aa := a.([]any)
 		_, ba := b.([]any)
 		if aa || ba {
-			a = planArrayItem(a, "", part)
-			b = planArrayItem(b, "", part)
+			a = r.arrayItem(a, "", part)
+			b = r.arrayItem(b, "", part)
 			number := part
 			if n, err := strconv.Atoi(part); err == nil {
 				number = strconv.Itoa(n + 1)

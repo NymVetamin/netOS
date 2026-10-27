@@ -55,10 +55,11 @@ func configurationChanges(old, next *config.Config) []planChange {
 		return value
 	}
 	a, b := object(old), object(next)
-	changes := configdiff.Diff(a, b, func(path []string) string { return resolvePlanField(b, a, path).Identity })
+	var resolver planResolver
+	changes := configdiff.Diff(a, b, func(path []string) string { return resolver.resolveField(b, a, path).Identity })
 	result := []planChange{}
 	for _, change := range changes {
-		field := resolvePlanField(b, a, change.Path)
+		field := resolver.resolveField(b, a, change.Path)
 		if field.Ignored {
 			continue
 		}
@@ -77,7 +78,7 @@ func configurationChanges(old, next *config.Config) []planChange {
 				for _, id := range ids {
 					part, _ := id.(string)
 					p := append(append([]string{}, change.Path...), part)
-					result = append(result, resolvePlanField(root, other, p).Label)
+					result = append(result, resolver.resolveField(root, other, p).Label)
 				}
 				return configdiff.Value{Present: value.Present, Data: result}
 			}
