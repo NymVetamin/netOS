@@ -89,3 +89,40 @@ func TestWireGuardClientProfileValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodedWireGuardProfilesPreserveDefaultsAndExplicitSettings(t *testing.T) {
+	for _, legacyRoutes := range [][]string{nil, {}, {"192.0.2.0/24"}} {
+		server := validWGServerConfig().VPNServers[0]
+		server.Config["client_dns"] = []string{"192.0.2.53"}
+		server.Config["client_allowed_ips"] = legacyRoutes
+		wg, err := server.WireGuardConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, explicit := range []*WireGuardClientProfile{nil, {}, {DNS: []string{}, AllowedIPs: []string{}}, {UseRouterDNS: true, DNS: []string{"ignored"}, AllowedIPs: []string{"198.51.100.0/24"}}} {
+			peer := VPNPeer{WireGuardProfile: explicit}
+			before, _ := json.Marshal(peer)
+			want, err := server.WireGuardProfileFor(peer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := wg.clientProfileFor(peer, server.Subnet)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("decoded profile differs: %#v / %#v", got, want)
+			}
+			after, _ := json.Marshal(peer)
+			if string(before) != string(after) {
+				t.Fatal("resolution mutated peer profile")
+			}
+		}
+	}
+	server := validWGServerConfig().VPNServers[0]
+	server.Config = map[string]any{"unknown": true}
+	explicit := VPNPeer{WireGuardProfile: &WireGuardClientProfile{DNS: []string{}, AllowedIPs: []string{"0.0.0.0/0"}}}
+	if _, err := server.WireGuardProfileFor(explicit); err != nil {
+		t.Fatal("explicit profile unexpectedly decoded server settings")
+	}
+	if _, err := server.WireGuardProfileFor(VPNPeer{}); err == nil {
+		t.Fatal("inherited profile ignored invalid server settings")
+	}
+}

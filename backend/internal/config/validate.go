@@ -3230,10 +3230,7 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 		}
 		seenIDs[peer.ID] = true
 
-		profile, profileErr := s.WireGuardProfileFor(peer)
-		if profileErr != nil {
-			r.errf(ppath+".wireguard_profile", "%v", profileErr)
-		}
+		profile := wg.clientProfileFor(peer, s.Subnet)
 		for j, address := range profile.DNS {
 			if net.ParseIP(address) == nil {
 				r.errf(fmt.Sprintf("%s.wireguard_profile.dns[%d]", ppath, j), "некорректный адрес DNS-сервера")

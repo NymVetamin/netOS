@@ -29,24 +29,33 @@ type WireGuardClientProfile struct {
 }
 
 func (s VPNServer) WireGuardProfileFor(peer VPNPeer) (WireGuardClientProfile, error) {
+	var wg WireGuardServerConfig
+	if peer.WireGuardProfile == nil {
+		var err error
+		wg, err = s.WireGuardConfig()
+		if err != nil {
+			return WireGuardClientProfile{}, err
+		}
+	}
+	return wg.clientProfileFor(peer, s.Subnet), nil
+}
+
+// clientProfileFor also accepts a configuration already decoded by validation.
+func (wg WireGuardServerConfig) clientProfileFor(peer VPNPeer, subnet string) WireGuardClientProfile {
 	var profile WireGuardClientProfile
 	if peer.WireGuardProfile != nil {
 		profile = *peer.WireGuardProfile
 	} else {
 		// Preserve already-issued profiles, including profiles with no DNS.
-		wg, err := s.WireGuardConfig()
-		if err != nil {
-			return profile, err
-		}
 		profile.DNS, profile.AllowedIPs = wg.ClientDNS, wg.ClientAllowedIPs
 		if len(profile.AllowedIPs) == 0 {
 			profile.AllowedIPs = []string{"0.0.0.0/0"}
 		}
 	}
 	if profile.UseRouterDNS {
-		profile.DNS = []string{strings.SplitN(s.Subnet, "/", 2)[0]}
+		profile.DNS = []string{strings.SplitN(subnet, "/", 2)[0]}
 	}
-	return profile, nil
+	return profile
 }
 
 // XrayServerConfig describes an authenticated Xray listener. An empty protocol
