@@ -1,9 +1,10 @@
+import { indexClientStatuses } from "../clientStatusIndex";
 import { CopyButton } from "../CopyButton";
 import { realityClientConfig } from "../xrayProfile";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
 import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError, formatMiB } from "../api";
 import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
@@ -41,7 +42,8 @@ function useClientStatuses(serverID: string) {
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
   }, [serverID]);
-  return { clientStatus, statusFailed };
+  const statusIndex = useMemo(() => indexClientStatuses(clientStatus), [clientStatus]);
+  return { statusIndex, statusFailed };
 }
 
 function ClientBadge({ server, peer, status }: any) {
@@ -353,7 +355,7 @@ function OcservServer({ server, config, installed, patch }: any) {
 
 // Пользователи с логином и паролем: OpenConnect, IKEv2 и L2TP устроены одинаково.
 function PasswordPeers({ server, config, patch, empty }: any) {
-  const { clientStatus } = useClientStatuses(server.id);
+  const { statusIndex } = useClientStatuses(server.id);
   const { channels, update } = serverTools(server, config, patch);
   function addPeer() {
     const id = newID("peer");
@@ -368,7 +370,7 @@ function PasswordPeers({ server, config, patch, empty }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>{empty}</Empty> : (server.peers || []).map((peer: any) =>
-      <OcservPeer status={clientStatus.find(row => row.id === peer.id)} key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} />)}
+      <OcservPeer status={statusIndex.get(peer.id)} key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} />)}
   </PeerGroup>;
 }
 
@@ -444,7 +446,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
 }
 
 function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
-  const { clientStatus } = useClientStatuses(server.id);
+  const { statusIndex } = useClientStatuses(server.id);
   const { cfg, channels, update } = serverTools(server, config, patch);
   const protocol = cfg.protocol || "reality";
   const [wgClientKeys, setWGClientKeys] = useState<Record<string, string>>({});
@@ -472,7 +474,7 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor status={clientStatus.find(row => row.id === peer.id && (!peer.credentials?.public_key || row.public_key === peer.credentials.public_key))} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
 }
 
@@ -630,7 +632,7 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
 
 function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setClientSecrets, setError }: any) {
   const { cfg, channels, update } = serverTools(server, config, patch);
-  const { clientStatus, statusFailed } = useClientStatuses(server.id);
+  const { statusIndex, statusFailed } = useClientStatuses(server.id);
 
   async function addPeer() {
     setError("");
@@ -681,7 +683,7 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер — netOS сам подготовит всё необходимое.</Empty> : (server.peers || []).map((peer: any) =>
-      <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : clientStatus.find((row) => row.id === peer.id && row.public_key === peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
+      <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : statusIndex.getWithKey(peer.id, peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
   </PeerGroup>;
 }
 
