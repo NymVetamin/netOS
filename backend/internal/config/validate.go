@@ -1758,7 +1758,18 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 		r.errf("dhcp.advanced_options", "Kea использует структурированный JSON и не поддерживает произвольные текстовые директивы")
 	}
 
-	networks := c.networkIDs()
+	if len(c.DHCP.Reservations) == 0 {
+		return
+	}
+	type networkEntry struct {
+		prefix  netip.Prefix
+		gateway string
+	}
+	networks := map[string][]networkEntry{}
+	for _, n := range c.Networks {
+		p, _ := netip.ParsePrefix(n.RouterAddress)
+		networks[n.ID] = append(networks[n.ID], networkEntry{p, n.DHCPPool.Gateway})
+	}
 	seenMAC := map[string]bool{}
 	seenIP := map[string]bool{}
 	seenID := map[string]bool{}
@@ -1787,18 +1798,15 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 				r.errf(path+".ip", "адрес %s уже закреплён за другим устройством", res.IP)
 			}
 			seenIP[res.IP] = true
-			if !c.addressInNetwork(res.Network, addr) {
+			if len(networks[res.Network]) == 0 || !networks[res.Network][0].prefix.Contains(addr) {
 				r.errf(path+".ip", "адрес не принадлежит подсети выбранного сегмента")
 			} else {
-				for _, n := range c.Networks {
-					if n.ID != res.Network {
+				for _, n := range networks[res.Network] {
+					prefix := n.prefix
+					if !prefix.IsValid() || !prefix.Addr().Is4() {
 						continue
 					}
-					prefix, err := netip.ParsePrefix(n.RouterAddress)
-					if err != nil || !prefix.Addr().Is4() {
-						continue
-					}
-					if addr == prefix.Addr() || res.IP == n.DHCPPool.Gateway {
+					if addr == prefix.Addr() || res.IP == n.gateway {
 						r.errf(path+".ip", "клиенту нельзя закрепить адрес роутера или DHCP-шлюза")
 					} else if prefix.Bits() <= 30 && (addr == prefix.Masked().Addr() || addr == ipv4Broadcast(prefix)) {
 						r.errf(path+".ip", "клиенту нельзя закрепить адрес сети или широковещательный адрес")
@@ -1806,7 +1814,7 @@ func (c *Config) validateDHCP(r *ValidationResult) {
 				}
 			}
 		}
-		if !networks[res.Network] {
+		if len(networks[res.Network]) == 0 {
 			r.errf(path+".network", "неизвестный сегмент %q", res.Network)
 		}
 		if res.Hostname != "" && !validDNSName(res.Hostname) {
