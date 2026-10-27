@@ -1,3 +1,4 @@
+import { storageAccessIndex } from "../storageAccess";
 import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -10,6 +11,7 @@ const initial = () => ({ enabled: false, discovery: true, workgroup: "WORKGROUP"
 
 export function StoragePage({ config, patch, admin }: Props) {
   const s = { ...initial(), ...config.samba };
+  const access = storageAccessIndex(s.shares || []);
   const installed = (config.components || []).some((c: any) => c.id === "samba" && c.installed);
   const [devices, setDevices] = useState<any[]>([]);
   const [error, setError] = useState("");
@@ -68,9 +70,9 @@ export function StoragePage({ config, patch, admin }: Props) {
       <Card tight title="Пользователи Samba" subtitle="Отдельные учётные записи для доступа к файлам" actions={<button className="btn" onClick={() => edit(d => d.users.push({ id: openOnCreate(newID("smbuser")), name: "", password: "" }))}>Добавить пользователя</button>}>
         {(s.users || []).length === 0 && <Empty>Добавьте логин и пароль для подключения к папкам.</Empty>}
         {(s.users || []).length > 0 && <Rows cols={["Логин", "Папки", "", "", ""]}>{(s.users || []).map((u: any) =>
-          <Row key={u.id} id={u.id} cells={[<strong>{u.name || "без имени"}</strong>, <span className="dim">{(s.shares || []).filter((sh: any) => (sh.users || []).includes(u.id)).map((sh: any) => sh.name).join(", ") || "нет доступа к папкам"}</span>]}>
+          <Row key={u.id} id={u.id} cells={[<strong>{u.name || "без имени"}</strong>, <span className="dim">{(access.namesByUser.get(u.id) || []).join(", ") || "нет доступа к папкам"}</span>]}>
             <div className="form-grid"><Field label="Логин"><input value={u.name} maxLength={20} autoComplete="off" onChange={e => edit(d => d.users.find((x: any) => x.id === u.id).name = e.target.value)} /></Field><Field label="Пароль" hint="Минимум 8 символов. Пустое поле сохраняет ранее заданный пароль."><input type="password" autoComplete="new-password" {...secretInput(u, "password")} value={u.password || ""} onChange={e => edit(d => d.users.find((x: any) => x.id === u.id).password = e.target.value)} /></Field></div>
-            <div className="row-actions end"><button className="btn ghost sm" disabled={(s.shares || []).some((sh: any) => (sh.users || []).includes(u.id))} onClick={() => edit(d => d.users = d.users.filter((x: any) => x.id !== u.id))}>Удалить</button></div>
+            <div className="row-actions end"><button className="btn ghost sm" disabled={access.namesByUser.has(u.id)} onClick={() => edit(d => d.users = d.users.filter((x: any) => x.id !== u.id))}>Удалить</button></div>
           </Row>)}</Rows>}
       </Card>
       <Card tight title="Сетевые папки" subtitle="Одна папка открывает содержимое выбранного тома" actions={<button className="btn" disabled={!(s.volumes || []).length || !(s.users || []).length} onClick={() => edit(d => d.shares.push({ id: openOnCreate(newID("share")), name: "USB" + (d.shares.length + 1), volume: d.volumes.find((v: any) => v.enabled)?.id || "", enabled: false, read_only: true, users: [] }))}>Добавить папку</button>}>
@@ -81,7 +83,7 @@ export function StoragePage({ config, patch, admin }: Props) {
             sh.read_only ? "только чтение" : "чтение и запись", `пользователей: ${(sh.users || []).length}`, <Badge tone={sh.enabled ? "ok" : "neutral"}>{sh.enabled ? "опубликована" : "черновик"}</Badge>]}
             toggle={<Switch label="" ariaLabel="Опубликовать" checked={!!sh.enabled} disabled={!installed} onChange={v => update(x => x.enabled = v)} />}>
             <div className="form-grid"><Field label="Имя папки"><input value={sh.name} maxLength={20} onChange={e => update(x => x.name = e.target.value)} /></Field><Field label="Том"><select value={sh.volume} onChange={e => update(x => x.volume = e.target.value)}><option value="">Выберите том</option>{(s.volumes || []).map((v: any) => <option key={v.id} value={v.id} disabled={!v.enabled}>{devices.find(d => d.uuid === v.uuid)?.label || v.uuid}{!v.enabled ? " — отключён" : ""}</option>)}</select></Field><Field label="Права"><Switch label="Только чтение" checked={!!sh.read_only} onChange={v => update(x => x.read_only = v)} /></Field></div>
-            <div style={{ marginTop: "0.8rem" }}><Field label="Кто может подключаться">{(s.users || []).map((u: any) => <Switch key={u.id} label={u.name || "Без имени"} checked={(sh.users || []).includes(u.id)} onChange={on => update(x => x.users = on ? [...(x.users || []), u.id] : (x.users || []).filter((id: string) => id !== u.id))} />)}</Field></div>
+            <div style={{ marginTop: "0.8rem" }}><Field label="Кто может подключаться">{(s.users || []).map((u: any) => <Switch key={u.id} label={u.name || "Без имени"} checked={access.usersByShare.get(sh)!.has(u.id)} onChange={on => update(x => x.users = on ? [...(x.users || []), u.id] : (x.users || []).filter((id: string) => id !== u.id))} />)}</Field></div>
             <div className="row-actions end"><button className="btn ghost sm" disabled={sh.enabled} onClick={() => edit(d => d.shares = d.shares.filter((x: any) => x.id !== sh.id))}>Удалить</button></div>
           </Row>;
         })}</Rows>}
