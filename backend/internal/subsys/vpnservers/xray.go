@@ -117,7 +117,14 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 			defaultRules = append(defaultRules, map[string]any{"type": "field", "user": []string{email}, "outboundTag": outboundTag(channelID)})
 		}
 	}
-	policies := append([]config.Policy(nil), cfg.Policies...)
+	// Sort only this server's policies, without copying or reordering the config.
+	policies := make([]*config.Policy, 0, len(cfg.Policies))
+	for i := range cfg.Policies {
+		policy := &cfg.Policies[i]
+		if policy.Enabled && policy.VPNServer == server.ID {
+			policies = append(policies, policy)
+		}
+	}
 	sort.SliceStable(policies, func(i, j int) bool {
 		if policies[i].Priority != policies[j].Priority {
 			return policies[i].Priority < policies[j].Priority
@@ -125,9 +132,6 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		return policies[i].ID < policies[j].ID
 	})
 	for _, policy := range policies {
-		if !policy.Enabled || policy.VPNServer != server.ID {
-			continue
-		}
 		users := []string{}
 		if policy.VPNPeer != "" {
 			if email := emails[policy.VPNPeer]; email != "" {
