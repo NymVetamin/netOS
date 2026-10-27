@@ -70,21 +70,30 @@ func (c *Config) validateIPTV(r *ValidationResult) {
 	if len(c.IPTV.Networks) == 0 {
 		r.errf("iptv.networks", "выберите локальную сеть для IPTV")
 	}
-	seen := map[string]bool{}
+	type selection struct{ eligible, seen bool }
+	selected := map[string]selection{}
 	for _, id := range c.IPTV.Networks {
-		found := false
+		selected[id] = selection{}
+	}
+	if len(selected) > 0 {
 		for _, n := range c.Networks {
-			if n.ID != id || !n.Enabled {
+			entry, wanted := selected[n.ID]
+			if !wanted || !n.Enabled {
 				continue
 			}
 			iface, ok := c.InterfaceByID(n.Interface)
 			prefix, err := netip.ParsePrefix(n.RouterAddress)
-			found = ok && iface.Enabled && iface.Name != up && err == nil && prefix.Addr().Is4()
+			entry.eligible = ok && iface.Enabled && iface.Name != up && err == nil && prefix.Addr().Is4()
+			selected[n.ID] = entry
 		}
-		if !found || seen[id] {
+	}
+	for _, id := range c.IPTV.Networks {
+		entry := selected[id]
+		if !entry.eligible || entry.seen {
 			r.errf("iptv.networks", "сеть %q выключена, повторяется или не подходит для IPTV", id)
 		}
-		seen[id] = true
+		entry.seen = true
+		selected[id] = entry
 	}
 	for _, w := range c.WANs {
 		if w.ID == c.IPTV.Upstream {
