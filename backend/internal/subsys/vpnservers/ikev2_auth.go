@@ -64,6 +64,7 @@ func renderIKEv2AuthUsers(servers []config.VPNServer) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		var splitRoutes string
 		for _, peer := range server.Peers {
 			if !peer.Enabled {
 				continue
@@ -91,7 +92,10 @@ func renderIKEv2AuthUsers(servers []config.VPNServer) ([]byte, error) {
 				fmt.Fprintf(&b, ",\n    %s += %s", attribute, address)
 			}
 			if len(ike.SplitRoutes) > 0 {
-				fmt.Fprintf(&b, ",\n    CVPN3000-IPSec-Split-Tunneling-Policy = 1,\n    CVPN3000-IPSec-Split-Tunnel-List = \"%s\"", strings.Join(ikev2RoutesWithDNS(ike.SplitRoutes, ike.DNS), ","))
+				if splitRoutes == "" {
+					splitRoutes = strings.Join(ikev2RoutesWithDNS(ike.SplitRoutes, ike.DNS), ",")
+				}
+				fmt.Fprintf(&b, ",\n    CVPN3000-IPSec-Split-Tunneling-Policy = 1,\n    CVPN3000-IPSec-Split-Tunnel-List = \"%s\"", splitRoutes)
 			}
 			fmt.Fprintln(&b)
 		}
