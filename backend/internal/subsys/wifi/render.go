@@ -10,7 +10,9 @@ import (
 func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 	interfaces := map[string]string{}
 	for _, iface := range cfg.Interfaces {
-		interfaces[iface.ID] = cfg.InterfaceName(iface.ID)
+		if _, exists := interfaces[iface.ID]; !exists {
+			interfaces[iface.ID] = iface.Name
+		}
 	}
 	bridges := map[string]string{}
 	for _, network := range cfg.Networks {
