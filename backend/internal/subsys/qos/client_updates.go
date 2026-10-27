@@ -137,13 +137,13 @@ func (s *Subsystem) clientRateUpdates(ctx context.Context, item clientInterface)
 			return nil, false
 		}
 		seen := map[int]bool{}
-		text := ""
+		var blocks trafficBlocks
 		if direction.key == "src_mac" {
-			var err error
-			text, err = s.Runner.Run(ctx, "tc", "filter", "show", "dev", item.Name, "parent", direction.parent)
+			text, err := s.Runner.Run(ctx, "tc", "filter", "show", "dev", item.Name, "parent", direction.parent)
 			if err != nil {
 				return nil, false
 			}
+			blocks = parseTrafficBlocks(text, "filter ")
 		}
 		for _, filter := range filters {
 			if filter.Kind != "flower" || filter.Protocol != "all" || filter.Chain != 0 {
@@ -174,7 +174,7 @@ func (s *Subsystem) clientRateUpdates(ctx context.Context, item clientInterface)
 			if options.Classid != "" || len(options.Actions) != 1 || options.Actions[0].Kind != "police" || options.Actions[0].Order != 1 || options.Actions[0].ControlAction.Type != "drop" || options.Actions[0].Overhead != 0 {
 				return nil, false
 			}
-			if !blockHasTokens(text, "filter ", fmt.Sprintf("pref=%d", filter.Pref), "src_mac="+strings.ToLower(client.MAC), fmt.Sprintf("rate=%dkbit", client.UpKbit), "burst=64kb", "mtu=64kb") {
+			if !blocks.hasTokens(fmt.Sprintf("pref=%d", filter.Pref), "src_mac="+strings.ToLower(client.MAC), fmt.Sprintf("rate=%dkbit", client.UpKbit), "burst=64kb", "mtu=64kb") {
 				updates = append(updates, []string{"filter", "replace", "dev", item.Name, "parent", "ffff:", "protocol", "all", "pref", fmt.Sprint(filter.Pref), "handle", fmt.Sprintf("0x%x", options.Handle), "flower", "src_mac", client.MAC, "action", "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "burst", "64k", "mtu", "64k", "conform-exceed", "drop"})
 			}
 		}

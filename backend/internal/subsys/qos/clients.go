@@ -206,14 +206,16 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 			if err != nil {
 				return err
 			}
+			classBlocks := parseTrafficBlocks(classes, "class ")
+			filterBlocks := parseTrafficBlocks(filters, "filter ")
 			expectedClasses := []string{"1:1"}
 			expectedMACs := make([]string, 0, len(item.Download))
 			for index, client := range item.Download {
 				classID := fmt.Sprintf("1:%d", index+10)
 				expectedClasses = append(expectedClasses, classID)
 				expectedMACs = append(expectedMACs, strings.ToLower(client.MAC))
-				if !blockHasTokens(classes, "class ", "class", "htb", classID, fmt.Sprintf("rate=%dkbit", client.DownKbit), fmt.Sprintf("ceil=%dkbit", client.DownKbit)) ||
-					!blockHasTokens(filters, "filter ", "pref", fmt.Sprint(100+index), "dst_mac", strings.ToLower(client.MAC), "classid", classID) {
+				if !classBlocks.hasTokens("class", "htb", classID, fmt.Sprintf("rate=%dkbit", client.DownKbit), fmt.Sprintf("ceil=%dkbit", client.DownKbit)) ||
+					!filterBlocks.hasTokens("pref", fmt.Sprint(100+index), "dst_mac", strings.ToLower(client.MAC), "classid", classID) {
 					return fmt.Errorf("лимит загрузки клиента %s на %s не соответствует конфигурации", client.MAC, item.Name)
 				}
 			}
@@ -228,10 +230,11 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 			if err != nil {
 				return err
 			}
+			filterBlocks := parseTrafficBlocks(filters, "filter ")
 			expectedMACs := make([]string, 0, len(item.Upload))
 			for index, client := range item.Upload {
 				expectedMACs = append(expectedMACs, strings.ToLower(client.MAC))
-				if !blockHasTokens(filters, "filter ", "pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "mtu=64kb") {
+				if !filterBlocks.hasTokens("pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "mtu=64kb") {
 					return fmt.Errorf("лимит отдачи клиента %s на %s не соответствует конфигурации", client.MAC, item.Name)
 				}
 			}
@@ -306,61 +309,6 @@ func htbClassIDs(output string) []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-func blockHasTokens(output, boundary string, tokens ...string) bool {
-	var blocks []string
-	var current strings.Builder
-	for _, line := range strings.Split(strings.ToLower(output), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, boundary) && current.Len() > 0 {
-			blocks = append(blocks, current.String())
-			current.Reset()
-		}
-		if trimmed != "" {
-			current.WriteByte(' ')
-			current.WriteString(trimmed)
-		}
-	}
-	if current.Len() > 0 {
-		blocks = append(blocks, current.String())
-	}
-	for _, block := range blocks {
-		fields := trafficFields(block)
-		matched := true
-		for _, token := range tokens {
-			if pair := strings.SplitN(token, "=", 2); len(pair) == 2 {
-				found := false
-				for i := 0; i+1 < len(fields); i++ {
-					if normalizeTrafficToken(fields[i]) == normalizeTrafficToken(pair[0]) && normalizeTrafficToken(fields[i+1]) == normalizeTrafficToken(pair[1]) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					matched = false
-					break
-				}
-				continue
-			}
-			want := normalizeTrafficToken(token)
-			found := false
-			for _, field := range fields {
-				if normalizeTrafficToken(field) == want {
-					found = true
-					break
-				}
-			}
-			if !found {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Subsystem) clientOwnedPath() string {
