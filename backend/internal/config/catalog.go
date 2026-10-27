@@ -183,6 +183,12 @@ var Catalog = []ComponentInfo{
 
 	// --- вспомогательное ---
 	{
+		ID: "igmpproxy", Title: "IPTV", Group: "Сетевые службы",
+		Description: "Мультикастовое телевидение провайдера: IGMP proxy для выбранных локальных сетей.",
+		Packages: []string{"igmpproxy"}, Units: []string{"igmpproxy.service"},
+		RunUnits: []string{"netos-iptv.service"}, Provides: []string{"iptv"}, SizeHint: "меньше 1 МБ",
+	},
+	{
 		ID: "ipset", Title: "Наборы адресов", Group: "Дополнительно",
 		Description: "Позволяет правилам работать со списками адресов и доменов целиком. Нужен для маршрутизации по доменам.",
 		Packages:    []string{"ipset"},

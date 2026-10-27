@@ -16,7 +16,7 @@ func TestKeaNetlinkRealEventsAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events, err := subscribeKeaLinks(ctx)
+	events, err := subscribeIPv4Links(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

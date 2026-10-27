@@ -26,13 +26,13 @@ func formatPlanValue(value configdiff.Value, field planField, cfg *config.Config
 		if translated := planEnumLabels[field.Key][v]; translated != "" {
 			return translated
 		}
-		if field.Reference == "channel" {
+		if field.Reference == "channel" || field.Reference == "wan" {
 			if v == "direct" {
 				return "Напрямую"
 			}
 			if cfg != nil {
 				for _, ch := range cfg.Channels {
-					if ch.ID == v && ch.Name != "" {
+					if field.Reference == "channel" && ch.ID == v && ch.Name != "" {
 						return ch.Name + " (" + v + ")"
 					}
 				}

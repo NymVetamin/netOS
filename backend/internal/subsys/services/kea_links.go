@@ -26,7 +26,7 @@ type KeaLinkMonitor struct {
 }
 
 func NewKeaLinkMonitor(r system.Runner) *KeaLinkMonitor {
-	return &KeaLinkMonitor{runner: r, scan: scanKeaLinks, subscribe: subscribeKeaLinks}
+	return &KeaLinkMonitor{runner: r, scan: scanKeaLinks, subscribe: subscribeIPv4Links}
 }
 
 func (m *KeaLinkMonitor) Reconcile(ctx context.Context, cfg *config.Config) error {

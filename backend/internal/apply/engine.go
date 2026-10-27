@@ -67,6 +67,7 @@ const (
 // и политики маршрутизации ссылаются на интерфейсы, которых до создания
 // каналов не существует, а DHCP-сервер не поднимется на интерфейсе без адреса.
 var Order = []string{
+	"iptv-prepare",
 	"socks-prepare",
 	// После остановки меняющихся слушателей устанавливаем компоненты: без пакетов остальным подсистемам
 	// нечего запускать.
@@ -99,6 +100,7 @@ var Order = []string{
 	"firewall",
 	"traffic-monitor",
 	"socks",
+	"iptv",
 	"policy-cleanup",
 	"dhcp",
 	"dns",
@@ -114,6 +116,7 @@ var Order = []string{
 // provisional revision; running the ordinary component-first Apply in that
 // state can fail on DNS/downloads before it ever gets a chance to restore WAN.
 var startupConnectivityOrder = []string{
+	"iptv-prepare",
 	"socks-prepare",
 	"netconf", "interfaces", "ipv6", "networks", "wan", "multiwan", "routing", "firewall",
 }

@@ -83,6 +83,7 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateDDNS(r)
 	c.validateSamba(r)
 	c.validateSocks(r)
+	c.validateIPTV(r)
 
 	return r
 }

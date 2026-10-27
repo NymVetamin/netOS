@@ -285,6 +285,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	}
 
 	// 2. Разбор по зонам: переход в цепочку по интерфейсу.
+	b.iptvAccess(cfg)
 	b.line("# --- разбор по зонам ---")
 	// strongSwan 6.0.1 не всегда присваивает входящий XFRM ID трафику
 	// road-warrior. Ядро уже проверило IPsec-политику, поэтому классифицируем

@@ -234,6 +234,12 @@ func renderIKEv2(cfg *config.Config) (string, error) {
 // artifacts перечислены в том порядке, в каком их показывает панель: сперва
 // то, что определяет доступность машины, затем службы, затем система.
 var artifacts = []Artifact{
+	{ID: "iptv", Title: "IPTV (IGMP proxy)", Active: func(c *config.Config) bool { return c.IPTV.Enabled }, Render: func(c *config.Config) (string, error) {
+		if !c.IPTV.Enabled {
+			return "# IPTV выключено\n", nil
+		}
+		return string(services.RenderIPTV(c)), nil
+	}},
 	{ID: "samba", Title: "Сетевые папки Samba", Active: func(c *config.Config) bool { return c.Samba.Enabled }, Render: func(c *config.Config) (string, error) { return samba.Render(c, "/var/lib/netos/generated") }},
 	{
 		ID: "iptables", Title: "Правила iptables", Active: always,

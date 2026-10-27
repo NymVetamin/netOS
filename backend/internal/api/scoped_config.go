@@ -14,7 +14,7 @@ var rootSections = map[string][]string{
 	"traffic_monitor": {"system", "dashboard"},
 	"system":          {"system"}, "ipv6": {"system"}, "interfaces": {"network"}, "networks": {"network"},
 	"wans": {"network"}, "multiwan": {"network"}, "routing": {"routing"}, "firewall": {"firewall"},
-	"dhcp": {"services"}, "dns": {"services"}, "socks": {"services"}, "clients": {"clients"},
+	"dhcp": {"services"}, "dns": {"services"}, "socks": {"services"}, "iptv": {"services"}, "clients": {"clients"},
 	"channels": {"channels"}, "policies": {"channels"}, "vpn_servers": {"vpn-servers"},
 	"wifi": {"wifi"}, "qos": {"traffic"}, "ddns": {"services"}, "samba": {"storage"}, "components": {"components"},
 }

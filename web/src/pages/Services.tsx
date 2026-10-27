@@ -1,4 +1,5 @@
 import { SocksSection } from "./Socks";
+import { IPTVSection } from "./IPTV";
 import { DDNSSection } from "./DDNS";
 import { useEffect, useState } from "react";
 import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
@@ -39,7 +40,7 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
         <p>DHCP, DNS, динамические адреса и прокси для клиентов</p>
       </div>
 
-      <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns", "socks"]} />
+      <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns", "socks", "iptv"]} />
 
       <section className="service-group" aria-labelledby="service-dhcp">
         <header className="service-group-head"><h2 id="service-dhcp">DHCP</h2><span>Выдача IP-адресов</span></header>
@@ -56,6 +57,10 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
       <section className="service-group" aria-labelledby="service-socks">
         <header className="service-group-head"><h2 id="service-socks">SOCKS5</h2><span>Прокси для приложений</span></header>
         <div className="service-group-content"><SocksSection config={config} patch={patch} /></div>
+      </section>
+      <section className="service-group" aria-labelledby="service-iptv">
+        <header className="service-group-head"><h2 id="service-iptv">IPTV</h2><span>Телевидение провайдера</span></header>
+        <div className="service-group-content"><IPTVSection config={config} patch={patch} /></div>
       </section>
     </>
   );

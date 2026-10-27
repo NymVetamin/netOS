@@ -37,6 +37,7 @@ const maxInterfaceName = 15
 
 // Config — корень дерева конфигурации.
 type Config struct {
+	IPTV           IPTV           `json:"iptv" plan:"IPTV" sensitivity:"public"`
 	TrafficMonitor TrafficMonitor `json:"traffic_monitor" plan:"Учёт трафика клиентов" sensitivity:"public"`
 	Socks          Socks          `json:"socks" plan:"Прокси SOCKS" sensitivity:"public"`
 	Version        int            `json:"version" plan:"Версия схемы" sensitivity:"public"`

@@ -283,6 +283,7 @@ func main() {
 	go ddnsController.Run(ctx, engine.Current)
 	go sambaController.Run(ctx, engine.Current, logger)
 	go services.NewKeaLinkMonitor(runner).Run(ctx, engine.Maintain, logger.Errorf)
+	go services.NewIPTV(runner, stateDir).Run(ctx, engine.Maintain, logger.Errorf)
 	go samba.NewDiscoveryMonitor(runner).Run(ctx, engine.Maintain, logger.Errorf)
 
 	// Первый запуск: заводим администратора и печатаем учётные данные.
@@ -564,6 +565,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	sambaController := samba.New(runner, stateDir)
 	vpnSubsystem := vpnservers.New(runner, stateDir)
 	socksSubsystem := socks.New(runner, stateDir)
+	iptvSubsystem := services.NewIPTV(runner, stateDir)
 	if len(options) > 0 {
 		if options[0].Samba != nil {
 			sambaController = options[0].Samba
@@ -591,6 +593,8 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		wifi.New(runner, stateDir),
 		sambaController,
 		&socks.Preparation{S: socksSubsystem},
+		&services.IPTVPreparation{S: iptvSubsystem},
+		iptvSubsystem,
 		firewallSubsystem,
 		&monitor.Subsystem{Runner: runner},
 		socksSubsystem,

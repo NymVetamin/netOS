@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func subscribeKeaLinks(ctx context.Context) (<-chan error, error) {
+func subscribeIPv4Links(ctx context.Context) (<-chan error, error) {
 	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
 	if err != nil {
 		return nil, err
@@ -20,7 +20,7 @@ func subscribeKeaLinks(ctx context.Context) (<-chan error, error) {
 		unix.Close(fd)
 		return nil, err
 	}
-	file := os.NewFile(uintptr(fd), "kea-netlink")
+	file := os.NewFile(uintptr(fd), "services-netlink")
 	raw, err := file.SyscallConn()
 	if err != nil {
 		file.Close()
