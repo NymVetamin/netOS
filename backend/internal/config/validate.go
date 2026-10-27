@@ -2302,25 +2302,52 @@ func (c *Config) validateChannels(r *ValidationResult) {
 	for _, ch := range c.Channels {
 		byID[ch.ID] = ch
 	}
+	type tailResult struct {
+		kind       string
+		id, target string
+	}
+	memo := map[string]tailResult{}
+	// Duplicate IDs can refer to different starting objects; retain their traversal.
+	cacheable := len(byID) == len(c.Channels)
 	for _, ch := range c.Channels {
 		seen := map[string]bool{ch.ID: true}
 		cur := ch
+		var trail []string
+		var result tailResult
 		for cur.FailMode == "fallback" && cur.Fallback != "" {
+			if cacheable {
+				if cached, ok := memo[cur.ID]; ok {
+					result = cached
+					break
+				}
+				trail = append(trail, cur.ID)
+			}
 			next, ok := byID[cur.Fallback]
 			if !ok {
-				r.errf("channels", "канал %q ссылается на несуществующий запасной %q", cur.ID, cur.Fallback)
+				result = tailResult{"missing", cur.ID, cur.Fallback}
 				break
 			}
 			if !next.Enabled {
-				r.errf("channels", "канал %q ссылается на выключенный запасной %q", cur.ID, cur.Fallback)
+				result = tailResult{"disabled", cur.ID, cur.Fallback}
 				break
 			}
 			if seen[next.ID] {
-				r.errf("channels", "цикл в цепочке запасных каналов, начиная с %q", ch.ID)
+				result.kind = "cycle"
 				break
 			}
 			seen[next.ID] = true
 			cur = next
+		}
+		for _, id := range trail {
+			memo[id] = result
+		}
+		switch result.kind {
+		case "missing":
+			r.errf("channels", "канал %q ссылается на несуществующий запасной %q", result.id, result.target)
+		case "disabled":
+			r.errf("channels", "канал %q ссылается на выключенный запасной %q", result.id, result.target)
+		case "cycle":
+			r.errf("channels", "цикл в цепочке запасных каналов, начиная с %q", ch.ID)
 		}
 	}
 }
