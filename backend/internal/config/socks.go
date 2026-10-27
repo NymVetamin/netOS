@@ -45,24 +45,36 @@ func (c *Config) validateSocks(r *ValidationResult) {
 	if len(s.Networks) == 0 && len(s.VPNs) == 0 && !s.AllowWAN {
 		r.errf("socks.networks", "выберите хотя бы одну сеть для доступа")
 	}
+	selectedNetworks := map[string]bool{}
 	for _, id := range s.Networks {
-		found := false
+		selectedNetworks[id] = false
+	}
+	if len(selectedNetworks) > 0 {
 		for _, n := range c.Networks {
-			if n.ID == id && n.Enabled {
-				found = true
+			if _, selected := selectedNetworks[n.ID]; selected && n.Enabled {
+				selectedNetworks[n.ID] = true
 			}
 		}
+	}
+	for _, id := range s.Networks {
+		found := selectedNetworks[id]
 		if !found {
 			r.errf("socks.networks", "локальная сеть %q отсутствует или выключена", id)
 		}
 	}
+	selectedVPNs := map[string]bool{}
 	for _, id := range s.VPNs {
-		found := false
+		selectedVPNs[id] = false
+	}
+	if len(selectedVPNs) > 0 {
 		for _, v := range c.VPNServers {
-			if v.ID == id && v.Enabled && v.Type != "xray" {
-				found = true
+			if _, selected := selectedVPNs[v.ID]; selected && v.Enabled && v.Type != "xray" {
+				selectedVPNs[v.ID] = true
 			}
 		}
+	}
+	for _, id := range s.VPNs {
+		found := selectedVPNs[id]
 		if !found {
 			r.errf("socks.vpns", "выберите включённый VPN-сервер с IP-туннелем")
 		}
