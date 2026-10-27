@@ -53,31 +53,46 @@ func (c *Config) validateSamba(r *ValidationResult) {
 	if s.Enabled && len(s.Networks) == 0 && len(s.VPNs) == 0 {
 		r.errf("samba.networks", "выберите локальную сеть или VPN-сервер")
 	}
-	seenVPNs := map[string]bool{}
+	type selection struct{ eligible, seen bool }
+	vpns := map[string]selection{}
 	for _, id := range s.VPNs {
-		found := false
+		vpns[id] = selection{}
+	}
+	if len(vpns) > 0 {
 		for _, v := range c.VPNServers {
-			if v.ID == id && v.Enabled && v.Type != "xray" {
-				found = true
+			if entry, selected := vpns[v.ID]; selected && v.Enabled && v.Type != "xray" {
+				entry.eligible = true
+				vpns[v.ID] = entry
 			}
 		}
-		if !found || seenVPNs[id] {
+	}
+	for _, id := range s.VPNs {
+		entry := vpns[id]
+		if !entry.eligible || entry.seen {
 			r.errf("samba.vpns", "выберите включённый VPN-сервер с IP-туннелем, без повторов")
 		}
-		seenVPNs[id] = true
+		entry.seen = true
+		vpns[id] = entry
 	}
-	seenNetworks := map[string]bool{}
+	networks := map[string]selection{}
 	for _, id := range s.Networks {
-		found := false
+		networks[id] = selection{}
+	}
+	if len(networks) > 0 {
 		for _, n := range c.Networks {
-			if n.ID == id && n.Enabled && !n.Isolated && n.Zone != "wan" {
-				found = true
+			if entry, selected := networks[n.ID]; selected && n.Enabled && !n.Isolated && n.Zone != "wan" {
+				entry.eligible = true
+				networks[n.ID] = entry
 			}
 		}
-		if !found || seenNetworks[id] {
+	}
+	for _, id := range s.Networks {
+		entry := networks[id]
+		if !entry.eligible || entry.seen {
 			r.errf("samba.networks", "сеть %q должна быть включённой, неизолированной и локальной; повторы запрещены", id)
 		}
-		seenNetworks[id] = true
+		entry.seen = true
+		networks[id] = entry
 	}
 	volumes := map[string]StorageVolume{}
 	uuids := map[string]bool{}
