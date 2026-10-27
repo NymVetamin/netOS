@@ -1414,6 +1414,15 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 			"файрволл выключен: роутер пропускает весь трафик без фильтрации")
 	}
 
+	interfaceNames := map[string]string{}
+	interfaceName := func(id string) string {
+		if name, ok := interfaceNames[id]; ok {
+			return name
+		}
+		name := c.InterfaceName(id)
+		interfaceNames[id] = name
+		return name
+	}
 	ids := map[string]bool{}
 	for i, rule := range c.Firewall.Rules {
 		path := fmt.Sprintf("firewall.rules[%d]", i)
@@ -1441,7 +1450,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 			r.errf(path+".interface", "некорректное имя интерфейса")
 		}
 		if rule.OutInterface != "" {
-			if rule.DstZone != "" && !c.FirewallInterfaceInZone(rule.OutInterface, rule.DstZone) {
+			if rule.DstZone != "" && !c.firewallInterfaceInZone(rule.OutInterface, rule.DstZone, interfaceName) {
 				r.errf(path+".out_interface", "интерфейс не относится к выбранной зоне назначения")
 			}
 			if rule.Flow != "forward" {
