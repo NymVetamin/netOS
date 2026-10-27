@@ -459,8 +459,7 @@ func (s *WAN) waitUnderlayGateway(ctx context.Context, iface string) (string, er
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
-	deadline := time.Now().After
-	limit := time.Now().Add(timeout)
+	deadline := time.Now().Add(timeout)
 	for {
 		gateway, err := s.underlayGateway(ctx, iface)
 		if err != nil {
@@ -469,7 +468,7 @@ func (s *WAN) waitUnderlayGateway(ctx context.Context, iface string) (string, er
 		if gateway != "" {
 			return gateway, nil
 		}
-		if deadline(limit) {
+		if time.Now().After(deadline) {
 			return "", nil
 		}
 		timer := time.NewTimer(interval)
