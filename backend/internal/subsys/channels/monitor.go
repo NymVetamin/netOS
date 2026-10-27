@@ -106,9 +106,13 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 	}
 	// A reserve can fail or recover while its parent stays down. Reconcile
 	// after all probes so routing follows the complete, current fallback chain.
+	var resolver *fallbackResolver
 	for _, ch := range enabledChannels(cfg) {
 		if state := s.states[ch.ID]; state != nil && state.Down {
-			if err := s.failChannel(ctx, cfg, ch); err != nil {
+			if resolver == nil {
+				resolver = newFallbackResolver(cfg, s.states)
+			}
+			if err := s.applyFallback(ctx, ch, resolver.resolve(ch)); err != nil {
 				s.warnf("Канал %s: обновление резервного маршрута: %v", ch.Name, err)
 			}
 		}
@@ -151,35 +155,17 @@ func (s *Subsystem) record(ctx context.Context, cfg *config.Config, ch config.Ch
 }
 
 func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch config.Channel) error {
-	target := ch
-	seen := map[string]bool{}
-	for {
-		if seen[target.ID] {
-			return s.ensureBlockedRule(ctx, ch)
-		}
-		seen[target.ID] = true
-		switch target.FailMode {
-		case "direct":
-			return s.removeChannelRule(ctx, ch)
-		case "fallback":
-			fallback, ok := channelByID(cfg, target.Fallback)
-			if !ok {
-				return s.ensureBlockedRule(ctx, ch)
-			}
-			if fallback.Type == "direct" {
-				return s.removeChannelRule(ctx, ch)
-			}
-			if state := s.states[fallback.ID]; state != nil && state.Down {
-				target = fallback
-				continue
-			}
-			return s.ensureRuleTable(ctx, ch, TableNumber(fallback))
-		default: // block
-			// Recovery probes bind to the device without the client fwmark.
-			// Block marked traffic at the rule, keeping probe routes usable.
-			return s.ensureBlockedRule(ctx, ch)
-		}
+	return s.applyFallback(ctx, ch, newFallbackResolver(cfg, s.states).resolve(ch))
+}
+
+func (s *Subsystem) applyFallback(ctx context.Context, ch config.Channel, route fallbackRoute) error {
+	if route.direct {
+		return s.removeChannelRule(ctx, ch)
 	}
+	if route.table != 0 {
+		return s.ensureRuleTable(ctx, ch, route.table)
+	}
+	return s.ensureBlockedRule(ctx, ch)
 }
 
 func (s *Subsystem) ensureBlockedRule(ctx context.Context, ch config.Channel) error {
@@ -268,15 +254,6 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 		}
 	}
 	return false
-}
-
-func channelByID(cfg *config.Config, id string) (config.Channel, bool) {
-	for _, ch := range cfg.Channels {
-		if ch.ID == id && ch.Enabled {
-			return ch, true
-		}
-	}
-	return config.Channel{}, false
 }
 
 func (s *Subsystem) infof(format string, args ...any) {
