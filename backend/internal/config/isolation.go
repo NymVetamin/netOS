@@ -38,9 +38,20 @@ func (c *Config) IsolationDestinations(server VPNServer) []string {
 	if !c.Firewall.Enabled {
 		return result
 	}
-	for _, destination := range c.InternalSegments() {
-		if destination.ID != "vpn:"+server.ID && (server.Isolated || destination.Isolated) {
-			result = append(result, destination.Subnet)
+	add := func(address string) {
+		p, err := netip.ParsePrefix(address)
+		if err == nil && p.Addr().Is4() {
+			result = append(result, p.Masked().String())
+		}
+	}
+	for _, network := range c.Networks {
+		if network.Enabled && (server.Isolated || network.Isolated) {
+			add(network.RouterAddress)
+		}
+	}
+	for _, destination := range c.VPNServers {
+		if destination.Enabled && destination.ID != server.ID && (server.Isolated || destination.Isolated) {
+			add(destination.Subnet)
 		}
 	}
 	return result
