@@ -64,6 +64,8 @@ func limitedEndpoint(r *http.Request) bool {
 		return !write && anySection(r, false, "clients", "map", "dashboard", "services", "diagnostics")
 	case "/api/interfaces":
 		return !write && anySection(r, false, "network", "map", "dashboard", "channels", "routing", "firewall", "traffic", "wifi")
+	case "/api/wifi/hardware":
+		return !write && may(r, "wifi", false)
 	case "/api/routes":
 		return !write && anySection(r, false, "routing", "diagnostics")
 	case "/api/statistics", "/api/statistics/clients", "/api/statistics/clients/live", "/api/statistics/realtime", "/api/statistics/realtime/history":
