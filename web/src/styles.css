@@ -182,6 +182,8 @@ body {
 }
 
 #root {
+  /* Keep the wide frame's margins inside the viewport-sized root. */
+  display: flow-root;
   zoom: var(--zoom);
   min-height: calc(100vh / var(--zoom));
 }
