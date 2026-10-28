@@ -1930,7 +1930,8 @@ pre.output {
     animation-duration: 1.8s;
   }
   .port.busy .l2,
-  .edge.live {
+  .edge,
+  .edge-flow {
     animation: none;
   }
 }
@@ -2322,16 +2323,12 @@ tr.disabled-row td {
   color: var(--text-faint);
 }
 
-.map-legend i {
-  display: inline-block;
-  width: 18px;
-  border-top: 2px dashed var(--accent-fill);
+.map-legend svg {
+  width: 44px;
+  height: 12px;
   vertical-align: middle;
   margin-right: 5px;
 }
-
-.map-legend i.idle { border-top: 2px dotted var(--border-strong); }
-.map-legend i.dead { border-top: 2px dotted var(--danger); }
 
 .cloud { fill: var(--surface-2); stroke: var(--border-strong); }
 .nb { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1.2; }
@@ -2350,17 +2347,28 @@ tr.disabled-row td {
 .rp { fill: #050607; stroke: #3b4249; }
 .rp-on { fill: #5ad08a; }
 .rp-off { fill: #2a2f34; }
-.edge { fill: none; stroke: var(--border-strong); stroke-width: 2; }
-.edge.live { stroke: var(--accent-fill); stroke-dasharray: 6 8; animation: flow 1.1s linear infinite; }
+/* Вид связи задаёт рисунок линии, состояние — цвет. Аплинк — жирная сплошная,
+   сегмент — тонкая сплошная, VPN — пунктир, канал — штрихпунктир. Длины
+   штрихов кратны 28, чтобы анимация flow шла без рывка. */
+.edge { fill: none; stroke: var(--border-strong); stroke-width: 2; stroke-linecap: round; }
+.edge.live { stroke: var(--accent-fill); }
+.edge.dead { stroke: var(--danger); opacity: 0.85; }
+.edge.k-uplink { stroke-width: 5; }
+.edge.k-lan { stroke-width: 1.6; }
+.edge.k-vpn { stroke-width: 2.2; stroke-dasharray: 6 8; }
+.edge.k-channel { stroke-width: 2.6; stroke-dasharray: 16 5 0.1 6.9; }
+.edge.k-vpn.live, .edge.k-channel.live, .edge-flow { animation: flow 1.4s linear infinite; }
+.edge-flow { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 12; }
+.edge-mark circle { fill: var(--surface); }
+.edge-mark path { fill: none; stroke: var(--danger); stroke-width: 2.2; stroke-linecap: round; }
 @media (prefers-reduced-motion: reduce) {
-  .edge.live { animation: none; }
+  /* !important: правила вида .edge.k-channel.live сильнее простого .edge */
+  .edge, .edge-flow { animation: none !important; }
 }
-.edge.idle { stroke-dasharray: 2 6; }
-.edge.dead { stroke: var(--danger); stroke-dasharray: 2 6; opacity: 0.8; }
 
 @keyframes flow {
   to {
-    stroke-dashoffset: -14;
+    stroke-dashoffset: -28;
   }
 }
 

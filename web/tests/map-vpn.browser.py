@@ -34,7 +34,7 @@ async def scenario(browser, mode):
         if req.method!="GET":writes.append(path)
         if path=="/api/session":body={"username":"admin","role":"admin","csrf_token":"test"}
         elif path=="/api/config":body={"config":cfg,"dirty":False,"draft_version":1,"problems":[],"pending_confirmation":False}
-        elif path=="/api/status":body={"interfaces":[],"wans":[],"channels":[],"uptime_seconds":100}
+        elif path=="/api/status":body={"interfaces":[],"wans":[],"channels":[{"id":"ch0","up":True}],"uptime_seconds":100}
         elif path=="/api/clients":body={"clients":[]}
         elif path.endswith("/clients") and path.startswith("/api/vpn-servers/"):
             body=[{"id":"phone","state":"offline" if mode=="idle" else "recent","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":1234,"sent":5678},
@@ -48,7 +48,8 @@ async def scenario(browser, mode):
     await expect(graph.get_by_role('button',name='Exit 0:',exact=False)).to_be_visible()
     await expect(graph.get_by_role('button',name='Exit 1:',exact=False)).to_be_visible()
     if mode!='no-vpn':
-        await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd ok')
+        # Сервер без единого клиента на связи ждёт, а не работает.
+        await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd idle' if mode in ('idle','error') else 'nd ok')
     box=await graph.bounding_box()
     assert box['y']+box['height']<1000
     layout=page.locator('.map-layout')
@@ -71,13 +72,19 @@ async def scenario(browser, mode):
     edges=graph.locator('..').locator('.map-edges')
     if mode!='no-vpn':
         server_edge=edges.locator('[data-vpn-server="wg1"]')
-        await expect(server_edge).to_have_class('edge live')
-        await expect(server_edge).to_have_css('animation-name','flow')
         if mode in ('idle','error'):
-            await expect(server_edge.locator('..').locator('path').nth(1)).to_have_class('edge idle')
+            await expect(server_edge).to_have_class('edge k-vpn idle')
+            await expect(server_edge).to_have_css('animation-name','none')
+            await expect(server_edge.locator('..').locator('path').nth(1)).to_have_class('edge k-vpn idle')
+        else:
+            await expect(server_edge).to_have_class('edge k-vpn live')
+            await expect(server_edge).to_have_css('animation-name','flow')
     if mode=='many':
-        await expect(edges.locator('[data-vpn-server="wg2"]')).to_have_class('edge dead')
-    live=edges.locator('.edge.live').first
+        await expect(edges.locator('[data-vpn-server="wg2"]')).to_have_class('edge k-vpn dead')
+    await expect(edges.locator('.edge.k-channel.dead')).to_have_count(4 if mode=='many' else 1)
+    # Крестик стоит на каждой оборванной линии: упавшие каналы, запрещённый клиент, выключенный сервер и его клиент.
+    await expect(edges.locator('.edge-mark')).to_have_count((4 if mode=='many' else 1)+(0 if mode=='no-vpn' else 1)+(2 if mode=='many' else 0))
+    live=edges.locator('.edge.k-channel.live').first
     await expect(live).to_have_css('animation-name','flow')
     offset=await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')
     await page.wait_for_timeout(180)

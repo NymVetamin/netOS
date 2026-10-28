@@ -101,9 +101,9 @@ export function MapPage({ config }: { config: any }) {
             title="Схема"
             actions={
               <span className="map-legend">
-                <span><i className="live" />активно</span>
-                <span><i className="idle" />ждёт</span>
-                <span><i className="dead" />нет связи</span>
+                {LEGEND.map(([kind, state, label]) => (
+                  <span key={label}><svg viewBox="0 0 44 12" aria-hidden="true"><Edge kind={kind} state={state} path={["M3,6 H41", null]} /></svg>{label}</span>
+                ))}
               </span>
             }
             tight
@@ -172,9 +172,46 @@ function spread(count: number, from: number, to: number): number[] {
   return Array.from({ length: count }, (_, i) => from + (i * (to - from)) / (count - 1));
 }
 
-function curve(x1: number, y1: number, x2: number, y2: number) {
+type Point = [number, number];
+type EdgePath = [string, Point | null]; // кривая и её середина — туда ставится крестик обрыва
+type EdgeKind = "uplink" | "channel" | "lan" | "vpn";
+type EdgeState = "live" | "idle" | "dead";
+
+const LEGEND: [EdgeKind, EdgeState, string][] = [
+  ["uplink", "live", "аплинк"], ["channel", "live", "канал"], ["lan", "live", "сегмент"], ["vpn", "live", "VPN"],
+  ["uplink", "idle", "ждёт, резерв"], ["uplink", "dead", "нет связи"],
+];
+
+// Кривая симметрична, поэтому её середина — середина отрезка между концами.
+function curve(x1: number, y1: number, x2: number, y2: number): EdgePath {
   const m = (x1 + x2) / 2;
-  return `M${x1},${y1} C${m},${y1} ${m},${y2} ${x2},${y2}`;
+  return [`M${x1},${y1} C${m},${y1} ${m},${y2} ${x2},${y2}`, [m, (y1 + y2) / 2]];
+}
+
+// Линия канала спускается сверху; середина — точка кубической кривой при t = 0,5.
+function drop(x1: number, y1: number, x2: number, y2: number, bend: number): EdgePath {
+  return [`M${x1},${y1} C${x1},${bend} ${x2},${bend} ${x2},${y2}`, [(x1 + x2) / 2, (y1 + 6 * bend + y2) / 8]];
+}
+
+function Edge({ kind, state, path: [d, mid], children, ...rest }: { kind: EdgeKind; state: EdgeState; path: EdgePath; children?: ReactNode; "data-vpn-server"?: string }) {
+  return (
+    <>
+      <path className={`edge k-${kind} ${state}`} d={d} {...rest}>{children}</path>
+      {kind === "uplink" && state === "live" && <path className="edge-flow" d={d} />}
+      {state === "dead" && mid && <g className="edge-mark" transform={`translate(${mid[0]} ${mid[1]})`}><circle r={8} /><path d="M-4,-4 4,4 M4,-4 -4,4" /></g>}
+    </>
+  );
+}
+
+function peerEdgeState(state: string): EdgeState {
+  if (["recent", "online"].includes(state)) return "live";
+  return state === "disabled" || state === "server_disabled" ? "dead" : "idle";
+}
+
+// Включённый сервер, к которому сейчас никто не подключён, ждёт клиентов.
+function serverEdgeState(server: { enabled: boolean; peers: { state: string }[] }): EdgeState {
+  if (!server.enabled) return "dead";
+  return server.peers.some((p) => peerEdgeState(p.state) === "live") ? "live" : "idle";
 }
 
 function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
@@ -231,22 +268,22 @@ function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
     <MapViewport width={vpn.length ? 1240 : W} height={height} overlay={overlay} background={<>
         {wans.map((w, i) => (
           <g key={`e-${w.id}`}>
-            <path className={`edge ${edgeState(w.up, w.primary)}`} d={curve(122, cy, 205, wanY[i])} />
-            <path className={`edge ${edgeState(w.up, w.primary)}`} d={curve(375, wanY[i], router.x - router.w / 2, cy)} />
+            <Edge kind="uplink" state={edgeState(w.up, w.primary)} path={curve(122, cy, 205, wanY[i])} />
+            <Edge kind="uplink" state={edgeState(w.up, w.primary)} path={curve(375, wanY[i], router.x - router.w / 2, cy)} />
           </g>
         ))}
         {segments.map((s, i) => (
-          <path key={`e-${s.id}`} className="edge live" d={curve(router.x + router.w / 2, cy, 755, segY[i])} />
+          <Edge key={`e-${s.id}`} kind="lan" state="live" path={curve(router.x + router.w / 2, cy, 755, segY[i])} />
         ))}
         {channels.map((c, i) => (
-          <path key={`e-${c.id}`} className={`edge ${c.up ? "live" : "dead"}`} d={`M${chPos[i].x},${chPos[i].y+30} C${chPos[i].x},${top - 10} ${router.x},${top - 10} ${router.x},${router.y - router.h / 2}`} />
+          <Edge key={`e-${c.id}`} kind="channel" state={c.up ? "live" : "dead"} path={drop(chPos[i].x, chPos[i].y + 30, router.x, router.y - router.h / 2, top - 10)} />
         ))}
 
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-lines-${server.id}`}>
-          <path data-vpn-server={server.id} className={`edge ${server.enabled ? "live" : "dead"}`} d={curve(router.x + router.w / 2, cy, 755, y)}>
-            <title>{server.enabled ? "VPN-сервер включён" : "VPN-сервер отключён"}</title>
-          </path>
-          {server.peers.map((peer, i) => <path key={peer.id} className={`edge ${["recent", "online"].includes(peer.state) ? "live" : peer.state === "disabled" || peer.state === "server_disabled" ? "dead" : "idle"}`} d={curve(925, y, 990, positions[i])} />)}
+          <Edge data-vpn-server={server.id} kind="vpn" state={serverEdgeState(server)} path={curve(router.x + router.w / 2, cy, 755, y)}>
+            <title>{!server.enabled ? "VPN-сервер отключён" : serverEdgeState(server) === "live" ? "VPN-сервер включён, клиенты на связи" : "VPN-сервер включён, клиентов на связи нет"}</title>
+          </Edge>
+          {server.peers.map((peer, i) => <Edge key={peer.id} kind="vpn" state={peerEdgeState(peer.state)} path={curve(925, y, 990, positions[i])} />)}
         </g>)}
 
         </>}>
@@ -289,14 +326,14 @@ function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
 
         {segments.map((s, i) => node(`segment:${s.id}`, 840, segY[i], 170, 62, s.name, `${s.address} · ${s.online}/${s.total}`, "ok"))}
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-nodes-${server.id}`}>
-          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.enabled ? "включён" : "отключён"}`, server.enabled ? "ok" : "idle")}
-          {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), ["recent", "online"].includes(peer.state) ? "ok" : "idle"))}
+          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.enabled ? "включён" : "отключён"}`, serverEdgeState(server) === "live" ? "ok" : "idle")}
+          {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), peerEdgeState(peer.state) === "live" ? "ok" : "idle"))}
         </g>)}
     </MapViewport>
   );
 }
 
-function edgeState(up: boolean, primary: boolean) {
+function edgeState(up: boolean, primary: boolean): EdgeState {
   if (!up) return "dead";
   return primary ? "live" : "idle";
 }
