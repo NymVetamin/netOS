@@ -2701,6 +2701,32 @@ td > select {
 }
 .clients-channel-hint { padding: 12px 16px; border-top: 1px solid var(--border); }
 
+.openconnect-grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 16px;align-items:start}
+.openconnect-grid > .field {width:auto;min-width:0;max-width:none;margin:0}
+.openconnect-grid > .field.wide {grid-column:span 2}
+.openconnect-grid .field-label, .openconnect-timing .field-label {white-space:normal}
+.openconnect-advanced {margin:18px 0;border-top:1px solid var(--border);padding-top:14px}
+.openconnect-advanced > summary {cursor:pointer;color:var(--accent);font-weight:600}
+.openconnect-advanced[open] > summary {margin-bottom:14px}
+.openconnect-probe .openconnect-grid {grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.openconnect-probe .openconnect-grid > .field.wide {grid-column:auto}
+.openconnect-probe textarea {min-height:66px}
+.openconnect-probe-timing {margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.openconnect-probe-timing > summary {cursor:pointer;color:var(--accent)}
+.openconnect-timing {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 16px;margin-top:12px}
+.openconnect-timing .field {min-width:0;margin:0}
+.channel-openconnect .channel-nat-settings > .field {width:100%;max-width:none;display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap}
+.channel-openconnect .channel-nat-settings .hint {flex-basis:100%;margin:0}
+.channel-openconnect .channel-nat-settings .field-label {margin:0}
+@media(max-width:900px) {
+  .openconnect-grid,.openconnect-probe .openconnect-grid {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .openconnect-timing {grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:520px) {
+  .openconnect-grid,.openconnect-probe .openconnect-grid {grid-template-columns:minmax(0,1fr)}
+  .openconnect-grid > .field.wide {grid-column:auto}
+}
+
 .grip svg { pointer-events: none; }
 .grip:active { cursor: grabbing; }
 .grip:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; }

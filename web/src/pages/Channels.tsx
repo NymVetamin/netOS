@@ -341,11 +341,11 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
   const state = !channel.enabled ? <Badge tone="neutral">выключен</Badge>
     : !live ? <Badge tone="ok">включён</Badge>
     : <Badge tone={live.up ? "ok" : "warn"}>{live.probe_down ? "проба не прошла" : live.up ? "поднят" : "нет связи"}</Badge>;
-  return <Row as="form" className="channel-row" icon={CHANNEL_ICONS[channel.type]} id={channel.id} data-channel-id={channel.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
+  return <Row as="form" className={`channel-row channel-${channel.type}`} icon={CHANNEL_ICONS[channel.type]} id={channel.id} data-channel-id={channel.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
     cells={[<strong>{channel.name}</strong>, TYPE_NAMES[channel.type] || channel.type, <span className="mono">{live?.interface || "—"}</span>, <span className="dim">{probe}</span>, state]}
     toggle={<Switch checked={!!channel.enabled} disabled={!channel.enabled && (!installed || !!blocked)} onChange={(enabled) => update((draft) => draft.enabled = enabled)} label="" ariaLabel="Использовать" />}>
     {children}
-    {settings && nat?.iface && <div className="form-grid">
+    {settings && nat?.iface && <div className="form-grid channel-nat-settings">
       <Field label="NAT канала" hint={channel.type === "xray" ? "Подмена адресов перед передачей трафика в Xray." : "Без NAT на другой стороне нужен маршрут к подсетям клиентов."}>
         <Switch label="Подменять адреса клиентов (NAT)" ariaLabel={`NAT канала ${channel.name}`} checked={nat.enabled} disabled={nat.manual}
           onChange={enabled => settings.patch(draft => setChannelNAT(draft, draft.channels.find((c: any) => c.id === channel.id), enabled))} />
@@ -472,29 +472,41 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
   return (
     <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
-      <div className="form-grid">
+      <section className="openconnect-connection" aria-label="Подключение">
+      <div className="channel-probe-heading"><h4>Подключение</h4><span className="dim">AnyConnect</span></div>
+      <div className="openconnect-grid">
         <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} /></Field>
-        <Field label="VPN-сервер"><input className="mono" placeholder="https://vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
-        <Field label="Протокол"><input value="AnyConnect" readOnly /></Field>
-        <Field label="Группа / realm"><input value={cfg.authgroup || ""} onChange={(e) => setConfig("authgroup", e.target.value)} /></Field>
+        <Field label="VPN-сервер" wide><input className="mono" placeholder="https://vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
         <Field label="Пользователь"><input autoComplete="off" value={cfg.username || ""} onChange={(e) => setConfig("username", e.target.value)} /></Field>
         <Field label="Пароль"><input type="password" autoComplete="new-password" {...secretInput(channel, "password")} value={cfg.password || ""} onChange={(e) => setConfig("password", e.target.value)} /></Field>
-        <Field label="Отпечаток сертификата" hint="Необязательно; pin-sha256:…"><input className="mono" value={cfg.servercert || ""} onChange={(e) => setConfig("servercert", e.target.value)} /></Field>
+        <Field label="Группа / realm"><input value={cfg.authgroup || ""} onChange={(e) => setConfig("authgroup", e.target.value)} /></Field>
+      </div>
+      </section>
+      <details className="openconnect-advanced"><summary>Дополнительные параметры подключения</summary><div className="openconnect-grid">
+        <Field wide label="Отпечаток сертификата" hint="Необязательно; pin-sha256:…"><input className="mono" value={cfg.servercert || ""} onChange={(e) => setConfig("servercert", e.target.value)} /></Field>
         <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
         <Field label="Транспорт"><Switch checked={!cfg.no_dtls} label="Использовать DTLS" onChange={(enabled) => setConfig("no_dtls", !enabled)} /></Field>
         <Field label="Доверие TLS"><Switch checked={!cfg.no_system_trust} label="Системные CA" onChange={(enabled) => setConfig("no_system_trust", !enabled)} /></Field>
+      </div></details>
+      <section className="channel-probe-settings openconnect-probe" aria-label="Проверка и отказ канала">
+        <div className="channel-probe-heading"><h4>Проверка канала</h4>
+          <Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe.enabled = enabled; })} />
+        </div>
+      <div className="openconnect-grid">
         <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => (draft.fail_mode = e.target.value))}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
         {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => (draft.fallback = e.target.value))}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
-        <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe.enabled = enabled; })} /></Field>
         {channel.probe?.enabled !== false && <>
           <Field label="Тип проверки"><select value={channel.probe?.type || "icmp"} onChange={(e) => update((draft) => (draft.probe.type = e.target.value))}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
-          <Field label="Цели"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => (draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean)))} /></Field>
+          <Field label="Цели" wide><textarea rows={2} className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => (draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean)))} /></Field>
+        </>}
+      </div>
+      {channel.probe?.enabled !== false && <details className="openconnect-probe-timing"><summary>Интервалы и пороги</summary><div className="openconnect-timing">
           <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => (draft.probe.interval = Number(e.target.value)))} /></Field>
           <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => (draft.probe.timeout = Number(e.target.value)))} /></Field>
           <Field label="Ошибок до отказа"><input type="number" min={1} value={channel.probe?.fail_threshold || 3} onChange={(e) => update((draft) => (draft.probe.fail_threshold = Number(e.target.value)))} /></Field>
           <Field label="Успехов до возврата"><input type="number" min={1} value={channel.probe?.rise_threshold || 2} onChange={(e) => update((draft) => (draft.probe.rise_threshold = Number(e.target.value)))} /></Field>
-        </>}
-      </div>
+      </div></details>}
+      </section>
     </ChannelRow>
   );
 }
