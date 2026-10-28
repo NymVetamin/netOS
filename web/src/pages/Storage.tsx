@@ -54,7 +54,7 @@ export function StoragePage({ config, patch, admin }: Props) {
       <Card tight title="Накопители" subtitle="Настройка сохраняется по UUID и действует после повторного подключения" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
         <div className="rows-notes">{error && <Notice tone="danger" title="Список дисков недоступен">{error}</Notice>}</div>
         {devices.length === 0 && <Empty>Вставьте USB-диск с файловой системой ext2/3/4, FAT, exFAT или NTFS. Форматирование не выполняется.</Empty>}
-        <Rows cols={["Том", "Файловая система", "Размер", "Подключение", "Состояние"]} toggle="Автоподключение">
+        <div className="storage-volumes"><Rows cols={["Том", "Файловая система", "Размер", "Подключение", "Состояние"]} toggle="Автоподключение">
         {devices.filter(d => !(s.volumes || []).some((v: any) => v.uuid.toLowerCase() === d.uuid.toLowerCase())).map(d =>
           <Row key={d.path} cells={[<strong>{d.label || d.path}</strong>, d.fstype, `${(Number(d.size) / 1073741824).toFixed(1)} ГБ`, d.tran || "диск", <span className="dim" title={d.reason || d.uuid}>{d.reason || d.uuid}</span>]}
             toggle={<button className="btn sm" disabled={!installed || !d.available} onClick={() => edit(v => v.volumes.push({ id: newID("volume"), uuid: d.uuid, filesystem: d.fstype, enabled: true }))}>Подключить</button>} />)}
@@ -64,7 +64,7 @@ export function StoragePage({ config, patch, admin }: Props) {
           return <Row key={v.id} cells={[<strong>{live?.label || v.uuid}</strong>, v.filesystem, live ? `${(Number(live.size) / 1073741824).toFixed(1)} ГБ` : "—", <button className="btn ghost sm" disabled={v.enabled || (s.shares || []).some((x: any) => x.volume === v.id)} onClick={() => edit(d => d.volumes = d.volumes.filter((x: any) => x.id !== v.id))}>Забыть том</button>, <Badge tone={mounted ? "ok" : "neutral"}>{mounted ? "Подключён в системе" : live ? "Диск обнаружен" : "Диск отсутствует"}</Badge>]}
             toggle={<Switch checked={!!v.enabled} disabled={!installed} label="" ariaLabel="Автоподключение" onChange={on => edit(d => { d.volumes.find((x: any) => x.id === v.id).enabled = on; if (!on) d.shares.forEach((x: any) => { if (x.volume === v.id) x.enabled = false; }); })} />} />;
         })}
-        </Rows>
+        </Rows></div>
         <div className="rows-foot"><span className="faint">Для извлечения выключите автоподключение и примените изменения: связанные папки отключатся. Дождитесь успешного применения. Занятый диск не отключается принудительно. На ext2/3/4 сохраняются существующие права файлов: для записи нужен доступ системному пользователю netos-storage. NTFS, FAT и exFAT подключаются с правами этого пользователя.</span></div>
       </Card>
       <Card tight title="Пользователи Samba" subtitle="Отдельные учётные записи для доступа к файлам" actions={<button className="btn" onClick={() => edit(d => d.users.push({ id: openOnCreate(newID("smbuser")), name: "", password: "" }))}>Добавить пользователя</button>}>

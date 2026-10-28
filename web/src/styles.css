@@ -635,6 +635,18 @@ code, pre {
 
 /* --- строки записей: одна сетка столбцов на все таблицы панели --- */
 
+.storage-volumes .xrows {
+  --xcols: 38px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, .7fr) minmax(0, 1fr) minmax(0, 1.5fr) 150px;
+}
+.storage-volumes .xhead > span,
+.storage-volumes .xsum > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 860px) {
+  .storage-volumes .xrows { --xcols: 34px minmax(0, 1fr) 120px; }
+}
+
 .xrows {
   --xcols: 38px 22% 16% 19% 16% minmax(0, 1fr) 84px;
 }
