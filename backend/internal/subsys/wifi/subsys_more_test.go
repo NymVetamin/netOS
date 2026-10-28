@@ -320,7 +320,7 @@ func TestEveryApplyRadioCommandFailureIsReturned(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			runner := &fakeRunner{errors: map[string]error{command: errors.New("injected")}}
 			s := testWiFiSubsystem(t, runner)
-			err := s.applyRadio(context.Background(), cfg, radio)
+			err := s.applyRadio(context.Background(), cfg, radio, &radioPowerLimits{})
 			if err == nil || !strings.Contains(err.Error(), "injected") {
 				t.Fatalf("error=%v", err)
 			}
@@ -339,7 +339,7 @@ func TestApplyRadioFileWriteFailuresAreReturned(t *testing.T) {
 		}
 		s := New(&fakeRunner{}, filepath.Join(blocker, "state"))
 		s.UnitDir = filepath.Join(root, "units")
-		if err := s.applyRadio(context.Background(), cfg, radio); err == nil {
+		if err := s.applyRadio(context.Background(), cfg, radio, &radioPowerLimits{}); err == nil {
 			t.Fatal("config write error ignored")
 		}
 	})
@@ -351,7 +351,7 @@ func TestApplyRadioFileWriteFailuresAreReturned(t *testing.T) {
 		}
 		s := New(&fakeRunner{}, filepath.Join(root, "state"))
 		s.UnitDir = filepath.Join(unitBlocker, "units")
-		if err := s.applyRadio(context.Background(), cfg, radio); err == nil {
+		if err := s.applyRadio(context.Background(), cfg, radio, &radioPowerLimits{}); err == nil {
 			t.Fatal("unit write error ignored")
 		}
 	})
@@ -453,7 +453,7 @@ func TestApplyAndHealthPropagateOwnershipAndRenderErrors(t *testing.T) {
 	t.Run("applyRadio render", func(t *testing.T) {
 		cfg := wifiConfig()
 		cfg.WiFi[0].SSIDs = nil
-		if err := testWiFiSubsystem(t, &fakeRunner{}).applyRadio(context.Background(), cfg, cfg.WiFi[0]); err == nil {
+		if err := testWiFiSubsystem(t, &fakeRunner{}).applyRadio(context.Background(), cfg, cfg.WiFi[0], &radioPowerLimits{}); err == nil {
 			t.Fatal("applyRadio ignored render error")
 		}
 	})

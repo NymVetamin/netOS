@@ -12,13 +12,13 @@ func TestPowerChangeTargetsPhysicalRadioWithoutRestart(t *testing.T) {
 	}}
 	s := testWiFiSubsystem(t, runner)
 	cfg := wifiConfig() // Two BSSes share the physical radio.
-	if err := s.applyRadio(context.Background(), cfg, cfg.WiFi[0]); err != nil {
+	if err := s.applyRadio(context.Background(), cfg, cfg.WiFi[0], &radioPowerLimits{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, power := range []int{12, 0} {
 		runner.commands = nil
 		cfg.WiFi[0].TxPower = power
-		if err := s.applyRadio(context.Background(), cfg, cfg.WiFi[0]); err != nil {
+		if err := s.applyRadio(context.Background(), cfg, cfg.WiFi[0], &radioPowerLimits{}); err != nil {
 			t.Fatal(err)
 		}
 		want := "iw phy#7 set txpower fixed 1200"

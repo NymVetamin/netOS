@@ -132,8 +132,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	next := make([]ownedRadio, 0, len(wanted))
+	powerLimits := &radioPowerLimits{}
 	for _, radio := range radios {
-		if err := s.applyRadio(ctx, cfg, radio); err != nil {
+		if err := s.applyRadio(ctx, cfg, radio, powerLimits); err != nil {
 			if _, existed := ownedIDs[radio.ID]; !existed {
 				item := ownedRadio{ID: radio.ID, Unit: unitName(radio)}
 				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
@@ -166,7 +167,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio config.WiFiRadio) error {
+func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio config.WiFiRadio, powerLimits *radioPowerLimits) error {
 	confPath, unitPath := s.paths(radio)
 	conf, err := RenderRadio(radio, cfg)
 	if err != nil {
@@ -228,7 +229,7 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 		}
 	}
 	if radio.PowerPercent > 0 {
-		power, err := s.percentPower(ctx, radio)
+		power, err := powerLimits.percentPower(ctx, s.Runner, radio)
 		if err != nil {
 			return err
 		}
@@ -275,6 +276,7 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 	if !sameOwnedRadios(owned, expectedOwned) {
 		return fmt.Errorf("список принадлежащих netOS Wi-Fi units не соответствует конфигурации")
 	}
+	powerLimits := &radioPowerLimits{}
 	for _, radio := range radios {
 		confPath, unitPath := s.paths(radio)
 		conf, err := RenderRadio(radio, cfg)
@@ -292,7 +294,7 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 		ready := false
 		powerLimit := -1
 		if radio.PowerPercent > 0 {
-			powerLimit, err = s.percentPower(ctx, radio)
+			powerLimit, err = powerLimits.percentPower(ctx, s.Runner, radio)
 			if err != nil {
 				return err
 			}

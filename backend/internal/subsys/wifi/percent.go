@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 // Percentage is linear RF power, not a percentage of the logarithmic dBm.
@@ -43,29 +44,45 @@ func radioBandMatches(info, band string) bool {
 	return false
 }
 
-func (s *Subsystem) percentPower(ctx context.Context, radio config.WiFiRadio) (int, error) {
-	hardware, err := ReadHardware(ctx, s.Runner, radio.Country)
+// One regulatory database snapshot per Apply/Health. Kernel capabilities are
+// always read again after hostapd: regulatory changes can alter their limits.
+type radioPowerLimits struct{ db regulatoryDB }
+
+func (p *radioPowerLimits) percentPower(ctx context.Context, runner system.Runner, radio config.WiFiRadio) (int, error) {
+	info, err := runner.Run(ctx, "iw", "dev", radio.Device, "info")
+	if err != nil {
+		return 0, fmt.Errorf("не удалось определить Wi-Fi-устройство %s: %w", radio.Device, err)
+	}
+	target := radioPowerTarget(info, radio.Device)
+	if len(target) != 1 {
+		return 0, fmt.Errorf("не удалось определить радиомодуль устройства %s", radio.Device)
+	}
+	phy, err := runner.Run(ctx, "iw", target[0], "info")
+	if err != nil {
+		return 0, fmt.Errorf("не удалось прочитать возможности Wi-Fi: %w", err)
+	}
+	radios := parseHardware(phy, "")
+	if len(radios) != 1 {
+		return 0, fmt.Errorf("не удалось определить допустимую мощность радио %s", radio.Device)
+	}
+	if p.db == nil {
+		p.db, err = readRegDB()
+		if err != nil {
+			return 0, err
+		}
+	}
+	country, err := hardwareCountry(ctx, runner, p.db, radio.Country)
 	if err != nil {
 		return 0, err
 	}
+	filterRadio(&radios[0], p.db, country)
 	limit := math.Inf(1)
-	for _, r := range hardware.Radios {
-		matches := false
-		for _, device := range r.Interfaces {
-			if device == radio.Device {
-				matches = true
-			}
-		}
-		if !matches {
-			continue
-		}
-		for _, b := range r.Bands {
-			if b.Name == radio.Band {
-				for _, ch := range b.Channels {
-					if radio.Channel == 0 || ch.Number == radio.Channel {
-						if power, ok := ch.PowerLimits[radio.Width]; ok {
-							limit = math.Min(limit, power)
-						}
+	for _, b := range radios[0].Bands {
+		if b.Name == radio.Band {
+			for _, ch := range b.Channels {
+				if radio.Channel == 0 || ch.Number == radio.Channel {
+					if power, ok := ch.PowerLimits[radio.Width]; ok {
+						limit = math.Min(limit, power)
 					}
 				}
 			}

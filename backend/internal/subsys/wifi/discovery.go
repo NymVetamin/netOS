@@ -68,6 +68,22 @@ func ReadHardware(ctx context.Context, runner system.Runner, country string) (Ha
 		}
 	}
 	sort.Strings(result.Countries)
+	country, err = hardwareCountry(ctx, runner, db, country)
+	if err != nil {
+		return result, err
+	}
+	result.Country = country
+	for i := range result.Radios {
+		filterRadio(&result.Radios[i], db, country)
+		if result.Radios[i].AP && result.Radios[i].Device != "" {
+			_, err := runner.Run(ctx, "iw", "dev", result.Radios[i].Device, "survey", "dump")
+			result.Radios[i].AutoChannel = err == nil
+		}
+	}
+	return result, nil
+}
+
+func hardwareCountry(ctx context.Context, runner system.Runner, db regulatoryDB, country string) (string, error) {
 	if country == "" {
 		reg, _ := runner.Run(ctx, "iw", "reg", "get")
 		for _, line := range strings.Split(reg, "\n") {
@@ -82,17 +98,9 @@ func ReadHardware(ctx context.Context, runner system.Runner, country string) (Ha
 		}
 	}
 	if _, ok := db[country]; !ok {
-		return result, fmt.Errorf("страна отсутствует в региональной базе Wi-Fi")
+		return "", fmt.Errorf("страна отсутствует в региональной базе Wi-Fi")
 	}
-	result.Country = country
-	for i := range result.Radios {
-		filterRadio(&result.Radios[i], db, country)
-		if result.Radios[i].AP && result.Radios[i].Device != "" {
-			_, err := runner.Run(ctx, "iw", "dev", result.Radios[i].Device, "survey", "dump")
-			result.Radios[i].AutoChannel = err == nil
-		}
-	}
-	return result, nil
+	return country, nil
 }
 
 func parseHardware(phys, devs string) []RadioDevice {
