@@ -1,7 +1,7 @@
 ﻿import { createContext, ReactNode, useContext, useRef, useState } from "react";
 import { HintContext } from "./HintContext";
 import { api, Session } from "./api";
-import { Card, Notice, Switch } from "./ui";
+import { Notice } from "./ui";
 
 const HintSettingsContext = createContext({ busy: false, error: "", setEnabled: (_: boolean) => {} });
 
@@ -32,10 +32,19 @@ export function useHintPreference() {
   return { enabled: useContext(HintContext), ...useContext(HintSettingsContext) };
 }
 
-export function HintSettings() {
+export function HintToggle() {
   const hints = useHintPreference();
-  return <Card title="Подсказки" subtitle="Для вашей учётной записи. Ошибки и результаты операций остаются видимыми.">
-    <Switch checked={hints.enabled} disabled={hints.busy} onChange={hints.setEnabled} label="Показывать подсказки" />
-    {hints.error && <Notice tone="danger" title="Не удалось сохранить настройку подсказок">{hints.error}</Notice>}
-  </Card>;
+  const label = hints.enabled ? "Подсказки включены. Выключить" : "Подсказки выключены. Включить";
+  return <button type="button" className="icon-btn" title={label} aria-label={label}
+    aria-pressed={hints.enabled} disabled={hints.busy} onClick={() => hints.setEnabled(!hints.enabled)}>
+    <svg className="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 18h6M10 22h4M9 15c0-2-3-3-3-7a6 6 0 0 1 12 0c0 4-3 5-3 7" />
+      {!hints.enabled && <path d="m3 3 18 18" />}
+    </svg>
+  </button>;
+}
+
+export function HintSaveError() {
+  const { error } = useHintPreference();
+  return error ? <Notice tone="danger" title="Не удалось сохранить настройку подсказок">{error}</Notice> : null;
 }

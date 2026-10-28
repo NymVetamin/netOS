@@ -1,5 +1,5 @@
 import { PermissionContext, canAccess } from "./permissions";
-import { HintProvider, HintSettings } from "./HintProvider";
+import { HintProvider, HintToggle, HintSaveError } from "./HintProvider";
 import { StatusPollingProvider, useStatusPolling } from "./StatusPollingContext";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, ConfigResponse, formatUptime, PlanResponse, Problem, Session } from "./api";
@@ -516,6 +516,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           >
             <ThemeIcon theme={theme} />
           </button>
+          <HintToggle />
           <button
             type="button"
             className="icon-btn mobile-nav-toggle"
@@ -578,6 +579,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
       <main className="main" ref={mainRef}>
         <div className="page">
+          <HintSaveError />
           {canAccess(session, page) && !canAccess(session, page, true) && (
             <Notice tone="info" title="Режим просмотра">
               В этом разделе доступен только просмотр.
@@ -635,7 +637,6 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "diagnostics" && <DiagnosticsPage admin={session.role === "admin"} dnsLogging={!!cfg.dns?.query_log} />}
             </fieldset>
           )}
-          {page === "system" && canAccess(session, "system") && <HintSettings />}
         </div>
       </main>
       </div>
