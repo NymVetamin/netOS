@@ -987,6 +987,7 @@ svg.glyph.glyph-os {
 }
 
 .page-head h1,
+.card-sub h3:has(.glyph),
 .card-head h2 {
   display: flex;
   align-items: center;
@@ -1000,6 +1001,7 @@ svg.glyph.glyph-os {
 }
 
 .card-head h2 .glyph,
+.card-sub h3 .glyph,
 .xname .glyph,
 .component-main .row .glyph {
   color: var(--text-dim);
