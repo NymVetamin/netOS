@@ -1,5 +1,5 @@
 import { secretInput } from "../secrets";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon } from "../icons";
@@ -8,6 +8,11 @@ import { newID } from "../id";
 type Props = { config: any; patch: (mutate: (draft: any) => void) => void };
 const SECURITY: Record<string, string> = { "wpa2/wpa3": "WPA2/WPA3", wpa3: "WPA3", wpa2: "WPA2", open: "открытая" };
 const countryNames = new Intl.DisplayNames(["ru"], { type: "region" });
+function countryOptions(countries: string[]) {
+  return countries.map(code => ({ code, name: countryNames.of(code) }))
+    .sort((a, b) => (a.name || a.code).localeCompare(b.name || b.code, "ru"))
+    .map(({ code, name }) => <option key={code} value={code}>{name} ({code})</option>);
+}
 function defaults(hw: any, country: string) {
   const band = hw.bands.find((b: any) => b.channels.length);
   return { id: `radio-${hw.phy}`, device: hw.device, enabled: false, band: hw.bands.find((b: any) => b.channels.length)?.name || "2.4", channel: hw.auto_channel ? 0 : band?.channels[0]?.number || 0, width: 20, country, tx_power: 0, ssids: [] };
@@ -17,6 +22,8 @@ export function WiFiPage({ config, patch }: Props) {
   const [hardware, setHardware] = useState<any>(null);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const countries = hardware?.countries;
+  const countryChoices = useMemo(() => countryOptions(countries || []), [countries]);
   useEffect(() => {
     const controller = new AbortController();
     setError("");
@@ -35,12 +42,12 @@ export function WiFiPage({ config, patch }: Props) {
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
       {!hardware && !error ? <Empty>Определяем радиоустройства…</Empty> : entries.length === 0 ? <Empty>{hardware?.radios.length ? "Обнаруженные адаптеры не поддерживают режим точки доступа или не имеют сетевого интерфейса." : "Wi-Fi-адаптеры не обнаружены."}</Empty> :
         <Rows cols={["Радио", "Диапазон", "Канал", "Сети", "Состояние"]} toggle="Включено">{entries.map(({ radio, hw }: any) =>
-          <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={hardware?.countries || []} initialCountry={hardware?.country} config={config} installed={installed} patch={patch} />)}</Rows>}
+          <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} config={config} installed={installed} patch={patch} />)}</Rows>}
     </Card>
   </>;
 }
 
-function RadioEditor({ radio, hardware, countries, initialCountry, config, installed, patch }: any) {
+function RadioEditor({ radio, hardware, countries, countryChoices, initialCountry, config, installed, patch }: any) {
   const [options, setOptions] = useState(hardware);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -83,7 +90,7 @@ function RadioEditor({ radio, hardware, countries, initialCountry, config, insta
     <div className="form-grid">
       <Field label="Страна" hint="Где используется роутер"><select disabled={!hardware} value={radio.country} onChange={e => update(d => { d.country = e.target.value; d.width = 20; })}>
         {!countries.includes(radio.country) && <option value={radio.country}>{radio.country} — нет в базе</option>}
-        {[...countries].sort((a: string,b: string) => (countryNames.of(a) || a).localeCompare(countryNames.of(b) || b, "ru")).map((c: string) => <option key={c} value={c}>{countryNames.of(c)} ({c})</option>)}
+        {countryChoices}
       </select></Field>
       <Field label="Диапазон"><select disabled={unavailable} value={radio.band} onChange={e => update(d => { d.band = e.target.value; d.channel = options?.auto_channel ? 0 : bands.find((b: any) => b.name === d.band)?.channels[0]?.number || 0; d.width = 20; })}>
         {!bands.some((b: any) => b.name === radio.band) && <option value={radio.band}>{radio.band} ГГц — недоступен</option>}
