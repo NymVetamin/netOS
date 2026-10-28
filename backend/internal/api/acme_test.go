@@ -333,8 +333,9 @@ func TestProductionACMEManagerProtectsCacheAndRejectsOtherHost(t *testing.T) {
 
 func TestACMEFallbackExposesNoPanelContent(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	acmeFallback(recorder, httptest.NewRequest(http.MethodGet, "http://router.invalid/not-a-challenge", nil))
-	if recorder.Code != http.StatusNotFound || recorder.Header().Get("Cache-Control") != "no-store" {
+	manager := newFakeACMEManager(t)
+	manager.HTTPHandler(panelHTTPSRedirect(8443)).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://router.invalid/not-a-challenge", nil))
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "https://router.invalid:8443/not-a-challenge" || recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("fallback status=%d cache=%q body=%q", recorder.Code, recorder.Header().Get("Cache-Control"), recorder.Body.String())
 	}
 }

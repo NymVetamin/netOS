@@ -149,4 +149,30 @@ func TestChallengeRoutingAndIndependentVPN(t *testing.T) {
 	if calls["one.example.test"] != 1 || calls["two.example.test"] != 1 {
 		t.Fatal("unexpected issuance")
 	}
+	if err := m.SetHTTPFallback(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(302) })); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		host, path string
+		code       int
+	}{
+		{"one.example.test", "/.well-known/acme-challenge/token", 200},
+		{"unknown.example.test", "/.well-known/acme-challenge/token", 404},
+		{"one.example.test", "/", 302},
+		{"unknown.example.test", "/", 302},
+	} {
+		w := httptest.NewRecorder()
+		m.challenge(w, httptest.NewRequest("GET", "http://"+tc.host+tc.path, nil))
+		if w.Code != tc.code {
+			t.Fatalf("fallback %v: %d", tc, w.Code)
+		}
+	}
+	if err := m.SetHTTPFallback(nil); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	m.challenge(w, httptest.NewRequest("GET", "http://one.example.test/", nil))
+	if w.Code != 404 {
+		t.Fatal("fallback survived removal")
+	}
 }

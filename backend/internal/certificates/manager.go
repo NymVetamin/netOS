@@ -57,6 +57,7 @@ type Manager struct {
 	handlers      map[string]http.Handler
 	status        map[string]Status
 	httpServer    *http.Server
+	httpFallback  http.Handler
 	listenerError error
 }
 
@@ -77,6 +78,20 @@ func (m *Manager) HTTPActive() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.httpServer != nil && m.listenerError == nil
+}
+
+// SetHTTPFallback shares the HTTP listener with certificate challenges.
+// A nil handler disables navigation without interrupting ACME renewal.
+func (m *Manager) SetHTTPFallback(handler http.Handler) error {
+	if handler != nil {
+		if err := m.startHTTP(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	m.httpFallback = handler
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) Status() []Status {
@@ -194,8 +209,13 @@ func (m *Manager) challenge(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.RLock()
 	handler := m.handlers[hostname(host)]
+	fallback := m.httpFallback
 	m.mu.RUnlock()
 	w.Header().Set("Cache-Control", "no-store")
+	if !strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") && fallback != nil {
+		fallback.ServeHTTP(w, r)
+		return
+	}
 	if handler == nil || !strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") {
 		http.NotFound(w, r)
 		return

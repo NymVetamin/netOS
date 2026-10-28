@@ -367,7 +367,7 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 				return fmt.Errorf("не удалось занять HTTP-порт проверки ACME %s: %w", challengeAddress, listenErr)
 			}
 			s.challengeServer = &http.Server{
-				Addr: challengeAddress, Handler: manager.HTTPHandler(http.HandlerFunc(acmeFallback)),
+				Addr: challengeAddress, Handler: manager.HTTPHandler(panelHTTPSRedirect(cfg.System.Panel.Port)),
 				ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 				WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
 				ErrorLog: log.New(logWriter{s.Logger}, "", 0),
@@ -433,6 +433,40 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		return fmt.Errorf("не удалось занять порт %d: %w", cfg.System.Panel.Port, err)
 	}
 	stopControl := func() {}
+	// HTTP is optional: another service occupying port 80 must not prevent
+	// access to the HTTPS panel. Port 80 can itself be the legacy TLS port.
+	if cfg.System.Panel.Port != 80 {
+		redirect := panelHTTPSRedirect(cfg.System.Panel.Port)
+		if s.Certificates != nil {
+			if err := s.Certificates.SetHTTPFallback(redirect); err != nil {
+				s.Logger.Warnf("HTTP-переход на HTTPS недоступен: %v", err)
+			}
+			defer s.Certificates.SetHTTPFallback(nil)
+		} else if s.challengeServer == nil {
+			address := s.ACMEHTTPAddress
+			if address == "" {
+				address = ":80"
+			}
+			httpListener, err := listen("tcp", address)
+			if err != nil {
+				s.Logger.Warnf("HTTP-переход на HTTPS недоступен: %v", err)
+			} else {
+				s.challengeServer = &http.Server{Handler: redirect, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+				done := make(chan error, 1)
+				challengeErr = done
+				go func() {
+					err := s.challengeServer.Serve(httpListener)
+					if err == http.ErrServerClosed {
+						err = nil
+					}
+					done <- err
+				}()
+			}
+		}
+	}
+	if s.challengeServer != nil {
+		defer s.challengeServer.Close()
+	}
 	var controlDone <-chan error
 	if s.EnableLocalControl {
 		stopControl, controlDone, err = s.startLocalControl()
@@ -505,7 +539,7 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 			return <-serveDone
 		}
 		_ = s.httpServer.Close()
-		return fmt.Errorf("HTTP endpoint ACME остановлен: %w", err)
+		return fmt.Errorf("HTTP endpoint панели остановлен: %w", err)
 	}
 }
 

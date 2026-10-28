@@ -917,7 +917,7 @@ func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) 
 	next.System.Panel = input.Panel
 	for i := range next.Firewall.Rules {
 		if next.Firewall.Rules[i].ID == config.RulePanel {
-			next.Firewall.Rules[i].DstPort = strconv.Itoa(input.Panel.Port)
+			next.Firewall.Rules[i].DstPort = config.PanelPorts(input.Panel.Port)
 		}
 	}
 	// ACME HTTP-01 must be reachable before the replacement daemon starts:
@@ -944,7 +944,9 @@ func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if input.Panel.Port != current.System.Panel.Port {
-		if err := panelPortAvailable(input.Panel.Port); err != nil {
+		// The old daemon releases its own redirect listener during replacement.
+		ownHTTP := input.Panel.Port == 80 && ((s.Certificates != nil && s.Certificates.HTTPActive()) || s.challengeServer != nil)
+		if err := panelPortAvailable(input.Panel.Port); err != nil && !ownHTTP {
 			writeError(w, http.StatusConflict, "порт %d уже занят: %v", input.Panel.Port, err)
 			return
 		}

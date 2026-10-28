@@ -156,6 +156,14 @@ const (
 	RuleLANOut         = "sys-lan-out"
 )
 
+// PanelPorts keeps the HTTP upgrade under the same access restrictions as TLS.
+func PanelPorts(port int) string {
+	if port == 80 {
+		return "80"
+	}
+	return fmt.Sprintf("80,%d", port)
+}
+
 // systemRules возвращает эталонный набор в том порядке, в каком он должен
 // стоять в начале списка.
 func systemRules(panelPort int, acme bool) []FirewallRule {
@@ -193,8 +201,8 @@ func systemRules(panelPort int, acme bool) []FirewallRule {
 		{
 			ID: RulePanel, Name: "Веб-панель netOS", System: true, Enabled: true,
 			Zone: "global", Flow: "in", Action: "accept", Protocol: "tcp",
-			DstPort: fmt.Sprint(panelPort),
-			Comment: "Порт берётся из настроек панели в разделе «Система».",
+			DstPort: PanelPorts(panelPort),
+			Comment: "HTTPS-порт из настроек панели и HTTP-переход на него (порт 80).",
 		},
 		{
 			ID: RuleICMP, Name: "Отвечать на пинг", System: true, Enabled: true,

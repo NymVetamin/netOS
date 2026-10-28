@@ -56,7 +56,7 @@ func TestPanelMaintenanceCreatesIsolatedRevisionAndSchedulesRollbackGuard(t *tes
 			panelRulePort = rule.DstPort
 		}
 	}
-	if panelRulePort != fmt.Sprint(port) {
+	if panelRulePort != fmt.Sprintf("80,%d", port) {
 		t.Fatalf("target panel firewall port=%q", panelRulePort)
 	}
 	if current.System.Panel.Port != 8443 {

@@ -77,11 +77,6 @@ func acmeCacheDir(tlsDir, email string) string {
 	return filepath.Join(tlsDir, "acme", fmt.Sprintf("%x", digest[:8]))
 }
 
-func acmeFallback(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	http.Error(w, "ACME challenge endpoint", http.StatusNotFound)
-}
-
 func prefetchACMECertificate(manager acmeCertificateManager, domain string) (*tls.Certificate, error) {
 	domain = strings.TrimSuffix(strings.ToLower(domain), ".")
 	cert, err := manager.GetCertificate(&tls.ClientHelloInfo{

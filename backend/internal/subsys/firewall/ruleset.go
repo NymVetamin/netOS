@@ -255,8 +255,8 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	b.line("# --- правила без привязки к зоне ---")
 	if cfg.UsesACME() {
 		// HTTP-01 проверяет домен с непредсказуемых адресов CA. На этом порту
-		// панель не обслуживается: отдельный handler отвечает только на challenge,
-		// а остальные запросы получает 404.
+		// панель не обслуживается: handler отвечает на challenge и перенаправляет
+		// навигацию на HTTPS; API и вход по HTTP недоступны.
 		b.line("-A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -m comment --comment %q -j ACCEPT", "ACME HTTP-01")
 	}
 	for _, h := range hooks {

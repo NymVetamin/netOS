@@ -98,7 +98,7 @@ func TestExistingPanelRuleAndDisabledSSH(t *testing.T) {
 	}
 	c.Normalize()
 	for _, r := range c.Firewall.Rules {
-		if r.ID == RulePanel && r.DstPort != "9443" {
+		if r.ID == RulePanel && r.DstPort != "80,9443" {
 			t.Fatal("panel port not synchronized")
 		}
 		if r.ID == RuleSSH && (r.Enabled || r.SrcIP != "192.0.2.0/24") {
