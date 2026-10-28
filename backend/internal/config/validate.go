@@ -3340,11 +3340,11 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 			// The renderer always enables 802.11n, while channel 14 is an
 			// 802.11b-only special case in Japan. Advertising it would produce a
 			// hostapd configuration that cannot start.
-			if radio.Channel < 1 || radio.Channel > 13 {
+			if radio.Channel < 0 || radio.Channel > 13 {
 				r.errf(path+".channel", "для диапазона 2,4 ГГц нужен канал 1-13")
 			}
 		case "5":
-			if !valid5GHzPrimaryChannel(radio.Channel) {
+			if radio.Channel != 0 && !ValidWiFi5GHzChannel(radio.Channel) {
 				r.errf(path+".channel", "нужен стандартный первичный канал 5 ГГц")
 			}
 		default:
@@ -3356,7 +3356,7 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 		if radio.Band == "2.4" && radio.Width == 80 {
 			r.errf(path+".width", "80 МГц недоступны в диапазоне 2,4 ГГц")
 		}
-		if radio.Band == "5" && radio.Width > 20 && !valid5GHzWidePrimaryChannel(radio.Channel) {
+		if radio.Band == "5" && radio.Channel != 0 && radio.Width > 20 && !valid5GHzWidePrimaryChannel(radio.Channel) {
 			r.errf(path+".channel", "для ширины 40/80 МГц выберите канал 36-161 из стандартного блока")
 		}
 		if len(radio.Country) != 2 || !asciiLetter(radio.Country[0]) || !asciiLetter(radio.Country[1]) {
@@ -3369,6 +3369,12 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 		}
 		if radio.TxPower < 0 || radio.TxPower > 40 {
 			r.errf(path+".tx_power", "мощность должна быть в диапазоне 0-40 dBm")
+		}
+		if radio.PowerPercent < 0 || radio.PowerPercent > 100 {
+			r.errf(path+".power_percent", "мощность должна быть от 1 до 100%% или автоматической")
+		}
+		if radio.PowerPercent > 0 && radio.TxPower != 0 {
+			r.errf(path+".power_percent", "нельзя одновременно задавать мощность в процентах и dBm")
 		}
 		enabledSSIDs := 0
 		ssidIDs := map[string]bool{}
@@ -3435,7 +3441,8 @@ func asciiLetter(ch byte) bool {
 	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
 }
 
-func valid5GHzPrimaryChannel(channel int) bool {
+// ValidWiFi5GHzChannel defines primary channels supported by our HT/VHT renderer.
+func ValidWiFi5GHzChannel(channel int) bool {
 	for _, candidate := range []int{36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165, 169, 173, 177} {
 		if channel == candidate {
 			return true
@@ -3445,7 +3452,7 @@ func valid5GHzPrimaryChannel(channel int) bool {
 }
 
 func valid5GHzWidePrimaryChannel(channel int) bool {
-	return valid5GHzPrimaryChannel(channel) && channel <= 161
+	return ValidWiFi5GHzChannel(channel) && channel <= 161
 }
 
 // --- вспомогательное ---

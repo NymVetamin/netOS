@@ -36,6 +36,9 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит секреты; права 0600.")
 	fmt.Fprintf(&b, "interface=%s\nctrl_interface=/run/netos-hostapd-%s\ndriver=nl80211\n", radio.Device, radioToken(radio.ID))
 	fmt.Fprintf(&b, "country_code=%s\nieee80211d=1\nchannel=%d\n", strings.ToUpper(radio.Country), radio.Channel)
+	if radio.Band == "5" {
+		fmt.Fprintln(&b, "ieee80211h=1")
+	}
 	if radio.Band == "2.4" {
 		fmt.Fprintln(&b, "hw_mode=g\nieee80211n=1")
 	} else {
@@ -45,9 +48,12 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 		direction := secondaryChannelDirection(radio.Band, radio.Channel)
 		fmt.Fprintf(&b, "ht_capab=[HT40%s]\n", direction)
 	}
-	if radio.Width == 80 {
+	if radio.Width == 80 && radio.Channel != 0 {
 		center := center80(radio.Channel)
 		fmt.Fprintf(&b, "vht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=%d\n", center)
+	}
+	if radio.Width == 80 && radio.Channel == 0 {
+		fmt.Fprintln(&b, "vht_oper_chwidth=1")
 	}
 	renderSSID(&b, ssids[0], bridges[ssids[0].Network])
 	for i, ssid := range ssids[1:] {

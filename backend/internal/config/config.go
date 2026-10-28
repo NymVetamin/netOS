@@ -647,15 +647,16 @@ type VPNPeer struct {
 // ---------------------------------------------------------------------------
 
 type WiFiRadio struct {
-	ID      string     `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
-	Device  string     `json:"device" plan:"Устройство" sensitivity:"public"`
-	Enabled bool       `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
-	Band    string     `json:"band" plan:"Диапазон" sensitivity:"public"`
-	Channel int        `json:"channel" plan:"Канал" sensitivity:"public" reference:"channel"`
-	Width   int        `json:"width" plan:"Ширина канала" sensitivity:"public"`
-	Country string     `json:"country" plan:"Страна" sensitivity:"public"`
-	TxPower int        `json:"tx_power,omitempty" plan:"Мощность передатчика" sensitivity:"public"`
-	SSIDs   []WiFiSSID `json:"ssids" plan:"Сети Wi-Fi" sensitivity:"public"`
+	ID           string     `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
+	Device       string     `json:"device" plan:"Устройство" sensitivity:"public"`
+	Enabled      bool       `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`
+	Band         string     `json:"band" plan:"Диапазон" sensitivity:"public"`
+	Channel      int        `json:"channel" plan:"Канал" sensitivity:"public" reference:"channel"`
+	Width        int        `json:"width" plan:"Ширина канала" sensitivity:"public"`
+	Country      string     `json:"country" plan:"Страна" sensitivity:"public"`
+	TxPower      int        `json:"tx_power,omitempty" plan:"Мощность передатчика" sensitivity:"public"`
+	PowerPercent int        `json:"power_percent,omitempty" plan:"Мощность передатчика, %" sensitivity:"public"`
+	SSIDs        []WiFiSSID `json:"ssids" plan:"Сети Wi-Fi" sensitivity:"public"`
 }
 
 type WiFiSSID struct {

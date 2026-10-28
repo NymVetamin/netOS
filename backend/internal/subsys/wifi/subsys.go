@@ -193,7 +193,7 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 		if _, err := s.Runner.Run(ctx, "iw", append(powerTarget, "set", "txpower", "fixed", fmt.Sprint(radio.TxPower*100))...); err != nil {
 			return fmt.Errorf("мощность передатчика: %w", err)
 		}
-	case radio.TxPower == 0:
+	case radio.TxPower == 0 && radio.PowerPercent == 0:
 		// Ноль означает «как решит драйвер», и вернуть это состояние обязаны
 		// мы: раньше значение просто не трогали, и после отката конфигурации
 		// радио оставалось на мощности, которую администратор уже отменил.
@@ -225,6 +225,15 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 		}
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", name); err != nil {
 			return fmt.Errorf("запуск hostapd: %w", err)
+		}
+	}
+	if radio.PowerPercent > 0 {
+		power, err := s.percentPower(ctx, radio)
+		if err != nil {
+			return err
+		}
+		if _, err := s.Runner.Run(ctx, "iw", append(powerTarget, "set", "txpower", "limit", fmt.Sprint(power))...); err != nil {
+			return fmt.Errorf("мощность передатчика: %w", err)
 		}
 	}
 	return nil
@@ -281,6 +290,13 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 			return fmt.Errorf("unit hostapd для %s не включён", radio.Device)
 		}
 		ready := false
+		powerLimit := -1
+		if radio.PowerPercent > 0 {
+			powerLimit, err = s.percentPower(ctx, radio)
+			if err != nil {
+				return err
+			}
+		}
 		for attempt := 0; attempt < attempts; attempt++ {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -288,6 +304,9 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName(radio))
 			allReady, primaryInfo := s.radioRuntimeMatches(ctx, cfg, radio)
 			allReady = strings.TrimSpace(active) == "active" && allReady && s.bridgePortsForwarding(radio) && (radio.TxPower == 0 || txPowerMatches(primaryInfo, radio.TxPower))
+			if powerLimit >= 0 {
+				allReady = allReady && txPowerWithinLimit(primaryInfo, powerLimit)
+			}
 			if allReady {
 				ready = true
 				break
@@ -407,6 +426,9 @@ func (s *Subsystem) radioRuntimeMatches(ctx context.Context, cfg *config.Config,
 		if err != nil || !radioInfoMatches(info, device, radio.Channel, ssid.SSID) {
 			allReady = false
 		}
+		if radio.Channel == 0 && !radioBandMatches(info, radio.Band) {
+			allReady = false
+		}
 		// Точка доступа без моста — это работающая сеть без сегмента:
 		// клиент подключается к SSID, но не видит ни шлюза, ни соседей.
 		// Проверять состояние радио и не проверять мост означало считать
@@ -471,7 +493,7 @@ func radioInfoMatches(info, device string, channel int, ssid string) bool {
 			}
 		}
 	}
-	return gotDevice == device && gotType == "AP" && gotChannel == channel && gotSSID == ssid
+	return gotDevice == device && gotType == "AP" && (gotChannel == channel || channel == 0 && gotChannel > 0) && gotSSID == ssid
 }
 
 func txPowerMatches(info string, wanted int) bool {

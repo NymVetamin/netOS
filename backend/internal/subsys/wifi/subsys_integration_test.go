@@ -46,6 +46,10 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 	if device == "" {
 		t.Fatal("mac80211_hwsim did not create a radio interface")
 	}
+	hardware, err := ReadHardware(ctx, runner, "US")
+	if err != nil || len(hardware.Radios) != 1 || hardware.Radios[0].Device != device || !hardware.Radios[0].AP || len(hardware.Radios[0].Bands) == 0 || len(hardware.Radios[0].Bands[0].Channels) == 0 {
+		t.Fatalf("hardware discovery: %+v %v", hardware, err)
+	}
 	const bridge = "br-wifi997"
 	if _, err := runner.Run(ctx, "ip", "link", "show", bridge); err == nil {
 		t.Skipf("refusing to reuse existing %s", bridge)
@@ -127,6 +131,22 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 		if err != nil || pidAfter != pidBefore {
 			t.Fatalf("%s restarted hostapd: %q -> %q %v", operation, pidBefore, pidAfter, err)
 		}
+	}
+	// Switch from the legacy dBm setting to percentages and back to automatic.
+	for _, percent := range []int{50, 100, 0} {
+		cfg.WiFi[0].TxPower = 0
+		cfg.WiFi[0].PowerPercent = percent
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatalf("power %d: %v", percent, err)
+		}
+		if err := s.Health(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		info, err := runner.Run(ctx, "iw", "dev", device, "info")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("power %d: %s", percent, info)
 	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)

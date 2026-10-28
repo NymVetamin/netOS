@@ -343,6 +343,7 @@ export const api = {
   maintenanceStatus: () => request<any>("GET", "/api/maintenance/status"),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
+  wifiHardware: (country = "", signal?: AbortSignal) => request<{ radios: any[]; countries: string[]; country: string }>("GET", `/api/wifi/hardware?country=${encodeURIComponent(country)}`, undefined, undefined, signal),
   leases: () => request<{ leases: any[] }>("GET", "/api/leases"),
   arp: () => request<{ arp: any[] }>("GET", "/api/arp"),
   routes: (table = "") =>
