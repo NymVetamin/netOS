@@ -42,7 +42,7 @@ func renderL2TPPPP(server config.VPNServer, l2tp config.L2TPServerConfig) string
 		auth = "require-mschap-v2"
 	}
 	text := fmt.Sprintf("name %s\nauth\n%s\nrefuse-pap\nnodefaultroute\nmtu %d\nmru %d\nnoipv6\nlcp-echo-interval 20\nlcp-echo-failure 3\n", l2tpAuthName(server), auth, mtu, mtu)
-	for _, address := range l2tp.DNS {
+	for _, address := range server.ClientDNS(l2tp.UseRouterDNS, l2tp.DNS) {
 		text += "ms-dns " + address + "\n"
 	}
 	return text

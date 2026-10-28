@@ -2700,6 +2700,9 @@ td > select {
   .channel-probe-settings .form-grid .field-label {white-space:normal}
 }
 .clients-channel-hint { padding: 12px 16px; border-top: 1px solid var(--border); }
+.form-grid .field:has(.vpn-dns-settings), .form-grid .field:has(.vpn-dns-input) {width:250px;max-width:100%}
+.vpn-dns-settings {display:flex;flex-direction:column;gap:10px}
+textarea.vpn-dns-input {height:64px;min-height:64px;resize:vertical}
 
 .openconnect-grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 16px;align-items:start}
 .openconnect-grid > .field {width:auto;min-width:0;max-width:none;margin:0}

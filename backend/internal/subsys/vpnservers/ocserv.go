@@ -94,7 +94,7 @@ func RenderOcserv(server config.VPNServer, cfg *config.Config, stateDir string) 
 			fmt.Fprintf(&b, "route = %s\n", route)
 		}
 	}
-	dnsServers := oc.DNS
+	dnsServers := server.ClientDNS(oc.UseRouterDNS, oc.DNS)
 	if oc.UseRouterDNS {
 		// ocserv assigns its local tunnel address from the network, not the
 		// host part of the configured prefix. /31 follows RFC 3021.
@@ -102,7 +102,6 @@ func RenderOcserv(server config.VPNServer, cfg *config.Config, stateDir string) 
 		if network.Bits() < 31 {
 			router = router.Next()
 		}
-		dnsServers = []string{router.String()}
 		if len(oc.Routes) > 0 {
 			covered := false
 			for _, route := range oc.Routes {

@@ -65,6 +65,7 @@ func renderIKEv2AuthUsers(servers []config.VPNServer) ([]byte, error) {
 			return nil, err
 		}
 		var splitRoutes string
+		dnsServers := server.ClientDNS(ike.UseRouterDNS, ike.DNS)
 		for _, peer := range server.Peers {
 			if !peer.Enabled {
 				continue
@@ -80,7 +81,7 @@ func renderIKEv2AuthUsers(servers []config.VPNServer) ([]byte, error) {
 			}
 			fmt.Fprintf(&b, "\"%s\" NT-Password := 0x%s\n", user, ikev2NTPassword(peer.Credentials["password"]))
 			fmt.Fprintf(&b, "    Framed-IP-Address = %s,\n    Class = \"netos-srv%d\"", ip, server.Index)
-			for i, dns := range ike.DNS {
+			for i, dns := range dnsServers {
 				address, err := netip.ParseAddr(dns)
 				if err != nil || !address.Is4() {
 					return nil, fmt.Errorf("некорректный DNS IKEv2")
@@ -93,7 +94,7 @@ func renderIKEv2AuthUsers(servers []config.VPNServer) ([]byte, error) {
 			}
 			if len(ike.SplitRoutes) > 0 {
 				if splitRoutes == "" {
-					splitRoutes = strings.Join(ikev2RoutesWithDNS(ike.SplitRoutes, ike.DNS), ",")
+					splitRoutes = strings.Join(ikev2RoutesWithDNS(ike.SplitRoutes, dnsServers), ",")
 				}
 				fmt.Fprintf(&b, ",\n    CVPN3000-IPSec-Split-Tunneling-Policy = 1,\n    CVPN3000-IPSec-Split-Tunnel-List = \"%s\"", splitRoutes)
 			}

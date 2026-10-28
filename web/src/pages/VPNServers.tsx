@@ -200,10 +200,10 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         config: { public_endpoint: "", dns: [], use_router_dns: true, routes: [], mtu: 1380, banner: "netOS VPN" },
 		} : type === "l2tp" ? {
 			...common, name: `L2TP ${index}`, port: 1701,
-			config: { listen: "0.0.0.0", mtu: 1400, ipsec: true, preshared_key: "", dns: [] },
+			config: { listen: "0.0.0.0", mtu: 1400, ipsec: true, preshared_key: "", dns: [], use_router_dns: true },
 		} : {
 			...common, name: `IKEv2 ${index}`, port: 500,
-			config: { public_endpoint: "", server_identity: config.system?.hostname || "netos", dns: [], split_routes: [], mtu: 1400 },
+			config: { public_endpoint: "", server_identity: config.system?.hostname || "netos", dns: [], use_router_dns: true, split_routes: [], mtu: 1400 },
       };
       draft.vpn_servers.push(server);
     });
@@ -308,7 +308,7 @@ function L2TPServer({ server, config, installed, patch }: any) {
       <Field label="UDP-порт"><input type="number" value={1701} readOnly /></Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="MTU"><input type="number" min={576} max={1460} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
-      <Field label="DNS для клиентов" hint="До двух IPv4-адресов, по одному в строке"><textarea className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <VPNClientDNS cfg={cfg} setConfig={setConfig} />
     </div>
     {cfg.ipsec && <Notice tone="info" title="Подключение L2TP/IPsec">На клиенте укажите адрес роутера, общий ключ IPsec и личный логин с паролем. Несколько Windows-клиентов за одним общим NAT могут конфликтовать — для них используйте IKEv2.</Notice>}
   </ServerRow>;
@@ -325,7 +325,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 			<Field label="Идентификатор сервера" hint="Должен совпадать с адресом в профиле клиента"><input className="mono" value={cfg.server_identity || ""} onChange={(e) => setConfig("server_identity", e.target.value)} /></Field>
 			<Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
 			<Field label="MTU"><input type="number" min={1280} max={9000} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
-			<Field label="DNS для клиентов" hint="По одному IPv4-адресу в строке"><textarea className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <VPNClientDNS cfg={cfg} setConfig={setConfig} />
 			<Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.split_routes || []).join("\n")} onChange={(e) => setConfig("split_routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
 		</div>
 		<Notice tone="info" title="Настройка клиента">Импортируйте сертификат как доверенный корневой, затем создайте IKEv2-подключение к публичному адресу с логином и паролем EAP-MSCHAPv2. <VPNCertificate server={server} /></Notice>
@@ -343,10 +343,7 @@ function OcservServer({ server, config, installed, patch }: any) {
       <Field label="Публичный адрес" hint="vpn.example.com:443"><input className="mono" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1380} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
-      <Field label="DNS для клиентов" hint={cfg.use_router_dns ? "Клиент получит адрес роутера в VPN-подсети. DNS-служба роутера должна быть включена." : "По одному IPv4-адресу в строке"}>
-        <Switch checked={!!cfg.use_router_dns} label="Использовать DNS роутера" onChange={(enabled) => setConfig("use_router_dns", enabled)} />
-        {!cfg.use_router_dns && <textarea aria-label="DNS OpenConnect" className="mono" value={(cfg.dns || []).join("\n")} onChange={(e) => setConfig("dns", e.target.value.split(/\s+/).filter(Boolean))} />}
-      </Field>
+      <VPNClientDNS cfg={cfg} setConfig={setConfig} />
       <Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.routes || []).join("\n")} onChange={(e) => setConfig("routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
       <Field label="Приветствие"><input value={cfg.banner || ""} onChange={(e) => setConfig("banner", e.target.value)} /></Field>
     </div>
@@ -574,7 +571,16 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
 
 type ClientStatus = { id: string; public_key: string; state: string; endpoint: string; last_handshake: number; last_seen?: number; traffic_known?: boolean; received: number; sent: number };
 
-function ProfileListInput({ label, values, disabled, onChange }: { label: string; values: string[]; disabled?: boolean; onChange: (values: string[]) => void }) {
+function VPNClientDNS({ cfg, setConfig }: { cfg: any; setConfig: (key: string, value: unknown) => void }) {
+  return <Field label="DNS для клиентов" hint={cfg.use_router_dns ? "Адрес роутера в VPN-подсети. DNS-служба должна быть включена." : "IPv4-адреса, по одному в строке"}>
+    <div className="vpn-dns-settings">
+      <Switch checked={!!cfg.use_router_dns} label="DNS роутера" onChange={enabled => setConfig("use_router_dns", enabled)} />
+      {!cfg.use_router_dns && <ProfileListInput compact label="DNS для клиентов" values={cfg.dns || []} onChange={values => setConfig("dns", values)} />}
+    </div>
+  </Field>;
+}
+
+function ProfileListInput({ label, values, disabled, compact, onChange }: { label: string; values: string[]; disabled?: boolean; compact?: boolean; onChange: (values: string[]) => void }) {
   const serialized = values.join("\n");
   const [text, setText] = useState(serialized);
   const parse = (value: string) => value.split(/[\s,]+/).filter(Boolean);
@@ -582,7 +588,7 @@ function ProfileListInput({ label, values, disabled, onChange }: { label: string
     setText((current) => parse(current).join("\n") === serialized ? current : serialized);
   }, [serialized]);
   // Keep trailing newlines while typing so a second address can be entered.
-  return <textarea aria-label={label} className="mono" disabled={disabled} value={text} onChange={(event) => {
+  return <textarea aria-label={label} className={compact ? "mono vpn-dns-input" : "mono"} rows={compact ? 2 : undefined} disabled={disabled} value={text} onChange={(event) => {
     setText(event.target.value);
     onChange(parse(event.target.value));
   }} />;
@@ -767,7 +773,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     </div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Трафик через VPN (AllowedIPs)" hint="Подсети, которые это устройство направляет в туннель. 0.0.0.0/0 — весь IPv4-трафик; по одной подсети в строке."><ProfileListInput label="Трафик через VPN (AllowedIPs)" values={profile.allowed_ips} onChange={(items) => editProfile((value) => { value.allowed_ips = items; })} /></Field>
-      <Field label="DNS в профиле" hint="DNS роутера — адрес его WireGuard-интерфейса. Для своих DNS отключите переключатель; пустой список оставит DNS устройства. При выборочной маршрутизации включите адрес DNS роутера в AllowedIPs."><Switch checked={profile.use_router_dns} label="DNS роутера" onChange={(enabled) => editProfile((value) => { value.use_router_dns = enabled; })} /><ProfileListInput label="DNS в профиле" disabled={profile.use_router_dns} values={profile.dns} onChange={(items) => editProfile((value) => { value.dns = items; })} /></Field>
+      <Field label="DNS в профиле" hint="DNS роутера — адрес его WireGuard-интерфейса. Для своих DNS отключите переключатель; пустой список оставит DNS устройства. При выборочной маршрутизации включите адрес DNS роутера в AllowedIPs."><Switch checked={profile.use_router_dns} label="DNS роутера" onChange={(enabled) => editProfile((value) => { value.use_router_dns = enabled; })} /><ProfileListInput compact label="DNS в профиле" disabled={profile.use_router_dns} values={profile.dns} onChange={(items) => editProfile((value) => { value.dns = items; })} /></Field>
     </div>
     <p className="hint">После изменения этих настроек скачайте профиль заново или отсканируйте QR-код на устройстве.</p>
     {secret ? <div className="client-package">

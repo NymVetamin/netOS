@@ -96,7 +96,7 @@ func renderIPsecServers(servers []config.VPNServer, cfg *config.Config, l2tp []c
 		if len(ts) == 0 {
 			ts = []string{"0.0.0.0/0"}
 		} else {
-			ts = ikev2RoutesWithDNS(ts, ike.DNS)
+			ts = ikev2RoutesWithDNS(ts, server.ClientDNS(ike.UseRouterDNS, ike.DNS))
 		}
 		fmt.Fprintf(&b, "  netos-srv%d {\n", server.Index)
 		fmt.Fprintln(&b, "    version = 2")
