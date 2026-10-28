@@ -14,11 +14,19 @@ function ClientChannel({ config, value, inherited, source, label, onChange }: {
 }) {
   const channels = config.channels || [];
   const name = (id: string) => channels.find((c: any) => c.id === id)?.name || (id === "direct" ? "Напрямую" : id);
-  return <select className="client-channel" aria-label={label} value={value} onChange={e => onChange(e.target.value)} onClick={e => e.stopPropagation()}>
-    <option value="">{source}{inherited ? ` — ${name(inherited)}` : ""}</option>
-    {value && !channels.some((c: any) => c.id === value && c.enabled) && <option value={value} disabled>{name(value)} (недоступен)</option>}
-    {channels.filter((c: any) => c.enabled).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
-  </select>;
+  const unavailable = !!value && !channels.some((c: any) => c.id === value && c.enabled);
+  const selected = value ? name(value) : inherited ? name(inherited) : source;
+  return <div className="client-channel-control">
+    <div className="client-channel-value" aria-hidden="true">
+      <span>{selected}{unavailable && " (недоступен)"}</span>
+      {!value && inherited && <small>{source}</small>}
+    </div>
+    <select className="client-channel" aria-label={label} value={value} onChange={e => onChange(e.target.value)} onClick={e => e.stopPropagation()}>
+      <option value="">{source}{inherited ? ` — ${name(inherited)}` : ""}</option>
+      {unavailable && <option value={value} disabled>{name(value)} (недоступен)</option>}
+      {channels.filter((c: any) => c.enabled).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
+    </select>
+  </div>;
 }
 
 // Для каждого клиента можно переопределить канал сегмента. Явные политики
