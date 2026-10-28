@@ -791,6 +791,42 @@ summary.xsum:hover,
   align-items: center;
 }
 
+.firewall-settings-toggle {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.firewall-settings > .field {
+  display: grid;
+  max-width: none;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 380px);
+  gap: 4px 24px;
+  align-items: center;
+  margin: 0;
+}
+
+.firewall-settings > .field > .field-label,
+.firewall-settings > .field > .hint {
+  grid-column: 1;
+  margin: 0;
+}
+
+.firewall-settings > .field > select {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .firewall-settings > .field { grid-template-columns: minmax(0, 1fr); }
+  .firewall-settings > .field > select {
+    grid-column: 1;
+    grid-row: 3;
+    margin-top: 8px;
+  }
+}
+
 .card-sub > .btn,
 .card-sub > .addmenu {
   margin-left: auto;

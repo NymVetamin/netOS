@@ -150,27 +150,26 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       <AddressSets config={config} patch={patch} />
 
       <Card tight title="Зоны и политики">
-        <div className="rows-foot top">
-          <div className="form-grid">
+        <div className="rows-foot top firewall-settings">
+          <div className="firewall-settings-toggle">
             <Switch
               checked={fw.enabled}
               label="Файрволл включён"
               onChange={(v) => patch((d) => (d.firewall.enabled = v))}
             />
-            <Field
-              wide
-              label="Исходящий трафик самого роутера"
-              hint="Обновления, запросы DNS от роутера, его подключения к VPN"
-            >
-              <select
-                value={fw.output_policy || "accept"}
-                onChange={(e) => patch((d) => (d.firewall.output_policy = e.target.value))}
-              >
-                <option value="accept">разрешён</option>
-                <option value="drop">запрещён, кроме разрешённого правилами</option>
-              </select>
-            </Field>
           </div>
+          <Field
+            label="Исходящий трафик роутера"
+            hint="Обновления, DNS и подключения к VPN"
+          >
+            <select
+              value={fw.output_policy || "accept"}
+              onChange={(e) => patch((d) => (d.firewall.output_policy = e.target.value))}
+            >
+              <option value="accept">Разрешён</option>
+              <option value="drop">Только разрешённый правилами</option>
+            </select>
+          </Field>
         </div>
 
         <Rows cols={["Зона", "Цепочки", "Интерфейсы", "Без правила", "Размер пакетов"]}>
