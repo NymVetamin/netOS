@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon } from "../icons";
 import { newID } from "../id";
+import { createWiFiHardwareRequests } from "../wifiHardwareRequests";
 
 type Props = { config: any; patch: (mutate: (draft: any) => void) => void };
 const SECURITY: Record<string, string> = { "wpa2/wpa3": "WPA2/WPA3", wpa3: "WPA3", wpa2: "WPA2", open: "открытая" };
@@ -22,6 +23,7 @@ export function WiFiPage({ config, patch }: Props) {
   const [hardware, setHardware] = useState<any>(null);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [requestHardware] = useState(() => createWiFiHardwareRequests());
   const countries = hardware?.countries;
   const countryChoices = useMemo(() => countryOptions(countries || []), [countries]);
   useEffect(() => {
@@ -42,26 +44,27 @@ export function WiFiPage({ config, patch }: Props) {
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
       {!hardware && !error ? <Empty>Определяем радиоустройства…</Empty> : entries.length === 0 ? <Empty>{hardware?.radios.length ? "Обнаруженные адаптеры не поддерживают режим точки доступа или не имеют сетевого интерфейса." : "Wi-Fi-адаптеры не обнаружены."}</Empty> :
         <Rows cols={["Радио", "Диапазон", "Канал", "Сети", "Состояние"]} toggle="Включено">{entries.map(({ radio, hw }: any) =>
-          <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} config={config} installed={installed} patch={patch} />)}</Rows>}
+          <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} requestHardware={requestHardware} config={config} installed={installed} patch={patch} />)}</Rows>}
     </Card>
   </>;
 }
 
-function RadioEditor({ radio, hardware, countries, countryChoices, initialCountry, config, installed, patch }: any) {
+function RadioEditor({ radio, hardware, countries, countryChoices, initialCountry, requestHardware, config, installed, patch }: any) {
   const [options, setOptions] = useState(hardware);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    const controller = new AbortController();
+    let cancelled = false;
     setError(""); setOptions(hardware);
-    if (!hardware || radio.country === initialCountry) { setLoading(false); return () => controller.abort(); }
+    if (!hardware || radio.country === initialCountry) { setLoading(false); return; }
     setLoading(true);
-    api.wifiHardware(radio.country, controller.signal).then(result => {
-      if (!controller.signal.aborted) setOptions(result.radios.find((r: any) => r.phy === hardware.phy));
-    }).catch(e => { if (!controller.signal.aborted) { setError(e.message); setOptions(null); } })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [hardware, radio.country, initialCountry]);
+    const request = requestHardware(radio.country);
+    request.result.then((result: Awaited<ReturnType<typeof api.wifiHardware>>) => {
+      if (!cancelled) setOptions(result.radios.find((r: any) => r.phy === hardware.phy));
+    }).catch((e: Error) => { if (!cancelled) { setError(e.message); setOptions(null); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; request.release(); };
+  }, [hardware, radio.country, initialCountry, requestHardware]);
   const networks = (config.networks || []).filter((item: any) => item.enabled).map((item: any) => ({
     ...item, wifiBridge: (config.interfaces || []).some((iface: any) => iface.id === item.interface && iface.type === "bridge"),
   }));
