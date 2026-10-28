@@ -82,6 +82,7 @@ export type RouteEntry = {
 };
 
 export type Session = {
+  show_hints?: boolean;
   permissions?: Record<string, string>;
   username: string;
   role: string;
@@ -215,6 +216,8 @@ export const api = {
     csrfToken = res.csrf_token;
     return res;
   },
+
+  setPreferences: (show_hints: boolean) => request<{ show_hints: boolean }>("PUT", "/api/preferences", { show_hints }),
 
   async changePassword(current: string, next: string) {
     const result = await request<{ ok: boolean }>("POST", "/api/password", { current, new: next });

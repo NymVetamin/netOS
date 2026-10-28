@@ -1,4 +1,5 @@
 import { PermissionContext, canAccess } from "./permissions";
+import { HintProvider, HintSettings } from "./HintProvider";
 import { StatusPollingProvider, useStatusPolling } from "./StatusPollingContext";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, ConfigResponse, formatUptime, PlanResponse, Problem, Session } from "./api";
@@ -125,7 +126,7 @@ export default function App() {
     return <Login onSuccess={onLogin} sessionEnded={sessionEnded} />;
   }
 
-  return <PermissionContext.Provider value={session}><StatusPollingProvider key={session.username}><Shell session={session} onLogout={onLogout} /></StatusPollingProvider></PermissionContext.Provider>;
+  return <PermissionContext.Provider value={session}><StatusPollingProvider key={session.username}><HintProvider session={session}><Shell session={session} onLogout={onLogout} /></HintProvider></StatusPollingProvider></PermissionContext.Provider>;
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +635,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "diagnostics" && <DiagnosticsPage admin={session.role === "admin"} dnsLogging={!!cfg.dns?.query_log} />}
             </fieldset>
           )}
+          {page === "system" && canAccess(session, "system") && <HintSettings />}
         </div>
       </main>
       </div>

@@ -14,7 +14,7 @@ export function IPTVSection({config,patch}: {config:any;patch:(fn:(draft:any)=>v
   const installed=(config.components||[]).some((c:any)=>c.id==="igmpproxy" && c.installed);
   const wans=(config.wans||[]).filter((w:any)=>w.enabled && ["dhcp","static"].includes(w.proto));
   return <Card title="Телевидение провайдера">
-    {!installed && <Notice tone="info" title="Нужен компонент IPTV">Установите его в разделе «Компоненты».</Notice>}
+    {!installed && <Notice hint tone="info" title="Нужен компонент IPTV">Установите его в разделе «Компоненты».</Notice>}
     <Switch checked={!!value.enabled} onChange={v=>set("enabled",v)} label="Включить IGMP proxy" />
     <div className="form-grid">
       <Field label="Аплинк IPTV" hint="Если провайдер использует отдельный VLAN, создайте для него аплинк в разделе «Сеть».">

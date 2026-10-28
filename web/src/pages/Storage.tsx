@@ -35,8 +35,8 @@ export function StoragePage({ config, patch, admin }: Props) {
   const server = networks.find((n: any) => (s.networks || []).includes(n.id))?.router_address?.split("/")[0] || vpns.find((v: any) => (s.vpns || []).includes(v.id))?.subnet?.split("/")[0] || config.system?.hostname || "netos";
   return <>
     <div className="page-head"><h1><Icon name="hard-drive" />Диски и файлы</h1><p>Файлы на USB-дисках по SMB из локальной сети и VPN</p></div>
-    {!installed && <Notice tone="info" title="Нужен компонент Samba">Включите «Samba — диски и сетевые папки» в разделе «Компоненты».</Notice>}
-    <Notice tone="info" title="Как подключиться">После применения настроек откройте <span className="mono">{`\\\\${server}`}</span> в Проводнике Windows или <span className="mono">{`smb://${server}`}</span> в файловом менеджере. Используйте отдельный логин Samba. Можно просматривать и скачивать файлы, а при разрешённой записи — загружать, переименовывать и удалять их. Для VPN в маршруты клиента должен входить адрес роутера; обнаружение в сетевом окружении работает в LAN.</Notice>
+    {!installed && <Notice hint tone="info" title="Нужен компонент Samba">Включите «Samba — диски и сетевые папки» в разделе «Компоненты».</Notice>}
+    <Notice hint tone="info" title="Как подключиться">После применения настроек откройте <span className="mono">{`\\\\${server}`}</span> в Проводнике Windows или <span className="mono">{`smb://${server}`}</span> в файловом менеджере. Используйте отдельный логин Samba. Можно просматривать и скачивать файлы, а при разрешённой записи — загружать, переименовывать и удалять их. Для VPN в маршруты клиента должен входить адрес роутера; обнаружение в сетевом окружении работает в LAN.</Notice>
     <fieldset className="storage-settings" disabled={!admin} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <Card title="Файловый сервер">
         <div className="storage-server">

@@ -17,7 +17,7 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
   const [editing, setEditing] = useState<{ id: string; name: string; text: string } | null>(null);
   const installed = (config.components || []).some((c: any) => c.id === "ipset" && c.installed);
   return <Card tight title="Наборы адресов" subtitle="IPv4-адреса и подсети для правил доступа">
-    {!installed && <div className="rows-notes"><Notice tone="warn" title="Нужен компонент «Наборы адресов»">Включите его на странице компонентов перед применением настройки.</Notice></div>}
+    {!installed && <div className="rows-notes"><Notice hint tone="warn" title="Нужен компонент «Наборы адресов»">Включите его на странице компонентов перед применением настройки.</Notice></div>}
     {sets.length === 0 && !editing && <Empty>Наборов нет</Empty>}
     {sets.length > 0 && <Rows cols={["Набор", "Состав", "", "", ""]}>{sets.map((item: any) => {
       const used = (config.firewall?.rules || []).some((r: any) => r.src_ipset === item.id || r.dst_ipset === item.id);
@@ -134,7 +134,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       </div>
 
       <ProblemsFor problems={problems} prefixes={["firewall", "clients"]} />
-      {config.samba?.enabled && <Notice tone="info" title="Доступ к дискам Samba">
+      {config.samba?.enabled && <Notice hint tone="info" title="Доступ к дискам Samba">
         {!fw.enabled && <p>Файрволл выключен: описанные ниже сетевые правила не действуют. Ограничения самого Samba по адресам и пользователям сохраняются.</p>}
         TCP 445 разрешён для сетей {(config.networks || []).filter((n: any) => (config.samba.networks || []).includes(n.id)).map((n: any) => n.name).join(", ") || "—"} и VPN-серверов {(config.vpn_servers || []).filter((v: any) => (config.samba.vpns || []).includes(v.id)).map((v: any) => v.name).join(", ") || "—"}. Для остальных источников SMB закрыт, включая ранее установленные соединения. {config.samba.discovery && "Обнаружение Windows использует UDP/TCP 3702 и IGMP только в выбранных LAN."} Эти правила применяются до общих правил доступа; настройки находятся в разделе «Диски и файлы».
       </Notice>}
@@ -591,7 +591,7 @@ function RuleRow({
               </div>
             )}
             {rule.system && (
-              <Notice tone="info" title="Правило создано netOS">
+              <Notice hint tone="info" title="Правило создано netOS">
                 {rule.id === "sys-acme" ? "Правило управляется настройками сертификата в разделе «Система»." : "Это стартовое правило. Его можно изменить, выключить или удалить; удалённое правило не восстановится автоматически."}
                 {rule.id === "sys-panel" && " Порт панели берётся из раздела «Система»."}
               </Notice>

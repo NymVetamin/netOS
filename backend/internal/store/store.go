@@ -28,7 +28,7 @@ const (
 	StateSuperseded = "superseded"
 	// schemaVersion describes SQLite tables, not the independently versioned
 	// JSON document stored inside revisions.
-	schemaVersion = 3
+	schemaVersion = 4
 )
 
 var ErrNotFound = errors.New("не найдено")
@@ -50,6 +50,7 @@ type Revision struct {
 
 // User — учётная запись веб-панели.
 type User struct {
+	ShowHints    bool       `json:"show_hints"`
 	ID           int64      `json:"id"`
 	Username     string     `json:"username"`
 	PasswordHash string     `json:"-"`
@@ -130,6 +131,11 @@ CREATE TABLE IF NOT EXISTS users (
     totp_secret   TEXT NOT NULL DEFAULT '',
     created_at    INTEGER NOT NULL,
     last_login    INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    username TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+    show_hints INTEGER NOT NULL DEFAULT 1 CHECK(show_hints IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS audit (
@@ -386,15 +392,16 @@ func (s *Store) CreateUser(username, passwordHash, role string) (int64, error) {
 
 func (s *Store) UserByName(username string) (*User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, role, totp_secret, created_at, last_login
-         FROM users WHERE username = ?`, username)
+		`SELECT u.id, u.username, u.password_hash, u.role, u.totp_secret, u.created_at, u.last_login,
+         COALESCE(p.show_hints, 1) FROM users u LEFT JOIN user_preferences p ON p.username=u.username
+         WHERE u.username = ?`, username)
 
 	var u User
 	var createdAt int64
 	var lastLogin sql.NullInt64
 
 	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret,
-		&createdAt, &lastLogin); err != nil {
+		&createdAt, &lastLogin, &u.ShowHints); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}

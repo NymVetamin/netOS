@@ -107,8 +107,8 @@ export function OcservTLSSettings({ server, setConfig }: { server: any; setConfi
         <Field label="Закрытый ключ PEM" hint={tls.private_key || server.secrets_set?.["tls.private_key"] ? "•••••••• — ключ задан. Выберите файл только для замены." : "Ключ не задан"}><input type="file" accept=".pem,.key" onChange={(e) => { void upload("private_key", e.target.files?.[0]); e.target.value = ""; }} /></Field>
       </>}
     </div>
-    {tls.mode === "panel" && <Notice tone="info" title="Общий сертификат">Сертификат netOS должен покрывать домен публичного адреса VPN. Продление выполняется совместно; повторный выпуск для того же домена не нужен.</Notice>}
-    {tls.mode === "acme" && <Notice tone="info" title="Автоматический выпуск и продление">Домен должен вести на этот роутер, а TCP-порт 80 — быть доступен из интернета. Выпуск начнётся при применении. Продление работает в фоне.</Notice>}
+    {tls.mode === "panel" && <Notice hint tone="info" title="Общий сертификат">Сертификат netOS должен покрывать домен публичного адреса VPN. Продление выполняется совместно; повторный выпуск для того же домена не нужен.</Notice>}
+    {tls.mode === "acme" && <Notice hint tone="info" title="Автоматический выпуск и продление">Домен должен вести на этот роутер, а TCP-порт 80 — быть доступен из интернета. Выпуск начнётся при применении. Продление работает в фоне.</Notice>}
     {status?.expires && tls.mode !== "selfsigned" && <div className="hint">Применённый сертификат действует до {new Date(status.expires).toLocaleString()}. Отпечаток: <span className="mono">{status.fingerprint}</span></div>}
     {status?.error && <Notice tone="warn" title="Не удалось обновить сертификат">{status.error}</Notice>}
     {error && <Notice tone="danger" title="Не удалось загрузить сертификат">{error}</Notice>}

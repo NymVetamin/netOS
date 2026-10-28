@@ -6,7 +6,8 @@ import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { HintContext } from "../HintContext";
 import { api, Problem } from "../api";
 import { newID } from "../id";
 import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
@@ -479,7 +480,7 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
               toggle={<Switch checked={n.enabled} label="" ariaLabel={`${n.name} ${n.enabled ? "обслуживается" : "не обслуживается"}`} onChange={(v) => patch((d) => (d.networks[idx].enabled = v))} />}
             >
               {!n.enabled && (
-                  <Notice tone="info" title="Сегмент выключен">
+                  <Notice hint tone="info" title="Сегмент выключен">
                     Адрес с интерфейса снимется, DHCP в этом сегменте работать не будет.
                     Сам интерфейс останется — его состояние настраивается ниже, в списке
                     портов.
@@ -995,7 +996,8 @@ export function ProblemsFor({
   problems: Problem[];
   prefixes: string[];
 }) {
-  const mine = problems.filter((p) => prefixes.some((pref) => p.path.startsWith(pref)));
+  const showHints = useContext(HintContext);
+  const mine = problems.filter((p) => (showHints || p.severity === "error") && prefixes.some((pref) => p.path.startsWith(pref)));
   if (mine.length === 0) return null;
   return (
     <div className="stack" style={{ marginBottom: "1rem" }}>

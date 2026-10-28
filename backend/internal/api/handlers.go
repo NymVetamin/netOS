@@ -271,7 +271,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 }
 
 func viewerAllowed(r *http.Request) bool {
-	if r.URL.Path == "/api/logout" || r.URL.Path == "/api/password" {
+	if r.URL.Path == "/api/logout" || r.URL.Path == "/api/password" || (r.URL.Path == "/api/preferences" && r.Method == http.MethodPut) {
 		return true
 	}
 	if r.Method != http.MethodGet {
@@ -318,6 +318,7 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
+	ShowHints   bool              `json:"show_hints"`
 	Permissions map[string]string `json:"permissions,omitempty"`
 	Username    string            `json:"username"`
 	Role        string            `json:"role"`
@@ -422,6 +423,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = s.Store.Audit(store.AuditEntry{User: user.Username, Action: "login", SourceIP: ip, Success: true})
 
 	writeJSON(w, http.StatusOK, loginResponse{
+		ShowHints:   user.ShowHints,
 		Permissions: s.userPermissions(user.Username),
 		Username:    user.Username,
 		Role:        user.Role,
@@ -473,6 +475,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"role":        user.Role,
 		"csrf_token":  csrf,
 		"last_login":  user.LastLogin,
+		"show_hints":  user.ShowHints,
 	})
 }
 

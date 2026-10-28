@@ -82,7 +82,7 @@ function DHCPSection({
   return (
     <Card title="Выдача адресов" subtitle="DHCP-сервер для локальных сегментов">
       {providers.length === 0 ? (
-        <Notice tone="warn" title="Сервер DHCP не установлен">
+        <Notice hint tone="warn" title="Сервер DHCP не установлен">
           Установите dnsmasq, ISC DHCP или Kea в разделе «Компоненты» — после этого его
           можно будет включить здесь.
         </Notice>
@@ -205,7 +205,7 @@ function DNSSection({
   if (providers.length === 0) {
     return (
       <Card title="Разрешение имён" subtitle="DNS-резолвер">
-        <Notice tone="warn" title="Резолвер не установлен">
+        <Notice hint tone="warn" title="Резолвер не установлен">
           Установите dnsmasq, Unbound или dnsproxy в разделе «Компоненты».
           Для шифрованного DNS (DoT, DoH) подойдут последние два.
         </Notice>
@@ -285,7 +285,7 @@ function DNSSection({
 
         {cantEncrypt && (
           <div style={{ marginTop: "1rem" }}>
-            <Notice tone="warn" title="Выбранный резолвер не умеет шифровать запросы">
+            <Notice hint tone="warn" title="Выбранный резолвер не умеет шифровать запросы">
               Настроено шифрованных апстримов: {encrypted.length}. Установите dnsproxy
               либо оставьте только обычные.
             </Notice>
@@ -294,7 +294,7 @@ function DNSSection({
 
         {cantFilterAAAA && (
           <div style={{ marginTop: "1rem" }}>
-            <Notice tone="warn" title="Выбранный резолвер не фильтрует AAAA">
+            <Notice hint tone="warn" title="Выбранный резолвер не фильтрует AAAA">
               В настройках IPv6 фильтр AAAA включён, но unbound вырезать эти записи не
               умеет — клиенты будут их получать. Вырезать AAAA умеют dnsmasq и dnsproxy.
             </Notice>
@@ -350,7 +350,7 @@ function DNSSection({
         </div>
 
         {provider === "dnsproxy" && config.dns?.dnssec && (
-          <Notice tone="info" title="Проверка подписей зависит от вышестоящего резолвера">
+          <Notice hint tone="info" title="Проверка подписей зависит от вышестоящего резолвера">
             dnsproxy запрашивает данные DNSSEC, но сам не проверяет подписи.
             Выберите вышестоящий резолвер с проверкой DNSSEC или Unbound для
             проверки подписей на роутере.

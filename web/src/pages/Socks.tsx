@@ -43,7 +43,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   <div className="stack">
   {error&&<Notice tone="danger" title={error}/>}
   {catalogError&&<Notice tone="warn" title="Не удалось проверить компонент Xray">Повторная проверка выполняется автоматически.</Notice>}
-  {(!chosen||ready===false)&&<Notice tone="info" title="Нужен компонент Xray">
+  {(!chosen||ready===false)&&<Notice hint tone="info" title="Нужен компонент Xray">
    {!chosen?<button className="btn" onClick={()=>patch(d=>{d.components=d.components||[];const c=d.components.find((v:any)=>v.id==="xray");if(c)c.installed=true;else d.components.push({id:"xray",installed:true})})}>Установить Xray</button>:<span>Примените установку компонента и дождитесь её завершения.</span>}
   </Notice>}
   <Switch label="Включить SOCKS5" checked={!!p.enabled} disabled={!p.enabled&&(!ready||!chosen)} onChange={async enabled=>{

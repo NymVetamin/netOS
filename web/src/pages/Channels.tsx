@@ -240,7 +240,7 @@ export function ChannelsPage({ config, patch }: Props) {
         <div className="rows-notes">
         {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed === null ?
           <div className="hint" role="status">Проверяем установленные VPN-компоненты…</div> : missing.length > 0 &&
-          <Notice tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <SectionLink section="components">«Компоненты»</SectionLink>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
+          <Notice hint tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <SectionLink section="components">«Компоненты»</SectionLink>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
         {liveChannels === null && <div className="hint" role="status">{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</div>}
         </div>
@@ -392,7 +392,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
         {channel.probe?.type === "icmp" && <Notice tone="warn" title="Выберите HTTP или TCP">ICMP получает локальный ответ Xray даже при недоступном VPN-сервере и не проверяет канал.</Notice>}
         <Field label="Тип проверки"><select value={channel.probe?.type || "tcp"} onChange={(e) => update((draft) => changeProbeType(draft.probe, e.target.value))}>{channel.probe?.type === "icmp" && <option value="icmp" disabled>ICMP (недоступно для Xray)</option>}<option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
         {channel.probe?.type === "tcp" && <>
-          <Notice tone="info" title="Нужен ответ удалённой службы">Укажите запрос, понятный выбранной службе, и ожидаемое начало её ответа. Если служба сама присылает приветствие, запрос можно оставить пустым. Молчание до таймаута считается отказом.</Notice>
+          <Notice hint tone="info" title="Нужен ответ удалённой службы">Укажите запрос, понятный выбранной службе, и ожидаемое начало её ответа. Если служба сама присылает приветствие, запрос можно оставить пустым. Молчание до таймаута считается отказом.</Notice>
           <Field label="Запрос TCP" hint="Текст отправляется как введён, включая переводы строк. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_request || ""} onChange={(e) => update((draft) => draft.probe.tcp_request = e.target.value)} /></Field>
           <Field label="Начало ответа TCP" hint="Обязательный точный текст в начале ответа удалённой службы. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_response || ""} onChange={(e) => update((draft) => draft.probe.tcp_response = e.target.value)} /></Field>
         </>}
@@ -405,7 +405,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
       </div></>}
     </section>
     <details className="more"><summary>Outbound Xray (JSON)</summary>
-    {Object.values(channel.secrets_set || {}).some(Boolean) && <Notice tone="info" title="Секреты подключения сохранены">Пустые значения скрытых полей сохраняют прежние секреты. Для замены импортируйте новую ссылку или введите новое значение.
+    {Object.values(channel.secrets_set || {}).some(Boolean) && <Notice hint tone="info" title="Секреты подключения сохранены">Пустые значения скрытых полей сохраняют прежние секреты. Для замены импортируйте новую ссылку или введите новое значение.
       <ul>{Object.entries(channel.secrets_set || {}).filter(([, saved]) => saved).map(([field]) => <li key={field}><span className="mono">{field}</span>: ••••••••</li>)}</ul>
     </Notice>}
     <Field label="Outbound Xray (JSON)" hint="Можно использовать любой поддержанный Xray transport: Reality, XTLS, XHTTP, WebSocket, gRPC, mKCP и другие.">

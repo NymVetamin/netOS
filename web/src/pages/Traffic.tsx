@@ -33,7 +33,7 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
       <Card title="Умное управление очередью" subtitle="CAKE не даёт загрузкам и резервным копиям повышать задержку для звонков и игр">
         <Switch checked={!!qos.enabled} onChange={toggle} label="Включить QoS" />
         <div style={{ height: ".8rem" }} />
-        <Notice tone="info" title="Укажите реальную полезную скорость">
+        <Notice hint tone="info" title="Укажите реальную полезную скорость">
           Для лучшего результата задайте 90–95% скорости тарифа. Значения указываются в Кбит/с: 100 Мбит/с = 100000 Кбит/с.
         </Notice>
       </Card>

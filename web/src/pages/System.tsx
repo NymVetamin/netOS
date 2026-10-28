@@ -162,7 +162,7 @@ export function SystemPage({
         </div>
         <div style={{ marginTop: "0.9rem" }}>
           {config.system?.network_backend === "netos" ? (
-            <Notice tone="info" title="Интерфейсы переходят под управление netOS">
+            <Notice hint tone="info" title="Интерфейсы переходят под управление netOS">
               systemd-networkd оставляет перечисленные интерфейсы управляемыми, но
               пассивными: не выдаёт им адреса и не спорит за маршруты, а ожидание сети
               при загрузке не упирается в таймаут. Служба networking (ifupdown) в этом
@@ -170,7 +170,7 @@ export function SystemPage({
               второй сетевой стек параллельно с netOS.
             </Notice>
           ) : (
-            <Notice tone="info" title="Что попадёт в сгенерированный файл">
+            <Notice hint tone="info" title="Что попадёт в сгенерированный файл">
               Бриджи, VLAN, агрегаты и адреса сегментов — они статичны и будут подняты
               системой ещё до старта netOS. Аплинки только поднимаются: их адресами,
               маршрутами и метриками управляет netOS, и второй клиент DHCP на том же
@@ -193,7 +193,7 @@ export function SystemPage({
         title="IPv6"
         subtitle="Подавление протокола, чтобы трафик не уходил мимо правил маршрутизации"
       >
-        <Notice tone="info" title="Почему это важно">
+        <Notice hint tone="info" title="Почему это важно">
           Правила выбора канала работают для IPv4. Если у клиента поднят IPv6, он пойдёт
           в интернет напрямую, минуя выбранный туннель.
         </Notice>

@@ -1,7 +1,8 @@
 // Базовые элементы интерфейса. Держим их в одном месте, чтобы страницы
 // занимались данными, а не оформлением.
 
-import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
+import { HintContext } from "./HintContext";
 import { formatBitrate } from "./api";
 import { CARD_ICONS, Icon, IconName } from "./icons";
 
@@ -166,12 +167,16 @@ export function Notice({
   title,
   children,
   actions,
+  hint = false,
 }: {
   tone: "info" | "warn" | "danger";
   title: string;
   children?: ReactNode;
   actions?: ReactNode;
+  hint?: boolean;
 }) {
+  const showHints = useContext(HintContext);
+  if (hint && tone !== "danger" && !showHints) return null;
   const icon = tone === "danger" ? "!" : tone === "warn" ? "!" : "i";
   return (
     <div className={`notice ${tone}`}>

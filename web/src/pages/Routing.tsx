@@ -503,7 +503,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
       </Card>
 
       {(config.channels || []).filter((c: any) => c.type !== "direct").length === 0 && (
-        <Notice tone="info" title="Выбор канала для клиентов появится здесь же">
+        <Notice hint tone="info" title="Выбор канала для клиентов появится здесь же">
           Когда будут добавлены VPN-каналы, каждый из них получит собственную таблицу, а
           правила выше начнут направлять в неё трафик выбранных клиентов.
         </Notice>

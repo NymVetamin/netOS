@@ -183,6 +183,7 @@ func (s *Server) Routes() http.Handler {
 
 	auth("POST /api/logout", s.handleLogout)
 	auth("GET /api/session", s.handleSession)
+	auth("PUT /api/preferences", s.handleUserPreferences)
 	auth("GET /api/panel-users", s.handlePanelUsers)
 	auth("POST /api/panel-users", s.handlePanelUsers)
 	auth("PUT /api/panel-users", s.handlePanelUsers)

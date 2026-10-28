@@ -30,7 +30,7 @@ export function WiFiPage({ config, patch }: Props) {
   for (const radio of saved) if (!entries.some((e: any) => e.radio.id === radio.id)) entries.push({ radio, hw: null });
   return <>
     <div className="page-head"><h1><Icon name="wifi" />Wi-Fi</h1><p>Точки доступа, защита сети и привязка к сегментам роутера</p></div>
-    {!installed && <Notice tone="info" title="Нужен компонент hostapd">Установите «Точку доступа Wi-Fi» в разделе «Компоненты».</Notice>}
+    {!installed && <Notice hint tone="info" title="Нужен компонент hostapd">Установите «Точку доступа Wi-Fi» в разделе «Компоненты».</Notice>}
     {error && <Notice tone="warn" title="Не удалось определить радиоустройства">{error}</Notice>}
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
       {!hardware && !error ? <Empty>Определяем радиоустройства…</Empty> : entries.length === 0 ? <Empty>{hardware?.radios.length ? "Обнаруженные адаптеры не поддерживают режим точки доступа или не имеют сетевого интерфейса." : "Wi-Fi-адаптеры не обнаружены."}</Empty> :
