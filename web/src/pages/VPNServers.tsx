@@ -320,7 +320,6 @@ function L2TPServer({ server, config, installed, patch }: any) {
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-подсеть"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
-      <Field label="Адрес прослушивания" hint={cfg.ipsec ? "IPv4 интерфейса; 0.0.0.0 — все интерфейсы" : "Частный IPv4 адрес интерфейса, без порта"}><input className="mono" placeholder={cfg.ipsec ? "0.0.0.0" : "192.168.1.1"} value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>
       <Field label="Адрес подключения" hint="Домен или IPv4-адрес без порта"><input className="mono" placeholder="vpn.example.com" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       <Field label="Защита IPsec"><Switch checked={!!cfg.ipsec} onChange={(value) => setConfig("ipsec", value)} label="Включена" /></Field>
       {cfg.ipsec && <Field label="Общий ключ IPsec (PSK)" hint="Не меньше 16 символов"><input type="password" autoComplete="new-password" {...secretInput(server, "preshared_key")} value={cfg.preshared_key || ""} onChange={(e) => setConfig("preshared_key", e.target.value)} /></Field>}
@@ -329,6 +328,12 @@ function L2TPServer({ server, config, installed, patch }: any) {
       <Field label="MTU"><input type="number" min={576} max={1460} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <VPNClientDNS cfg={cfg} setConfig={setConfig} />
     </div>
+    <details className="more">
+      <summary>Дополнительные настройки</summary>
+      <div className="form-grid">
+        <Field label="Адрес прослушивания" hint={cfg.ipsec ? "IPv4 интерфейса; 0.0.0.0 — все интерфейсы" : "Частный IPv4 адрес интерфейса, без порта"}><input className="mono" placeholder={cfg.ipsec ? "0.0.0.0" : "192.168.1.1"} value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>
+      </div>
+    </details>
     {cfg.ipsec && <Notice hint tone="info" title="Подключение L2TP/IPsec">На клиенте укажите адрес роутера, общий ключ IPsec и личный логин с паролем. Несколько Windows-клиентов за одним общим NAT могут конфликтовать — для них используйте IKEv2.</Notice>}
   </ServerRow>;
 }
