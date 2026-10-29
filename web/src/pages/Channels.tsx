@@ -238,11 +238,9 @@ export function ChannelsPage({ config, patch }: Props) {
         actions={addItems.length > 0 && <AddMenu label="Добавить канал" items={addItems} />}
       >
         <div className="rows-notes">
-        {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed === null ?
-          <div className="hint" role="status">Проверяем установленные VPN-компоненты…</div> : missing.length > 0 &&
+        {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed !== null && missing.length > 0 &&
           <Notice hint tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <SectionLink section="components">«Компоненты»</SectionLink>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
-        {liveChannels === null && <div className="hint" role="status">{liveError ? "Состояние каналов недоступно" : "Загрузка состояния каналов…"}</div>}
         </div>
         <NATSettings.Provider value={{config, patch}}>
         <Live.Provider value={liveChannels}>
