@@ -35,9 +35,9 @@ function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
   {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>
    {data?.warnings?.map((text:string,i:number)=><Notice key={i} tone="warn" title={text}/>)}
    <p className="hint">Показано {rows.length} из {data?.entries?.length || 0} · Снимок: {data?.captured_at ? new Date(data.captured_at).toLocaleString("ru-RU") : "—"}</p>
-   {rows.length===0?<Empty>{query?"Совпадений нет":kind==="dns"?"Запросов DNS пока нет":"Записей пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table>
+   {rows.length===0?<Empty>{query?"Совпадений нет":kind==="dns"?"Запросов DNS пока нет":"Записей пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table className="logs-table">
     <thead><tr><th>Время</th><th>Источник</th><th>Сообщение</th></tr></thead>
-    <tbody>{rows.map((e:any,i:number)=><tr key={i}><td style={{whiteSpace:"nowrap"}}>{e.time?new Date(e.time).toLocaleString("ru-RU"):"Время неизвестно"}</td><td>{tabs.find(t=>t.id===e.source)?.name || e.source}<div className="hint">{e.unit}</div></td><td style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxWidth:"65vw"}}>{e.message}</td></tr>)}</tbody>
+    <tbody>{rows.map((e:any,i:number)=><tr key={i}><td style={{whiteSpace:"nowrap"}}>{e.time?new Date(e.time).toLocaleString("ru-RU"):"Время неизвестно"}</td><td className="logs-source">{tabs.find(t=>t.id===e.source)?.name || e.source}{e.unit&&<span className="logs-unit faint">{e.unit}</span>}</td><td style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxWidth:"65vw"}}>{e.message}</td></tr>)}</tbody>
    </table></TableWrap></div>}
   </>}
  </div>;

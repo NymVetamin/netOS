@@ -2801,6 +2801,10 @@ textarea.vpn-dns-input {height:64px;min-height:64px;resize:vertical}
 .logs-section { margin-bottom: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .logs-section > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; }
 .logs-content { padding: 0 16px 16px; }
+.logs-table { min-width: 720px; font-size: 12.5px; }
+.logs-table th, .logs-table td { padding: 4px 10px; line-height: 1.35; vertical-align: top; }
+.logs-table .logs-source { white-space: nowrap; }
+.logs-table .logs-unit { margin-left: 8px; }
 
 /* Samba settings: separate service controls and vertical access lists. */
 .storage-server {
