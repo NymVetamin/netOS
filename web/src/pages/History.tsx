@@ -2,7 +2,7 @@ import { useContext } from "react";
 import { PermissionContext } from "../permissions";
 import { useEffect, useState } from "react";
 import { api, formatTime } from "../api";
-import { Badge, Card, Empty, Notice, TableWrap } from "../ui";
+import { Badge, Card, Empty, Notice, Spinner, TableWrap } from "../ui";
 import { Icon } from "../icons";
 
 // История ревизий и журнал аудита. Главная ценность — возможность вернуться к
@@ -49,8 +49,9 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
         </Notice>
       )}
 
+      {loading ? <Card><div className="loading-state"><Spinner /> Загружаем историю…</div></Card> : <>
       <Card title="Ревизии" subtitle="Каждое применение сохраняется отдельной версией" tight>
-        {loading ? <Empty>Загрузка ревизий…</Empty> : loadError ? null : revisions.length === 0 ? (
+        {loadError ? null : revisions.length === 0 ? (
           <Empty>История пуста</Empty>
         ) : (
           <TableWrap>
@@ -111,7 +112,7 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
       </Card>
 
       <Card title="Журнал действий" tight>
-        {loading ? <Empty>Загрузка журнала…</Empty> : loadError ? null : audit.length === 0 ? (
+        {loadError ? null : audit.length === 0 ? (
           <Empty>Записей нет</Empty>
         ) : (
           <TableWrap>
@@ -146,6 +147,7 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
           </TableWrap>
         )}
       </Card>
+      </>}
     </>
   );
 }
