@@ -1,4 +1,5 @@
 import { indexClientStatuses } from "../clientStatusIndex";
+import { newVPNEndpoint } from "../vpnEndpoint";
 import { CopyButton } from "../CopyButton";
 import { realityClientConfig } from "../xrayProfile";
 import { confirmAction } from "../confirm";
@@ -122,6 +123,9 @@ function VPNCertificate({ server }: { server: any }) {
 const XRAY_NAMES: Record<string, string> = { reality: "VLESS Reality", vless: "VLESS TLS", vmess: "VMess", trojan: "Trojan TLS", shadowsocks: "Shadowsocks", socks: "SOCKS", http: "HTTP proxy", wireguard: "Xray WireGuard", hysteria: "Hysteria 2" };
 
 export function VPNServersPage({ config, patch, beforeRead }: Props) {
+  const endpointController = useRef<AbortController | null>(null);
+  const [creatingServer, setCreatingServer] = useState(false);
+  useEffect(() => () => endpointController.current?.abort(), []);
   const creators = useRef<Record<string, () => void | Promise<void>>>({});
   const [addingTo, setAddingTo] = useState("");
   async function addClient(id: string) {
@@ -170,43 +174,57 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   }, []);
 
   async function addServer(type: "wireguard" | "xray" | "ocserv" | "ikev2" | "l2tp", protocol = "reality") {
-    setError("");
-    let generatedWireGuardKey = "";
-    if (type === "wireguard") {
-      try {
-        generatedWireGuardKey = (await api.wireGuardKeypair()).private_key;
-      } catch (err: any) {
-        setError(err?.message || "Не удалось безопасно создать ключ WireGuard-сервера");
-        return;
+    if (endpointController.current) return;
+    const controller = new AbortController();
+    endpointController.current = controller;
+    setCreatingServer(true);
+    const suggestion = api.vpnEndpoint(controller.signal).then(value => value.host).catch(() => "");
+    try {
+      setError("");
+      let generatedWireGuardKey = "";
+      if (type === "wireguard") {
+        try {
+          generatedWireGuardKey = (await api.wireGuardKeypair()).private_key;
+        } catch (err: any) {
+          setError(err?.message || "Не удалось безопасно создать ключ WireGuard-сервера");
+          return;
+        }
       }
+      const suggestedHost = await suggestion;
+      if (controller.signal.aborted) return;
+      const id = newID(`${type}-server`);
+      openOnCreate(id);
+      patch((draft) => {
+        draft.vpn_servers = draft.vpn_servers || [];
+        const used = new Set(draft.vpn_servers.map((item: any) => item.index));
+        let index = 1;
+        while (used.has(index)) index++;
+        const common = { id, index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
+        const server = type === "wireguard" ? {
+          ...common, name: `WireGuard ${index}`, port: 51819 + index,
+          config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: "" },
+        } : type === "xray" ? {
+          ...common, name: `${XRAY_NAMES[protocol]} ${index}`,
+          port: protocol === "reality" ? 443 : 18000 + index,
+          config: { protocol, listen: protocol === "socks" || protocol === "http" ? "127.0.0.1" : "", method: "aes-256-gcm", private_key: "", wg_private_key: "", mtu: 1420, public_endpoint: "", destination: "www.cloudflare.com:443", server_names: ["www.cloudflare.com"], short_ids: [randomHex(8)], flow: protocol === "reality" ? "xtls-rprx-vision" : "" },
+        } : type === "ocserv" ? {
+          ...common, name: `OpenConnect ${index}`, port: 443,
+          config: { public_endpoint: "", dns: [], use_router_dns: true, routes: [], mtu: 1380, banner: "netOS VPN" },
+        } : type === "l2tp" ? {
+          ...common, name: `L2TP ${index}`, port: 1701,
+          config: { public_endpoint: "", listen: "0.0.0.0", mtu: 1400, ipsec: true, preshared_key: "", dns: [], use_router_dns: true },
+        } : {
+          ...common, name: `IKEv2 ${index}`, port: 500,
+          config: { public_endpoint: "", server_identity: config.system?.hostname || "netos", dns: [], use_router_dns: true, split_routes: [], mtu: 1400 },
+        };
+        server.config.public_endpoint = newVPNEndpoint(server, suggestedHost);
+        draft.vpn_servers.push(server);
+      });
+    } finally {
+      controller.abort();
+      endpointController.current = null;
+      setCreatingServer(false);
     }
-    const id = newID(`${type}-server`);
-    openOnCreate(id);
-    patch((draft) => {
-      draft.vpn_servers = draft.vpn_servers || [];
-      const used = new Set(draft.vpn_servers.map((item: any) => item.index));
-      let index = 1;
-      while (used.has(index)) index++;
-      const common = { id, index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
-      const server = type === "wireguard" ? {
-        ...common, name: `WireGuard ${index}`, port: 51819 + index,
-        config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: `${window.location.hostname}:${51819 + index}` },
-      } : type === "xray" ? {
-		...common, name: `${XRAY_NAMES[protocol]} ${index}`,
-		port: protocol === "reality" ? 443 : 18000 + index,
-		config: { protocol, listen: protocol === "socks" || protocol === "http" ? "127.0.0.1" : "", method: "aes-256-gcm", private_key: "", wg_private_key: "", mtu: 1420, public_endpoint: "", destination: "www.cloudflare.com:443", server_names: ["www.cloudflare.com"], short_ids: [randomHex(8)], flow: protocol === "reality" ? "xtls-rprx-vision" : "" },
-		} : type === "ocserv" ? {
-        ...common, name: `OpenConnect ${index}`, port: 443,
-        config: { public_endpoint: "", dns: [], use_router_dns: true, routes: [], mtu: 1380, banner: "netOS VPN" },
-		} : type === "l2tp" ? {
-			...common, name: `L2TP ${index}`, port: 1701,
-			config: { listen: "0.0.0.0", mtu: 1400, ipsec: true, preshared_key: "", dns: [], use_router_dns: true },
-		} : {
-			...common, name: `IKEv2 ${index}`, port: 500,
-			config: { public_endpoint: "", server_identity: config.system?.hostname || "netos", dns: [], use_router_dns: true, split_routes: [], mtu: 1400 },
-      };
-      draft.vpn_servers.push(server);
-    });
   }
 
   const needs = (installed: boolean) => installed ? undefined : "нужен компонент";
@@ -236,7 +254,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     <div className="page-head"><h1><Icon name="shield-check" />VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
 	{!wireguardInstalled && !xrayInstalled && !ocservInstalled && !strongswanInstalled && !l2tpInstalled && <Notice hint tone="info" title="Нужен VPN-компонент">Установите нужный VPN-компонент в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
-    <ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label="Добавить сервер" items={addItems} />}>
+    <ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить сервер"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
       <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]} toggle="Включён">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
@@ -295,7 +313,7 @@ function serverTools(server: any, config: any, patch: any) {
 function L2TPServer({ server, config, installed, patch }: any) {
   const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
   const ipsecReady = !cfg.ipsec || (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
-  return <ServerRow server={server} type={cfg.ipsec ? "L2TP/IPsec" : "L2TP"} endpoint={cfg.listen === "0.0.0.0" ? "" : cfg.listen} installed={installed} referenced={referenced} update={update} patch={patch}>
+  return <ServerRow server={server} type={cfg.ipsec ? "L2TP/IPsec" : "L2TP"} endpoint={cfg.public_endpoint || (cfg.listen === "0.0.0.0" ? "" : cfg.listen)} installed={installed} referenced={referenced} update={update} patch={patch}>
     {!installed && <Notice hint tone="info" title="Нужен компонент L2TP">Установите L2TP перед включением сервера.</Notice>}
     {!ipsecReady && <Notice hint tone="info" title="Нужен компонент strongSwan">Установите strongSwan для защиты L2TP/IPsec.</Notice>}
     {!cfg.ipsec && <Notice tone="warn" title="L2TP без шифрования">Сервер слушает только выбранный частный адрес. Подключайте клиентов из доверенной сети или через отдельный защищённый транспорт.</Notice>}
@@ -303,6 +321,7 @@ function L2TPServer({ server, config, installed, patch }: any) {
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-подсеть"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
       <Field label="Адрес прослушивания" hint={cfg.ipsec ? "IPv4 интерфейса; 0.0.0.0 — все интерфейсы" : "Частный IPv4 адрес интерфейса, без порта"}><input className="mono" placeholder={cfg.ipsec ? "0.0.0.0" : "192.168.1.1"} value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>
+      <Field label="Адрес подключения" hint="Домен или IPv4-адрес без порта"><input className="mono" placeholder="vpn.example.com" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       <Field label="Защита IPsec"><Switch checked={!!cfg.ipsec} onChange={(value) => setConfig("ipsec", value)} label="Включена" /></Field>
       {cfg.ipsec && <Field label="Общий ключ IPsec (PSK)" hint="Не меньше 16 символов"><input type="password" autoComplete="new-password" {...secretInput(server, "preshared_key")} value={cfg.preshared_key || ""} onChange={(e) => setConfig("preshared_key", e.target.value)} /></Field>}
       <Field label="UDP-порт"><input type="number" value={1701} readOnly /></Field>
@@ -321,7 +340,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 		<div className="form-grid">
 			<Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
 			<Field label="Пул адресов" hint="Адрес сервера и маска"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
-			<Field label="Публичный адрес" hint="Домен или IP без порта"><input className="mono" placeholder="vpn.example.com" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
+			<Field label="Адрес подключения" hint="Домен или IP без порта"><input className="mono" placeholder="vpn.example.com" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
 			<Field label="Идентификатор сервера" hint="Должен совпадать с адресом в профиле клиента"><input className="mono" value={cfg.server_identity || ""} onChange={(e) => setConfig("server_identity", e.target.value)} /></Field>
 			<Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
 			<Field label="MTU"><input type="number" min={1280} max={9000} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
@@ -340,7 +359,7 @@ function OcservServer({ server, config, installed, patch }: any) {
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="Пул адресов" hint="Адрес сервера и маска"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
       <Field label="TCP/UDP-порт"><input type="number" min={1} max={65535} value={server.port || 443} onChange={(e) => update((draft) => draft.port = Number(e.target.value))} /></Field>
-      <Field label="Публичный адрес" hint="vpn.example.com:443"><input className="mono" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
+      <Field label="Адрес подключения" hint="vpn.example.com:443"><input className="mono" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1380} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <VPNClientDNS cfg={cfg} setConfig={setConfig} />
@@ -422,7 +441,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="Протокол"><input value={protocol} readOnly /></Field>
       <Field label={protocol === "wireguard" || protocol === "hysteria" ? "UDP-порт" : "TCP-порт"}><input type="number" min={1} max={65535} value={server.port || 443} onChange={(e) => update((draft) => draft.port = Number(e.target.value))} /></Field>
-      <Field label="Публичный адрес" hint="Домен или IP роутера с портом"><input className="mono" placeholder="vpn.example.com:443" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
+      <Field label="Адрес подключения" hint="Домен или IP роутера с портом"><input className="mono" placeholder="vpn.example.com:443" value={cfg.public_endpoint || ""} onChange={(e) => setConfig("public_endpoint", e.target.value)} /></Field>
       {(protocol === "socks" || protocol === "http") && <Field label="Адрес прослушивания" hint="Только локальный или частный IPv4"><input className="mono" value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>}
       {protocol === "shadowsocks" && <Field label="Шифр"><select value={cfg.method || "aes-256-gcm"} onChange={(e) => setConfig("method", e.target.value)}><option value="aes-256-gcm">AES-256-GCM</option><option value="aes-128-gcm">AES-128-GCM</option><option value="chacha20-poly1305">ChaCha20-Poly1305</option></select></Field>}
       {protocol === "reality" && <>
@@ -483,7 +502,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
   async function downloadClient() {
     setError("");
     const endpoint = server.config?.public_endpoint;
-    if (!endpoint) { setError("Укажите публичный адрес сервера с портом."); return; }
+    if (!endpoint) { setError("Укажите адрес подключения к серверу с портом."); return; }
     try {
       const url = new URL(`https://${endpoint}`);
       const address = url.hostname.replace(/^\[|\]$/g, "");
@@ -518,7 +537,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
   }
   async function downloadWG() {
     setError("");
-    if (!wgPrivateKey || !server.config?.public_endpoint) { setError("Ключ клиента доступен только во вкладке, где он создан; укажите публичный адрес сервера."); return; }
+    if (!wgPrivateKey || !server.config?.public_endpoint) { setError("Ключ клиента доступен только во вкладке, где он создан; укажите адрес подключения к серверу."); return; }
     try {
       const pair = await api.wireGuardServerPublicKey(server.id);
       const body = wireGuardClientConfig(server, peer, wgPrivateKey, pair.public_key, peer.credentials?.preshared_key);
@@ -646,6 +665,7 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
   async function addPeer() {
     setError("");
     try {
+      if (!cfg.public_endpoint) throw new Error("Укажите адрес подключения к WireGuard-серверу");
       const serverPair = cfg.private_key
         ? await api.wireGuardKeypair(cfg.private_key)
         : await api.wireGuardServerPublicKey(server.id);
@@ -657,7 +677,6 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
       let host = 2;
       while (used.has(`${prefix}.${host}`) && host < 255) host++;
       if (host >= 255) throw new Error("В адресном пуле WireGuard не осталось свободных адресов");
-      const endpoint = cfg.public_endpoint || `${window.location.hostname}:${server.port || 51820}`;
       const peer = {
         id,
         name: `Клиент ${(server.peers || []).length + 1}`,
@@ -671,7 +690,6 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
       update((draft) => {
         draft.config = draft.config || {};
         draft.config.private_key = serverPair.private_key || draft.config.private_key;
-        draft.config.public_endpoint = endpoint;
         draft.peers = draft.peers || [];
         draft.peers.push(peer);
       });

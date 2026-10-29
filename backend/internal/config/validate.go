@@ -2851,6 +2851,12 @@ func (c *Config) validateL2TPServer(r *ValidationResult, path string, s VPNServe
 	if !s.Enabled {
 		return
 	}
+	if l2tp.PublicEndpoint != "" {
+		ip, err := netip.ParseAddr(l2tp.PublicEndpoint)
+		if (err == nil && (!ip.Is4() || ip.IsUnspecified() || ip.IsMulticast() || ip == netip.MustParseAddr("255.255.255.255"))) || (err != nil && !validDNSName(l2tp.PublicEndpoint)) {
+			r.errf(path+".config.public_endpoint", "укажите доменное имя или IPv4-адрес без порта")
+		}
+	}
 	if s.Port != 1701 {
 		r.errf(path+".port", "L2TP использует UDP-порт 1701")
 	}

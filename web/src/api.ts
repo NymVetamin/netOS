@@ -345,6 +345,7 @@ export const api = {
     request<{ scheduled: boolean; revision: number; port: number }>("POST", "/api/maintenance/panel", { panel, confirm }),
   maintenanceStatus: () => request<any>("GET", "/api/maintenance/status"),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
+  vpnEndpoint: (signal?: AbortSignal) => request<{host: string; source: string}>("GET", "/api/vpn-endpoint", undefined, undefined, signal),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
   wifiHardware: (country = "", signal?: AbortSignal) => request<{ radios: any[]; countries: string[]; country: string }>("GET", `/api/wifi/hardware?country=${encodeURIComponent(country)}`, undefined, undefined, signal),
   leases: () => request<{ leases: any[] }>("GET", "/api/leases"),

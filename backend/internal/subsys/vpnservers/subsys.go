@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -235,6 +236,12 @@ func ownedServersEqual(left, right []ownedServer) bool {
 
 // Client TLS fingerprints affect exported profiles, not the server process.
 func sameServerRuntime(a, b config.VPNServer) bool {
+	if a.Type == "l2tp" && b.Type == "l2tp" {
+		// Connection instructions do not change xl2tpd/PPP or IPsec listeners.
+		a.Config, b.Config = maps.Clone(a.Config), maps.Clone(b.Config)
+		delete(a.Config, "public_endpoint")
+		delete(b.Config, "public_endpoint")
+	}
 	if a.Type == "ikev2" && b.Type == "ikev2" {
 		a.Name, b.Name = "", ""
 	}

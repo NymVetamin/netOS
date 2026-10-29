@@ -227,6 +227,7 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/firewall/preview", s.handleFirewallPreview)
 	auth("GET /api/logs", s.handleLogs)
 	auth("GET /api/ddns/status", s.handleDDNSStatus)
+	auth("GET /api/vpn-endpoint", s.handleVPNEndpoint)
 	auth("GET /api/statistics", s.handleStatistics)
 	auth("GET /api/statistics/clients", s.handleClientStatistics)
 	auth("GET /api/statistics/clients/live", s.handleClientLive)

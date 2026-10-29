@@ -281,7 +281,7 @@ func viewerAllowed(r *http.Request) bool {
 		return true
 	}
 	switch r.URL.Path {
-	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/statistics", "/api/maintenance/status", "/api/clients",
+	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/vpn-endpoint", "/api/statistics", "/api/maintenance/status", "/api/clients",
 		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes", "/api/audit",
 		"/api/revisions":
 		return true

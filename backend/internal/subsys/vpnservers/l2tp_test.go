@@ -84,3 +84,24 @@ func TestL2TPChapBlockRejectsTruncatedBlock(t *testing.T) {
 		t.Fatal("truncated managed credentials block accepted")
 	}
 }
+
+func TestL2TPConnectionAddressDoesNotRestartServer(t *testing.T) {
+	a := config.VPNServer{Type: "l2tp", Config: map[string]any{"listen": "0.0.0.0", "ipsec": true}}
+	b := a
+	b.Config = map[string]any{"listen": "0.0.0.0", "ipsec": true, "public_endpoint": "vpn.example.com"}
+	if !sameServerRuntime(a, b) {
+		t.Fatal("address metadata plans a runtime change")
+	}
+	ac, _ := a.L2TPConfig()
+	bc, _ := b.L2TPConfig()
+	if renderL2TPConf(a, ac, "test.ppp") != renderL2TPConf(b, bc, "test.ppp") || renderL2TPPPP(a, ac) != renderL2TPPPP(b, bc) {
+		t.Fatal("address metadata changes generated service configuration")
+	}
+	if b.Config["public_endpoint"] != "vpn.example.com" {
+		t.Fatal("comparison changed saved address")
+	}
+	b.Config["listen"] = "192.168.1.1"
+	if sameServerRuntime(a, b) {
+		t.Fatal("listener change ignored")
+	}
+}
