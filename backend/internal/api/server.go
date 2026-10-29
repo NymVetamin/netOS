@@ -205,6 +205,7 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/vpn-servers/{id}/peers/{peer}/certificate/{action}", s.handleOCClientCertificate)
 	auth("GET /api/vpn-servers/{id}/peers/{peer}/profile", s.handleVPNClientProfile)
 	auth("GET /api/vpn-servers/{id}/peers/{peer}/reality-profile", s.handleRealityClientProfile)
+	auth("GET /api/vpn-servers/{id}/peers/{peer}/xray-profile", s.handleXrayClientProfile)
 	auth("GET /api/vpn-servers/{id}/clients", s.handleVPNClientStatus)
 
 	auth("GET /api/config", s.handleGetConfig)

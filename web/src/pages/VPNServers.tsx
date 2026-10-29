@@ -1,7 +1,6 @@
 import { indexClientStatuses } from "../clientStatusIndex";
 import { newVPNEndpoint } from "../vpnEndpoint";
 import { CopyButton } from "../CopyButton";
-import { realityClientConfig } from "../xrayProfile";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
 import { OcservClientCertificate, VPNServerTLSSettings } from "./OcservCertificates";
@@ -79,18 +78,6 @@ function saveClientFile(name: string, body: string) {
   link.click();
   URL.revokeObjectURL(url);
 }
-
-async function certificateFingerprint(pem: string) {
-  const begin = "-----BEGIN CERTIFICATE-----", end = "-----END CERTIFICATE-----";
-  const start = pem.indexOf(begin);
-  const finish = start < 0 ? -1 : pem.indexOf(end, start + begin.length);
-  const encoded = finish < 0 ? "" : pem.slice(start + begin.length, finish).replace(/\s/g, "");
-  if (!encoded) throw new Error("Не удалось прочитать TLS-сертификат сервера");
-  const der = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", der));
-  return Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 
 function VPNCertificate({ server }: { server: any }) {
   const [error, setError] = useState("");
@@ -458,9 +445,9 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       {protocol === "reality" && <Field label="Закрытый ключ Reality" hint={cfg.private_key || server.reality_key_set ? "Ключ задан. Пустое поле сохраняет прежний ключ." : "Ключ ещё не создан"}><div className="row"><input className="mono" type="password" autoComplete="new-password" {...secretInput(server, "private_key")} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={generateKey}>Сгенерировать</button></div></Field>}
       {protocol === "wireguard" && <><Field label="Закрытый ключ Xray WireGuard"><div className="row"><input className="mono" type="password" autoComplete="new-password" {...secretInput(server, "wg_private_key")} value={cfg.wg_private_key || ""} onChange={(e) => setConfig("wg_private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={() => void generateWGServerKey()}>Сгенерировать</button></div></Field><Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field></>}
-      {(protocol === "vless" || protocol === "trojan" || protocol === "hysteria") && <Field label="TLS-сертификат" hint="После применения скачайте сертификат и доверьте ему на клиенте"><VPNCertificate server={server} /></Field>}
+
     </div>
-    {["vless", "trojan", "hysteria"].includes(protocol) && <VPNServerTLSSettings server={server} setConfig={setConfig} />}
+    {["vless", "trojan", "hysteria"].includes(protocol) && <><VPNServerTLSSettings server={server} setConfig={setConfig} /><div className="row-actions"><VPNCertificate server={server} /></div></>}
   </ServerRow>;
 }
 
@@ -469,7 +456,6 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   const { cfg, channels, update } = serverTools(server, config, patch);
   const protocol = cfg.protocol || "reality";
   const [wgClientKeys, setWGClientKeys] = useState<Record<string, string>>({});
-  const [peerCredentials, setPeerCredentials] = useState<Record<string, Record<string, string>>>({});
 
   async function addPeer() {
     const peerID = newID("peer");
@@ -486,79 +472,49 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
       draft.peers = draft.peers || [];
       draft.peers.push({ id: peerID, name: `Клиент ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${draft.peers.length + 2}`, channel: "", credentials, comment: "" });
     });
-    setPeerCredentials((old) => ({ ...old, [peerID]: credentials }));
     if (wgPair) setWGClientKeys((old) => ({ ...old, [peerID]: wgPair.private_key }));
   }
 
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor panelTLSMode={config.system?.panel?.tls?.mode} status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
 }
 
-function XrayPeerEditor({ panelTLSMode, status, beforeRead, server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
+function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateKey, referenced, channels, update, setError }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
-  async function downloadClient() {
-    setError("");
-    const endpoint = server.config?.public_endpoint;
-    if (!endpoint) { setError("Укажите адрес подключения к серверу с портом."); return; }
-    try {
-      const url = new URL(`https://${endpoint}`);
-      const address = url.hostname.replace(/^\[|\]$/g, "");
-      // URL normalizes the default HTTPS port away, but the VPN endpoint still needs it.
-      const port = Number(endpoint.slice(endpoint.lastIndexOf(":") + 1));
-      if (!address || !port) throw new Error("Укажите адрес сервера в формате host:port");
-      const credentials = { ...(peer.credentials || {}), ...(issuedCredentials || {}) };
-      if ((protocol === "vless" || protocol === "vmess") && !credentials.uuid) throw new Error("UUID клиента недоступен");
-      if ((protocol === "trojan" || protocol === "shadowsocks" || protocol === "hysteria" || protocol === "socks" || protocol === "http") && !credentials.password) throw new Error("Пароль клиента недоступен; выдайте новый пароль");
-      if (protocol === "socks" || protocol === "http") {
-        const scheme = protocol === "socks" ? "socks5" : "http";
-        saveClientFile(`${peer.name || peer.id}.txt`, `${scheme}://${encodeURIComponent(credentials.username)}:${encodeURIComponent(credentials.password)}@${endpoint}\n`);
-        return;
-      }
-      const settings: Record<string, unknown> = { address, port };
-      if (protocol === "vless") Object.assign(settings, { id: credentials.uuid, encryption: "none" });
-      if (protocol === "vmess") Object.assign(settings, { id: credentials.uuid, security: "auto" });
-      if (protocol === "trojan") settings.password = credentials.password;
-      if (protocol === "shadowsocks") Object.assign(settings, { method: server.config?.method || "aes-256-gcm", password: credentials.password });
-      if (protocol === "hysteria") Object.assign(settings, { version: 2 });
-      const outbound: Record<string, unknown> = { protocol, settings };
-      if (protocol === "vless" || protocol === "trojan" || protocol === "hysteria") {
-        const mode = server.config?.tls?.mode;
-        const publicCA = mode === "acme" || (mode === "panel" && panelTLSMode === "acme");
-        const pin = publicCA ? undefined : await certificateFingerprint(await api.vpnServerCertificate(server.id));
-        const tlsSettings = { ...(protocol !== "hysteria" && peer.tls_fingerprint ? {fingerprint:peer.tls_fingerprint} : {}), serverName: address, ...(pin ? { pinnedPeerCertSha256: pin } : {}) };
-        outbound.streamSettings = protocol === "hysteria"
-          ? { method: "hysteria", hysteriaSettings: { version: 2, auth: credentials.password }, security: "tls", tlsSettings }
-          : { network: "tcp", security: "tls", tlsSettings };
-      }
-      const profile = { log: { loglevel: "warning" }, inbounds: [{ listen: "127.0.0.1", port: 10808, protocol: "socks", settings: { auth: "noauth", udp: false } }], outbounds: [outbound] };
-      saveClientFile(`${peer.name || peer.id}.json`, JSON.stringify(profile, null, 2) + "\n");
-    } catch (err: any) { setError(err?.message || "Не удалось скачать клиентский профиль"); }
-  }
-  async function downloadWG() {
+  async function downloadWG(action: "download" | "copy" | "qr" = "download") {
     setError("");
     if (!wgPrivateKey || !server.config?.public_endpoint) { setError("Ключ клиента доступен только во вкладке, где он создан; укажите адрес подключения к серверу."); return; }
     try {
+      await beforeRead();
       const pair = await api.wireGuardServerPublicKey(server.id);
       const body = wireGuardClientConfig(server, peer, wgPrivateKey, pair.public_key, peer.credentials?.preshared_key);
+      if (action === "qr") { setProfileLink(body); return; }
+      if (action === "copy") { await navigator.clipboard.writeText(body); setCopied(true); return; }
       const url = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
       const link = document.createElement("a"); link.href = url; link.download = `${peer.name || peer.id}.conf`; link.click(); URL.revokeObjectURL(url);
     } catch (err: any) { setError(err?.message || "Не удалось скачать WireGuard-профиль"); }
   }
-  const [realityLink, setRealityLink] = useState("");
-  const [realityBusy, setRealityBusy] = useState(false);
-  useEffect(() => { setRealityLink(""); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name, peer.tls_fingerprint]);
-  async function openReality(downloadFile = false) {
-    setError(""); setRealityBusy(true);
+  const [profileLink, setProfileLink] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const profileRequest = useRef(0);
+  useEffect(() => () => { profileRequest.current++; }, []);
+  useEffect(() => { profileRequest.current++; setProfileLink(""); setCopied(false); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name, peer.tls_fingerprint]);
+  async function exportProfile(action: "download" | "copy" | "qr") {
+    setError(""); setProfileBusy(true); setCopied(false);
     try {
       await beforeRead();
-      const profile = await api.realityClientProfile(server.id, peer.id);
-      setRealityLink(profile.link);
-      if (downloadFile) saveClientFile(`${peer.name || peer.id}.json`, JSON.stringify(realityClientConfig(profile.link), null, 2) + "\n");
-    } catch (err: any) { setError(err?.message || "Не удалось создать ссылку подключения"); }
-    finally { setRealityBusy(false); }
+      const request = ++profileRequest.current;
+      const profile = await api.xrayClientProfile(server.id, peer.id);
+      if (request !== profileRequest.current) return;
+      if (action === "download") saveClientFile(`${peer.name || peer.id}.json`, JSON.stringify(profile.config, null, 2) + "\n");
+      if (action === "copy") { await navigator.clipboard.writeText(profile.link); setCopied(true); }
+      if (action === "qr") setProfileLink(profile.link);
+    } catch (err: any) { setError(err?.message || "Не удалось получить профиль подключения"); }
+    finally { setProfileBusy(false); }
   }
   return <Row className="peer-card" icon="monitor-smartphone" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{status?.endpoint || "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
@@ -566,10 +522,10 @@ function XrayPeerEditor({ panelTLSMode, status, beforeRead, server, peer, protoc
     <ClientConnection status={status} session />
     <div className="form-grid">
       <Field label="Клиент"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
-      {(protocol === "reality" || protocol === "vless" || protocol === "vmess") && <Field label="UUID клиента"><div className="row"><input className="mono" {...secretInput(peer, "uuid")} value={peer.credentials?.uuid || ""} onChange={(e) => { const uuid = e.target.value; rememberCredentials({ uuid }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }} /><button type="button" className="btn ghost sm" onClick={() => { const uuid = crypto.randomUUID(); rememberCredentials({ uuid }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }}>Новый</button></div></Field>}
-      {(protocol === "socks" || protocol === "http") && <Field label="Логин"><input className="mono" value={peer.credentials?.username || ""} onChange={(e) => { const username = e.target.value; rememberCredentials({ username }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = username; }); }} /></Field>}
-      {(protocol === "trojan" || protocol === "shadowsocks" || protocol === "socks" || protocol === "http") && <Field label="Пароль"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; rememberCredentials({ password }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
-      {protocol === "hysteria" && <Field label="Пароль Hysteria 2"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; rememberCredentials({ password }); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
+      {(protocol === "reality" || protocol === "vless" || protocol === "vmess") && <Field label="UUID клиента"><div className="row"><input className="mono" {...secretInput(peer, "uuid")} value={peer.credentials?.uuid || ""} onChange={(e) => { const uuid = e.target.value; edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }} /><button type="button" className="btn ghost sm" onClick={() => { const uuid = crypto.randomUUID(); edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.uuid = uuid; }); }}>Новый</button></div></Field>}
+      {(protocol === "socks" || protocol === "http") && <Field label="Логин"><input className="mono" value={peer.credentials?.username || ""} onChange={(e) => { const username = e.target.value; edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = username; }); }} /></Field>}
+      {(protocol === "trojan" || protocol === "shadowsocks" || protocol === "socks" || protocol === "http") && <Field label="Пароль"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
+      {protocol === "hysteria" && <Field label="Пароль Hysteria 2"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => { const password = e.target.value; edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = password; }); }} /></Field>}
       {protocol === "wireguard" && <><Field label="Публичный ключ клиента"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; })} /></Field><Field label="Предварительный ключ"><input className="mono" type="password" autoComplete="new-password" {...secretInput(peer, "preshared_key")} value={peer.credentials?.preshared_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.preshared_key = e.target.value; })} /></Field></>}
       {["reality", "vless", "trojan"].includes(protocol) && <Field label="TLS fingerprint" hint="Какой TLS-отпечаток имитирует приложение клиента. После изменения скачайте новый профиль или обновите ссылку в приложении.">
         <select aria-label="TLS fingerprint клиента" value={peer.tls_fingerprint || ""} onChange={e => edit((draft) => draft.tls_fingerprint = e.target.value)}>
@@ -580,11 +536,18 @@ function XrayPeerEditor({ panelTLSMode, status, beforeRead, server, peer, protoc
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
-    {protocol === "reality" && realityLink && <div className="client-package"><div className="qr-card"><QRCodeSVG value={realityLink} size={176} level="M" marginSize={2} title={`Reality-профиль ${peer.name || peer.id}`} /></div><div className="client-package-copy"><strong>Профиль Reality</strong><p>Отсканируйте QR-код в VPN-приложении. Изменения черновика начнут работать после применения настроек.</p><CopyButton text={realityLink} label="Скопировать ссылку" onError={setError} /></div></div>}
+    {profileLink && <div className="client-package"><div className="qr-card"><QRCodeSVG value={profileLink} size={176} level="M" marginSize={2} title={`Профиль ${peer.name || peer.id}`} /></div><div className="client-package-copy"><strong>Профиль подключения</strong><p>Отсканируйте QR-код в VPN-приложении. Изменения черновика начнут работать после применения настроек.</p><button type="button" className="btn ghost sm" onClick={() => setProfileLink("")}>Закрыть QR-код</button></div></div>}
     <div className="row-actions peer-head">
-    {protocol === "reality" && <><button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality(true)}>Скачать JSON Xray</button>{!realityLink && <button type="button" className="btn sm" disabled={realityBusy} onClick={() => void openReality()}>Открыть QR-код</button>}</>}
-    {protocol === "wireguard" && <button type="button" className="btn sm" onClick={() => void downloadWG()}>Скачать WireGuard-профиль</button>}
-    {protocol !== "reality" && protocol !== "wireguard" && <button type="button" className="btn sm" onClick={() => void downloadClient()}>Скачать профиль подключения</button>}
+    {protocol !== "wireguard" && <>
+      <button type="button" className="btn sm" disabled={profileBusy} onClick={() => void exportProfile("download")}>Скачать JSON Xray</button>
+      <button type="button" className="btn sm" disabled={profileBusy} onClick={() => void exportProfile("copy")}>{copied ? "Ссылка скопирована" : "Скопировать ссылку"}</button>
+      {!profileLink && <button type="button" className="btn sm" disabled={profileBusy} onClick={() => void exportProfile("qr")}>Открыть QR-код</button>}
+    </>}
+    {protocol === "wireguard" && <>
+      <button type="button" className="btn sm" onClick={() => void downloadWG()}>Скачать WireGuard-профиль</button>
+      <button type="button" className="btn sm" onClick={() => void downloadWG("copy")}>{copied ? "Конфиг скопирован" : "Скопировать конфиг"}</button>
+      {!profileLink && <button type="button" className="btn sm" onClick={() => void downloadWG("qr")}>Открыть QR-код</button>}
+    </>}
       <button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button>
     </div>
   </Row>;

@@ -8,7 +8,7 @@ export function parseXrayLink(value: string): any {
     const alterId = Number(data.aid || 0);
     if (!Number.isInteger(alterId) || alterId < 0) throw new Error("Некорректный alterId");
     const outbound: any = { protocol: "vmess", settings: { vnext: [{ address: data.add, port, users: [{ id: data.id, alterId, security: data.scy || "auto" }] }] } };
-    outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp });
+    outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp, pcs: data.pcs, vcn: data.vcn });
     return outbound;
   }
   if (value.startsWith("ss://") && !value.slice(5).includes("@")) {
@@ -38,6 +38,7 @@ export function parseXrayLink(value: string): any {
     serviceName: url.searchParams.get("serviceName"), fingerprint: url.searchParams.get("fp"),
     publicKey: url.searchParams.get("pbk"), shortId: url.searchParams.get("sid"), spiderX: url.searchParams.get("spx"),
     mode: url.searchParams.get("mode"), extra: url.searchParams.get("extra"), alpn: url.searchParams.get("alpn"),
+    pcs: url.searchParams.get("pcs"), vcn: url.searchParams.get("vcn"),
   }) };
 }
 
@@ -58,6 +59,8 @@ function streamSettings(network: string, security: string, options: any): any {
   }
   if (security === "tls") out.tlsSettings = { serverName: options.sni || options.host || "", fingerprint: options.fingerprint || "chrome" };
   if (security === "tls" && options.alpn) out.tlsSettings.alpn = options.alpn.split(",").map((value: string) => value.trim()).filter(Boolean);
+  if (security === "tls" && options.pcs) out.tlsSettings.pinnedPeerCertSha256 = options.pcs;
+  if (security === "tls" && options.vcn) out.tlsSettings.verifyPeerCertByName = options.vcn;
   if (security === "reality") out.realitySettings = { serverName: options.sni || "", fingerprint: options.fingerprint || "chrome", password: options.publicKey || "", shortId: options.shortId || "", spiderX: options.spiderX || "" };
   return out;
 }

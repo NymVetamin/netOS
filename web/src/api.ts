@@ -232,6 +232,8 @@ export const api = {
 
   realityClientProfile: (serverID: string, peerID: string) =>
     request<{ link: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/reality-profile`),
+  xrayClientProfile: (serverID: string, peerID: string) =>
+    request<{ link: string; config: Record<string, unknown> }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/xray-profile`),
   vpnClientProfile: (serverID: string, peerID: string) =>
     request<{ privateKey: string; publicKey: string; serverPublicKey: string; presharedKey: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/profile`),
 

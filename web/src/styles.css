@@ -1419,6 +1419,11 @@ textarea {
   white-space: nowrap;
 }
 
+.vpn-tls-settings input[type="file"] {
+  width: 100%;
+  min-width: 0;
+}
+
 .field:has(textarea) {
   max-width: none;
 }

@@ -90,7 +90,7 @@ export function VPNServerTLSSettings({ server, setConfig }: { server: any; setCo
     } catch (err) { setError(err instanceof Error ? err.message : "Не удалось прочитать файл"); }
   };
   return <>
-    <div className="form-grid">
+    <div className="form-grid vpn-tls-settings">
       <Field label="Сертификат сервера (TLS)"><select value={tls.mode || "selfsigned"} onChange={(e) => edit("mode", e.target.value)}>
         <option value="selfsigned">Самоподписанный</option>
         <option value="panel">Использовать сертификат netOS</option>

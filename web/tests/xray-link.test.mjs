@@ -64,3 +64,17 @@ test("preserve supported protocols, credential encoding and transports", () => {
   assert.equal(parseXrayLink(cases[1][0]).settings.servers[0].password, "secret:value");
   assert.equal(parseXrayLink(cases[3][0]).settings.servers[0].password, "secret:part");
 });
+
+test("TLS share links preserve certificate verification on reimport", () => {
+  const pin = "ab".repeat(32);
+  for (const link of [
+    xhttpLink({ pcs: pin, vcn: "vpn.example.com" }),
+    `trojan://secret@vpn.example.com:443?security=tls&pcs=${pin}&vcn=vpn.example.com`,
+    vmess({ add: "vpn.example.com", port: 443, id: "user", tls: "tls", pcs: pin, vcn: "vpn.example.com" }),
+  ]) {
+    const tls = parseXrayLink(link).streamSettings.tlsSettings;
+    assert.equal(tls.pinnedPeerCertSha256, pin);
+    assert.equal(tls.verifyPeerCertByName, "vpn.example.com");
+    assert.equal(tls.allowInsecure, undefined);
+  }
+});
