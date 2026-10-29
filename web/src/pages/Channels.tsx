@@ -201,6 +201,8 @@ export function ChannelsPage({ config, patch }: Props) {
     const name = component.type === "ikev2" ? "IKEv2" : component.title;
     return { label: name, ariaLabel: name, icon: CHANNEL_ICONS[component.type], onSelect: adders[component.type] };
   });
+  const awaitingComponents = installed === null && !componentError && channelComponents.some(component =>
+    (config.components || []).some((item: any) => item.id === component.id && item.installed));
 
   return (
     <>
@@ -235,7 +237,9 @@ export function ChannelsPage({ config, patch }: Props) {
         tight
         title="Каналы выхода"
         subtitle="Прямой выход всегда доступен; VPN-каналы защищены настраиваемым kill-switch"
-        actions={addItems.length > 0 && <AddMenu label="Добавить канал" items={addItems} />}
+        actions={(addItems.length > 0 || awaitingComponents) && <div style={{ visibility: awaitingComponents ? "hidden" : undefined }}>
+          <AddMenu label="Добавить канал" items={addItems} />
+        </div>}
       >
         <div className="rows-notes">
         {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed !== null && missing.length > 0 &&

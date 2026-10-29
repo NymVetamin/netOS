@@ -39,3 +39,9 @@ test('failed loading stays actionable and successful retry clears errors', () =>
   assert.match(render([installed, false, [], true]), /Показаны последние полученные данные/);
   assert.equal(notes(render([installed, false, [], false])), '');
 });
+test('pending component check reserves the creation menu without making it interactive', () => {
+  assert.match(render([null, false, null, false]), /visibility:hidden/);
+  assert.doesNotMatch(render([installed, false, [], false]), /visibility:hidden/);
+  assert.doesNotMatch(render([{}, false, [], false]), /Добавить канал/);
+  assert.doesNotMatch(render([null, true, [], false]), /Добавить канал/);
+});
