@@ -387,8 +387,8 @@ func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 			if server.UsesL2TPIPsec() {
 				b.line("-A %s -p udp -m multiport --dports 500,4500 -m comment --comment %q -j ACCEPT", chain, comment)
 				b.line("-A %s -p esp -m comment --comment %q -j ACCEPT", chain, comment)
+				b.line("-A %s -p udp --dport 1701 -m comment --comment %q -j ACCEPT", chain, comment)
 			}
-			b.line("-A %s -p udp --dport 1701 -m comment --comment %q -j ACCEPT", chain, comment)
 		}
 	}
 }

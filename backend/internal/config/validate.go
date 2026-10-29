@@ -2861,15 +2861,13 @@ func (c *Config) validateL2TPServer(r *ValidationResult, path string, s VPNServe
 		r.errf(path+".port", "L2TP использует UDP-порт 1701")
 	}
 	addr, err := netip.ParseAddr(l2tp.Listen)
+	if err != nil || !addr.Is4() || addr.IsMulticast() || addr == netip.MustParseAddr("255.255.255.255") {
+		r.errf(path+".config.listen", "укажите IPv4-адрес интерфейса или 0.0.0.0 для всех интерфейсов")
+	}
 	if l2tp.IPsec {
-		if err != nil || !addr.Is4() || addr.IsMulticast() || addr == netip.MustParseAddr("255.255.255.255") {
-			r.errf(path+".config.listen", "укажите IPv4-адрес интерфейса или 0.0.0.0 для всех интерфейсов")
-		}
 		if len(l2tp.PresharedKey) < 16 || unsafeConfigText(l2tp.PresharedKey) {
 			r.errf(path+".config.preshared_key", "общий ключ IPsec должен содержать не меньше 16 символов без управляющих символов")
 		}
-	} else if err != nil || !addr.Is4() || !(addr.IsPrivate() || addr.IsLoopback() || netip.MustParsePrefix("198.18.0.0/15").Contains(addr)) {
-		r.errf(path+".config.listen", "L2TP без IPsec должен слушать конкретный частный IPv4-адрес")
 	}
 	if len(l2tp.DNS) > 2 {
 		r.errf(path+".config.dns", "PPP поддерживает не больше двух DNS-серверов")

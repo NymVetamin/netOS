@@ -316,7 +316,7 @@ function L2TPServer({ server, config, installed, patch }: any) {
   return <ServerRow server={server} type={cfg.ipsec ? "L2TP/IPsec" : "L2TP"} endpoint={cfg.public_endpoint || (cfg.listen === "0.0.0.0" ? "" : cfg.listen)} installed={installed} referenced={referenced} update={update} patch={patch}>
     {!installed && <Notice hint tone="info" title="Нужен компонент L2TP">Установите L2TP перед включением сервера.</Notice>}
     {!ipsecReady && <Notice hint tone="info" title="Нужен компонент strongSwan">Установите strongSwan для защиты L2TP/IPsec.</Notice>}
-    {!cfg.ipsec && <Notice tone="warn" title="L2TP без шифрования">Сервер слушает только выбранный частный адрес. Подключайте клиентов из доверенной сети или через отдельный защищённый транспорт.</Notice>}
+    {!cfg.ipsec && <Notice tone="warn" title="L2TP без шифрования">Без IPsec трафик не шифруется. Доступ с WAN автоматически не разрешается.</Notice>}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-подсеть"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
@@ -328,12 +328,6 @@ function L2TPServer({ server, config, installed, patch }: any) {
       <Field label="MTU"><input type="number" min={576} max={1460} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <VPNClientDNS cfg={cfg} setConfig={setConfig} />
     </div>
-    <details className="more">
-      <summary>Дополнительные настройки</summary>
-      <div className="form-grid">
-        <Field label="Адрес прослушивания" hint={cfg.ipsec ? "IPv4 интерфейса; 0.0.0.0 — все интерфейсы" : "Частный IPv4 адрес интерфейса, без порта"}><input className="mono" placeholder={cfg.ipsec ? "0.0.0.0" : "192.168.1.1"} value={cfg.listen || ""} onChange={(e) => setConfig("listen", e.target.value)} /></Field>
-      </div>
-    </details>
     {cfg.ipsec && <Notice hint tone="info" title="Подключение L2TP/IPsec">На клиенте укажите адрес роутера, общий ключ IPsec и личный логин с паролем. Несколько Windows-клиентов за одним общим NAT могут конфликтовать — для них используйте IKEv2.</Notice>}
   </ServerRow>;
 }

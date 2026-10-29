@@ -245,7 +245,7 @@ func (s VPNServer) IKEv2Config() (IKEv2ServerConfig, error) {
 }
 
 func (s VPNServer) L2TPConfig() (L2TPServerConfig, error) {
-	var out L2TPServerConfig
+	out := L2TPServerConfig{Listen: "0.0.0.0"}
 	data, err := json.Marshal(s.Config)
 	if err != nil {
 		return out, fmt.Errorf("кодирование параметров сервера L2TP: %w", err)

@@ -105,3 +105,15 @@ func TestL2TPConnectionAddressDoesNotRestartServer(t *testing.T) {
 		t.Fatal("listener change ignored")
 	}
 }
+func TestL2TPWildcardListenerInBothModes(t *testing.T) {
+	for _, secured := range []bool{false, true} {
+		server := config.VPNServer{Type: "l2tp", Index: 1, Subnet: "10.99.0.1/24", Config: map[string]any{"ipsec": secured}}
+		parsed, err := server.L2TPConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(renderL2TPConf(server, parsed, "test.ppp"), "listen-addr = 0.0.0.0\n") {
+			t.Fatal("default listener missing")
+		}
+	}
+}

@@ -11,8 +11,8 @@ func TestL2TPIPsecValidationAndSharedPorts(t *testing.T) {
 		t.Fatalf("protected server rejected: %+v", r.Problems)
 	}
 	c.VPNServers[0].Config["ipsec"] = false
-	if r := c.Validate(); !hasErrorAt(r, "vpn_servers[0].config.listen") {
-		t.Fatal("plain server may listen publicly")
+	if r := c.Validate(); r.HasErrors() {
+		t.Fatalf("plain wildcard listener rejected: %+v", r.Problems)
 	}
 	c.VPNServers[0].Config["ipsec"] = true
 	c.VPNServers[0].Config["preshared_key"] = "short"
