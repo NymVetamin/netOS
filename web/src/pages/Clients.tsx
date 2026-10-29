@@ -147,7 +147,7 @@ export function Clients({
       <Card
         actions={(config.networks || []).length > 0 ? <button className="btn sm" onClick={() => setManual(!manual)}>{manual ? "Закрыть добавление" : "Добавить по MAC"}</button> : undefined}
         title="Клиенты"
-        subtitle={`${devices.length} локальных · ${vpnCount} VPN · ${devices.filter(c => c.online && !loadError).length} локальных в сети · ${vpn.reduce((n, s) => n + s.peers.filter(p => ["recent", "online"].includes(p.state)).length, 0)} VPN на связи`}
+        subtitle={`${loaded ? `${devices.length} локальных` : loading ? "LAN: загрузка…" : "LAN: нет данных"} · ${vpnCount} VPN · ${devices.filter(c => c.online && !loadError).length} локальных в сети · ${vpn.reduce((n, s) => n + s.peers.filter(p => ["recent", "online"].includes(p.state)).length, 0)} VPN на связи`}
         tight
       >
         {loadError && (
@@ -157,7 +157,6 @@ export function Clients({
           </Notice>
         )}
         {vpnError && <Notice tone="warn" title="Состояние VPN-клиентов недоступно">Подключение не подтверждено. Проверка повторится автоматически.</Notice>}
-        {!loaded && loading && <Empty>Загрузка локальных устройств…</Empty>}
         {loaded && devices.length + vpnCount === 0 && <Empty>Устройств пока не видно</Empty>}
           <Rows cols={["Устройство", "Подключение", "Адрес", "Канал выхода", "Состояние"]}>
           {devices.map((c) => {
