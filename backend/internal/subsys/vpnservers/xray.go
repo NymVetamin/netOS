@@ -69,6 +69,22 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 	}
 	tags := map[string]bool{"direct": true}
 	outboundTag := func(channelID string) string {
+		if channelID == config.InternetBlockChannel {
+			if !tags[channelID] {
+				restricted := append([]any(nil), finalRules[:len(finalRules)-1]...)
+				var local []string
+				for _, segment := range cfg.InternalSegments() {
+					local = append(local, segment.Subnet)
+				}
+				if len(local) > 0 {
+					restricted = append(restricted, map[string]any{"action": "allow", "ip": local})
+				}
+				restricted = append(restricted, map[string]any{"action": "block", "blockDelay": "0"})
+				outbounds = append(outbounds, map[string]any{"tag": channelID, "protocol": "freedom", "settings": map[string]any{"finalRules": restricted}})
+				tags[channelID] = true
+			}
+			return channelID
+		}
 		if channel, ok := channelByID[channelID]; ok && channel.Type != "direct" {
 			tag := "channel-" + channel.ID
 			if !tags[tag] {
@@ -84,6 +100,7 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 	}
 	emails := map[string]string{}
 	defaultRules := []any{}
+	blockedRules := []any{}
 	for _, peer := range server.Peers {
 		if !peer.Enabled {
 			continue
@@ -115,12 +132,18 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		if channelID == "" {
 			channelID = server.DefaultChannel
 		}
+		start := len(defaultRules)
 		if protocol == "socks" || protocol == "http" {
 			defaultRules = append(defaultRules, map[string]any{"type": "field", "inboundTag": []string{"xray-in"}, "outboundTag": outboundTag(channelID)})
 		} else {
 			defaultRules = append(defaultRules, map[string]any{"type": "field", "user": []string{email}, "outboundTag": outboundTag(channelID)})
 		}
+		if channelID == config.InternetBlockChannel {
+			blockedRules = append(blockedRules, defaultRules[start:]...)
+			defaultRules = defaultRules[:start]
+		}
 	}
+	rules = append(rules, blockedRules...)
 	// Sort only this server's policies, without copying or reordering the config.
 	policies := make([]*config.Policy, 0, len(cfg.Policies))
 	for i := range cfg.Policies {

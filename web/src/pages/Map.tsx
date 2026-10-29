@@ -437,7 +437,7 @@ function NodeDetails({ graph, id, config, status, clients }: {
     const peer = vpnServer.peers.find(p => p.id === peerID);
     title = peer ? peer.name : vpnServer.name;
     const selectedChannel = peer?.peer.channel || vpnServer.server.default_channel || "direct";
-    const channelName = (config.channels || []).find((c: any) => c.id === selectedChannel)?.name || (selectedChannel === "direct" ? "Напрямую" : selectedChannel);
+    const channelName = (config.channels || []).find((c: any) => c.id === selectedChannel)?.name || (selectedChannel === "block" ? "Блок" : selectedChannel === "direct" ? "Напрямую" : selectedChannel);
     body = <>
       <dl className="kv">
         <dt>VPN-сервер</dt><dd>{vpnServer.name} · {channelType(vpnServer.type)}</dd>

@@ -27,6 +27,9 @@ func formatPlanValue(value configdiff.Value, field planField, cfg *config.Config
 			return translated
 		}
 		if field.Reference == "channel" || field.Reference == "wan" {
+			if field.Reference == "channel" && v == config.InternetBlockChannel {
+				return "Блок — без интернета"
+			}
 			if v == "direct" {
 				return "Напрямую"
 			}

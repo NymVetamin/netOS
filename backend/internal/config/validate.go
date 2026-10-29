@@ -385,7 +385,7 @@ func (c *Config) validateClients(r *ValidationResult) {
 		if client.Network != "" && !networks[client.Network] {
 			r.errf(path+".network", "неизвестный сегмент %q", client.Network)
 		}
-		if client.Channel != "" && !channels[client.Channel] {
+		if client.Channel != "" && client.Channel != InternetBlockChannel && !channels[client.Channel] {
 			r.errf(path+".channel", "канал %q не существует или выключен", client.Channel)
 		}
 		if client.DownKbit < 0 {
@@ -2236,6 +2236,9 @@ func (c *Config) validateChannels(r *ValidationResult) {
 	indexes := map[int]string{}
 	for i, ch := range c.Channels {
 		path := fmt.Sprintf("channels[%d]", i)
+		if ch.ID == InternetBlockChannel {
+			r.errf(path+".id", "идентификатор зарезервирован для запрета интернета клиенту")
+		}
 		if ids[ch.ID] {
 			r.errf(path+".id", "дубликат идентификатора канала %q", ch.ID)
 		}
@@ -2835,7 +2838,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 				r.errf(ppath+".address", "адрес %s уже назначен другому клиенту", peer.Address)
 			}
 			seenAddr[peer.Address] = true
-			if peer.Channel != "" && !channels[peer.Channel] {
+			if peer.Channel != "" && peer.Channel != InternetBlockChannel && !channels[peer.Channel] {
 				r.errf(ppath+".channel", "VPN-клиент %q сервера %q: канал %q отсутствует или выключен; выберите включённый канал", peer.Name, s.Name, peer.Channel)
 			}
 		}

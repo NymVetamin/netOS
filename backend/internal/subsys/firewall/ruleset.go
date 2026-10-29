@@ -209,6 +209,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		b.line(":INPUT ACCEPT [0:0]")
 		b.line(":FORWARD ACCEPT [0:0]")
 		b.line(":OUTPUT ACCEPT [0:0]")
+		b.internetBlockedClients(cfg, false)
 		b.line("COMMIT")
 		return
 	}
@@ -248,6 +249,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// раньше системного ESTABLISHED и дополняют отказ DHCP-сервера в аренде.
 	b.isolation(cfg)
 	b.blockedClients(cfg)
+	b.internetBlockedClients(cfg, false)
 	b.sambaAccess(cfg)
 	b.socksAccess(cfg)
 
@@ -1055,7 +1057,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	clients := append([]config.Client(nil), cfg.Clients...)
 	sort.Slice(clients, func(i, j int) bool { return clients[i].ID < clients[j].ID })
 	for _, client := range clients {
-		if client.Blocked || client.Channel == "" {
+		if client.Blocked || client.Channel == "" || client.Channel == config.InternetBlockChannel {
 			continue
 		}
 		rules = append(rules, policyRule{
@@ -1074,7 +1076,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 		peers := append([]config.VPNPeer(nil), server.Peers...)
 		sort.Slice(peers, func(i, j int) bool { return peers[i].ID < peers[j].ID })
 		for _, peer := range peers {
-			if !peer.Enabled || peer.Channel == "" {
+			if !peer.Enabled || peer.Channel == "" || peer.Channel == config.InternetBlockChannel {
 				continue
 			}
 			match := " -i " + vpnservers.MatchInterfaceName(server) + " -s " + peer.Address + "/32"
@@ -1111,11 +1113,16 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			channel: network.DefaultChannel, comment: "канал сегмента «" + network.Name + "»",
 		})
 	}
-	if len(rules) == 0 {
+	blocked := internetBlockMatches(cfg, false)
+	if len(rules) == 0 && len(blocked) == 0 {
 		return
 	}
 
 	b.line(":NETOS-POLICY - [0:0]")
+	for _, match := range blocked {
+		b.line("-A PREROUTING%s -j CONNMARK --set-mark 0", match)
+		b.line("-A NETOS-POLICY%s -j RETURN", match)
+	}
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-POLICY")
 	for _, rule := range rules {
@@ -1261,6 +1268,7 @@ func buildIPv6(cfg *config.Config) string {
 		b.line(":INPUT ACCEPT [0:0]")
 		b.line(":FORWARD ACCEPT [0:0]")
 		b.line(":OUTPUT ACCEPT [0:0]")
+		b.internetBlockedClients(cfg, true)
 		// Go/Xray may bind an IPv6 dual-stack wildcard even for 0.0.0.0.
 		// SOCKS access scopes are IPv4-only; never bypass them over IPv6.
 		if cfg.Socks.Enabled {

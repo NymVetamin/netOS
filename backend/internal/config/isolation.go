@@ -2,6 +2,9 @@ package config
 
 import "net/netip"
 
+// InternetBlockChannel is a per-client restriction, not an exit interface.
+const InternetBlockChannel = "block"
+
 // InternalSegment is a routed client subnet, not an Internet exit channel.
 type InternalSegment struct {
 	ID, Name, Zone, Subnet string

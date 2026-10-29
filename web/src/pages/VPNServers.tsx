@@ -283,7 +283,7 @@ function PeerGroup({ server, children }: any) {
 }
 
 function channelName(channels: any[], peer: any) {
-  return peer.channel ? channels.find((item: any) => item.id === peer.channel)?.name || peer.channel : "как у сервера";
+  return peer.channel === "block" ? "Блок" : peer.channel ? channels.find((item: any) => item.id === peer.channel)?.name || peer.channel : "как у сервера";
 }
 
 function serverTools(server: any, config: any, patch: any) {
@@ -393,7 +393,7 @@ function OcservPeer({ status, server, peer, referenced, channels, update }: any)
       {!certAuth && <Field label="Логин"><input className="mono" autoComplete="off" value={peer.credentials?.username || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.username = e.target.value; })} /></Field>}
       {passwordAuth && <Field label="Пароль" hint="Не меньше 8 символов"><input type="password" autoComplete="new-password" {...secretInput(peer, "password")} value={peer.credentials?.password || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.password = e.target.value; })} /></Field>}
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
-      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option><option value="block">Блок — без интернета</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
     {certAuth && <OcservClientCertificate server={server} peer={peer} active={open} />}
@@ -533,7 +533,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
           {[["chrome","Chrome"],["firefox","Firefox"],["safari","Safari"],["ios","iOS"],["edge","Edge"],["random","Случайный браузер"],["randomized","Случайный отпечаток"]].map(([value,label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </Field>}
-      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option><option value="block">Блок — без интернета</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
     {profileLink && <div className="client-package"><div className="qr-card"><QRCodeSVG value={profileLink} size={176} level="M" marginSize={2} title={`Профиль ${peer.name || peer.id}`} /></div><div className="client-package-copy"><strong>Профиль подключения</strong><p>Отсканируйте QR-код в VPN-приложении. Изменения черновика начнут работать после применения настроек.</p><button type="button" className="btn ghost sm" onClick={() => setProfileLink("")}>Закрыть QR-код</button></div></div>}
@@ -751,7 +751,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Название клиента"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
-      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option><option value="block">Блок — без интернета</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>

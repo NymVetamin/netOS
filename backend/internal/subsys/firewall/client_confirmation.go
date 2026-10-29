@@ -167,7 +167,7 @@ func (s *Subsystem) managementReverseRoutesSafe(ctx context.Context, cfg *config
 	}
 	marks := []int{0}
 	for id := range wanted {
-		if id == "direct" {
+		if id == "direct" || id == config.InternetBlockChannel {
 			continue
 		}
 		found := false

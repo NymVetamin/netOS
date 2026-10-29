@@ -13,8 +13,8 @@ function ClientChannel({ config, value, inherited, source, label, onChange }: {
   config: any; value: string; inherited?: string; source: string; label: string; onChange: (value: string) => void;
 }) {
   const channels = config.channels || [];
-  const name = (id: string) => channels.find((c: any) => c.id === id)?.name || (id === "direct" ? "Напрямую" : id);
-  const unavailable = !!value && !channels.some((c: any) => c.id === value && c.enabled);
+  const name = (id: string) => id === "block" ? "Блок" : channels.find((c: any) => c.id === id)?.name || (id === "direct" ? "Напрямую" : id);
+  const unavailable = !!value && value !== "block" && !channels.some((c: any) => c.id === value && c.enabled);
   const selected = value ? name(value) : inherited ? name(inherited) : source;
   return <div className="client-channel-control">
     <div className="client-channel-value" aria-hidden="true">
@@ -23,6 +23,7 @@ function ClientChannel({ config, value, inherited, source, label, onChange }: {
     </div>
     <select className="client-channel" aria-label={label} value={value} onChange={e => onChange(e.target.value)} onClick={e => e.stopPropagation()}>
       <option value="">{source}{inherited ? ` — ${name(inherited)}` : ""}</option>
+      <option value="block">Блок — без интернета</option>
       {unavailable && <option value={value} disabled>{name(value)} (недоступен)</option>}
       {channels.filter((c: any) => c.enabled).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
     </select>
@@ -197,10 +198,10 @@ export function Clients({
                 <ReservationEditor key={`${c.mac}:${reserved.get(c.mac)?.id || ''}:${reserved.get(c.mac)?.ip || ''}:${reserved.get(c.mac)?.network || ''}`}
                   config={config} client={c} reservation={reserved.get(c.mac)} baseReservations={baseReservations} devices={reservationDevices} conflicts={reservationConflicts} patch={patch} />
                 <div className="row-actions end"><button
-                          className={`btn sm ${cfgClient?.blocked ? "danger" : ""}`}
+                          className={`btn sm ${cfgClient?.blocked ? "" : "danger"}`}
                           onClick={() => updateClient(c.mac, { blocked: !cfgClient?.blocked })}
                         >
-                          {cfgClient?.blocked ? "Заблокирован" : "Разрешён"}
+                          {cfgClient?.blocked ? "Разблокировать" : "Заблокировать"}
                         </button></div>
               </Row>
           );
@@ -231,7 +232,7 @@ export function Clients({
             </div>
           </Row>))}
         </Rows>
-        <div className="clients-channel-hint hint">Каналы показаны по настройкам черновика. Изменения начнут действовать после применения. Явные правила маршрутизации имеют приоритет.</div>
+        <div className="clients-channel-hint hint">Каналы показаны по настройкам черновика. Изменения начнут действовать после применения. «Блок» запрещает интернет, сохраняя доступ к локальным сетям. Для остальных каналов явные правила маршрутизации имеют приоритет.</div>
       </Card>
 
     </>
