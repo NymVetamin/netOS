@@ -14,15 +14,16 @@ function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
  const [selectedKind,setKind]=useState(fromHash),[attempt,setAttempt]=useState(0),[query,setQuery]=useState("");
  const kind=selectedKind==="dns" && !dnsLogging ? "all" : selectedKind;
  useEffect(()=>{if(!dnsLogging && selectedKind==="dns")setKind("all")},[dnsLogging,selectedKind]);
- const [data,setData]=useState<any>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true);
+ const [snapshot,setSnapshot]=useState<{kind:string;value:any}|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true);
+ const data=snapshot?.kind===kind?snapshot.value:null;
  useEffect(()=>{const change=()=>setKind(fromHash());window.addEventListener("hashchange",change);return()=>window.removeEventListener("hashchange",change)},[]);
- useEffect(()=>{let active=true;setLoading(true);setData(null);setError("");
-  api.logs(kind).then(d=>{if(active)setData(d)}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});
+ useEffect(()=>{let active=true;setLoading(true);setError("");
+  api.logs(kind).then(d=>{if(active)setSnapshot({kind,value:d})}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[kind,attempt]);
  const rows=(data?.entries || []).filter((e:any)=>`${e.time} ${e.source} ${e.unit} ${e.message}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
  function download(){const text=rows.map((e:any)=>`${e.time || "Время неизвестно"}\t${e.source}\t${e.unit}\t${e.message}`).join("\n");const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`netos-${kind}.log`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
- return <div className="logs-content">
+ return <div className="logs-content" aria-busy={loading}>
   <div role="tablist" aria-label="Источники журнала" className="row wrap">{tabs.filter(t=>t.id!=="dns" || dnsLogging).map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?log=${t.id}`}}>{t.name}</button>)}</div>
   <div className="row wrap" style={{margin:"0.8rem 0",gap:"0.5rem"}}>
    <input aria-label="Поиск в журнале" placeholder="Поиск в загруженных записях" value={query} onChange={e=>setQuery(e.target.value)}/>
@@ -30,7 +31,8 @@ function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
    <button className="btn sm" disabled={loading || !!error || !rows.length} onClick={download}>Скачать журнал</button>
   </div>
 
-  {loading?<Empty>Загрузка журнала…</Empty>:error?<Notice tone="danger" title="Не удалось загрузить журнал">{error}</Notice>:<>
+  {error&&<Notice tone="danger" title="Не удалось загрузить журнал">{error}{data&&" Показан предыдущий снимок журнала."}</Notice>}
+  {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>
    {data?.warnings?.map((text:string,i:number)=><Notice key={i} tone="warn" title={text}/>)}
    <p className="hint">Показано {rows.length} из {data?.entries?.length || 0} · Снимок: {data?.captured_at ? new Date(data.captured_at).toLocaleString("ru-RU") : "—"}</p>
    {rows.length===0?<Empty>{query?"Совпадений нет":kind==="dns"?"Запросов DNS пока нет":"Записей пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table>
