@@ -346,27 +346,27 @@ func (m *Manager) Panel(ctx context.Context, cfg *config.Config) (string, error)
 func (m *Manager) VPN(ctx context.Context, cfg *config.Config, server config.VPNServer, dir string) (bool, error) {
 	m.op.Lock()
 	defer m.op.Unlock()
-	oc, err := server.OcservConfig()
+	spec, endpoint, err := server.ServerTLS()
 	if err != nil {
 		return false, err
 	}
-	host, _, err := net.SplitHostPort(oc.PublicEndpoint)
+	host, _, err := net.SplitHostPort(endpoint)
 	if err != nil {
-		return false, fmt.Errorf("укажите публичный адрес OpenConnect в формате домен:порт")
+		return false, fmt.Errorf("укажите публичный адрес VPN в формате домен:порт")
 	}
 	var pair *Pair
-	if oc.TLS == nil {
-		return false, fmt.Errorf("не выбран сертификат OpenConnect")
+	if spec == nil {
+		return false, fmt.Errorf("не выбран сертификат VPN")
 	}
-	switch oc.TLS.Mode {
+	switch spec.Mode {
 	case "panel":
 		pair, err = m.panel(ctx, cfg)
 	case "acme":
-		pair, err = m.acme(ctx, oc.TLS.Domain, oc.TLS.Email)
+		pair, err = m.acme(ctx, spec.Domain, spec.Email)
 	case "custom":
-		pair, err = ParsePair([]byte(oc.TLS.CertPEM), []byte(oc.TLS.PrivateKey), host)
+		pair, err = ParsePair([]byte(spec.CertPEM), []byte(spec.PrivateKey), host)
 	default:
-		return false, fmt.Errorf("неизвестный управляемый режим TLS %q", oc.TLS.Mode)
+		return false, fmt.Errorf("неизвестный управляемый режим TLS %q", spec.Mode)
 	}
 	if err == nil {
 		pair, err = ParsePair(pair.Certificate, pair.Key, host)

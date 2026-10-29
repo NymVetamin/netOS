@@ -4,7 +4,7 @@ import { CopyButton } from "../CopyButton";
 import { realityClientConfig } from "../xrayProfile";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
-import { OcservClientCertificate, OcservTLSSettings } from "./OcservCertificates";
+import { OcservClientCertificate, VPNServerTLSSettings } from "./OcservCertificates";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError, formatBytes } from "../api";
@@ -366,7 +366,7 @@ function OcservServer({ server, config, installed, patch }: any) {
       <Field label="Приветствие"><input value={cfg.banner || ""} onChange={(e) => setConfig("banner", e.target.value)} /></Field>
     </div>
     <Field label="Авторизация клиентов"><select value={cfg.auth_mode || "password"} onChange={(e) => setConfig("auth_mode", e.target.value)}><option value="password">Логин и пароль</option><option value="certificate">Сертификат клиента</option><option value="certificate_password">Сертификат клиента и пароль</option></select></Field>
-    <OcservTLSSettings server={server} setConfig={setConfig} />
+    <VPNServerTLSSettings server={server} setConfig={setConfig} />
     {(!cfg.tls || !cfg.tls.mode || cfg.tls.mode === "selfsigned") && <Notice tone="info" title="Самоподписанный сертификат">После первого применения импортируйте сертификат в доверенные на клиентском устройстве. <VPNCertificate server={server} /></Notice>}
   </ServerRow>;
 }
@@ -460,6 +460,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       {protocol === "wireguard" && <><Field label="Закрытый ключ Xray WireGuard"><div className="row"><input className="mono" type="password" autoComplete="new-password" {...secretInput(server, "wg_private_key")} value={cfg.wg_private_key || ""} onChange={(e) => setConfig("wg_private_key", e.target.value)} /><button type="button" className="btn ghost sm" onClick={() => void generateWGServerKey()}>Сгенерировать</button></div></Field><Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field></>}
       {(protocol === "vless" || protocol === "trojan" || protocol === "hysteria") && <Field label="TLS-сертификат" hint="После применения скачайте сертификат и доверьте ему на клиенте"><VPNCertificate server={server} /></Field>}
     </div>
+    {["vless", "trojan", "hysteria"].includes(protocol) && <VPNServerTLSSettings server={server} setConfig={setConfig} />}
   </ServerRow>;
 }
 
@@ -492,11 +493,11 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor panelTLSMode={config.system?.panel?.tls?.mode} status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} issuedCredentials={peerCredentials[peer.id]} rememberCredentials={(next: Record<string, string>) => setPeerCredentials((old) => ({ ...old, [peer.id]: { ...old[peer.id], ...next } }))} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
 }
 
-function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
+function XrayPeerEditor({ panelTLSMode, status, beforeRead, server, peer, protocol, wgPrivateKey, issuedCredentials, rememberCredentials, referenced, channels, update, setError }: any) {
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   async function downloadClient() {
     setError("");
@@ -524,8 +525,10 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
       if (protocol === "hysteria") Object.assign(settings, { version: 2 });
       const outbound: Record<string, unknown> = { protocol, settings };
       if (protocol === "vless" || protocol === "trojan" || protocol === "hysteria") {
-        const pem = await api.vpnServerCertificate(server.id);
-        const tlsSettings = { ...(protocol !== "hysteria" && peer.tls_fingerprint ? {fingerprint:peer.tls_fingerprint} : {}), serverName: address, pinnedPeerCertSha256: await certificateFingerprint(pem) };
+        const mode = server.config?.tls?.mode;
+        const publicCA = mode === "acme" || (mode === "panel" && panelTLSMode === "acme");
+        const pin = publicCA ? undefined : await certificateFingerprint(await api.vpnServerCertificate(server.id));
+        const tlsSettings = { ...(protocol !== "hysteria" && peer.tls_fingerprint ? {fingerprint:peer.tls_fingerprint} : {}), serverName: address, ...(pin ? { pinnedPeerCertSha256: pin } : {}) };
         outbound.streamSettings = protocol === "hysteria"
           ? { method: "hysteria", hysteriaSettings: { version: 2, auth: credentials.password }, security: "tls", tlsSettings }
           : { network: "tcp", security: "tls", tlsSettings };

@@ -48,16 +48,17 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 		first = err
 	}
 	for _, server := range cfg.VPNServers {
-		if !server.Enabled || server.Type != "ocserv" {
+		if !server.Enabled {
 			continue
 		}
-		oc, err := server.OcservConfig()
-		if err != nil || oc.TLS == nil || oc.TLS.Mode == "" || oc.TLS.Mode == "selfsigned" {
+		spec, _, err := server.ServerTLS()
+		if err != nil || !spec.Managed() {
 			continue
 		}
-		dir := filepath.Join(generated, fmt.Sprintf("ocserv-srv%d-tls", server.Index))
+		dir := filepath.Join(generated, fmt.Sprintf("%s-srv%d-tls", server.Type, server.Index))
 		changed, err := m.VPN(ctx, cfg, server, dir)
-		if err == nil && changed {
+		// Xray hot-reloads these files hourly without interrupting sessions.
+		if err == nil && changed && server.Type == "ocserv" {
 			_, err = runner.Run(ctx, "systemctl", "kill", "--kill-whom=main", "--signal=HUP", fmt.Sprintf("netos-ocserv-srv%d.service", server.Index))
 		}
 		if err != nil && first == nil {

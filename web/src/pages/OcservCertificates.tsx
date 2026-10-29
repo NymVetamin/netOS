@@ -68,7 +68,7 @@ export function OcservClientCertificate({ server, peer, active }: { server: any;
   </div>;
 }
 
-export function OcservTLSSettings({ server, setConfig }: { server: any; setConfig: (key: string, value: unknown) => void }) {
+export function VPNServerTLSSettings({ server, setConfig }: { server: any; setConfig: (key: string, value: unknown) => void }) {
   const tls = server.config?.tls || { mode: "selfsigned" };
   const [error, setError] = useState("");
   const [status, setStatus] = useState<any>(null);
@@ -91,14 +91,14 @@ export function OcservTLSSettings({ server, setConfig }: { server: any; setConfi
   };
   return <>
     <div className="form-grid">
-      <Field label="Сертификат OpenConnect"><select value={tls.mode || "selfsigned"} onChange={(e) => edit("mode", e.target.value)}>
+      <Field label="Сертификат сервера (TLS)"><select value={tls.mode || "selfsigned"} onChange={(e) => edit("mode", e.target.value)}>
         <option value="selfsigned">Самоподписанный</option>
         <option value="panel">Использовать сертификат netOS</option>
         <option value="acme">Let’s Encrypt для VPN</option>
         <option value="custom">Загрузить свой сертификат</option>
       </select></Field>
       {tls.mode === "acme" && <>
-        <Field label="Домен сертификата VPN" hint="Должен совпадать с доменом публичного адреса OpenConnect"><input value={tls.domain || ""} placeholder="vpn.example.com" onChange={(e) => edit("domain", e.target.value.trim())} /></Field>
+        <Field label="Домен сертификата VPN" hint="Должен совпадать с доменом адреса подключения VPN"><input value={tls.domain || ""} placeholder="vpn.example.com" onChange={(e) => edit("domain", e.target.value.trim())} /></Field>
         <Field label="Email для Let’s Encrypt"><input type="email" value={tls.email || ""} onChange={(e) => edit("email", e.target.value.trim())} /></Field>
         <Field label="Условия выпуска"><Switch checked={!!tls.accept_tos} label="Принимаю условия Let’s Encrypt" onChange={(value) => edit("accept_tos", value)} /></Field>
       </>}

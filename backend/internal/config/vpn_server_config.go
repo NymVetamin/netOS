@@ -62,33 +62,34 @@ func (wg WireGuardServerConfig) clientProfileFor(peer VPNPeer, subnet string) Wi
 // XrayServerConfig describes an authenticated Xray listener. An empty protocol
 // keeps the original VLESS+Reality configuration used by existing installs.
 type XrayServerConfig struct {
-	Sniffing       bool     `json:"sniffing,omitempty" plan:"Определение протокола и назначения" sensitivity:"public"`
-	Protocol       string   `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
-	Listen         string   `json:"listen,omitempty" plan:"Адрес прослушивания" sensitivity:"public"`
-	Method         string   `json:"method,omitempty" plan:"Метод шифрования" sensitivity:"public"`
-	WGPrivateKey   string   `json:"wg_private_key,omitempty" plan:"Закрытый ключ WireGuard" sensitivity:"secret"`
-	MTU            int      `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
-	PrivateKey     string   `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
-	PublicEndpoint string   `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
-	Destination    string   `json:"destination" plan:"Назначение" sensitivity:"public"`
-	ServerNames    []string `json:"server_names" plan:"Имена сервера TLS" sensitivity:"public"`
-	ShortIDs       []string `json:"short_ids" plan:"Идентификаторы REALITY" sensitivity:"secret"`
-	Flow           string   `json:"flow,omitempty" plan:"Режим flow" sensitivity:"public"`
-	Show           bool     `json:"show,omitempty" plan:"Диагностика REALITY" sensitivity:"public"`
+	TLS            *VPNServerTLS `json:"tls,omitempty" plan:"TLS" sensitivity:"public"`
+	Sniffing       bool          `json:"sniffing,omitempty" plan:"Определение протокола и назначения" sensitivity:"public"`
+	Protocol       string        `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
+	Listen         string        `json:"listen,omitempty" plan:"Адрес прослушивания" sensitivity:"public"`
+	Method         string        `json:"method,omitempty" plan:"Метод шифрования" sensitivity:"public"`
+	WGPrivateKey   string        `json:"wg_private_key,omitempty" plan:"Закрытый ключ WireGuard" sensitivity:"secret"`
+	MTU            int           `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	PrivateKey     string        `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
+	PublicEndpoint string        `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
+	Destination    string        `json:"destination" plan:"Назначение" sensitivity:"public"`
+	ServerNames    []string      `json:"server_names" plan:"Имена сервера TLS" sensitivity:"public"`
+	ShortIDs       []string      `json:"short_ids" plan:"Идентификаторы REALITY" sensitivity:"secret"`
+	Flow           string        `json:"flow,omitempty" plan:"Режим flow" sensitivity:"public"`
+	Show           bool          `json:"show,omitempty" plan:"Диагностика REALITY" sensitivity:"public"`
 }
 
 // OcservServerConfig contains user-visible OpenConnect server options. The
 // certificate is generated and owned by netOS; per-user passwords live on
 // VPNPeer credentials and are hashed before ocserv sees them.
 type OcservServerConfig struct {
-	AuthMode       string     `json:"auth_mode,omitempty" plan:"Режим авторизации" sensitivity:"public"` // password | certificate | certificate_password
-	TLS            *OcservTLS `json:"tls,omitempty" plan:"TLS" sensitivity:"public"`
-	UseRouterDNS   bool       `json:"use_router_dns,omitempty" plan:"Использовать DNS роутера" sensitivity:"public"`
-	PublicEndpoint string     `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
-	DNS            []string   `json:"dns,omitempty" plan:"DNS" sensitivity:"public"`
-	Routes         []string   `json:"routes,omitempty" plan:"Маршруты" sensitivity:"public"`
-	MTU            int        `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
-	Banner         string     `json:"banner,omitempty" plan:"Приветствие" sensitivity:"public"`
+	AuthMode       string        `json:"auth_mode,omitempty" plan:"Режим авторизации" sensitivity:"public"` // password | certificate | certificate_password
+	TLS            *VPNServerTLS `json:"tls,omitempty" plan:"TLS" sensitivity:"public"`
+	UseRouterDNS   bool          `json:"use_router_dns,omitempty" plan:"Использовать DNS роутера" sensitivity:"public"`
+	PublicEndpoint string        `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
+	DNS            []string      `json:"dns,omitempty" plan:"DNS" sensitivity:"public"`
+	Routes         []string      `json:"routes,omitempty" plan:"Маршруты" sensitivity:"public"`
+	MTU            int           `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	Banner         string        `json:"banner,omitempty" plan:"Приветствие" sensitivity:"public"`
 }
 
 func (s VPNServer) OcservAuthMode() string {
@@ -113,10 +114,10 @@ func (oc OcservServerConfig) Username(peer VPNPeer) string {
 	return peer.Credentials["username"]
 }
 
-// OcservTLS is independent of client authentication. An absent value preserves
+// VPNServerTLS is independent of client authentication. An absent value preserves
 // the existing server certificate. "panel" reuses the panel's certificate only
 // when it covers the VPN endpoint name.
-type OcservTLS struct {
+type VPNServerTLS struct {
 	Mode       string `json:"mode" plan:"Режим" sensitivity:"public"` // selfsigned | panel | acme | custom
 	Domain     string `json:"domain,omitempty" plan:"Домен" sensitivity:"public"`
 	Email      string `json:"email,omitempty" plan:"Электронная почта" sensitivity:"public"`
@@ -125,14 +126,39 @@ type OcservTLS struct {
 	PrivateKey string `json:"private_key,omitempty" plan:"Закрытый ключ" sensitivity:"secret"`
 }
 
+func (t *VPNServerTLS) Managed() bool {
+	return t != nil && t.Mode != "" && t.Mode != "selfsigned"
+}
+
+func (x XrayServerConfig) UsesTLS() bool {
+	return x.Protocol == "vless" || x.Protocol == "trojan" || x.Protocol == "hysteria"
+}
+
+// ServerTLS returns only the certificate settings used by the active protocol.
+func (s VPNServer) ServerTLS() (*VPNServerTLS, string, error) {
+	switch s.Type {
+	case "ocserv":
+		c, err := s.OcservConfig()
+		return c.TLS, c.PublicEndpoint, err
+	case "xray":
+		c, err := s.XrayConfig()
+		if err != nil || !c.UsesTLS() {
+			return nil, "", err
+		}
+		return c.TLS, c.PublicEndpoint, nil
+	default:
+		return nil, "", nil
+	}
+}
+
 func (c *Config) UsesACME() bool {
 	if c.System.Panel.TLS.Mode == "acme" {
 		return true
 	}
 	for _, server := range c.VPNServers {
-		if server.Enabled && server.Type == "ocserv" {
-			oc, err := server.OcservConfig()
-			if err == nil && oc.TLS != nil && oc.TLS.Mode == "acme" {
+		if server.Enabled {
+			tls, _, err := server.ServerTLS()
+			if err == nil && tls != nil && tls.Mode == "acme" {
 				return true
 			}
 		}

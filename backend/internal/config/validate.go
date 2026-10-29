@@ -2974,30 +2974,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 	default:
 		r.errf(path+".config.auth_mode", "неизвестный способ авторизации")
 	}
-	if oc.TLS != nil {
-		switch oc.TLS.Mode {
-		case "", "selfsigned":
-		case "panel":
-			if oc.PublicEndpoint == "" {
-				r.errf(path+".config.public_endpoint", "для общего сертификата укажите публичный адрес VPN")
-			}
-		case "acme":
-			validateACMESpec(r, path+".config.tls", TLS{Domain: oc.TLS.Domain, Email: oc.TLS.Email, AcceptTOS: oc.TLS.AcceptTOS})
-			host, _, _ := net.SplitHostPort(oc.PublicEndpoint)
-			if !strings.EqualFold(strings.TrimSuffix(host, "."), strings.TrimSuffix(oc.TLS.Domain, ".")) {
-				r.errf(path+".config.public_endpoint", "домен подключения должен совпадать с доменом сертификата")
-			}
-			if s.Port == 80 || c.System.Panel.Port == 80 {
-				r.errf(path+".config.tls", "порт 80 нужен для проверки ACME; измените порт VPN или панели")
-			}
-		case "custom":
-			if oc.TLS.CertPEM == "" || oc.TLS.PrivateKey == "" {
-				r.errf(path+".config.tls", "загрузите сертификат и закрытый ключ")
-			}
-		default:
-			r.errf(path+".config.tls.mode", "неизвестный режим сертификата")
-		}
-	}
+	c.validateVPNServerTLS(r, path, s, oc.TLS, oc.PublicEndpoint)
 
 	if s.Port < 1 || s.Port > 65535 {
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
@@ -3112,6 +3089,9 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 	}
 	if !s.Enabled {
 		return
+	}
+	if xr.UsesTLS() {
+		c.validateVPNServerTLS(r, path, s, xr.TLS, xr.PublicEndpoint)
 	}
 	protocol := xr.Protocol
 	if protocol == "" {
@@ -3593,5 +3573,32 @@ func validateACMESpec(r *ValidationResult, path string, spec TLS) {
 	}
 	if !spec.AcceptTOS {
 		r.errf(path+".accept_tos", "подтвердите условия использования центра сертификации")
+	}
+}
+
+func (c *Config) validateVPNServerTLS(r *ValidationResult, path string, s VPNServer, tls *VPNServerTLS, endpoint string) {
+	if tls != nil {
+		switch tls.Mode {
+		case "", "selfsigned":
+		case "panel":
+			if endpoint == "" {
+				r.errf(path+".config.public_endpoint", "для общего сертификата укажите публичный адрес VPN")
+			}
+		case "acme":
+			validateACMESpec(r, path+".config.tls", TLS{Domain: tls.Domain, Email: tls.Email, AcceptTOS: tls.AcceptTOS})
+			host, _, _ := net.SplitHostPort(endpoint)
+			if !strings.EqualFold(strings.TrimSuffix(host, "."), strings.TrimSuffix(tls.Domain, ".")) {
+				r.errf(path+".config.public_endpoint", "домен подключения должен совпадать с доменом сертификата")
+			}
+			if s.Port == 80 || c.System.Panel.Port == 80 {
+				r.errf(path+".config.tls", "порт 80 нужен для проверки ACME; измените порт VPN или панели")
+			}
+		case "custom":
+			if tls.CertPEM == "" || tls.PrivateKey == "" {
+				r.errf(path+".config.tls", "загрузите сертификат и закрытый ключ")
+			}
+		default:
+			r.errf(path+".config.tls.mode", "неизвестный режим сертификата")
+		}
 	}
 }

@@ -157,18 +157,20 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 }
 
 func TestOCUploadedKeyIsRetainedButNeverReturned(t *testing.T) {
-	cfg := config.Default()
-	cfg.VPNServers = []config.VPNServer{{ID: "oc", Type: "ocserv", Config: map[string]any{"tls": map[string]any{"mode": "custom", "private_key": "private-key-sensitive", "cert_pem": "public-certificate"}}}}
-	visible, err := redactAdminConfig(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, _ := json.Marshal(visible)
-	if strings.Contains(string(data), "private-key-sensitive") || !visible.VPNServers[0].SecretsSet["tls.private_key"] {
-		t.Fatal("key exposure/presence")
-	}
-	mergeRedactedSecrets(visible, cfg)
-	if visible.VPNServers[0].Config["tls"].(map[string]any)["private_key"] != "private-key-sensitive" {
-		t.Fatal("saving redacted key erased it")
+	for _, serverType := range []string{"ocserv", "xray"} {
+		cfg := config.Default()
+		cfg.VPNServers = []config.VPNServer{{ID: "oc", Type: serverType, Config: map[string]any{"tls": map[string]any{"mode": "custom", "private_key": "private-key-sensitive", "cert_pem": "public-certificate"}}}}
+		visible, err := redactAdminConfig(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(visible)
+		if strings.Contains(string(data), "private-key-sensitive") || !visible.VPNServers[0].SecretsSet["tls.private_key"] {
+			t.Fatal("key exposure/presence")
+		}
+		mergeRedactedSecrets(visible, cfg)
+		if visible.VPNServers[0].Config["tls"].(map[string]any)["private_key"] != "private-key-sensitive" {
+			t.Fatal("saving redacted key erased it")
+		}
 	}
 }

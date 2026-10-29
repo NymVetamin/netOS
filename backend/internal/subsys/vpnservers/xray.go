@@ -40,6 +40,10 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 	if err != nil {
 		return nil, err
 	}
+	if xr.UsesTLS() && xr.TLS.Managed() {
+		certPath = filepath.Join(filepath.Dir(certPath), "server.pem")
+		keyPath = certPath
+	}
 	protocol := xr.Protocol
 	if protocol == "" {
 		protocol = "reality"
@@ -345,18 +349,29 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 	if err != nil {
 		return false, err
 	}
-	if xr.Protocol == "vless" || xr.Protocol == "trojan" || xr.Protocol == "hysteria" {
+	certBefore, _ := os.ReadFile(filepath.Join(certDir, "panel.crt"))
+	if xr.UsesTLS() {
 		mutated = true
-		names := []string{}
-		if xr.PublicEndpoint != "" {
-			if host, _, splitErr := net.SplitHostPort(xr.PublicEndpoint); splitErr == nil {
-				names = append(names, host)
+		if xr.TLS.Managed() {
+			if s.Certificates == nil {
+				return false, fmt.Errorf("менеджер сертификатов недоступен")
+			}
+			if _, err := s.Certificates.VPN(ctx, cfg, server, certDir); err != nil {
+				return false, fmt.Errorf("сертификат Xray: %w", err)
+			}
+		} else {
+			names := []string{}
+			if xr.PublicEndpoint != "" {
+				if host, _, splitErr := net.SplitHostPort(xr.PublicEndpoint); splitErr == nil {
+					names = append(names, host)
+				}
+			}
+			if _, _, _, err := tlsutil.EnsureSelfSignedForNames(certDir, cfg.System.Hostname, names...); err != nil {
+				return false, fmt.Errorf("сертификат Xray: %w", err)
 			}
 		}
-		if _, _, _, err := tlsutil.EnsureSelfSignedForNames(certDir, cfg.System.Hostname, names...); err != nil {
-			return false, fmt.Errorf("сертификат Xray: %w", err)
-		}
 	}
+	certAfter, _ := os.ReadFile(filepath.Join(certDir, "panel.crt"))
 	conf, err := renderXrayWithTLS(server, cfg, filepath.Join(certDir, "panel.crt"), filepath.Join(certDir, "panel.key"))
 	if err != nil {
 		return false, err
@@ -371,7 +386,7 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 	}
 	unit := []byte(renderXrayUnit(server, confPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(unitPath, unit)
-	restart := system.FileChanged(confPath, conf) || system.UnitRuntimeChanged(unitPath, unit)
+	restart := string(certBefore) != string(certAfter) || system.FileChanged(confPath, conf) || system.UnitRuntimeChanged(unitPath, unit)
 	if err := os.Rename(candidate, confPath); err != nil {
 		return false, err
 	}
