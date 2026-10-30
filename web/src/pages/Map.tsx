@@ -208,10 +208,9 @@ function peerEdgeState(state: string): EdgeState {
   return state === "disabled" || state === "server_disabled" ? "dead" : "idle";
 }
 
-// Включённый сервер, к которому сейчас никто не подключён, ждёт клиентов.
-function serverEdgeState(server: { enabled: boolean; peers: { state: string }[] }): EdgeState {
-  if (!server.enabled) return "dead";
-  return server.peers.some((p) => peerEdgeState(p.state) === "live") ? "live" : "idle";
+// Связь роутера с сервером не зависит от состояния его клиентов.
+function serverEdgeState(server: { enabled: boolean }): EdgeState {
+  return server.enabled ? "live" : "dead";
 }
 
 function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
@@ -281,7 +280,7 @@ function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
 
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-lines-${server.id}`}>
           <Edge data-vpn-server={server.id} kind="vpn" state={serverEdgeState(server)} path={curve(router.x + router.w / 2, cy, 755, y)}>
-            <title>{!server.enabled ? "VPN-сервер отключён" : serverEdgeState(server) === "live" ? "VPN-сервер включён, клиенты на связи" : "VPN-сервер включён, клиентов на связи нет"}</title>
+            <title>{server.enabled ? "VPN-сервер включён" : "VPN-сервер отключён"}</title>
           </Edge>
           {server.peers.map((peer, i) => <Edge key={peer.id} kind="vpn" state={peerEdgeState(peer.state)} path={curve(925, y, 990, positions[i])} />)}
         </g>)}

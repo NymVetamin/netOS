@@ -25,6 +25,9 @@ async def scenario(browser, mode):
         cfg["vpn_servers"].append({"id":"wg2","name":"Other server","type":"wireguard","enabled":False,"peers":[{"id":"phone","name":"Other phone","enabled":True}]})
     cfg['channels']=[{'id':f'ch{i}','name':f'Exit {i}','type':'xray','enabled':True} for i in range(5 if mode=='many' else 2)]
     telemetry_error=mode=="error"
+    peer_online = mode != "idle"
+    if mode == "empty":
+        cfg["vpn_servers"][0]["peers"] = []
     async def route_request(route):
         req,path=route.request,urlparse(route.request.url).path
         if not path.startswith("/api/"):
@@ -37,7 +40,7 @@ async def scenario(browser, mode):
         elif path=="/api/status":body={"interfaces":[],"wans":[],"channels":[{"id":"ch0","up":True}],"uptime_seconds":100}
         elif path=="/api/clients":body={"clients":[]}
         elif path.endswith("/clients") and path.startswith("/api/vpn-servers/"):
-            body=[{"id":"phone","state":"offline" if mode=="idle" else "recent","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":1234,"sent":5678},
+            body=[{"id":"phone","state":"recent" if peer_online else "offline","endpoint":"192.0.2.10:4567","last_handshake":1700000000,"received":1234,"sent":5678},
                   {"id":"tablet","state":"never"}]
             if telemetry_error:status,body=503,{"error":"unavailable"}
         await route.fulfill(status=status,json=body)
@@ -48,8 +51,8 @@ async def scenario(browser, mode):
     await expect(graph.get_by_role('button',name='Exit 0:',exact=False)).to_be_visible()
     await expect(graph.get_by_role('button',name='Exit 1:',exact=False)).to_be_visible()
     if mode!='no-vpn':
-        # Сервер без единого клиента на связи ждёт, а не работает.
-        await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd idle' if mode in ('idle','error') else 'nd ok')
+        # Связь с включённым сервером не зависит от подключённых клиентов.
+        await expect(graph.get_by_role('button',name='VPN server:',exact=False).locator('circle')).to_have_class('nd ok')
     box=await graph.bounding_box()
     assert box['y']+box['height']<1000
     layout=page.locator('.map-layout')
@@ -72,18 +75,15 @@ async def scenario(browser, mode):
     edges=graph.locator('..').locator('.map-edges')
     if mode!='no-vpn':
         server_edge=edges.locator('[data-vpn-server="wg1"]')
+        await expect(server_edge).to_have_class('edge k-vpn live')
+        await expect(server_edge).to_have_css('animation-name','flow')
         if mode in ('idle','error'):
-            await expect(server_edge).to_have_class('edge k-vpn idle')
-            await expect(server_edge).to_have_css('animation-name','none')
             await expect(server_edge.locator('..').locator('path').nth(1)).to_have_class('edge k-vpn idle')
-        else:
-            await expect(server_edge).to_have_class('edge k-vpn live')
-            await expect(server_edge).to_have_css('animation-name','flow')
     if mode=='many':
         await expect(edges.locator('[data-vpn-server="wg2"]')).to_have_class('edge k-vpn dead')
     await expect(edges.locator('.edge.k-channel.dead')).to_have_count(4 if mode=='many' else 1)
     # Крестик стоит на каждой оборванной линии: упавшие каналы, запрещённый клиент, выключенный сервер и его клиент.
-    await expect(edges.locator('.edge-mark')).to_have_count((4 if mode=='many' else 1)+(0 if mode=='no-vpn' else 1)+(2 if mode=='many' else 0))
+    await expect(edges.locator('.edge-mark')).to_have_count((4 if mode=='many' else 1)+(0 if mode in ('no-vpn','empty') else 1)+(2 if mode=='many' else 0))
     live=edges.locator('.edge.k-channel.live').first
     await expect(live).to_have_css('animation-name','flow')
     offset=await live.evaluate('(e)=>getComputedStyle(e).strokeDashoffset')
@@ -146,7 +146,7 @@ async def scenario(browser, mode):
             await expect(page.get_by_label("Масштаб карты",exact=True)).to_have_text(f'{percent}%')
         await expect(page.get_by_role("button",name="Увеличить карту",exact=True)).to_be_disabled()
         await page.get_by_role("button",name="Показать всю карту",exact=True).click()
-    if mode=="no-vpn":
+    if mode in ("no-vpn", "empty"):
         await expect(graph.get_by_role("button",name=re.compile(r"^Phone:"))).to_have_count(0)
     else:
         phone=graph.get_by_role("button",name=re.compile(r"^Phone:"))
@@ -205,6 +205,15 @@ async def scenario(browser, mode):
                 assert min(labels)>=11, (width,labels)
                 assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 await page.screenshot(path=f'output/playwright/map-layout-{theme}-{width}.png')
+    if mode == 'healthy':
+        # Disconnect/reconnect changes only the client edge, without navigation.
+        telemetry_error = False
+        peer_edge = server_edge.locator('..').locator('path').nth(1)
+        for connected in (False, True, False):
+            peer_online = connected
+            await expect(peer_edge).to_have_class('edge k-vpn live' if connected else 'edge k-vpn idle', timeout=12000)
+            await expect(server_edge).to_have_class('edge k-vpn live')
+            await expect(server_edge).to_have_css('animation-name','flow')
     assert not errors,errors
     assert not writes,writes
     await page.close();print(mode,"PASS")
@@ -215,7 +224,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("healthy", "error", "many", "no-vpn", "idle"):
+        for mode in ("healthy", "error", "many", "no-vpn", "idle", "empty"):
             await scenario(browser, mode)
         await browser.close()
 
