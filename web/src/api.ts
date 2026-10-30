@@ -323,6 +323,9 @@ export const api = {
   rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
 
   catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
+  componentUpdates: (signal?:AbortSignal) => request<import("./componentUpdates").ComponentUpdates>("GET","/api/components/updates",undefined,undefined,signal),
+  checkComponentUpdates: () => request("POST","/api/components/updates/check"),
+  updateComponent: (id:string,token:string) => request("POST",`/api/components/${encodeURIComponent(id)}/update`,{token}),
   componentStatus: (ids: string[], signal?: AbortSignal) => request<Pick<CatalogResponse, "installed">>("GET", `/api/catalog?installed=${encodeURIComponent(ids.join(","))}`, undefined, undefined, signal),
 	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),
   status: (overview = false, signal?: AbortSignal) => request<any>("GET", overview ? "/api/status?overview=1" : "/api/status", undefined, undefined, signal),

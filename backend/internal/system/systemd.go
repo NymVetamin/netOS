@@ -293,6 +293,12 @@ func (p *Packages) InstalledPackages(ctx context.Context, packages []string) (ma
 // Ensure ставит пакеты, которых нет. Возвращает список установленных, чтобы
 // панель могла показать пользователю, что именно было доустановлено.
 func (p *Packages) Ensure(ctx context.Context, pkgs ...string) (installed []string, resultErr error) {
+	return p.EnsureWithRefresh(ctx, nil, pkgs...)
+}
+
+// EnsureWithRefresh refreshes repository metadata only if packages are missing.
+// The caller can share one refresh across a multi-component installation.
+func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, pkgs ...string) (installed []string, resultErr error) {
 	var missing []string
 	for _, pkg := range pkgs {
 		if !p.Installed(ctx, pkg) {
@@ -301,6 +307,11 @@ func (p *Packages) Ensure(ctx context.Context, pkgs ...string) (installed []stri
 	}
 	if len(missing) == 0 {
 		return nil, nil
+	}
+	if refresh != nil {
+		if err := refresh(); err != nil {
+			return nil, err
+		}
 	}
 	// Демонов запускает netOS собственными юнитами, поэтому postinst пакета
 	// запускать их не должен: у него для этого нет ни конфига, ни причины.
@@ -324,6 +335,29 @@ func (p *Packages) Ensure(ctx context.Context, pkgs ...string) (installed []stri
 		return nil, fmt.Errorf("установка пакетов %s: %w", strings.Join(missing, ", "), err)
 	}
 	return missing, nil
+}
+
+// Upgrade installs explicit repository candidates and preserves package ownership.
+func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr error) {
+	if len(versions) == 0 {
+		return nil
+	}
+	release, err := holdDaemons()
+	if err != nil {
+		return err
+	}
+	defer release()
+	finish, err := p.beginPackageCapture(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := finish(); err != nil {
+			resultErr = fmt.Errorf("%v; package ownership: %w", resultErr, err)
+		}
+	}()
+	_, resultErr = p.R.Run(ctx, "apt-get", append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--only-upgrade", "--no-remove", "--no-install-recommends"}, versions...)...)
+	return resultErr
 }
 
 // PolicyRCPath — скрипт, у которого Debian спрашивает разрешения, прежде чем

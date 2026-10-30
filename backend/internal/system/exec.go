@@ -66,6 +66,9 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	if name == "apt-cache" || name == "apt-get" || name == "dpkg" || name == "dpkg-query" {
+		cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l")
+	}
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	}

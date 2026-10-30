@@ -150,6 +150,7 @@ func main() {
 	}
 
 	engine := apply.NewEngine(logger, *dryRun)
+	componentSubsystem := components.New(runner, logger)
 	multiWAN := multiwan.New(runner, stateDir, logger)
 	channelMonitor := channels.New(runner, stateDir, logger)
 	ddnsController := ddns.New(logger)
@@ -158,7 +159,7 @@ func main() {
 	certificateManager := api.NewCertificateManager(tlsDir)
 	certificateManager.PrepareHTTP = certificates.HTTPBootstrap(runner)
 	defer certificateManager.Close()
-	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController, daemonServices{Samba: sambaController, Certificates: certificateManager, PKI: clientPKI}); err != nil {
+	if err := registerSubsystems(engine, runner, logger, multiWAN, channelMonitor, ddnsController, daemonServices{Samba: sambaController, Certificates: certificateManager, PKI: clientPKI, Components: componentSubsystem}); err != nil {
 		log.Fatalf("регистрация подсистем: %v", err)
 	}
 
@@ -362,7 +363,8 @@ func main() {
 	}
 	// Каталог компонентов панель показывает вместе с живым состоянием машины:
 	// что установлено и чей демон работает прямо сейчас.
-	panel.Components = components.New(runner, logger)
+	panel.Components = componentSubsystem
+	panel.StartComponentUpdates(ctx, componentSubsystem, filepath.Join(filepath.Dir(stateDir), "component-updates.json"))
 	qosSubsystem := qos.New(runner, stateDir)
 	panel.QoS = qosSubsystem
 	panel.DDNS = ddnsController
@@ -545,6 +547,7 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 }
 
 type daemonServices struct {
+	Components   *components.Subsystem
 	Samba        *samba.Subsystem
 	Certificates *certificates.Manager
 	PKI          *vpnpki.Store
@@ -554,6 +557,9 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	svc := services.NewManager(runner)
 	svc.Logger = logger
 	componentSubsystem := components.New(runner, logger)
+	if len(options) > 0 && options[0].Components != nil {
+		componentSubsystem = options[0].Components
+	}
 	componentSubsystem.DeferIPSetRemoval = true
 	componentSubsystem.DeferSambaRemoval = true
 	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")

@@ -27,6 +27,8 @@ import (
 )
 
 type Subsystem struct {
+	OnChange              func(string)
+	Progress              *Progress
 	Runner                system.Runner
 	Packages              *system.Packages
 	Systemd               *system.Systemd
@@ -47,6 +49,7 @@ var externalVersionTimeout = 10 * time.Second
 
 func New(r system.Runner, logger Logger) *Subsystem {
 	return &Subsystem{
+		Progress: &Progress{},
 		Runner:   r,
 		Packages: system.NewPackages(r),
 		Systemd:  system.NewSystemd(r),
@@ -142,6 +145,8 @@ func (s *Subsystem) liveSnapshot(ctx context.Context) (componentLiveSnapshot, er
 // должна примениться, а о неудаче администратор узнает из журнала и панели.
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	var failures []string
+	aptRefreshed := false
+	var aptRefreshErr error
 	desired := desiredComponentState(cfg)
 	protected := protectedComponentPackages(desired)
 	if err := s.migrateLegacyExternalOwnership(ctx, desired); err != nil {
@@ -173,7 +178,16 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			if allInstalled {
 				continue
 			}
-			if err := s.install(ctx, info); err != nil {
+			refresh := func() error {
+				if !aptRefreshed {
+					s.Progress.Stage(info.ID, "Проверка репозиториев Debian")
+					_, aptRefreshErr = s.Runner.Run(ctx, "apt-get", "-o", "APT::Update::Error-Mode=any", "update")
+					aptRefreshed = true
+				}
+				s.Progress.Stage(info.ID, "Загрузка и установка пакетов")
+				return aptRefreshErr
+			}
+			if err := s.install(ctx, info, refresh); err != nil {
 				s.Logger.Warnf("компонент %s: %v", info.Title, err)
 				failures = append(failures, info.Title+": "+err.Error())
 			}
@@ -239,7 +253,7 @@ func (s *Subsystem) migrateLegacyExternalOwnership(ctx context.Context, desired 
 			continue
 		}
 		rel, ok := externalReleases[info.ID]
-		if !ok || externalOwned(rel) || !externalTargetPresent(rel) || !s.externalCurrent(ctx, rel) {
+		if !ok || externalOwned(rel) || !externalTargetPresent(rel) || !s.legacyExternalCurrent(ctx, rel) {
 			continue
 		}
 		marker := externalOwnerPath(rel)
@@ -372,14 +386,20 @@ func (s *Subsystem) componentStateFrom(ctx context.Context, info config.Componen
 	return anyInstalled, allInstalled
 }
 
-func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo) error {
+func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo, refresh func() error) (resultErr error) {
+	if s.OnChange != nil {
+		defer s.OnChange(info.ID)
+	}
+	s.Progress.Start("install", info.ID)
+	defer func() { s.Progress.Finish(resultErr) }()
+	s.Progress.Stage(info.ID, "Установка")
 	if info.External {
 		return s.installExternal(ctx, info)
 	}
 	if len(info.Packages) == 0 {
 		return nil
 	}
-	installed, err := s.Packages.Ensure(ctx, info.Packages...)
+	installed, err := s.Packages.EnsureWithRefresh(ctx, refresh, info.Packages...)
 	if err != nil {
 		return err
 	}
@@ -412,6 +432,11 @@ func (s *Subsystem) installExternal(ctx context.Context, info config.ComponentIn
 		if externalTargetPresent(rel) && !owned {
 			return fmt.Errorf("target %s уже существует и не принадлежит netOS", rel.Target)
 		}
+		resolved, err := latestRelease(ctx, rel)
+		if err != nil {
+			return err
+		}
+		rel = resolved
 		backup := rel.Target + ".netos-rollback"
 		hadPrevious, err := backupExternalTarget(rel.Target, backup)
 		if err != nil {
@@ -482,14 +507,16 @@ func restoreExternalTarget(target, backup string) error {
 	return os.Rename(backup, target)
 }
 
-// externalCurrent проверяет закреплённую версию, а не просто наличие файла.
-// Повторное применение любой настройки не должно зависеть от GitHub и заново
-// заменять работающий бинарник; повреждённая или устаревшая копия при этом
-// должна быть переустановлена обычным проверенным путём.
+// externalCurrent probes a working binary offline. A resolved release additionally
+// requires the exact version, for verification immediately after installation.
 func (s *Subsystem) externalCurrent(ctx context.Context, rel externalRelease) bool {
 	info, err := os.Stat(rel.Target)
 	if err != nil || !info.Mode().IsRegular() || s.Runner == nil || len(rel.VersionArgs) == 0 {
 		return false
+	}
+	if rel.Version == "" {
+		_, err := s.installedExternalVersion(ctx, rel)
+		return err == nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, externalVersionTimeout)
 	defer cancel()
@@ -518,6 +545,9 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 		// Отключается функция, а не базовый инструмент, которым пользуется сам
 		// netOS. В частности, iproute2 нельзя удалять вместе с QoS.
 		return nil
+	}
+	if s.OnChange != nil {
+		defer s.OnChange(info.ID)
 	}
 	if protected == nil {
 		protected = protectedComponentPackages(nil)

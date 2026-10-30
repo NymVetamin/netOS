@@ -14,6 +14,7 @@ import { RoutingPage } from "./pages/Routing";
 import { ServicesPage } from "./pages/Services";
 import { FirewallPage } from "./pages/Firewall";
 import { ComponentsPage } from "./pages/Components";
+import { useComponentUpdates } from "./componentUpdates";
 import { SystemPage } from "./pages/System";
 import { HistoryPage } from "./pages/History";
 import { DiagnosticsPage } from "./pages/Diagnostics";
@@ -262,6 +263,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       ? id as PageID : (NAV.flatMap(group => group.items).find(item => canAccess(session, item.id))?.id || "dashboard");
   }, [session]);
   const [page, setPage] = useState<PageID>(readPage);
+  const componentUpdates = useComponentUpdates(canAccess(session,"components"),page==="components");
+  const componentUpdateCount=Object.values(componentUpdates.state?.components||{}).filter(c=>c.update_available).length;
   useEffect(() => {
     const navigate = () => { setPage(readPage()); setMobileNavOpen(false); };
     window.addEventListener("hashchange", navigate);
@@ -557,6 +560,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
                 >
                   <span className="icon"><Icon name={item.icon} /></span>
                   {item.label}
+                  {item.id==="components" && componentUpdateCount>0 && <span className="component-update-count">{componentUpdateCount}</span>}
                 </button>
               ))}
             </div>
@@ -631,7 +635,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
               {page === "traffic" && <TrafficPage config={cfg} patch={patch} />}
               {page === "services" && <ServicesPage config={cfg} patch={patch} problems={problems} />}
               {page === "firewall" && <FirewallPage config={cfg} patch={patch} problems={problems} />}
-              {page === "components" && <ComponentsPage config={cfg} patch={patch} />}
+              {page === "components" && <ComponentsPage config={cfg} patch={patch} updates={componentUpdates} canUpdate={session.role==="admin" || session.permissions?.components==="manage"} />}
               {page === "system" && (
                 <SystemPage config={cfg} patch={patch} session={session} onSessionEnded={onLogout} onConfigReplaced={reload} />
               )}

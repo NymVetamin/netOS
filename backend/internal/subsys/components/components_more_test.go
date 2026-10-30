@@ -124,7 +124,7 @@ func TestCatalogMetadataAndExternalReleaseIntegrity(t *testing.T) {
 			t.Errorf("external component %s has no pinned release", info.ID)
 			continue
 		}
-		if rel.Version == "" || rel.URL == nil || rel.FileInArchive == "" || len(rel.VersionArgs) == 0 || !path.IsAbs(rel.Target) {
+		if rel.Repository == "" || rel.URL == nil || rel.FileInArchive == "" || len(rel.VersionArgs) == 0 || !path.IsAbs(rel.Target) {
 			t.Errorf("incomplete release for %s: %+v", info.ID, rel)
 		}
 		if previous := targets[rel.Target]; previous != "" {
@@ -132,13 +132,8 @@ func TestCatalogMetadataAndExternalReleaseIntegrity(t *testing.T) {
 		}
 		targets[rel.Target] = info.ID
 		for _, arch := range []string{"amd64", "arm64"} {
-			sha := rel.SHA256[arch]
-			decoded, err := hex.DecodeString(sha)
-			if err != nil || len(decoded) != sha256.Size {
-				t.Errorf("release %s/%s has invalid SHA-256 %q", info.ID, arch, sha)
-			}
-			download := rel.URL(rel.Version, arch)
-			if !strings.HasPrefix(download, "https://") || !strings.Contains(download, rel.Version) {
+			download := rel.URL("v1.2.3", arch)
+			if !strings.HasPrefix(download, "https://github.com/"+rel.Repository+"/releases/download/v1.2.3/") {
 				t.Errorf("release %s/%s has invalid URL %q", info.ID, arch, download)
 			}
 		}
@@ -374,7 +369,7 @@ func TestInstallPropagatesStockUnitDisableFailure(t *testing.T) {
 	s := New(runner, testLogger{})
 	err := s.install(context.Background(), config.ComponentInfo{
 		ID: "daemon", Packages: []string{"daemon"}, Units: []string{"daemon.service"},
-	})
+	}, func() error { t.Fatal("installed packages must not refresh repositories"); return nil })
 	if err == nil || !strings.Contains(err.Error(), "daemon.service") {
 		t.Fatalf("disable failure was hidden: %v", err)
 	}
@@ -631,7 +626,7 @@ func TestExternalCurrentAndUnknownInstallerFailureBranches(t *testing.T) {
 	if any, all := s.componentState(context.Background(), config.ComponentInfo{ID: "unknown", External: true}); any || all {
 		t.Fatalf("unknown external state: any=%v all=%v", any, all)
 	}
-	if err := s.install(context.Background(), config.ComponentInfo{ID: "metadata-only"}); err != nil {
+	if err := s.install(context.Background(), config.ComponentInfo{ID: "metadata-only"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.removeProtected(context.Background(), config.ComponentInfo{ID: "absent", Packages: []string{"absent"}}, nil); err != nil {

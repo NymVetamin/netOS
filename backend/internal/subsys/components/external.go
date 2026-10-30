@@ -20,14 +20,12 @@ import (
 	"time"
 )
 
-// externalRelease описывает закреплённый релиз компонента, которого нет в
-// репозиториях Debian.
-//
-// Версия и контрольная сумма закреплены в коде намеренно. У dnsproxy в релизах
-// нет файла с суммами, а «скачать последнее и запустить» — это установка
-// произвольного бинарника с правами root по чужому решению. Обновление версии
-// становится осознанной правкой с новой суммой, а не тем, что случается само.
+// externalRelease describes an official source and, after resolution, an exact
+// stable release and its asset digest. Ordinary Apply does not resolve releases.
 type externalRelease struct {
+	Repository string
+	// LegacyVersions only identify old netOS-owned installations during migration.
+	LegacyVersions []string
 	// Version — тег релиза на GitHub.
 	Version string
 	// URL строит ссылку на архив для архитектуры Go (amd64, arm64).
@@ -47,14 +45,11 @@ type externalRelease struct {
 
 var externalReleases = map[string]externalRelease{
 	"xray": {
-		Version: "v26.10.29",
+		Repository:     "XTLS/Xray-core",
+		LegacyVersions: []string{"v26.7.28", "v26.10.29"},
 		URL: func(version, goarch string) string {
 			arch := map[string]string{"amd64": "64", "arm64": "arm64-v8a"}[goarch]
 			return fmt.Sprintf("https://github.com/XTLS/Xray-core/releases/download/%s/Xray-linux-%s.zip", version, arch)
-		},
-		SHA256: map[string]string{
-			"amd64": "8a5f3e6a1057e4bd0f8a7c57c9d91204b4be0b74222a6e210d070603101163c2",
-			"arm64": "afe01f19045b05237420328028ee1ee2e1edd2100eb41a8cbbf50e683b0a6e58",
 		},
 		FileInArchive: "xray",
 		Target:        "/usr/local/bin/xray",
@@ -62,15 +57,12 @@ var externalReleases = map[string]externalRelease{
 		ZIP:           true,
 	},
 	"dnsproxy": {
-		Version: "v0.84.0",
+		Repository:     "AdguardTeam/dnsproxy",
+		LegacyVersions: []string{"v0.84.0"},
 		URL: func(version, goarch string) string {
 			return fmt.Sprintf(
 				"https://github.com/AdguardTeam/dnsproxy/releases/download/%s/dnsproxy-linux-%s-%s.tar.gz",
 				version, goarch, version)
-		},
-		SHA256: map[string]string{
-			"amd64": "5137f6fd0e965692889e8e94cc7ff8be512a6bbee07d988a4935f9d8f24a2102",
-			"arm64": "5180311ad9f16cfe16f354fdc66db6a67fe45193b35bf7f70df5ac275f48d098",
 		},
 		FileInArchive: "dnsproxy",
 		Target:        "/usr/local/bin/dnsproxy",
@@ -95,7 +87,7 @@ var fetch = func(ctx context.Context, url string) ([]byte, error) {
 	}
 	// Ограничение спасает от бесконечного тела: релизный архив на два порядка
 	// меньше, а качаем мы под root.
-	return readExternalData(resp.Body)
+	return readExternalData(downloadProgress(ctx, resp.Body, resp.ContentLength))
 }
 
 var maxExternalBytes int64 = 256 << 20
@@ -123,6 +115,10 @@ func (s *Subsystem) installRelease(ctx context.Context, id string, rel externalR
 }
 
 func (s *Subsystem) installReleaseBuffered(ctx context.Context, id string, rel externalRelease) error {
+	if s.Progress != nil {
+		s.Progress.Stage(id, "Загрузка")
+		ctx = context.WithValue(ctx, progressContextKey{}, s.Progress)
+	}
 	want, ok := rel.SHA256[runtime.GOARCH]
 	if !ok {
 		return fmt.Errorf("%s не собирается под архитектуру %s", id, runtime.GOARCH)
@@ -133,6 +129,9 @@ func (s *Subsystem) installReleaseBuffered(ctx context.Context, id string, rel e
 	archive, err := fetch(ctx, url)
 	if err != nil {
 		return fmt.Errorf("загрузка %s: %w", id, err)
+	}
+	if s.Progress != nil {
+		s.Progress.Stage(id, "Проверка и установка")
 	}
 
 	sum := sha256.Sum256(archive)

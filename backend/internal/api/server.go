@@ -22,6 +22,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
+	"github.com/netos-router/netos/internal/subsys/components"
 	"github.com/netos-router/netos/internal/subsys/ddns"
 	"github.com/netos-router/netos/internal/system"
 	"github.com/netos-router/netos/internal/tlsutil"
@@ -58,8 +59,10 @@ type Server struct {
 	Logger        Logger
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
-	Components ComponentProbe
-	QoS        interface {
+	Components       ComponentProbe
+	ComponentUpdates *components.UpdateManager
+	componentContext context.Context
+	QoS              interface {
 		Active(context.Context, *config.Config) bool
 	}
 	DDNS             *ddns.Controller
@@ -222,6 +225,9 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/revisions/{id}/restore", s.handleRestoreRevision)
 
 	auth("GET /api/catalog", s.handleCatalog)
+	auth("GET /api/components/updates", s.handleComponentUpdates)
+	auth("POST /api/components/updates/check", s.handleComponentCheck)
+	auth("POST /api/components/{id}/update", s.handleComponentUpdate)
 	auth("GET /api/storage/devices", s.handleStorageDevices)
 	auth("GET /api/status", s.handleStatus)
 	auth("GET /api/firewall/live", s.handleLiveFirewall)

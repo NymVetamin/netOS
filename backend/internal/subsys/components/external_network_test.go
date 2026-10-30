@@ -13,15 +13,19 @@ import (
 )
 
 // The regular suite stays deterministic and offline. This explicit test
-// verifies that every pinned upstream asset still exists, matches its SHA-256,
+// verifies that each latest stable upstream asset exists, matches its SHA-256,
 // and contains the expected executable.
-func TestNetworkPinnedExternalArchives(t *testing.T) {
+func TestNetworkLatestExternalArchives(t *testing.T) {
 	if os.Getenv("NETOS_NETWORK_INTEGRATION") != "1" {
 		t.Skip("NETOS_NETWORK_INTEGRATION=1 is required")
 	}
 	s := New(nil, quietLogger{})
 	for id, release := range externalReleases {
 		t.Run(id, func(t *testing.T) {
+			release, err := latestRelease(context.Background(), release)
+			if err != nil {
+				t.Fatal(err)
+			}
 			release.Target = filepath.Join(t.TempDir(), id)
 			if err := s.installRelease(context.Background(), id, release); err != nil {
 				t.Fatal(err)
@@ -44,6 +48,10 @@ func TestNetworkPinnedExternalArchives(t *testing.T) {
 					continue
 				}
 				t.Run(arch, func(t *testing.T) {
+					release, err := latestReleaseForArch(context.Background(), release, arch)
+					if err != nil {
+						t.Fatal(err)
+					}
 					archive, err := fetch(context.Background(), release.URL(release.Version, arch))
 					if err != nil {
 						t.Fatal(err)

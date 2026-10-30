@@ -27,7 +27,12 @@ func TestNetworkExternalRepairAndFailureRecovery(t *testing.T) {
 	for _, id := range []string{"dnsproxy", "xray"} {
 		t.Run(id, func(t *testing.T) {
 			original := externalReleases[id]
-			rel := original
+			rel, err := latestRelease(context.Background(), original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Freeze the resolved fixture while injecting repair failures.
+			rel.Repository = ""
 			rel.Target = filepath.Join(t.TempDir(), id)
 			externalReleases[id] = rel
 			t.Cleanup(func() { externalReleases[id] = original; fetch = originalFetch })
@@ -35,7 +40,7 @@ func TestNetworkExternalRepairAndFailureRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("official archive sha256=%x pinned=%s", sha256.Sum256(archive), rel.SHA256[runtime.GOARCH])
+			t.Logf("official archive sha256=%x resolved=%s", sha256.Sum256(archive), rel.SHA256[runtime.GOARCH])
 			cached := func(context.Context, string) ([]byte, error) { return archive, nil }
 			fetch = cached
 			s := New(system.NewExec(), quietLogger{})

@@ -32,6 +32,9 @@ func anySection(r *http.Request, manage bool, sections ...string) bool {
 func limitedEndpoint(r *http.Request) bool {
 	p := r.URL.Path
 	write := r.Method != http.MethodGet
+	if strings.HasPrefix(p, "/api/components/") {
+		return may(r, "components", write)
+	}
 	if p == "/api/session" || p == "/api/logout" || p == "/api/password" || (p == "/api/preferences" && r.Method == http.MethodPut) {
 		return true
 	}
