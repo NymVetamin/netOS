@@ -31,7 +31,7 @@ func (b *builder) iptvAccess(c *config.Config) {
 		}
 		igmp(iface, prefix.Masked().String())
 		for _, source := range c.IPTV.SourceNetworks() {
-			b.line("-A FORWARD -i %s -o %s%s -p udp -m iprange --dst-range 224.0.1.0-239.255.255.255 -m comment --comment %q -j ACCEPT", up, iface, sourceMatch(source), "IPTV: поток провайдера")
+			b.line("-A %s -i %s -o %s%s -p udp -m iprange --dst-range 224.0.1.0-239.255.255.255 -m comment --comment %q -j ACCEPT", "NETOS-FWD-GLOBAL", up, iface, sourceMatch(source), "IPTV: поток провайдера")
 		}
 	}
 }

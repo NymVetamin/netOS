@@ -17,7 +17,7 @@ func TestBlockedClientIsDroppedBeforeEstablishedTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, chain := range []string{"INPUT", "FORWARD"} {
+	for _, chain := range []string{"INPUT", "NETOS-FWD-OTHER"} {
 		want := "-A " + chain + " -m mac --mac-source aa:bb:cc:dd:ee:ff"
 		if !strings.Contains(rules.IPv4, want) {
 			t.Errorf("нет блокировки в %s:\n%s", chain, rules.IPv4)
