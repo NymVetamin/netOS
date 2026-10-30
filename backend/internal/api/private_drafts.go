@@ -195,6 +195,11 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	pending, deadline := s.Engine.Pending()
 	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: pending && (roleOf(r) == "admin" || s.pendingOwner == userOf(r)), Problems: []config.Problem{}}
+	if anySection(r, false, "clients") {
+		for _, client := range d.Base.Clients {
+			resp.BaseClientMACs = append(resp.BaseClientMACs, client.MAC)
+		}
+	}
 	if anySection(r, false, "clients", "services") {
 		resp.BaseReservations = d.Base.DHCP.Reservations
 	}

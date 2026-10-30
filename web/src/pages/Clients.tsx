@@ -1,3 +1,4 @@
+import { updateClientSettings } from "../clientSettings";
 import { useAccess } from "../permissions";
 import { useEffect, useMemo, useState } from "react";
 import { api, formatBytes, formatTime } from "../api";
@@ -36,10 +37,12 @@ export function Clients({
   config,
   patch,
   baseReservations = [],
+  baseClientMACs = [],
 }: {
   config: any;
   patch: (mutate: (draft: any) => void) => void;
   baseReservations?: any[];
+  baseClientMACs?: string[];
 }) {
   const can = useAccess();
   const [clients, setClients] = useState<any[]>([]);
@@ -111,26 +114,12 @@ export function Clients({
 
   // Устройство описывается в конфигурации только когда о нём что-то задали:
   // имя, канал, блокировку. Пустые записи не копим.
+  const originalClients = useMemo(() => new Set(baseClientMACs.map(mac => mac.toLowerCase())), [baseClientMACs]);
   function updateClient(mac: string, changes: Record<string, unknown>) {
     patch((draft) => {
-      draft.clients = draft.clients || [];
-      const existing = draft.clients.find((c: any) => c.mac === mac);
-      if (existing) {
-        Object.assign(existing, changes);
-        return;
-      }
       const live = devices.find((client) => client.mac === mac);
       const detectedNetwork = live ? reservationNetwork(config, live) : "";
-      draft.clients.push({
-        id: "cl-" + mac.replace(/:/g, ""),
-        mac,
-        name: "",
-        blocked: false,
-        down_kbit: 0,
-        up_kbit: 0,
-        network: detectedNetwork,
-        ...changes,
-      });
+      updateClientSettings(draft, mac, changes, detectedNetwork, originalClients);
     });
   }
 

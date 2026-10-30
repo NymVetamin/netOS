@@ -633,6 +633,7 @@ func (s *Server) currentDraft() *config.Config {
 }
 
 type configResponse struct {
+	BaseClientMACs   []string             `json:"base_client_macs,omitempty"`
 	BaseReservations []config.Reservation `json:"base_reservations,omitempty"`
 	Config           *config.Config       `json:"config"`
 	Dirty            bool                 `json:"dirty"`
