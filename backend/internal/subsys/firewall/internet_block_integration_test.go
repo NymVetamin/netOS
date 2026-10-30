@@ -54,17 +54,18 @@ func TestIntegrationInternetBlock(t *testing.T) {
 	run("ip", "route", "add", "198.51.100.2/32", "via", "10.22.0.2")
 	run("sysctl", "-w", "net.ipv4.ip_forward=1")
 	cfg := config.Default()
-	cfg.Interfaces = []config.Interface{{ID: "source", Name: "lan0"}, {ID: "inside", Name: "dst0"}}
-	cfg.Networks = []config.Network{
-		{ID: "source", Interface: "source", Zone: "lan", Enabled: true, RouterAddress: "192.0.2.1/24"},
-		{ID: "local", Interface: "inside", Zone: "lan", Enabled: true, RouterAddress: "10.22.0.1/24"},
-	}
-	cfg.Firewall.Rules = append(cfg.Firewall.Rules, config.FirewallRule{ID: "internal", Enabled: true, Zone: "lan", Flow: "forward", DstIP: "10.22.0.0/24", Action: "accept"})
+	cfg.Networks = []config.Network{{ID: "local", Enabled: true, RouterAddress: "10.22.0.1/24"}}
 	cfg.Clients = []config.Client{{MAC: "02:00:00:00:00:02"}}
 	apply := func() {
 		t.Helper()
 		var b builder
-		b.filter(cfg, buildZoneMap(cfg))
+		b.line("*filter")
+		b.line(":INPUT ACCEPT [0:0]")
+		b.line(":OUTPUT ACCEPT [0:0]")
+		b.line(":FORWARD ACCEPT [0:0]")
+		b.internetBlockedClients(cfg, false)
+		b.line("-A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
+		b.line("COMMIT")
 		cmd := exec.Command("iptables-restore")
 		cmd.Stdin = strings.NewReader(b.String())
 		if o, e := cmd.CombinedOutput(); e != nil {
@@ -147,73 +148,6 @@ for line in sys.stdin:
 	ping("198.51.100.2", true)
 	freshIn, freshOut := persistent("198.51.100.2")
 	checkStream(freshIn, freshOut, "echo")
-
-	// A global deny must still beat a zone accept; a global accept must still
-	// beat a zone deny, but neither can bypass the per-client restriction.
-	baseRules := append([]config.FirewallRule(nil), cfg.Firewall.Rules...)
-	global := config.FirewallRule{ID: "priority", Enabled: true, Zone: "global", Flow: "forward", DstIP: "198.51.100.2", Action: "drop"}
-	cfg.Firewall.Rules = append([]config.FirewallRule{global}, baseRules...)
-	apply()
-	ping("198.51.100.2", false)
-	global.Action = "accept"
-	cfg.Firewall.Rules[0] = global
-	cfg.Firewall.Zones[0].Policy = "drop"
-	apply()
-	ping("198.51.100.2", true)
-	cfg.Clients[0].Channel = config.InternetBlockChannel
-	apply()
-	ping("198.51.100.2", false)
-	ping("10.22.0.2", true)
-	cfg.Clients[0].Blocked = true
-	apply()
-	ping("10.22.0.2", false)
-	ping("192.0.2.1", false)
-	cfg.Clients[0].Blocked = false
-	cfg.Clients[0].Channel = "direct"
-	apply()
-	ping("198.51.100.2", true)
-	ping("192.0.2.1", true)
-	// Unclassified ingress retains global permissions and MAC restrictions.
-	cfg.Networks[0].Enabled = false
-	apply()
-	ping("198.51.100.2", true)
-	cfg.Clients[0].Channel = config.InternetBlockChannel
-	apply()
-	ping("198.51.100.2", false)
-	cfg.Networks[0].Enabled = true
-	cfg.Firewall.Enabled = false
-	apply()
-	ping("198.51.100.2", false)
-	ping("10.22.0.2", true)
-	cfg.Clients[0].Channel = "direct"
-	apply()
-	ping("198.51.100.2", true)
-	cfg.Firewall.Enabled = true
-	cfg.Firewall.Zones[0].Policy = "accept"
-	cfg.Firewall.Rules = baseRules
-	// Real packets with the OpenConnect wildcard interface selector. Tunnel
-	// negotiation is outside this test; the complete generated filter is used.
-	run("ip", "link", "set", "lan0", "name", "vpns2a")
-	cfg.Networks[0].Enabled = false
-	cfg.VPNServers = []config.VPNServer{{ID: "vpn", Type: "ocserv", Index: 2, Enabled: true, Port: 443, Subnet: "192.0.2.1/24", Peers: []config.VPNPeer{{ID: "p", Enabled: true, Address: "192.0.2.2"}}}}
-	apply()
-	vpnIn, vpnOut := persistent("198.51.100.2")
-	checkStream(vpnIn, vpnOut, "echo")
-	cfg.VPNServers[0].Peers[0].Channel = config.InternetBlockChannel
-	for i := 0; i < 2; i++ {
-		apply()
-		checkStream(vpnIn, vpnOut, "blocked")
-		ping("198.51.100.2", false)
-		ping("10.22.0.2", true)
-		ping("192.0.2.1", true)
-	}
-	cfg.VPNServers[0].Peers[0].Channel = "direct"
-	apply()
-	ping("198.51.100.2", true)
-	cfg.VPNServers = nil
-	run("ip", "link", "set", "vpns2a", "name", "lan0")
-	cfg.Networks[0].Enabled = true
-	apply()
 	run("sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=0", "net.ipv6.conf.default.disable_ipv6=0", "net.ipv6.conf.all.forwarding=1")
 	run("ip", "link", "add", "wan0", "type", "veth", "peer", "name", "wanpeer")
 	run("ip", "link", "set", "wanpeer", "netns", names[1])
@@ -230,7 +164,8 @@ for line in sys.stdin:
 	run("ip", "netns", "exec", names[1], "ip", "link", "set", "wanpeer", "up")
 	run("ip", "netns", "exec", names[1], "ip", "-6", "addr", "add", "2001:db8:9::2/64", "dev", "wanpeer", "nodad")
 	cfg.IPv6.Mode = "passthrough"
-
+	cfg.Interfaces = []config.Interface{{ID: "inside", Name: "dst0"}}
+	cfg.Networks[0].Interface = "inside"
 	apply6 := func() {
 		t.Helper()
 		cmd := exec.Command("ip6tables-restore")

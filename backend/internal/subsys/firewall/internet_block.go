@@ -10,25 +10,11 @@ import (
 
 // Restrictions precede ESTABLISHED and user ACCEPT rules. Returning for an
 // internal destination preserves the ordinary firewall/isolation decision.
-type internetRestrictions struct {
-	mac []string
-	vpn []string
-}
-
-func (r internetRestrictions) empty() bool { return len(r.mac) == 0 && len(r.vpn) == 0 }
-
 func internetBlockMatches(cfg *config.Config, ipv6 bool) []string {
-	rules := internetBlockRestrictions(cfg, ipv6)
-	matches := append(rules.mac, rules.vpn...)
-	sort.Strings(matches)
-	return matches
-}
-
-func internetBlockRestrictions(cfg *config.Config, ipv6 bool) internetRestrictions {
-	var rules internetRestrictions
+	var matches []string
 	for _, c := range cfg.Clients {
 		if !c.Blocked && c.Channel == config.InternetBlockChannel && c.MAC != "" {
-			rules.mac = append(rules.mac, " -m mac --mac-source "+strings.ToLower(c.MAC))
+			matches = append(matches, " -m mac --mac-source "+strings.ToLower(c.MAC))
 		}
 	}
 	if !ipv6 {
@@ -44,29 +30,23 @@ func internetBlockRestrictions(cfg *config.Config, ipv6 bool) internetRestrictio
 				if s.Type == "ikev2" {
 					match = " -s " + p.Address + "/32 -m policy --dir in --pol ipsec"
 				}
-				rules.vpn = append(rules.vpn, match)
+				matches = append(matches, match)
 			}
 		}
 	}
-	sort.Strings(rules.mac)
-	sort.Strings(rules.vpn)
-	return rules
+	sort.Strings(matches)
+	return matches
 }
 
-func (b *builder) internetBlockChecks(rules internetRestrictions, chain string, vpn bool) {
-	emit := func(matches []string) {
-		for _, match := range matches {
-			b.line("-A %s%s -m comment --comment %q -j NETOS-INTERNET-BLOCK", chain, match, "запрет интернета клиенту")
-		}
+func (b *builder) internetBlockedClients(cfg *config.Config, ipv6 bool) {
+	matches := internetBlockMatches(cfg, ipv6)
+	if len(matches) == 0 {
+		return
 	}
-	emit(rules.mac)
-	if vpn {
-		emit(rules.vpn)
-	}
-}
-
-func (b *builder) internetBlockDestinations(cfg *config.Config, ipv6 bool) {
 	b.line(":NETOS-INTERNET-BLOCK - [0:0]")
+	for _, match := range matches {
+		b.line("-A FORWARD%s -m comment --comment %q -j NETOS-INTERNET-BLOCK", match, "запрет интернета клиенту")
+	}
 	destinations := map[string]bool{}
 	if ipv6 {
 		// Passthrough has no configured IPv6 prefixes: retain forwarding between
@@ -92,38 +72,4 @@ func (b *builder) internetBlockDestinations(cfg *config.Config, ipv6 bool) {
 		b.line("-A NETOS-INTERNET-BLOCK%s -j RETURN", key)
 	}
 	b.line("-A NETOS-INTERNET-BLOCK -j DROP")
-}
-
-// Even with ordinary filtering disabled, the explicit internet-only restriction
-// remains active. Dispatch once by zone; unclassified interfaces retain the same
-// MAC restriction instead of becoming a bypass.
-func (b *builder) openForwardRestrictions(cfg *config.Config, ipv6 bool) {
-	rules := internetBlockRestrictions(cfg, ipv6)
-	if rules.empty() {
-		return
-	}
-	b.internetBlockDestinations(cfg, ipv6)
-	zones := buildZoneMap(cfg)
-	names := make([]string, 0, len(zones))
-	for name := range zones {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		chain := ChainName(name, "FWD")
-		b.line(":%s - [0:0]", chain)
-		b.internetBlockChecks(rules, chain, name == "vpn")
-		b.line("-A %s -j ACCEPT", chain)
-	}
-	if !ipv6 && ikev2ServerEnabled(cfg) && len(zones["vpn"]) > 0 {
-		b.line("-A FORWARD -m policy --dir in --pol ipsec -j %s", ChainName("vpn", "FWD"))
-	}
-	for _, name := range names {
-		for _, iface := range zones[name] {
-			b.line("-A FORWARD -i %s -j %s", iface, ChainName(name, "FWD"))
-		}
-	}
-	b.line(":NETOS-FWD-OTHER - [0:0]")
-	b.internetBlockChecks(rules, "NETOS-FWD-OTHER", len(zones["vpn"]) == 0)
-	b.line("-A FORWARD -j NETOS-FWD-OTHER")
 }

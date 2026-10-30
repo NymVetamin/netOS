@@ -17,7 +17,7 @@ func TestInternetBlockPreservesInternalAndRouterAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 		rules := rs.IPv4
-		for _, want := range []string{"-A NETOS-FWD-OTHER -m mac --mac-source 02:00:00:00:00:02", "-A NETOS-INTERNET-BLOCK -d 10.22.0.0/24 -j RETURN", "-A NETOS-INTERNET-BLOCK -j DROP", "-A NETOS-POLICY -m mac --mac-source 02:00:00:00:00:02 -j RETURN"} {
+		for _, want := range []string{"-A FORWARD -m mac --mac-source 02:00:00:00:00:02", "-A NETOS-INTERNET-BLOCK -d 10.22.0.0/24 -j RETURN", "-A NETOS-INTERNET-BLOCK -j DROP", "-A NETOS-POLICY -m mac --mac-source 02:00:00:00:00:02 -j RETURN"} {
 			if !strings.Contains(rules, want) {
 				t.Fatalf("missing %s", want)
 			}
@@ -25,7 +25,7 @@ func TestInternetBlockPreservesInternalAndRouterAccess(t *testing.T) {
 		if strings.Contains(rules, "-A INPUT -m mac --mac-source") {
 			t.Fatal("internet block denied router services")
 		}
-		if enabled && strings.Index(rules, "-A NETOS-FWD-OTHER -m mac") > strings.Index(rules, "--ctstate ESTABLISHED,RELATED") {
+		if enabled && strings.Index(rules, "-A FORWARD -m mac") > strings.Index(rules, "--ctstate ESTABLISHED,RELATED") {
 			t.Fatal("block after established")
 		}
 	}
@@ -51,7 +51,7 @@ func TestInternetBlockVPNAndIPv6Selectors(t *testing.T) {
 		t.Fatal("IKE peer loses IPsec selector")
 	}
 	rs, _ := Build(cfg)
-	if !strings.Contains(rs.IPv6, "-A NETOS-FWD-OTHER -m mac --mac-source 02:00:00:00:00:02") {
+	if !strings.Contains(rs.IPv6, "-A FORWARD -m mac --mac-source 02:00:00:00:00:02") {
 		t.Fatal("IPv6 bypass")
 	}
 }

@@ -209,7 +209,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		b.line(":INPUT ACCEPT [0:0]")
 		b.line(":FORWARD ACCEPT [0:0]")
 		b.line(":OUTPUT ACCEPT [0:0]")
-		b.openForwardRestrictions(cfg, false)
+		b.internetBlockedClients(cfg, false)
 		b.line("COMMIT")
 		return
 	}
@@ -248,32 +248,12 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// соединению или обойти запрет статическим IP. Поэтому эти правила стоят
 	// раньше системного ESTABLISHED и дополняют отказ DHCP-сервера в аренде.
 	b.isolation(cfg)
-	// Each classified packet visits its zone once: client restrictions first,
-	// shared global rules second, ordinary zone rules/policy last. The fallback
-	// keeps global rules and MAC restrictions effective on unclassified links.
-	forwardChains := []string{"NETOS-FWD-OTHER"}
-	vpnChain := false
-	for _, c := range chains {
-		if c.hook.flow == "forward" {
-			forwardChains = append(forwardChains, c.chain)
-			vpnChain = vpnChain || c.zone.Name == "vpn"
-		}
-	}
-	b.line(":NETOS-FWD-GLOBAL - [0:0]")
-	b.line(":NETOS-FWD-OTHER - [0:0]")
-	b.blockedClients(cfg, append([]string{"INPUT"}, forwardChains...)...)
-	restrictions := internetBlockRestrictions(cfg, false)
-	if !restrictions.empty() {
-		b.internetBlockDestinations(cfg, false)
-	}
-	for _, chain := range forwardChains {
-		b.internetBlockChecks(restrictions, chain, chain == ChainName("vpn", "FWD") || (chain == "NETOS-FWD-OTHER" && !vpnChain))
-		b.line("-A %s -j NETOS-FWD-GLOBAL", chain)
-	}
+	b.blockedClients(cfg)
+	b.internetBlockedClients(cfg, false)
 	b.sambaAccess(cfg)
 	b.socksAccess(cfg)
 
-	// 1. Общие правила FORWARD вызываются из зон после проверок клиентов.
+	// 1. Правила без привязки к зоне — прямо во встроенных цепочках.
 	b.line("# --- правила без привязки к зоне ---")
 	if cfg.UsesACME() {
 		// HTTP-01 проверяет домен с непредсказуемых адресов CA. На этом порту
@@ -282,10 +262,6 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		b.line("-A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -m comment --comment %q -j ACCEPT", "ACME HTTP-01")
 	}
 	for _, h := range hooks {
-		chain := h.builtin
-		if h.flow == "forward" {
-			chain = "NETOS-FWD-GLOBAL"
-		}
 		for _, r := range cfg.Firewall.Rules {
 			if !r.Enabled || r.Zone != "global" {
 				continue
@@ -302,11 +278,11 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 					}
 					copy := r
 					copy.OutInterface = ""
-					b.emitRule(chain, copy, " -o "+out)
+					b.emitRule(h.builtin, copy, " -o "+out)
 				}
 				continue
 			}
-			b.emitRule(chain, r, "")
+			b.emitRule(h.builtin, r, "")
 		}
 	}
 
@@ -325,8 +301,6 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			b.line("-A %s %s %s -j %s", c.hook.builtin, c.hook.selector, iface, c.chain)
 		}
 	}
-
-	b.line("-A FORWARD -j NETOS-FWD-OTHER")
 
 	// 3. Содержимое цепочек.
 	for _, c := range chains {
@@ -421,7 +395,7 @@ func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 	}
 }
 
-func (b *builder) blockedClients(cfg *config.Config, chains ...string) {
+func (b *builder) blockedClients(cfg *config.Config) {
 	type blockedClient struct {
 		mac  string
 		name string
@@ -442,7 +416,7 @@ func (b *builder) blockedClients(cfg *config.Config, chains ...string) {
 		if client.name != "" {
 			comment = "заблокирован клиент " + client.name
 		}
-		for _, chain := range chains {
+		for _, chain := range []string{"INPUT", "FORWARD"} {
 			b.line("-A %s -m mac --mac-source %s -m comment --comment %q -j DROP",
 				chain, client.mac, truncate(comment, 240))
 		}
@@ -1294,7 +1268,7 @@ func buildIPv6(cfg *config.Config) string {
 		b.line(":INPUT ACCEPT [0:0]")
 		b.line(":FORWARD ACCEPT [0:0]")
 		b.line(":OUTPUT ACCEPT [0:0]")
-		b.openForwardRestrictions(cfg, true)
+		b.internetBlockedClients(cfg, true)
 		// Go/Xray may bind an IPv6 dual-stack wildcard even for 0.0.0.0.
 		// SOCKS access scopes are IPv4-only; never bypass them over IPv6.
 		if cfg.Socks.Enabled {

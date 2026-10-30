@@ -46,7 +46,7 @@ func TestForwardExactOutputDoesNotExpandWholeZone(t *testing.T) {
 	}
 	c.Firewall.Rules[0] = config.FirewallRule{Name: "qa-global", Enabled: true, Zone: "global", Flow: "forward", Interface: "br-lan", OutInterface: "br1", Action: "accept"}
 	r, _ = Build(c)
-	if !strings.Contains(r.IPv4, "-A NETOS-FWD-GLOBAL -o br1 -i br-lan") {
+	if !strings.Contains(r.IPv4, "-A FORWARD -o br1 -i br-lan") {
 		t.Fatal("explicit output without destination zone lost")
 	}
 }
