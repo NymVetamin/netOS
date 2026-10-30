@@ -827,6 +827,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 
 	b.l2tpIPsecTransport(cfg)
 	b.l2tpPeerSources(cfg)
+	b.internetBlockClassification(cfg, false)
 	b.channelPolicies(cfg)
 	b.channelLocalReplies(cfg)
 	b.dnsChannelPolicies(cfg)
@@ -1113,16 +1114,12 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			channel: network.DefaultChannel, comment: "канал сегмента «" + network.Name + "»",
 		})
 	}
-	blocked := internetBlockMatches(cfg, false)
-	if len(rules) == 0 && len(blocked) == 0 {
+	if len(rules) == 0 {
 		return
 	}
 
 	b.line(":NETOS-POLICY - [0:0]")
-	for _, match := range blocked {
-		b.line("-A PREROUTING%s -j CONNMARK --set-mark 0", match)
-		b.line("-A NETOS-POLICY%s -j RETURN", match)
-	}
+
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-POLICY")
 	for _, rule := range rules {
@@ -1261,6 +1258,15 @@ func trimListItems(value string) string {
 
 func buildIPv6(cfg *config.Config) string {
 	var b builder
+	// Replace mangle even when blocking is removed or IPv6 is disabled.
+	b.line("*mangle")
+	for _, chain := range []string{"PREROUTING", "INPUT", "FORWARD", "OUTPUT", "POSTROUTING"} {
+		b.line(":%s ACCEPT [0:0]", chain)
+	}
+	if cfg.IPv6.Mode != "off" {
+		b.internetBlockClassification(cfg, true)
+	}
+	b.line("COMMIT")
 	b.line("*filter")
 	if cfg.IPv6.Mode != "off" {
 		// Даже разрешающий ruleset нужно применить: ip6tables-restore тем самым

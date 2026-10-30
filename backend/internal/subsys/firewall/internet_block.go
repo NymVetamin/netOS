@@ -8,6 +8,25 @@ import (
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
 
+// Reserved packet-only mark: distinct from channel/WAN IDs, Xray's
+// 0x40000000 and the 0x80000000 local-reply connmark discriminator.
+const internetBlockMark = "0x20000000"
+
+// Classify every packet, not only NEW: changes affect existing connections.
+// Never save the block mark in conntrack, so removing a block cannot leave a
+// stale restriction. ACCEPT ends only this mangle hook, not filter processing.
+func (b *builder) internetBlockClassification(cfg *config.Config, ipv6 bool) {
+	matches := internetBlockMatches(cfg, ipv6)
+	if len(matches) == 0 {
+		return
+	}
+	for _, match := range matches {
+		b.line("-A PREROUTING%s -j MARK --set-mark %s", match, internetBlockMark)
+	}
+	b.line("-A PREROUTING -m mark --mark %s -j CONNMARK --set-mark 0", internetBlockMark)
+	b.line("-A PREROUTING -m mark --mark %s -j ACCEPT", internetBlockMark)
+}
+
 // Restrictions precede ESTABLISHED and user ACCEPT rules. Returning for an
 // internal destination preserves the ordinary firewall/isolation decision.
 func internetBlockMatches(cfg *config.Config, ipv6 bool) []string {
@@ -44,9 +63,7 @@ func (b *builder) internetBlockedClients(cfg *config.Config, ipv6 bool) {
 		return
 	}
 	b.line(":NETOS-INTERNET-BLOCK - [0:0]")
-	for _, match := range matches {
-		b.line("-A FORWARD%s -m comment --comment %q -j NETOS-INTERNET-BLOCK", match, "запрет интернета клиенту")
-	}
+	b.line("-A FORWARD -m mark --mark %s -m comment --comment %q -j NETOS-INTERNET-BLOCK", internetBlockMark, "запрет интернета клиенту")
 	destinations := map[string]bool{}
 	if ipv6 {
 		// Passthrough has no configured IPv6 prefixes: retain forwarding between
