@@ -23,9 +23,9 @@ function ClientChannel({ config, value, inherited, source, label, onChange }: {
     </div>
     <select className="client-channel" aria-label={label} value={value} onChange={e => onChange(e.target.value)} onClick={e => e.stopPropagation()}>
       <option value="">{source}{inherited ? ` — ${name(inherited)}` : ""}</option>
-      <option value="block">Блок — без интернета</option>
       {unavailable && <option value={value} disabled>{name(value)} (недоступен)</option>}
       {channels.filter((c: any) => c.enabled).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
+      <option value="block">Блок — без интернета</option>
     </select>
   </div>;
 }
