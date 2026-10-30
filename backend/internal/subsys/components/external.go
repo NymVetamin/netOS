@@ -47,14 +47,14 @@ type externalRelease struct {
 
 var externalReleases = map[string]externalRelease{
 	"xray": {
-		Version: "v26.7.28",
+		Version: "v26.10.29",
 		URL: func(version, goarch string) string {
 			arch := map[string]string{"amd64": "64", "arm64": "arm64-v8a"}[goarch]
 			return fmt.Sprintf("https://github.com/XTLS/Xray-core/releases/download/%s/Xray-linux-%s.zip", version, arch)
 		},
 		SHA256: map[string]string{
-			"amd64": "8195d909f1109b8f3d99eefe401a3c451d7bf4af71f24d3815420f77e5dd2a40",
-			"arm64": "f5698bb218ada3b4022db26fafc39601c5f53b46b19eb76c9616325985807501",
+			"amd64": "8a5f3e6a1057e4bd0f8a7c57c9d91204b4be0b74222a6e210d070603101163c2",
+			"arm64": "afe01f19045b05237420328028ee1ee2e1edd2100eb41a8cbbf50e683b0a6e58",
 		},
 		FileInArchive: "xray",
 		Target:        "/usr/local/bin/xray",

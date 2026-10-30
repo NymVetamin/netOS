@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -134,6 +135,33 @@ func TestXrayProfilesRealConnections(t *testing.T) {
 						data, readErr := io.ReadAll(resp.Body)
 						resp.Body.Close()
 						if readErr == nil && string(data) == "netos-profile-roundtrip" {
+							ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+							counts, statsErr := realtimeXrayCounters(ctx, filepath.Join(dir, "stats.sock"))
+							cancel()
+							if statsErr != nil {
+								t.Fatalf("real traffic counters: %v", statsErr)
+							}
+							identity := s.ID + "/" + s.Peers[0].ID
+							if protocol == "socks" || protocol == "http" {
+								identity = "test-user" // These protocols identify users by login.
+							}
+							for _, direction := range []string{"uplink", "downlink"} {
+								name := "user>>>" + identity + ">>>traffic>>>" + direction
+								if counts[name] == 0 {
+									t.Fatalf("missing traffic counter %s: %v", name, counts)
+								}
+							}
+							ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+							again, statsErr := realtimeXrayCounters(ctx, filepath.Join(dir, "stats.sock"))
+							cancel()
+							if statsErr != nil {
+								t.Fatalf("repeat traffic counters: %v", statsErr)
+							}
+							for name, value := range counts {
+								if again[name] < value {
+									t.Fatalf("reading reset counter %s: %d -> %d", name, value, again[name])
+								}
+							}
 							if testMode == "internet-block" {
 								external := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "must-not-pass") }))
 								external.Listener.Close()
