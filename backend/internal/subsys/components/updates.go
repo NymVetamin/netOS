@@ -201,6 +201,14 @@ func (s *Subsystem) Upgrade(ctx context.Context, id, token string) error {
 	if !ok || row.Error != "" || !row.UpdateAvailable || token == "" || row.Token != token {
 		return fmt.Errorf("версии изменились или проверка не завершена; проверьте обновления ещё раз")
 	}
+	return s.upgradePrepared(ctx, info, row, packageUnitPatterns())
+}
+
+// The caller validates the entire batch before mutations and holds the same
+// maintenance lock as a single update. Shared packages are removed from later
+// rows only after their first update succeeds.
+func (s *Subsystem) upgradePrepared(ctx context.Context, info config.ComponentInfo, row ComponentUpdate, owners map[string][]string) error {
+	id := info.ID
 	changed := info
 	changed.Packages = nil
 	for _, p := range row.Packages {
@@ -208,7 +216,7 @@ func (s *Subsystem) Upgrade(ctx context.Context, id, token string) error {
 			changed.Packages = append(changed.Packages, p.Name)
 		}
 	}
-	units, err := s.updateUnits(ctx, changed)
+	units, err := s.updateUnitsWithOwners(ctx, changed, owners)
 	if err != nil {
 		return err
 	}
@@ -298,6 +306,21 @@ func parsePackageCandidates(out string) map[string]string {
 // Only services that were active are restarted. Shared packages map to every
 // affected catalog entry; updating ppp, for example, also affects PPPoE.
 func (s *Subsystem) updateUnits(ctx context.Context, info config.ComponentInfo) ([]string, error) {
+	return s.updateUnitsWithOwners(ctx, info, packageUnitPatterns())
+}
+
+// Build once per operation/batch, not by scanning the catalog for every update.
+func packageUnitPatterns() map[string][]string {
+	owners := map[string][]string{}
+	for _, c := range config.Catalog {
+		for _, p := range c.Packages {
+			owners[p] = append(owners[p], c.RunUnits...)
+		}
+	}
+	return owners
+}
+
+func (s *Subsystem) updateUnitsWithOwners(ctx context.Context, info config.ComponentInfo, owners map[string][]string) ([]string, error) {
 	patterns := append([]string(nil), info.RunUnits...)
 	if info.ID == "xray" {
 		patterns = append(patterns, "netos-socks.service")
@@ -305,21 +328,18 @@ func (s *Subsystem) updateUnits(ctx context.Context, info config.ComponentInfo) 
 	if info.ID == "samba" {
 		patterns = append(patterns, "netos-wsdd*.service")
 	}
-	pkgs := map[string]bool{}
 	for _, p := range info.Packages {
-		pkgs[p] = true
+		patterns = append(patterns, owners[p]...)
 	}
-	for _, other := range config.Catalog {
-		if other.ID == info.ID {
-			continue
-		}
-		for _, p := range other.Packages {
-			if pkgs[p] {
-				patterns = append(patterns, other.RunUnits...)
-				break
-			}
+	seen := make(map[string]bool, len(patterns))
+	unique := patterns[:0]
+	for _, pattern := range patterns {
+		if !seen[pattern] {
+			seen[pattern] = true
+			unique = append(unique, pattern)
 		}
 	}
+	patterns = unique
 	if len(patterns) == 0 {
 		return nil, nil
 	}

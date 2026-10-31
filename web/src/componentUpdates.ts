@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 
+export type ComponentOperation = {
+  active: boolean;
+  kind?: string;
+  status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  component?: string;
+  stage?: string;
+  error?: string;
+  bytes?: number;
+  total?: number;
+  updated_at?: string;
+  started_at?: string;
+};
+
 export type ComponentUpdates = {
   checked_at: string;
   error?: string;
@@ -20,17 +33,8 @@ export type ComponentUpdates = {
       }[];
     }
   >;
-  operation: {
-    active: boolean;
-    kind?: string;
-    component?: string;
-    stage?: string;
-    error?: string;
-    bytes?: number;
-    total?: number;
-    updated_at?: string;
-    started_at?: string;
-  };
+  operation: ComponentOperation;
+  operations?: Record<string, ComponentOperation>;
 };
 
 // This endpoint reads a memory snapshot; it never checks repositories.

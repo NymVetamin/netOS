@@ -2989,9 +2989,18 @@ textarea.vpn-dns-input {height:64px;min-height:64px;resize:vertical}
 .domain-detail-list th:last-child,.domain-detail-list td:last-child {width:110px;text-align:right}
 .domain-detail-list td:first-child {overflow-wrap:anywhere}
 .component-update-toolbar {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 12px}
-.component-progress {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px;font-size:13px}
-.component-progress progress {width:180px;height:5px;accent-color:var(--accent,#f5b932)}
-.component-version {display:flex;flex-direction:column;align-items:flex-end;gap:5px;max-width:35%;overflow-wrap:anywhere;font-size:12px}
-.component-version .btn {white-space:nowrap}
+.component-update-actions,.component-controls {display:flex;align-items:center;gap:12px;flex-shrink:0}
+.component-update-actions {flex-wrap:wrap}
+.component-progress {margin-top:10px;max-width:520px;font-size:12px;overflow-wrap:anywhere}
+.component-progress-label {display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.component-progress-label>.dim {white-space:nowrap}
+.component-progress progress {display:block;width:100%;height:5px;margin-top:6px;accent-color:var(--accent,#f5b932)}
+.component-progress.failed {color:var(--danger,#ff604d)}
+.component-progress.queued,.component-progress.cancelled {opacity:.7}
+.component-progress.succeeded {color:var(--ok,#50cc8d)}
+.component-version {overflow-wrap:anywhere;font-size:12px}
+.component-new-version {color:var(--accent,#f5b932)}
+.component-update-details {display:flex;flex-direction:column;gap:4px;margin-top:4px;overflow-wrap:anywhere}
+.component-update-details:empty {display:none}
 .component-update-count {margin-left:auto;min-width:20px;padding:0 5px;border-radius:10px;background:#f5b932;color:#171a1c;text-align:center;font-size:12px}
-@media(max-width:700px) {.component-version{max-width:45%}.component-update-toolbar .btn{margin-left:auto}}
+@media(max-width:700px) {.component-controls{flex-direction:column-reverse;align-items:flex-end;gap:10px}.component-update-actions{width:100%}.component-update-actions .btn{flex:1}}

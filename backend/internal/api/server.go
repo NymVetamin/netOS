@@ -227,6 +227,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/catalog", s.handleCatalog)
 	auth("GET /api/components/updates", s.handleComponentUpdates)
 	auth("POST /api/components/updates/check", s.handleComponentCheck)
+	auth("POST /api/components/updates/install", s.handleComponentUpdateAll)
 	auth("POST /api/components/{id}/update", s.handleComponentUpdate)
 	auth("GET /api/storage/devices", s.handleStorageDevices)
 	auth("GET /api/status", s.handleStatus)

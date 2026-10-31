@@ -325,6 +325,7 @@ export const api = {
   catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
   componentUpdates: (signal?:AbortSignal) => request<import("./componentUpdates").ComponentUpdates>("GET","/api/components/updates",undefined,undefined,signal),
   checkComponentUpdates: () => request("POST","/api/components/updates/check"),
+  updateAllComponents: (components:{id:string,token:string}[]) => request("POST","/api/components/updates/install",{components}),
   updateComponent: (id:string,token:string) => request("POST",`/api/components/${encodeURIComponent(id)}/update`,{token}),
   componentStatus: (ids: string[], signal?: AbortSignal) => request<Pick<CatalogResponse, "installed">>("GET", `/api/catalog?installed=${encodeURIComponent(ids.join(","))}`, undefined, undefined, signal),
 	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),

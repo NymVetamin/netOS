@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, CatalogResponse } from "../api";
 import { Badge, Card, Notice, Spinner, Switch } from "../ui";
 import { COMPONENT_ICONS, Icon } from "../icons";
-import { ComponentUpdates } from "../componentUpdates";
+import { ComponentOperation, ComponentUpdates } from "../componentUpdates";
 
 type Patch = (mutate: (draft: any) => void) => void;
 
@@ -16,6 +16,28 @@ type Patch = (mutate: (draft: any) => void) => void;
 // пакета занимает минуты, а служба поднимается и падает за секунды, поэтому
 // «используется» должно обновляться само, без перезагрузки страницы.
 const LIVE_POLL_MS = 5000;
+
+function ComponentProgress({ operation }: { operation?: ComponentOperation }) {
+  if (!operation) return null;
+  const running = operation.active;
+  const percentage = running && operation.total && operation.total > 0
+    ? Math.min(100, Math.round(((operation.bytes || 0) * 100) / operation.total))
+    : undefined;
+  return (
+    <div className={`component-progress ${operation.status || ""}`} role="status">
+      <div className="component-progress-label">
+        <span>{operation.error || operation.stage || "Подготовка…"}</span>
+        {running && <span className="dim">
+          {percentage !== undefined ? `${percentage}% · ` : ""}
+          {operation.started_at && !operation.started_at.startsWith("0001")
+            ? `${Math.max(0, Math.floor((Date.now() - Date.parse(operation.started_at)) / 1000))} с`
+            : ""}
+        </span>}
+      </div>
+      {running && <progress aria-label="Ход операции с компонентом" max={100} value={percentage} />}
+    </div>
+  );
+}
 
 export function ComponentsPage({
   config,
@@ -42,7 +64,11 @@ export function ComponentsPage({
     setStarting(true);
     setActionError("");
     try {
-      if (id) await api.updateComponent(id, token!);
+      if (id === "all") {
+        await api.updateAllComponents(Object.entries(updates.state?.components || {})
+          .filter(([, row]) => row.update_available && !row.error)
+          .map(([id, row]) => ({ id, token: row.token })));
+      } else if (id) await api.updateComponent(id, token!);
       else await api.checkComponentUpdates();
       updates.reload();
     } catch (e) {
@@ -94,46 +120,6 @@ export function ComponentsPage({
     };
   }, []);
 
-  const progress = busy && (
-    <div className="component-progress" role="status" aria-live="polite">
-      <span>
-        {catalog?.components.find((c) => c.id === operation?.component)
-          ?.title || operation?.component}
-        {operation?.component ? " · " : ""}
-        {operation?.stage || "Начинаем проверку…"}
-      </span>
-      <progress
-        aria-label="Ход операции с компонентами"
-        max={
-          operation?.total && operation.total > 0 ? operation.total : undefined
-        }
-        value={
-          operation?.total && operation.total > 0
-            ? operation.bytes || 0
-            : undefined
-        }
-      />
-      {operation?.started_at && !operation.started_at.startsWith("0001") && (
-        <small className="dim">
-          {Math.max(
-            0,
-            Math.floor((Date.now() - Date.parse(operation.started_at)) / 1000),
-          )}{" "}
-          с
-        </small>
-      )}
-      {operation?.total && operation.total > 0 ? (
-        <small>
-          {Math.min(
-            100,
-            Math.round(((operation.bytes || 0) * 100) / operation.total),
-          )}
-          %
-        </small>
-      ) : null}
-    </div>
-  );
-
   if (!catalog)
     return (
       <>
@@ -144,7 +130,7 @@ export function ComponentsPage({
           </h1>
           <p>Установленные возможности и системные службы роутера</p>
         </div>
-        {progress}
+
         <Card>
           <div className="loading-state">
             <Spinner /> Загружаем состояние компонентов…
@@ -173,6 +159,7 @@ export function ComponentsPage({
   const runningCount = Object.values(running).filter(Boolean).length;
   const updateEntries = Object.values(updates.state?.components || {});
   const updateCount = updateEntries.filter((entry) => entry.update_available).length;
+  const actionableCount = updateEntries.filter((entry) => entry.update_available && !entry.error).length;
   const checkFailed = Boolean(updates.error || updates.state?.error) ||
     updateEntries.some((entry) => entry.error);
   const checked = Boolean(updates.state?.checked_at &&
@@ -235,6 +222,7 @@ export function ComponentsPage({
             ` · Проверено: ${new Date(updates.state!.checked_at).toLocaleString()}`}
         </span>
         {canUpdate && (
+          <div className="component-update-actions">
           <button
             className="btn"
             disabled={busy}
@@ -242,9 +230,14 @@ export function ComponentsPage({
           >
             Проверить обновления
           </button>
+          <button className="btn primary" disabled={busy || actionableCount === 0}
+            onClick={() => void perform("all")}>
+            Обновить всё{actionableCount > 0 ? ` (${actionableCount})` : ""}
+          </button>
+          </div>
         )}
       </div>
-      {progress}
+
       {(actionError ||
         updates.error ||
         updates.state?.error ||
@@ -272,6 +265,7 @@ export function ComponentsPage({
               const isReady = ready[c.id] === true;
               const atWork = running[c.id] === true;
               const update = updates.state?.components?.[c.id];
+              const componentOperation = updates.state?.operations?.[c.id];
               return (
                 <div key={c.id} className={`component ${on ? "on" : ""}`}>
                   <div className="component-main">
@@ -280,6 +274,11 @@ export function ComponentsPage({
                         <Icon name={COMPONENT_ICONS[c.id]} />
                       )}
                       <strong>{c.title}</strong>
+                      {update?.installed && <span className="component-version dim">
+                        {update.installed}
+                        {update.update_available && update.available !== update.installed &&
+                          <span className="component-new-version"> → {update.available}</span>}
+                      </span>}
                       {isReady && <Badge tone="ok">готов</Badge>}
                       {atWork && <Badge tone="ok">используется</Badge>}
                       {/* Желаемое состояние сравнивается с живой машиной. Essential
@@ -312,15 +311,8 @@ export function ComponentsPage({
                         <span className="mono"> · {c.packages.join(", ")}</span>
                       )}
                     </div>
-                  </div>
                   {update && (
-                    <div className="component-version">
-                      <span className="dim">
-                        {update.installed}
-                        {update.update_available &&
-                          update.available !== update.installed &&
-                          ` → ${update.available}`}
-                      </span>
+                    <div className="component-update-details">
                       {update.error && (
                         <small className="dim">{update.error}</small>
                       )}
@@ -336,7 +328,12 @@ export function ComponentsPage({
                               .join("; ")}
                           </small>
                         )}
-                      {canUpdate && update.update_available && (
+                    </div>
+                  )}
+                  <ComponentProgress operation={componentOperation} />
+                  </div>
+                  <div className="component-controls">
+                      {canUpdate && update?.update_available && (
                         <button
                           className="btn"
                           disabled={busy || !!update.error}
@@ -345,14 +342,13 @@ export function ComponentsPage({
                           Обновить
                         </button>
                       )}
-                    </div>
-                  )}
                   <Switch
                     checked={on}
                     label=""
                     ariaLabel={`Компонент ${c.title || c.id} включён`}
                     onChange={(v) => toggle(c.id, v)}
                   />
+                  </div>
                 </div>
               );
             })}

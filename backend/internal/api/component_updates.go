@@ -50,6 +50,28 @@ func (s *Server) handleComponentUpdates(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleComponentCheck(w http.ResponseWriter, r *http.Request) {
 	s.startComponentOperation(w, r, "", "")
 }
+func (s *Server) handleComponentUpdateAll(w http.ResponseWriter, r *http.Request) {
+	if !may(r, "components", true) {
+		writeError(w, 403, "недостаточно прав")
+		return
+	}
+	if s.ComponentUpdates == nil {
+		writeError(w, 503, "обновления компонентов недоступны")
+		return
+	}
+	var req struct {
+		Components []components.UpdateRequest `json:"components"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, 400, "некорректный запрос")
+		return
+	}
+	if err := s.ComponentUpdates.StartUpdates(s.componentContext, req.Components); err != nil {
+		writeError(w, 409, "%s", err)
+		return
+	}
+	writeJSON(w, 202, map[string]bool{"started": true})
+}
 func (s *Server) handleComponentUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Token string `json:"token"`

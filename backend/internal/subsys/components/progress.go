@@ -10,6 +10,7 @@ import (
 type Operation struct {
 	Active    bool      `json:"active"`
 	Kind      string    `json:"kind,omitempty"`
+	Status    string    `json:"status,omitempty"`
 	Component string    `json:"component,omitempty"`
 	Stage     string    `json:"stage,omitempty"`
 	Error     string    `json:"error,omitempty"`
@@ -37,7 +38,7 @@ func (p *Progress) Start(kind, id string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.state = Operation{Active: true, Kind: kind, Component: id, UpdatedAt: time.Now(), StartedAt: time.Now()}
+	p.state = Operation{Active: true, Status: "running", Kind: kind, Component: id, UpdatedAt: time.Now(), StartedAt: time.Now()}
 }
 func (p *Progress) Stage(id, stage string) {
 	if p == nil {
@@ -45,7 +46,9 @@ func (p *Progress) Stage(id, stage string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.state.Component = id
+	if p.state.Kind == "check" || p.state.Component == "" {
+		p.state.Component = id
+	}
 	p.state.Stage = stage
 	p.state.Bytes = 0
 	p.state.Total = 0
@@ -58,8 +61,10 @@ func (p *Progress) Finish(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.state.Active = false
+	p.state.Status = "succeeded"
 	p.state.UpdatedAt = time.Now()
 	if err != nil {
+		p.state.Status = "failed"
 		p.state.Error = err.Error()
 	}
 }
