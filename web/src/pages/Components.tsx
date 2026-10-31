@@ -171,6 +171,21 @@ export function ComponentsPage({
 
   const installedCount = Array.from(wanted.values()).filter(Boolean).length;
   const runningCount = Object.values(running).filter(Boolean).length;
+  const updateEntries = Object.values(updates.state?.components || {});
+  const updateCount = updateEntries.filter((entry) => entry.update_available).length;
+  const checkFailed = Boolean(updates.error || updates.state?.error) ||
+    updateEntries.some((entry) => entry.error);
+  const checked = Boolean(updates.state?.checked_at &&
+    !updates.state.checked_at.startsWith("0001"));
+  const checkResult = operation?.active && operation.kind === "check"
+    ? "Проверяем обновления…"
+    : checkFailed
+      ? "Не удалось проверить все обновления"
+      : !checked
+        ? "Обновления ещё не проверялись"
+        : updateCount > 0
+          ? `Доступно обновлений: ${updateCount}`
+          : "Обновлений нет";
 
   function toggle(id: string, on: boolean) {
     patch((d) => {
@@ -215,10 +230,9 @@ export function ComponentsPage({
       )}
       <div className="component-update-toolbar">
         <span className="dim">
-          {updates.state?.checked_at &&
-          !updates.state.checked_at.startsWith("0001")
-            ? `Проверено: ${new Date(updates.state.checked_at).toLocaleString()}`
-            : "Обновления ещё не проверялись"}
+          {checkResult}
+          {checked && !operation?.active &&
+            ` · Проверено: ${new Date(updates.state!.checked_at).toLocaleString()}`}
         </span>
         {canUpdate && (
           <button
