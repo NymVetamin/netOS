@@ -230,10 +230,10 @@ export function ComponentsPage({
           >
             Проверить обновления
           </button>
-          <button className="btn primary" disabled={busy || actionableCount === 0}
+          {actionableCount > 0 && <button className="btn primary" disabled={busy}
             onClick={() => void perform("all")}>
-            Обновить всё{actionableCount > 0 ? ` (${actionableCount})` : ""}
-          </button>
+            Обновить всё ({actionableCount})
+          </button>}
           </div>
         )}
       </div>
