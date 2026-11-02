@@ -1,8 +1,9 @@
 import { probeChart } from "../chartProbe";
+import { chartPaths } from "../chartPaths";
 import { LiveChart, useRealtimeTraffic } from "./RealtimeTraffic";
 import { continueTrafficHistory } from "../trafficTimeline";
 import { DomainChart, domainCountsByClient } from "./DomainChart";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBitrate, formatBytes } from "../api";
 import { Card, Empty, Switch, Notice, TableWrap } from "../ui";
 import { useAccess } from "../permissions";
@@ -105,7 +106,7 @@ function TimeChart({lines,from,to,height,mapFrames}:{lines:Line[];from:number;to
  },[hover]);
  let peak=1;for(const l of lines)for(const p of l.points)peak=Math.max(peak,p.value||0,p.peak||0);
  const x=(t:number)=>pad+(t-from)/Math.max(1,to-from)*(width-2*pad),y=(n:number)=>height-pad-n/peak*(height-2*pad);
- const path=(line:Line)=>line.points.map((p,i)=>p.value==null?"":`${i&&line.points[i-1].value!=null&&p.at-line.points[i-1].at<=Math.max(p.gap||3,line.points[i-1].gap||3)?"L":"M"}${x(p.at).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+ const paths=useMemo(()=>lines.map(l=>({...l,...chartPaths(l.points,x,y,height-pad,1)})),[lines,from,to,height,peak]);
  if(!lines.some(l=>l.points.length))return <Empty>В выбранном периоде пока нет замеров</Empty>;
  const exactLines=exact?mapFrames(exact):null;
  const values=hover===null?[]:lines.map(line=>{
@@ -122,7 +123,8 @@ function TimeChart({lines,from,to,height,mapFrames}:{lines:Line[];from:number;to
    setHover(at);
   }}>
    {[.25,.5,.75,1].map(n=><line key={n} x1={pad} x2={width-pad} y1={y(peak*n)} y2={y(peak*n)} stroke="var(--border)" vectorEffect="non-scaling-stroke"/>)}
-   {lines.map(l=><path key={l.id} d={path(l)} fill="none" stroke={l.color} strokeWidth={1.8} vectorEffect="non-scaling-stroke"/>)}
+   {paths.map(l=><path key={`area-${l.id}`} d={l.area} fill={l.color} fillOpacity={0.16}/>)}
+   {paths.map(l=><path key={l.id} d={l.stroke} fill="none" stroke={l.color} strokeWidth={1.8} vectorEffect="non-scaling-stroke"/>)}
    {hover!==null&&<g className="monitor-crosshair"><line x1={cursor} x2={cursor} y1={pad} y2={height-pad} stroke="var(--text-dim)" strokeDasharray="4 4" vectorEffect="non-scaling-stroke"/></g>}
   </svg>
   {values.filter(v=>v.point).map(({line,point})=><span key={line.id} className="monitor-point" aria-hidden="true" style={{left:`${x(point!.at)/width*100}%`,top:y(point!.value!),background:line.color}}/>)}

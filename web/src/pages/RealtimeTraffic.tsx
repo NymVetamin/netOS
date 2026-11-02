@@ -1,6 +1,7 @@
 import { MutableRefObject, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, formatBitrate } from "../api";
 import { probeChart } from "../chartProbe";
+import { chartPaths } from "../chartPaths";
 
 type Value={id:string;name:string;at:number;rx_bps:number|null;tx_bps:number|null};
 type Batch={sequence:number;at:number;values:Value[];problems:string[]};
@@ -31,10 +32,8 @@ export function useRealtimeTraffic(enabled:boolean) {
 const Plot=memo(function Plot({lines,at,peak,motion,seconds,paused}:{lines:Line[];at:number;peak:number;seconds:number;motion:MutableRefObject<number>;paused:boolean}){
  const node=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{motion.current=performance.now();if(paused||!node.current||matchMedia('(prefers-reduced-motion: reduce)').matches){motion.current=-Infinity;return;}const animation=node.current.animate([{transform:'translate3d(0,0,0)'},{transform:`translate3d(${-100/seconds}%,0,0)`}],{duration:1000,easing:'linear'});return()=>animation.cancel()},[at,motion,seconds,paused]);
- const paths=lines.map(l=>{
-  let last=0,lastGap=3;return {...l,path:l.points.map(p=>{if(p.value==null){last=0;return ""}const command=last&&p.at-last<=Math.max(lastGap,p.gap||3)?"L":"M";last=p.at;lastGap=p.gap||3;return `${command}${((p.at-at+seconds+1)/seconds*1000).toFixed(2)},${(180-p.value/peak*170).toFixed(2)}`}).join(" ")};
- });
- return <div ref={node} className="rt-moving" style={{transform:`translate3d(${-100/seconds}%,0,0)`}}><svg viewBox="0 0 1000 190" preserveAspectRatio="none" aria-hidden="true" style={{width:'100%',height:190,overflow:'visible'}}>{paths.map(l=><path key={l.id} d={l.path} fill="none" stroke={l.color} strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>)}</svg></div>;
+ const paths=lines.map(l=>({...l,...chartPaths(l.points,t=>(t-at+seconds+1)/seconds*1000,v=>180-v/peak*170,180,2)}));
+ return <div ref={node} className="rt-moving" style={{transform:`translate3d(${-100/seconds}%,0,0)`}}><svg viewBox="0 0 1000 190" preserveAspectRatio="none" aria-hidden="true" style={{width:'100%',height:190,overflow:'visible'}}>{paths.map(l=><path key={`area-${l.id}`} d={l.area} fill={l.color} fillOpacity={0.16}/>)}{paths.map(l=><path key={l.id} d={l.stroke} fill="none" stroke={l.color} strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>)}</svg></div>;
 });
 export function LiveChart({lines,at,seconds=180,paused=false}:{lines:Line[];at:number;seconds?:number;paused?:boolean}) {
  const [hover,setHover]=useState<number|null>(null);const motion=useRef(0);const scale=useRef({peak:1000,at:0});
