@@ -279,6 +279,16 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState<{ until?: string } | null>(null);
   const [rollback, setRollback] = useState<any>(null);
+  const [dismissedRollback, setDismissedRollback] = useState(() => {
+    try { return sessionStorage.getItem("netos-dismissed-rollback") || ""; }
+    catch { return ""; }
+  });
+  const rollbackNoticeID = rollback ? JSON.stringify([rollback.at, rollback.revision]) : "";
+  const dismissRollback = () => {
+    setDismissedRollback(rollbackNoticeID);
+    try { sessionStorage.setItem("netos-dismissed-rollback", rollbackNoticeID); }
+    catch { /* Closing still works when browser storage is unavailable. */ }
+  };
   const [saveError, setSaveError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -592,9 +602,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
             </Notice>
           )}
 
-          {rollback && (
+          {rollback && rollbackNoticeID !== dismissedRollback && (
             <Notice
               tone="danger"
+              onDismiss={dismissRollback}
               title={
                 rollback.reason === "timeout"
                   ? "Изменения откачены: подтверждение не получено"
@@ -607,7 +618,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           )}
 
           {saveError && (
-            <Notice tone="danger" title="Не удалось сохранить черновик">
+            <Notice tone="danger" title="Не удалось сохранить черновик" onDismiss={() => setSaveError("")}>
               {saveError}
             </Notice>
           )}

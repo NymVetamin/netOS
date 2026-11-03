@@ -167,12 +167,14 @@ export function Notice({
   title,
   children,
   actions,
+  onDismiss,
   hint = false,
 }: {
   tone: "info" | "warn" | "danger";
   title: string;
   children?: ReactNode;
   actions?: ReactNode;
+  onDismiss?: () => void;
   hint?: boolean;
 }) {
   const showHints = useContext(HintContext);
@@ -186,6 +188,7 @@ export function Notice({
         {children && <div className="text">{children}</div>}
       </div>
       {actions && <div className="row">{actions}</div>}
+      {onDismiss && <button type="button" className="notice-dismiss" aria-label="Закрыть уведомление" title="Закрыть уведомление" onClick={onDismiss}>×</button>}
     </div>
   );
 }
