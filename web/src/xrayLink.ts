@@ -19,13 +19,14 @@ export function parseXrayLink(value: string): any {
   }
   const url = new URL(value);
   requireText(url.hostname, "В ссылке нет сервера");
+  if (url.protocol === "hysteria2:" || url.protocol === "hy2:") return hysteriaOutbound(url);
   const port = parsePort(url.port);
   if (url.protocol === "ss:") {
     const credentials = decodeBase64(decodeURIComponent(url.username));
     return shadowsocksOutbound(credentials, `${url.hostname}:${port}`);
   }
   const protocol = url.protocol.slice(0, -1);
-  if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan:// и ss://");
+  if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan://, ss://, hysteria2:// и hy2://");
   const user = decodeURIComponent(url.username);
   requireText(user, "В ссылке нет идентификатора пользователя или пароля");
   if (protocol === "vless" && !isUUID(user)) throw new Error("Идентификатор пользователя VLESS должен быть UUID");
@@ -40,6 +41,53 @@ export function parseXrayLink(value: string): any {
     mode: url.searchParams.get("mode"), extra: url.searchParams.get("extra"), alpn: url.searchParams.get("alpn"),
     pcs: url.searchParams.get("pcs"), vcn: url.searchParams.get("vcn"),
   }) };
+}
+
+function hysteriaOutbound(url: URL): any {
+  const auth = decodeURIComponent(url.username + (url.password ? `:${url.password}` : ""));
+  requireText(auth, "В ссылке нет пароля Hysteria 2");
+  const query = url.searchParams;
+  const tls: any = { serverName: query.get("sni") || url.hostname };
+  const insecure = query.get("insecure");
+  if (insecure !== null && insecure !== "0" && insecure !== "1") throw new Error("Параметр insecure должен быть 0 или 1");
+  const pin = query.get("pinSHA256");
+  if (pin !== null) {
+    const normalized = pin.replace(/:/g, "");
+    if (!/^[a-f0-9]{64}$/i.test(normalized)) throw new Error("pinSHA256 должен содержать SHA-256 сертификата");
+    tls.pinnedPeerCertSha256 = normalized;
+  }
+  if (insecure === "1" && !pin) throw new Error("Для insecure=1 укажите pinSHA256: Xray требует закреплённый сертификат");
+  if (query.has("alpn")) {
+    tls.alpn = query.get("alpn")!.split(",").map(value => value.trim()).filter(Boolean);
+    if (!tls.alpn.length) throw new Error("Параметр alpn не должен быть пустым");
+  }
+  const stream: any = { method: "hysteria", security: "tls", tlsSettings: tls, hysteriaSettings: { version: 2, auth } };
+  if (query.has("fm")) {
+    let mask: any;
+    try { mask = JSON.parse(query.get("fm")!); }
+    catch { throw new Error("Параметр fm должен содержать корректный JSON-объект"); }
+    if (!mask || typeof mask !== "object" || Array.isArray(mask)) throw new Error("Параметр fm должен быть JSON-объектом");
+    if (mask.udp !== undefined && (!Array.isArray(mask.udp) || mask.udp.some((item: any) => !item || typeof item !== "object" || Array.isArray(item) || typeof item.type !== "string"))) {
+      throw new Error("Параметр fm.udp должен содержать массив UDP-масок");
+    }
+    stream.finalmask = mask;
+  }
+  const obfs = query.get("obfs");
+  if (obfs) {
+    if (obfs !== "salamander") throw new Error("Поддерживается obfs=salamander; другие маски задайте через fm или outbound JSON");
+    const password = query.get("obfs-password");
+    requireText(password, "В ссылке нет obfs-password");
+    // Share links may describe the same mask twice. Applying it twice breaks the wire format.
+    const masks = stream.finalmask?.udp;
+    if (masks?.length) {
+      if (!masks.some((item: any) => item.type === "salamander" && item.settings?.password === password)) {
+        throw new Error("Параметры obfs и fm задают разные UDP-маски");
+      }
+    } else {
+      stream.finalmask = { ...stream.finalmask, udp: [{ type: "salamander", settings: { password } }] };
+    }
+  }
+  return { protocol: "hysteria", settings: { version: 2, address: url.hostname, port: parsePort(url.port || "443") }, streamSettings: stream };
 }
 
 function streamSettings(network: string, security: string, options: any): any {

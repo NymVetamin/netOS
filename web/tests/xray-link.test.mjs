@@ -78,3 +78,51 @@ test("TLS share links preserve certificate verification on reimport", () => {
     assert.equal(tls.allowInsecure, undefined);
   }
 });
+
+const hy2Link = params => "hysteria2://test-auth@vpn.example.com:2087?" + new URLSearchParams(params) + "#%F0%9F%9A%80%20test";
+const salamander = { type: "salamander", settings: { password: "test-obfs" } };
+
+test("Hysteria 2 import preserves auth, TLS and exactly one Salamander mask", () => {
+  const params = { sni: "tls.example.com", obfs: "salamander", "obfs-password": "test-obfs" };
+  for (const extra of [{}, { fm: JSON.stringify({ udp: [salamander] }) }]) {
+    const link = hy2Link({ ...params, ...extra });
+    const expected = {
+      protocol: "hysteria", settings: { version: 2, address: "vpn.example.com", port: 2087 },
+      streamSettings: { method: "hysteria", security: "tls", tlsSettings: { serverName: "tls.example.com" },
+        hysteriaSettings: { version: 2, auth: "test-auth" }, finalmask: { udp: [salamander] } },
+    };
+    for (let i = 0; i < 2; i++) assert.deepEqual(JSON.parse(JSON.stringify(parseXrayLink(link))), expected);
+  }
+});
+
+test("Hysteria alias, default port, userpass and pinned netOS profiles", () => {
+  const pin = "AB".repeat(32);
+  for (const auth of ["user:pass%3Aword", "user%3Apass%3Aword"]) {
+    const out = parseXrayLink(`hy2://${auth}@vpn.example.com/?insecure=1&pinSHA256=${pin}&alpn=h3`);
+    assert.equal(out.settings.port, 443);
+    assert.equal(out.streamSettings.hysteriaSettings.auth, "user:pass:word");
+    assert.equal(out.streamSettings.tlsSettings.pinnedPeerCertSha256, pin);
+    assert.equal(out.streamSettings.tlsSettings.allowInsecure, undefined);
+    assert.equal(out.streamSettings.tlsSettings.alpn[0], "h3");
+    assert.equal(out.streamSettings.finalmask, undefined);
+  }
+});
+
+test("Hysteria fm preserves ordered masks and QUIC options", () => {
+  const mask = { udp: [salamander, { type: "header-custom", settings: { header: "test" } }], quicParams: { congestion: "bbr" } };
+  const out = parseXrayLink(hy2Link({ fm: JSON.stringify(mask), obfs: "salamander", "obfs-password": "test-obfs" }));
+  assert.deepEqual(JSON.parse(JSON.stringify(out.streamSettings.finalmask)), mask);
+});
+
+test("Hysteria rejects invalid or conflicting settings before replacing outbound", () => {
+  for (const params of [
+    { fm: "{" }, { fm: "null" }, { fm: "[]" }, { fm: '{"udp":{}}' }, { fm: '{"udp":[null]}' },
+    { fm: JSON.stringify({ udp: [salamander] }), obfs: "salamander", "obfs-password": "different" },
+    { obfs: "salamander" }, { obfs: "unsupported" }, { insecure: "yes" }, { insecure: "1" },
+    { pinSHA256: "bad" }, { alpn: "" },
+  ]) assert.throws(() => parseXrayLink(hy2Link(params)));
+  for (const link of ["hy2://vpn.example.com", "hy2://%20@vpn.example.com", "hy2://auth@vpn.example.com:0", "hy2://auth@vpn.example.com:65536"]) {
+    assert.throws(() => parseXrayLink(link));
+  }
+  assert.equal(parseXrayLink(hy2Link({})).protocol, "hysteria");
+});

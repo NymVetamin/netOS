@@ -385,7 +385,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
     </div>
     <section className="channel-link-import" aria-label="Импорт подключения">
       <h4>Импорт подключения из ссылки</h4>
-      <p className="hint">VLESS, VMess, Trojan или Shadowsocks — заполнить настройки подключения.</p>
+      <p className="hint">VLESS, VMess, Trojan, Shadowsocks или Hysteria 2 — заполнить настройки подключения.</p>
       <div className="channel-link-actions"><input aria-label="Ссылка подключения" className="mono" value={link} onChange={(e) => setLink(e.target.value)} placeholder="vless://…" /><button type="button" className="btn primary" disabled={!link.trim()} onClick={importLink}>Импортировать</button></div>
     </section>
     <section className="channel-probe-settings" aria-label="Проверка канала">

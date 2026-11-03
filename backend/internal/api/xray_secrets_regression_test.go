@@ -15,7 +15,8 @@ func TestXrayOutboundCredentialAliasesRoundTrip(t *testing.T) {
 				"outbound": map[string]any{"protocol": protocol, "tag": "public-tag",
 					"settings": map[string]any{"address": "example.com", "id": "credential-id", "pass": "credential-pass",
 						"vnext": []any{map[string]any{"address": "example.com", "users": []any{map[string]any{"id": "nested-credential", "email": "label"}}}}},
-					"streamSettings": map[string]any{"hysteriaSettings": map[string]any{"auth": "credential-auth"}}},
+					"streamSettings": map[string]any{"hysteriaSettings": map[string]any{"auth": "credential-auth"},
+						"finalmask": map[string]any{"udp": []any{map[string]any{"type": "salamander", "settings": map[string]any{"password": "obfs-secret"}}}}}},
 				"peers": []any{map[string]any{"id": "structural-id", "password": "peer-secret"}},
 			}}}
 			visible, err := redactAdminConfig(original)
@@ -26,6 +27,10 @@ func TestXrayOutboundCredentialAliasesRoundTrip(t *testing.T) {
 			settings := out["settings"].(map[string]any)
 			user := settings["vnext"].([]any)[0].(map[string]any)["users"].([]any)[0].(map[string]any)
 			auth := out["streamSettings"].(map[string]any)["hysteriaSettings"].(map[string]any)
+			mask := out["streamSettings"].(map[string]any)["finalmask"].(map[string]any)["udp"].([]any)[0].(map[string]any)
+			if mask["settings"].(map[string]any)["password"] != "" {
+				t.Fatal("stored obfuscation password returned to browser")
+			}
 			if settings["id"] != "" || settings["pass"] != "" || user["id"] != "" || auth["auth"] != "" {
 				t.Fatal("stored outbound credential returned to browser")
 			}
