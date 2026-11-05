@@ -82,19 +82,18 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
         {SERVICE_TABS.map((item) => {
           const warned = problems.some((p) => (showHints || p.severity === "error") && p.path.startsWith(item.problems));
           return (
-            <button
+            <a
               key={item.id}
-              type="button"
+              href={`#services?tab=${item.id}`}
               role="tab"
               id={`service-tab-${item.id}`}
               aria-controls={`service-${item.id}`}
               aria-selected={tab === item.id}
               className={`btn sm ${tab === item.id ? "primary" : ""}`}
-              onClick={() => { window.location.hash = `services?tab=${item.id}`; setTab(item.id); }}
             >
               {item.label}
               {warned && <span className="tab-dot" title="Есть предупреждение" />}
-            </button>
+            </a>
           );
         })}
       </div>
