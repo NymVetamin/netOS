@@ -74,7 +74,7 @@ async def main():
         assert len(state["stops"]) == 1
         assert state["starts"][0]["count"] == 5
 
-        for tab, kind in [("Traceroute / MTR", "mtr"), ("DNS", "dns"), ("Захват пакетов", "capture"), ("Torch", "torch"), ("iPerf3", "iperf"), ("Соединения", "connections"), ("Поиск маршрута", "route")]:
+        for tab, kind in [("Traceroute / MTR", "mtr"), ("DNS", "dns"), ("Захват пакетов", "capture"), ("Torch", "torch"), ("iPerf3", "iperf"), ("Поиск маршрута", "route")]:
             await tabs.get_by_role("tab", name=tab, exact=True).click()
             await expect(page.get_by_role("heading", name=tab, exact=True)).to_be_visible()
             if kind == "mtr":

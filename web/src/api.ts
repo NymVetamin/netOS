@@ -1,3 +1,8 @@
+export type ConnectionRow = {
+ protocol:string; state:string; source:{address:string;port?:string}; destination:{address:string;port?:string};
+ reply_source:{address:string;port?:string};reply_destination:{address:string;port?:string};nat:string;
+ timeout?:number; packets?:number;bytes?:number;reply_packets?:number;reply_bytes?:number;process?:string;
+};
 // Обращения к API панели.
 //
 // CSRF-токен выдаётся при входе и живёт в памяти вкладки: класть его в
@@ -189,6 +194,7 @@ async function request<T>(
 }
 
 export const api = {
+  connections: (query: string, signal?: AbortSignal) => request<{rows:ConnectionRow[];total:number;scanned:number;unparsed:number;page:number;updated:string}>("GET", `/api/diagnostics/connections?${query}`, undefined, undefined, signal),
   async diagnosticCapture(id: string): Promise<Blob> {
     const response = await fetch(`/api/diagnostics/jobs/${encodeURIComponent(id)}/capture`, {credentials:"same-origin", cache:"no-store"});
     if (response.status === 401) invalidateSession(csrfToken);

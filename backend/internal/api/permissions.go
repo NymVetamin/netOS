@@ -32,7 +32,7 @@ func anySection(r *http.Request, manage bool, sections ...string) bool {
 func limitedEndpoint(r *http.Request) bool {
 	p := r.URL.Path
 	write := r.Method != http.MethodGet
-	if p == "/api/diagnostics/tools" {
+	if p == "/api/diagnostics/tools" || p == "/api/diagnostics/connections" {
 		return !write && may(r, "diagnostics", false)
 	}
 	if p == "/api/diagnostics/current" || p == "/api/diagnostics/jobs" || strings.HasPrefix(p, "/api/diagnostics/jobs/") {

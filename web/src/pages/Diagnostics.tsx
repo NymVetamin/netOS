@@ -1,3 +1,4 @@
+import { Connections } from "./Connections";
 import { LogEntries } from "./Logs";
 import { DiagnosticTool, DIAGNOSTIC_TOOLS } from "./DiagnosticTool";
 import { useEffect, useState, ReactNode } from "react";
@@ -54,7 +55,8 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
       {DIAGNOSTIC_TABS.filter(t => admin || t.id !== "configs").map(t => <a key={t.id} role="tab" id={`diagnostic-tab-${t.id}`} aria-controls={`diagnostic-${t.id}`} aria-selected={tab === t.id} className={`btn sm ${tab === t.id ? "primary" : ""}`} href={`#diagnostics?tab=${t.id}`}>{t.label}</a>)}
     </div>
     <div role="tabpanel" id={`diagnostic-${tab}`} aria-labelledby={`diagnostic-tab-${tab}`}>
-      {tool && <>
+      {tab === "connections" && <Connections />}
+      {tool && tab !== "connections" && <>
         {error && <Notice tone="danger" title="Не удалось проверить инструменты">{error} <button className="btn sm" onClick={() => setAttempt(n => n + 1)}>Повторить</button></Notice>}
         {!tools && !error && <Empty>Проверка инструментов…</Empty>}
         {tools && <DiagnosticTool key={tab} tool={tool} capabilities={tools} refresh={() => setAttempt(n => n + 1)} />}

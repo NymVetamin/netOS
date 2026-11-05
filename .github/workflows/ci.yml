@@ -46,7 +46,7 @@ jobs:
         working-directory: backend
         run: |
           sudo apt-get update -qq
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y iputils-ping traceroute mtr-tiny bind9-dnsutils tcpdump iperf3 iproute2
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y iputils-ping traceroute mtr-tiny bind9-dnsutils tcpdump iperf3 iproute2 conntrack iptables
           go test -c -o /tmp/netos-diagnostic.test ./internal/api
           sudo env NETOS_DIAGNOSTIC_LINUX_TEST=1 /tmp/netos-diagnostic.test -test.run '^TestDiagnosticLinux' -test.v -test.timeout 90s
 

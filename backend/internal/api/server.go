@@ -263,6 +263,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/dns/blocklists/status", s.handleBlocklistStatus)
 	auth("POST /api/diagnostics/probe", s.handleDiagnosticProbe)
 	auth("GET /api/diagnostics/tools", s.handleDiagnosticTools)
+	auth("GET /api/diagnostics/connections", s.handleDiagnosticConnections)
 	auth("GET /api/diagnostics/current", s.handleDiagnosticCurrent)
 	auth("POST /api/diagnostics/jobs", s.handleDiagnosticStart)
 	auth("GET /api/diagnostics/jobs/{id}", s.handleDiagnosticJob)
