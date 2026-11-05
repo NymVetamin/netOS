@@ -3102,3 +3102,21 @@ textarea.vpn-dns-input {height:64px;min-height:64px;resize:vertical}
 .component-update-details:empty {display:none}
 .component-update-count {margin-left:auto;min-width:20px;padding:0 5px;border-radius:10px;background:#f5b932;color:#171a1c;text-align:center;font-size:12px}
 @media(max-width:700px) {.component-controls{flex-direction:column-reverse;align-items:flex-end;gap:10px}.component-update-actions{width:100%}.component-update-actions .btn{flex:1}}
+
+/* Primary section tabs stay amber; nested navigation has a neutral selection. */
+.navigation-subtabs {
+  border-top: 1px solid var(--border-strong);
+  padding-top: 12px;
+}
+.navigation-subtabs .btn.primary {
+  background: #f5f6f8;
+  border-color: #77818d;
+  color: #1a1e23;
+}
+.navigation-subtabs .btn.primary:hover:not(:disabled) {
+  background: #fff;
+  border-color: #56616d;
+}
+.navigation-subtabs .btn:focus-visible {
+  outline-color: var(--text-dim);
+}

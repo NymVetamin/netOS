@@ -203,7 +203,7 @@ function DiagnosticArtifacts({ admin, mode }: { admin: boolean; mode: "state" | 
         </Notice>
       )}
 
-      <div className="row wrap" style={{ marginBottom: "1rem", gap: "0.4rem" }}>
+      <div className="row wrap navigation-subtabs" style={{ marginBottom: "1rem", gap: "0.4rem" }}>
         <button className="btn sm" disabled={pending || !tab} onClick={() => setRefreshVersion(n => n + 1)}>Обновить</button>
         {tabs.map((t) => (
           <button
