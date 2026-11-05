@@ -428,17 +428,22 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
   // страницы по-разному отвечают, работает ли один и тот же сегмент.
   const statusPolling = useStatusPolling();
   const [liveIfaces, setLiveIfaces] = useState<Record<string, any> | null>(null);
+  const [liveError, setLiveError] = useState(false);
   useEffect(() => {
     let active = true;
     const unsubscribe = statusPolling.subscribe(5000, false, request => {
       void request.then((status) => {
-        if (active) setLiveIfaces(Object.fromEntries((status.interfaces || []).map((iface: any) => [iface.name, iface])));
-      }).catch(() => {});
+        if (active) {
+          setLiveIfaces(Object.fromEntries((status.interfaces || []).map((iface: any) => [iface.name, iface])));
+          setLiveError(false);
+        }
+      }).catch(() => { if (active) setLiveError(true); });
     });
     return () => { active = false; unsubscribe(); };
   }, [statusPolling]);
   const segmentState = (n: any) => {
     if (!n.enabled) return <Badge>не обслуживается</Badge>;
+    if (liveError) return <Badge tone="warn">{liveIfaces ? "нет свежих данных" : "нет данных"}</Badge>;
     if (!liveIfaces) return <Badge>проверяется</Badge>;
     return liveIfaces[ifaceName(config, n.interface)]?.up
       ? <Badge tone="ok">поднят</Badge>
@@ -482,6 +487,9 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
         </button>
       }
     >
+      {liveError && <div className="rows-notes"><Notice tone="warn" title="Не удалось обновить состояние сегментов">
+        {liveIfaces ? "Последний снимок состояния устарел." : "Состояние пока неизвестно."} Повторная проверка выполняется автоматически.
+      </Notice></div>}
       {networks.length === 0 ? (
         <Empty>
           Локальных сегментов нет. Роутер сейчас доступен только по адресу, который у

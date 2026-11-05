@@ -81,6 +81,31 @@ async def service_tabs(browser, session, editable):
     print("service tabs", session, "PASS")
 
 
+async def segment_status(browser):
+    page, state = await fixture(browser, {"role": "admin"})
+    state["status_error"] = True
+    await page.goto("http://netos.test/#network")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Локальные сегменты", exact=True))
+    warning = card.get_by_text("Не удалось обновить состояние сегментов", exact=True)
+    await expect(warning).to_be_visible()
+    await expect(card.get_by_text("нет данных", exact=True)).to_be_visible()
+    state["status_error"] = False
+    await expect(card.get_by_text("поднят", exact=True)).to_be_visible(timeout=10000)
+    await expect(warning).to_have_count(0)
+    state["status_error"] = True
+    await expect(card.get_by_text("нет свежих данных", exact=True)).to_be_visible(timeout=10000)
+    await expect(card.get_by_text("поднят", exact=True)).to_have_count(0)
+    await expect(warning).to_be_visible()
+    state.update(status_error=False, up=False)
+    await expect(card.get_by_text("не поднят", exact=True)).to_be_visible(timeout=10000)
+    await expect(warning).to_have_count(0)
+    state["up"] = True
+    await expect(card.get_by_text("поднят", exact=True)).to_be_visible(timeout=10000)
+    assert not state["writes"] and not state["errors"], state
+    await page.close()
+    print("segment initial failure/recovery/stale/down/up PASS")
+
+
 async def main():
     async with async_playwright() as p:
         executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
@@ -91,6 +116,7 @@ async def main():
                                   ({"role": "limited", "permissions": {"services": "view"}}, False),
                                   ({"role": "admin"}, True)]:
             await service_tabs(browser, session, editable)
+        await segment_status(browser)
         await browser.close()
 
 
