@@ -1,8 +1,9 @@
 import { SocksSection } from "./Socks";
 import { IPTVSection } from "./IPTV";
 import { DDNSSection } from "./DDNS";
-import { useEffect, useState } from "react";
-import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { useContext, useEffect, useState } from "react";
+import { HintContext } from "../HintContext";
+import { Badge, Cap, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
 import { newID } from "../id";
 import { api, Problem } from "../api";
@@ -29,9 +30,46 @@ const DNS_CAPS: Record<
 // Должен совпадать с dnsmasqLocalPort в backend/internal/subsys/services.
 const DNSMASQ_LOCAL_PORT = 5354;
 
+// Службы независимы друг от друга, поэтому показываются по одной: вкладкой.
+// Вкладка записывается в адрес (#services?tab=dns), чтобы на службу можно было
+// дать ссылку. Все вкладки остаются в документе (hidden), как раньше все
+// разделы: их состояние и запросы не перезапускаются при переключении.
+const SERVICE_TABS = [
+  { id: "dhcp", label: "DHCP", problems: "dhcp" },
+  { id: "dns", label: "DNS", problems: "dns" },
+  { id: "ddns", label: "DDNS", problems: "ddns" },
+  { id: "socks", label: "SOCKS5", problems: "socks" },
+  { id: "iptv", label: "IPTV", problems: "iptv" },
+] as const;
+type ServiceTab = (typeof SERVICE_TABS)[number]["id"];
+
+// Переход из меню ведёт на #services без вкладки — тогда открывается та,
+// с которой администратор ушёл, а не каждый раз первая.
+let lastTab: ServiceTab = "dhcp";
+
+function tabFromHash(): ServiceTab {
+  const tab = new URLSearchParams(window.location.hash.split("?")[1] || "").get("tab");
+  lastTab = SERVICE_TABS.find((item) => item.id === tab)?.id || lastTab;
+  return lastTab;
+}
+
 export function ServicesPage({ config, patch, problems }: { config: any; patch: Patch; problems: Problem[] }) {
   const dnsProviders = installedProviders(config, ["dnsmasq", "unbound", "dnsproxy"]);
   const dhcpProviders = installedProviders(config, ["dnsmasq", "isc-dhcp-server", "kea"]);
+  const showHints = useContext(HintContext);
+  const [tab, setTab] = useState<ServiceTab>(tabFromHash);
+  useEffect(() => {
+    const follow = () => setTab(tabFromHash());
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, []);
+  const panels: Record<ServiceTab, JSX.Element> = {
+    dhcp: <DHCPSection config={config} patch={patch} providers={dhcpProviders} />,
+    dns: <DNSSection config={config} patch={patch} providers={dnsProviders} />,
+    ddns: <DDNSSection config={config} patch={patch} />,
+    socks: <SocksSection config={config} patch={patch} />,
+    iptv: <IPTVSection config={config} patch={patch} />,
+  };
 
   return (
     <>
@@ -40,28 +78,33 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
         <p>DHCP, DNS, динамические адреса и прокси для клиентов</p>
       </div>
 
-      <ProblemsFor problems={problems} prefixes={["dns", "dhcp", "ddns", "socks", "iptv"]} />
+      <div role="tablist" aria-label="Службы" className="row wrap service-tabs">
+        {SERVICE_TABS.map((item) => {
+          const warned = problems.some((p) => (showHints || p.severity === "error") && p.path.startsWith(item.problems));
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              id={`service-tab-${item.id}`}
+              aria-controls={`service-${item.id}`}
+              aria-selected={tab === item.id}
+              className={`btn sm ${tab === item.id ? "primary" : ""}`}
+              onClick={() => { window.location.hash = `services?tab=${item.id}`; setTab(item.id); }}
+            >
+              {item.label}
+              {warned && <span className="tab-dot" title="Есть предупреждение" />}
+            </button>
+          );
+        })}
+      </div>
 
-      <section className="service-group" aria-labelledby="service-dhcp">
-        <header className="service-group-head"><h2 id="service-dhcp">DHCP</h2><span>Выдача IP-адресов</span></header>
-        <div className="service-group-content"><DHCPSection config={config} patch={patch} providers={dhcpProviders} /></div>
-      </section>
-      <section className="service-group" aria-labelledby="service-dns">
-        <header className="service-group-head"><h2 id="service-dns">DNS</h2><span>Разрешение имён и фильтрация</span></header>
-        <div className="service-group-content"><DNSSection config={config} patch={patch} providers={dnsProviders} /></div>
-      </section>
-      <section className="service-group" aria-labelledby="service-ddns">
-        <header className="service-group-head"><h2 id="service-ddns">DDNS</h2><span>Обновление внешнего адреса в доменном имени</span></header>
-        <div className="service-group-content"><DDNSSection config={config} patch={patch} /></div>
-      </section>
-      <section className="service-group" aria-labelledby="service-socks">
-        <header className="service-group-head"><h2 id="service-socks">SOCKS5</h2><span>Прокси для приложений</span></header>
-        <div className="service-group-content"><SocksSection config={config} patch={patch} /></div>
-      </section>
-      <section className="service-group" aria-labelledby="service-iptv">
-        <header className="service-group-head"><h2 id="service-iptv">IPTV</h2><span>Телевидение провайдера</span></header>
-        <div className="service-group-content"><IPTVSection config={config} patch={patch} /></div>
-      </section>
+      {SERVICE_TABS.map((item) => (
+        <div key={item.id} role="tabpanel" id={`service-${item.id}`} aria-labelledby={`service-tab-${item.id}`} hidden={tab !== item.id}>
+          <ProblemsFor problems={problems} prefixes={[item.problems]} />
+          {panels[item.id]}
+        </div>
+      ))}
     </>
   );
 }
@@ -82,10 +125,7 @@ function DHCPSection({
   return (
     <Card title="Выдача адресов" subtitle="DHCP-сервер для локальных сегментов">
       {providers.length === 0 ? (
-        <Notice hint tone="warn" title="Сервер DHCP не установлен">
-          Установите dnsmasq, ISC DHCP или Kea в разделе «Компоненты» — после этого его
-          можно будет включить здесь.
-        </Notice>
+        <NeedComponent name="dnsmasq, ISC DHCP или Kea" effect="без сервера DHCP устройства не получат адреса автоматически" />
       ) : (
         <>
           <div className="row wrap" style={{ gap: "1.5rem", marginBottom: "1rem" }}>
@@ -205,10 +245,7 @@ function DNSSection({
   if (providers.length === 0) {
     return (
       <Card title="Разрешение имён" subtitle="DNS-резолвер">
-        <Notice hint tone="warn" title="Резолвер не установлен">
-          Установите dnsmasq, Unbound или dnsproxy в разделе «Компоненты».
-          Для шифрованного DNS (DoT, DoH) подойдут последние два.
-        </Notice>
+        <NeedComponent name="dnsmasq, Unbound или dnsproxy" effect="без резолвера клиенты не получат имена; для DoT и DoH подходят два последних" />
       </Card>
     );
   }
@@ -387,11 +424,28 @@ function DNSSection({
         title="Вышестоящие резолверы"
         subtitle="Куда роутер обращается за ответами, которых нет в кэше"
         tight
+        actions={<button
+            className="btn sm"
+            onClick={() =>
+              patch((d) => {
+                d.dns.upstreams = d.dns.upstreams || [];
+                d.dns.upstreams.push({
+                  id: openOnCreate(newID("up")),
+                  type: "plain",
+                  address: "",
+                  channel: "direct",
+                  enabled: true,
+                });
+              })
+            }
+          >
+            Добавить
+          </button>}
       >
         {(config.dns?.upstreams || []).length === 0 ? (
-          <Empty>Апстримы не заданы</Empty>
+          <Empty>Вышестоящих резолверов нет.</Empty>
         ) : (
-          <div className="dns-upstream-rows"><Rows cols={["Резолвер", "Тип", "Канал"]} toggle="Вкл.">
+          <div className="dns-upstream-rows"><Rows cols={["Резолвер", "Тип", "Канал"]}>
           {config.dns.upstreams.map((u: any, idx: number) => (
             <Row
               key={u.id}
@@ -426,30 +480,15 @@ function DNSSection({
           ))}
         </Rows></div>
         )}
-        <div className="rows-foot row wrap">
-          <button
-            className="btn"
-            onClick={() =>
-              patch((d) => {
-                d.dns.upstreams = d.dns.upstreams || [];
-                d.dns.upstreams.push({
-                  id: openOnCreate(newID("up")),
-                  type: "plain",
-                  address: "",
-                  channel: "direct",
-                  enabled: true,
-                });
-              })
-            }
-          >
-            Добавить апстрим
-          </button>
-        </div>
       </Card>
 
-      <Card title="Локальные DNS-записи" subtitle="Имена, которые обслуживает роутер" tight>
+      <Card title="Локальные DNS-записи" subtitle="Имена, которые обслуживает роутер" tight
+        actions={<button className="btn sm" onClick={() => patch((d) => {
+          d.dns.static_records = d.dns.static_records || [];
+          d.dns.static_records.push({ id: openOnCreate(newID("dns")), type: "A", name: "", value: "" });
+        })}>Добавить</button>}>
         {(config.dns?.static_records || []).length === 0 ? (
-          <Empty>Локальных записей нет</Empty>
+          <Empty>Локальных записей нет.</Empty>
         ) : (
           <Rows cols={["Имя", "Тип", "Значение", "", ""]}>
           {config.dns.static_records.map((record: any, idx: number) => (
@@ -470,17 +509,15 @@ function DNSSection({
           ))}
         </Rows>
         )}
-        <div className="rows-foot row wrap">
-          <button className="btn" onClick={() => patch((d) => {
-            d.dns.static_records = d.dns.static_records || [];
-            d.dns.static_records.push({ id: openOnCreate(newID("dns")), type: "A", name: "", value: "" });
-          })}>Добавить запись</button>
-        </div>
       </Card>
 
-      <Card title="Split-DNS" subtitle="Отдельные домены — через отдельный DNS-сервер и, при необходимости, VPN-канал" tight>
-        {(config.dns?.split_rules || []).length === 0 ? <Empty>Раздельных правил DNS нет</Empty> : (
-          <Rows cols={["Домены", "Апстрим", "Канал", "", "Состояние"]} toggle="Вкл.">
+      <Card title="Split-DNS" subtitle="Отдельные домены — через отдельный DNS-сервер и, при необходимости, VPN-канал" tight
+        actions={<button className="btn sm" onClick={() => patch((d) => {
+          d.dns.split_rules = d.dns.split_rules || [];
+          d.dns.split_rules.push({ id: openOnCreate(newID("split")), domains: [], upstream: "", channel: "direct", enabled: false });
+        })}>Добавить</button>}>
+        {(config.dns?.split_rules || []).length === 0 ? <Empty>Раздельных правил DNS нет.</Empty> : (
+          <Rows cols={["Домены", "Резолвер", "Канал", "", "Состояние"]}>
           {config.dns.split_rules.map((rule: any, idx: number) => {
             const upstream = (config.dns?.upstreams || []).find((up: any) => up.id === rule.upstream);
             return (
@@ -498,7 +535,7 @@ function DNSSection({
             >
               <div className="form-grid">
                 <Cap label="Домены" wide><textarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></Cap>
-                <Cap label="Апстрим"><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
+                <Cap label="Резолвер"><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
                       <option value="">Выберите сервер</option>
                       {(config.dns?.upstreams || []).filter((up: any) => up.enabled).map((up: any) => <option key={up.id} value={up.id}>{up.comment || up.address}</option>)}
                     </select></Cap>
@@ -512,31 +549,34 @@ function DNSSection({
           })}
         </Rows>
         )}
-        <div className="rows-foot row wrap">
-          <button className="btn" onClick={() => patch((d) => {
-            d.dns.split_rules = d.dns.split_rules || [];
-            d.dns.split_rules.push({ id: openOnCreate(newID("split")), domains: [], upstream: "", channel: "direct", enabled: false });
-          })}>Добавить правило</button>
-        </div>
       </Card>
 
-	  <Card title="DNS blocklists" subtitle="Блокировка рекламы и трекеров по внешним спискам доменов" tight>
+	  <Card title="DNS blocklists" subtitle="Блокировка рекламы и трекеров по внешним спискам доменов" tight
+		actions={<>
+		  <button className="btn ghost sm" onClick={() => void refreshBlocklistStatus()}>Обновить статусы</button>
+		  <button className="btn sm" onClick={() => patch((d) => {
+			d.dns.blocklists = d.dns.blocklists || [];
+			d.dns.blocklists.push({ id: openOnCreate(newID("blocklist")), name: "", url: "", ca_file: "", enabled: false });
+		  })}>Добавить</button>
+		</>}>
+		{statusError && <div className="rows-notes"><Notice tone="warn" title="Не удалось получить статус списков">{statusError}</Notice></div>}
 		{!config.dns?.enabled && (config.dns?.blocklists || []).length > 0 && (
 		  <Notice tone="warn" title="DNS выключен">
 			Списки можно сохранить, но включить их получится только вместе с DNS-резолвером.
 		  </Notice>
 		)}
-		{(config.dns?.blocklists || []).length === 0 ? <Empty>Списки блокировки не заданы</Empty> : (
-		  <Rows cols={["Название", "HTTPS URL списка", "", "Источник", ""]} toggle="Вкл.">
+		{(config.dns?.blocklists || []).length === 0 ? <Empty>Списков блокировки нет.</Empty> : (
+		  <Rows cols={["Название", "HTTPS URL списка", "", "", "Состояние"]}>
           {config.dns.blocklists.map((list: any, idx: number) => (
             <Row
               key={list.id}
               id={list.id}
               cells={[
                 <strong>{list.name || "—"}</strong>,
-                <span className="mono" title={list.url}>{list.url || "—"}</span>,
+                <span className="mono wrap-cell" title={list.url}>{list.url || "—"}</span>,
                 "",
-                <span className="dim" title={blocklistStatus[list.url]?.error || ""}>{!list.enabled ? "Выключен" : blocklistStatus[list.url]?.source === "cache" ? "Кэш: источник недоступен" : blocklistStatus[list.url]?.source === "unavailable" ? "Источник недоступен: нет рабочего кэша" : blocklistStatus[list.url]?.source === "fetched" ? "Загружен" : "Нет данных"}</span>,
+                "",
+                <span title={blocklistStatus[list.url]?.error || ""}><BlocklistState enabled={!!list.enabled} source={blocklistStatus[list.url]?.source} /></span>,
               ]}
               toggle={<Switch checked={!!list.enabled} disabled={!config.dns?.enabled} label="" ariaLabel={`DNS blocklist ${list.name || idx + 1} включён`} onChange={(enabled) => patch((d) => (d.dns.blocklists[idx].enabled = enabled))} />}
             >
@@ -550,17 +590,19 @@ function DNSSection({
           ))}
         </Rows>
 		)}
-		<div className="rows-foot row wrap">
-		  <button className="btn" onClick={() => void refreshBlocklistStatus()}>Обновить статусы</button>
-		  {statusError && <span role="alert">{statusError}</span>}
-		  <button className="btn" onClick={() => patch((d) => {
-			d.dns.blocklists = d.dns.blocklists || [];
-			d.dns.blocklists.push({ id: openOnCreate(newID("blocklist")), name: "", url: "", ca_file: "", enabled: false });
-		  })}>Добавить DNS blocklist</button>
-		</div>
 	  </Card>
     </>
   );
+}
+
+// Состояние списка блокировки: выключен, загружен, работает из кэша или
+// недоступен вовсе. Цвет по общему правилу: зелёный — проверено и работает.
+function BlocklistState({ enabled, source }: { enabled: boolean; source?: string }) {
+  if (!enabled) return <Badge>выключен</Badge>;
+  if (source === "fetched") return <Badge tone="ok">загружен</Badge>;
+  if (source === "cache") return <Badge tone="warn">из кэша: источник недоступен</Badge>;
+  if (source === "unavailable") return <Badge tone="danger">недоступен, кэша нет</Badge>;
+  return <Badge>нет данных</Badge>;
 }
 
 const DNS_TYPE: Record<string, string> = { plain: "открытый", dot: "DoT", doh: "DoH", doq: "DoQ" };
@@ -604,13 +646,14 @@ function ResolutionChain({ config }: { config: any }) {
   // чтобы у машины не было второго пути к именам мимо шифрования и фильтров.
   // Указать порт в этом файле нечем, поэтому на нестандартном порту роутер
   // остаётся с системным резолвером — и об этом надо сказать, а не умолчать.
-  const routerUsesOwn = config.dns?.port === 53;
+  const port = config.dns?.port;
+  const routerUsesOwn = port === 53;
   const steps = [
     step(
       "Клиенты сети и сам роутер",
       routerUsesOwn
         ? `запрос на ${dynamicFrontend ? "dnsmasq" : provider}, порт 53`
-        : `клиенты — на ${dynamicFrontend ? "dnsmasq" : provider}, порт ${config.dns?.port}; роутер порт указать не может и идёт мимо`,
+        : `клиенты — на ${dynamicFrontend ? "dnsmasq" : provider}, ${port ? `порт ${port}` : "порт не задан"}; роутер порт указать не может и идёт мимо`,
     ),
   ];
   if (dynamicFrontend) {

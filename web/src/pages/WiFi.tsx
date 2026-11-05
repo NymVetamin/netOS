@@ -1,7 +1,7 @@
 import { secretInput } from "../secrets";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, NeedComponent } from "../ui";
 import { Icon } from "../icons";
 import { newID } from "../id";
 import { createWiFiHardwareRequests } from "../wifiHardwareRequests";
@@ -39,11 +39,11 @@ export function WiFiPage({ config, patch }: Props) {
   for (const radio of saved) if (!entries.some((e: any) => e.radio.id === radio.id)) entries.push({ radio, hw: null });
   return <>
     <div className="page-head"><h1><Icon name="wifi" />Wi-Fi</h1><p>Точки доступа, защита сети и привязка к сегментам роутера</p></div>
-    {!installed && <Notice hint tone="info" title="Нужен компонент hostapd">Установите «Точку доступа Wi-Fi» в разделе «Компоненты».</Notice>}
+    {!installed && <NeedComponent name="Точка доступа Wi-Fi (hostapd)" effect="без неё сети не выйдут в эфир" />}
     {error && <Notice tone="warn" title="Не удалось определить радиоустройства">{error}</Notice>}
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
       {!hardware && !error ? <Empty>Определяем радиоустройства…</Empty> : entries.length === 0 ? error ? null : <Empty>{hardware?.radios.length ? "Обнаруженные адаптеры не поддерживают режим точки доступа или не имеют сетевого интерфейса." : "Wi-Fi-адаптеры не обнаружены."}</Empty> :
-        <Rows cols={["Радио", "Диапазон", "Канал", "Сети", "Состояние"]} toggle="Включено">{entries.map(({ radio, hw }: any) =>
+        <Rows cols={["Радио", "Диапазон", "Канал", "Сети", "Состояние"]}>{entries.map(({ radio, hw }: any) =>
           <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} requestHardware={requestHardware} config={config} installed={installed} patch={patch} />)}</Rows>}
     </Card>
   </>;

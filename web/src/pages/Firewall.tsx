@@ -5,7 +5,7 @@ import { AutomaticRuleRow, AutomaticNATRow, includeAutomatic, RuleGroup } from "
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
 import { newID } from "../id";
-import { Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { Badge, Cap, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
 import { api, Problem } from "../api";
 import { ProblemsFor } from "./Network";
@@ -16,9 +16,11 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
   const sets: any[] = config.firewall?.ipsets || [];
   const [editing, setEditing] = useState<{ id: string; name: string; text: string } | null>(null);
   const installed = (config.components || []).some((c: any) => c.id === "ipset" && c.installed);
-  return <Card tight title="Наборы адресов" subtitle="IPv4-адреса и подсети для правил доступа">
-    {!installed && <div className="rows-notes"><Notice hint tone="warn" title="Нужен компонент «Наборы адресов»">Включите его на странице компонентов перед применением настройки.</Notice></div>}
-    {sets.length === 0 && !editing && <Empty>Наборов нет</Empty>}
+  return <Card tight title="Наборы адресов" subtitle="IPv4-адреса и подсети для правил доступа"
+    actions={<button className="btn sm" disabled={!!editing} onClick={() => setEditing({ id: newID("set"), name: "", text: "" })}>Добавить</button>}>
+    {/* Наборы можно готовить заранее: компонент нужен к применению. */}
+    {!installed && <NeedComponent name="Наборы адресов" effect="без него правила с наборами не применятся" />}
+    {sets.length === 0 && !editing && <Empty>Наборов нет.</Empty>}
     {sets.length > 0 && <Rows cols={["Набор", "Состав", "", "", ""]}>{sets.map((item: any) => {
       const used = (config.firewall?.rules || []).some((r: any) => r.src_ipset === item.id || r.dst_ipset === item.id);
       return <Row key={item.id} cells={[<strong>{item.name}</strong>, <span>{(item.entries || []).length} адресов и подсетей</span>, used ? <span className="dim">используется в правилах</span> : ""]}>
@@ -28,9 +30,7 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
         </div>
       </Row>;
     })}</Rows>}
-    <div className="rows-foot">
-    {!editing && <button className="btn" onClick={() => setEditing({ id: newID("set"), name: "", text: "" })}>Добавить набор адресов</button>}
-    {editing && <div>
+    {editing && <div className="rows-foot">
       <Field label="Название набора"><input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></Field>
       <Field label="IPv4-адреса и подсети" hint="По одному на строку, например 192.0.2.10 или 198.51.100.0/24. Пустой набор не совпадает ни с одним адресом.">
         <textarea rows={6} className="mono" value={editing.text} onChange={(e) => setEditing({ ...editing, text: e.target.value })} />
@@ -44,7 +44,6 @@ function AddressSets({ config, patch }: { config: any; patch: Patch }) {
         <button className="btn" onClick={() => setEditing(null)}>Отмена</button>
       </div>
     </div>}
-    </div>
   </Card>;
 }
 
@@ -221,7 +220,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         actions={
           <div className="firewall-rule-actions">
             <label className="row"><input type="checkbox" checked={showAutomatic} disabled={adding || editing !== null} title={adding || editing !== null ? "Завершите редактирование правила" : undefined} onChange={e => { setShowAutomatic(e.target.checked); drag.end(); }} />Показать автоматические правила</label>
-            <button className="btn sm primary" onClick={() => setAdding(true)}>Создать правило</button>
+            <button className="btn sm" onClick={() => setAdding(true)}>Добавить</button>
           </div>
         }
         tight
@@ -852,7 +851,7 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
       {source.length === 0 ? (
         <Empty>Правил подмены адреса отправителя в настройках нет</Empty>
       ) : (
-        <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]} toggle="Вкл.">
+        <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]}>
           {source.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} destination={false} /> : (
             <Row
               key={n.id}
@@ -950,7 +949,7 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
       {dest.length === 0 ? (
         <Empty>Проброшенных портов нет</Empty>
       ) : (
-        <Rows cols={["Название", "Приходит на", "Внешний порт", "Куда", "Только с адресов"]} toggle="Вкл.">
+        <Rows cols={["Название", "Приходит на", "Внешний порт", "Куда", "Только с адресов"]}>
           {dest.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} destination /> : (
             <Row
               key={n.id}

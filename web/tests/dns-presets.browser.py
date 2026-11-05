@@ -44,7 +44,7 @@ async def scenario(browser):
         await route.fulfill(json=body)
 
     await page.route("**/*", route_request)
-    await page.goto("http://netos-ui.test/#services")
+    await page.goto("http://netos-ui.test/#services?tab=dns")
     await expect(page.get_by_role("heading", name="Сетевые службы", exact=True)).to_be_visible()
     row = page.locator("details.xd").filter(has=page.get_by_label("Резолвер DNS-сервера 1", exact=True))
     await row.locator("summary").click()

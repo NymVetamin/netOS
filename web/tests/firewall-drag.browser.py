@@ -8,7 +8,9 @@ DIST = Path(__file__).resolve().parents[2] / 'backend/internal/api/webdist'
 async def main():
  async with async_playwright() as p:
   browser = await p.chromium.launch(headless=True, executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE', str(Path(os.environ['ProgramFiles']) / 'Google/Chrome/Application/chrome.exe')))
-  page = await browser.new_page()
+  # All three rules must fit on screen: the gesture drops onto the last grip,
+  # and a pointer released outside the viewport does not drop anything.
+  page = await browser.new_page(viewport={'width': 1280, 'height': 1000})
   await page.add_init_script("new MutationObserver(()=>document.querySelectorAll('details.xd').forEach(e=>e.open=true)).observe(document,{childList:true,subtree:true})")
   cfg={'system':{'hostname':'router'}, 'interfaces':[], 'networks':[], 'policies':[], 'wans':[], 'channels':[],
     'firewall':{'enabled':True,'zones':[], 'nat':[], 'rules':[{'id':f'r{i}','name':f'Rule {i}','enabled':True,'zone':'global','flow':'forward','action':'accept'} for i in range(3)]}}

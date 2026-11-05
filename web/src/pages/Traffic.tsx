@@ -8,6 +8,7 @@ const QOS_CLASSES: Record<string, string> = { besteffort: "без приорит
 export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
   const qos = config.qos || { enabled: false, wans: [] };
   const enabledWANs = (config.wans || []).filter((wan: any) => wan.enabled);
+  const allAdded = enabledWANs.length === (qos.wans || []).length;
   function toggle(enabled: boolean) {
     patch((draft) => {
       draft.qos = draft.qos || { enabled: false, wans: [] };
@@ -39,12 +40,13 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
       </Card>
 
       <Card
-        title="Интернет-каналы"
+        title="Аплинки"
         tight
-        actions={
+        actions={<>
+          {allAdded && <span className="reason">{enabledWANs.length === 0 ? "Нет включённых аплинков" : "Все включённые аплинки уже добавлены"}</span>}
           <button
             className="btn sm"
-            disabled={enabledWANs.length === (qos.wans || []).length}
+            disabled={allAdded}
             onClick={() => patch((d) => {
               d.qos = d.qos || { enabled: false, wans: [] };
               const used = new Set((d.qos.wans || []).map((item: any) => item.wan));
@@ -53,12 +55,12 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
               if (wan) d.qos.wans.push({ wan: wan.id, upload_kbit: 95000, download_kbit: 95000, diffserv: "diffserv4" });
             })}
           >
-            Добавить канал
+            Добавить
           </button>
-        }
+        </>}
       >
-        {(qos.wans || []).length === 0 ? <Empty>Каналы для QoS не настроены</Empty> : (
-          <Rows cols={["Канал", "Загрузка, Кбит/с", "Отдача, Кбит/с", "Приоритеты", ""]}>
+        {(qos.wans || []).length === 0 ? <Empty>Аплинков для QoS нет.</Empty> : (
+          <Rows cols={["Аплинк", "Загрузка, Кбит/с", "Отдача, Кбит/с", "Приоритеты", ""]}>
           {(qos.wans || []).map((item: any, index: number) => (
               <Row
                 key={item.wan + index}
@@ -68,7 +70,7 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
                   <span className="dim">{QOS_CLASSES[item.diffserv || "diffserv4"]}</span>]}
               >
                 <div className="form-grid">
-                  <Cap label="Канал"><select aria-label={`Интернет-канал QoS ${index + 1}`} value={item.wan} onChange={(e) => patch((d) => (d.qos.wans[index].wan = e.target.value))}>
+                  <Cap label="Аплинк"><select aria-label={`Аплинк QoS ${index + 1}`} value={item.wan} onChange={(e) => patch((d) => (d.qos.wans[index].wan = e.target.value))}>
                         <option value="">— выберите —</option>
                         {enabledWANs.map((wan: any) => <option key={wan.id} value={wan.id}>{wan.name || wan.id}</option>)}
                       </select></Cap>

@@ -275,7 +275,7 @@ func (c *Config) validateDDNS(r *ValidationResult) {
 			}
 		}
 		if !found {
-			r.errf("ddns.wan", "выберите включённый интернет-канал")
+			r.errf("ddns.wan", "выберите включённый аплинк")
 		}
 	}
 	switch c.DDNS.Provider {
@@ -330,9 +330,9 @@ func (c *Config) validateQoS(r *ValidationResult) {
 	for i, item := range c.QoS.WANs {
 		path := fmt.Sprintf("qos.wans[%d]", i)
 		if !wanIDs[item.WAN] {
-			r.errf(path+".wan", "интернет-канал %q не существует или выключен", item.WAN)
+			r.errf(path+".wan", "аплинк %q не существует или выключен", item.WAN)
 		} else if prev, ok := seen[item.WAN]; ok {
-			r.errf(path+".wan", "интернет-канал уже настроен в qos.wans[%d]", prev)
+			r.errf(path+".wan", "аплинк уже настроен в qos.wans[%d]", prev)
 		} else {
 			seen[item.WAN] = i
 		}
@@ -349,7 +349,7 @@ func (c *Config) validateQoS(r *ValidationResult) {
 		}
 	}
 	if c.QoS.Enabled && len(c.QoS.WANs) == 0 {
-		r.errf("qos.wans", "добавьте хотя бы один интернет-канал")
+		r.errf("qos.wans", "добавьте хотя бы один аплинк")
 	}
 }
 

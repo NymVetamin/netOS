@@ -89,7 +89,7 @@ async def users_scenario(browser):
         await route.fulfill(json=body,content_type="application/json")
     await page.route("**/*",route_request)
     await page.goto("http://netos-ui.test/#system")
-    await page.get_by_role("button",name="Добавить пользователя панели",exact=True).click()
+    await page.locator("section.card",has=page.get_by_role("heading",name="Пользователи панели",exact=True)).get_by_role("button",name="Добавить",exact=True).click()
     await page.get_by_label("Логин пользователя панели",exact=True).fill("operator")
     await page.get_by_label("Пароль пользователя панели",exact=True).fill("temporary-test-password")
     await page.get_by_label("Управление: Клиенты",exact=True).check()
@@ -121,7 +121,7 @@ async def users_scenario(browser):
     await expect(page.get_by_label('Логин пользователя панели',exact=True)).to_have_value('operator')
     await expect(page.get_by_label('Логин пользователя панели',exact=True)).to_be_disabled()
     await page.get_by_role('button',name='Отмена',exact=True).click()
-    await expect(page.get_by_role('button',name='Добавить пользователя панели',exact=True)).to_be_enabled()
+    await expect(page.locator('section.card',has=page.get_by_role('heading',name='Пользователи панели',exact=True)).get_by_role('button',name='Добавить',exact=True)).to_be_enabled()
     assert not errors,errors
     await page.close();print("user form PASS")
 

@@ -232,7 +232,7 @@ type MultiWAN struct {
 	StickyConnections bool   `json:"sticky_connections" plan:"Закрепление соединений" sensitivity:"public"`
 }
 
-// QoS управляет очередями на интернет-каналах. Скорости задаются немного ниже
+// QoS управляет очередями на аплинках. Скорости задаются немного ниже
 // тарифа провайдера, чтобы очередь находилась на роутере, а не у провайдера.
 type QoS struct {
 	Enabled bool     `json:"enabled" plan:"Состояние" sensitivity:"public" format:"switch"`

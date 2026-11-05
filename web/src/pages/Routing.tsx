@@ -89,9 +89,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         }
       >
         {(routing.static || []).length === 0 ? (
-          <Empty>Статических маршрутов нет</Empty>
+          <Empty>Статических маршрутов нет.</Empty>
         ) : (
-          <Rows cols={["Название", "Куда", "Через", "Таблица", ""]} toggle="Вкл.">
+          <Rows cols={["Название", "Куда", "Через", "Таблица", ""]}>
           {routing.static.map((r: any, idx: number) => (
               <Row
                 key={r.id}
@@ -330,9 +330,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         {(routing.tables || []).length === 0 ? (
           <Empty>Для добавления правила создайте пользовательскую таблицу в разделе выше. Таблицами интернет-каналов netOS управляет автоматически: канал выбирается в настройках клиента или сегмента.</Empty>
         ) : (routing.rules || []).length === 0 ? (
-          <Empty>Правил нет</Empty>
+          <Empty>Правил нет.</Empty>
         ) : (
-          <Rows cols={["Название", "От кого", "Куда", "В таблицу", "Приоритет"]} toggle="Вкл.">
+          <Rows cols={["Название", "От кого", "Куда", "В таблицу", "Приоритет"]}>
           {[...(routing.rules || [])]
                   .map((r: any, i: number) => ({ r, i }))
                   .sort((a, b) => a.r.priority - b.r.priority)
@@ -448,7 +448,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
 
       <Card
         title="Действующие маршруты"
-        subtitle="Действующие маршруты IPv4 во всех таблицах, включая маршруты VPN-каналов"
+        subtitle="Маршруты IPv4 во всех таблицах, включая VPN-каналы. Маршруты DHCP и ядра появляются и исчезают сами, здесь они только для чтения"
         actions={<select aria-label="Показать таблицу маршрутизации" value={selectedTable} onChange={e => setSelectedTable(e.target.value)}>
           <option value="all">Все таблицы</option>
           {[...new Set([...observed, ...(selectedTable !== "all" ? [selectedTable] : [])])].map(name => <option key={name} value={name}>{name}</option>)}
@@ -458,7 +458,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         {!live ? (
           <Empty>{liveError ? "Действующие маршруты недоступны" : "Загрузка…"}</Empty>
         ) : displayedRoutes.length === 0 ? (
-          <Empty>Таблица пуста</Empty>
+          <Empty>Действующих маршрутов нет.</Empty>
         ) : (
           <TableWrap>
             <table>
@@ -487,19 +487,13 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
             </table>
           </TableWrap>
         )}
-        <div className="rows-foot">
-          <span className="faint" style={{ fontSize: 12.5 }}>
-            Маршруты, полученные от провайдера по DHCP, и созданные ядром при назначении
-            адреса менять здесь нельзя — они появляются и исчезают сами. Управлять можно
-            теми, что заведены выше вручную.
-          </span>
-        </div>
       </Card>
 
       <Card title="Правила выбора таблиц в ядре" tight>
-        <pre className="output">
-          {live ? live.rules || "Правил нет" : liveError ? "Правила недоступны" : "загрузка…"}
-        </pre>
+        {/* Вывод ядра — моноширинным, сообщения панели — обычной строкой. */}
+        {live?.rules
+          ? <pre className="output">{live.rules}</pre>
+          : <Empty>{live ? "Правил нет." : liveError ? "Правила недоступны." : "Загрузка…"}</Empty>}
       </Card>
 
       {(config.channels || []).filter((c: any) => c.type !== "direct").length === 0 && (

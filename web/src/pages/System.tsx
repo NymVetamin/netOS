@@ -16,16 +16,19 @@ const BACKENDS = [
   {
     id: "netos",
     title: "netOS напрямую",
+    short: "Сеть появляется вместе с netOS, изменения применяются мгновенно",
     hint: "Интерфейсы поднимает сам netOS через iproute2, а systemd-networkd получает указание их не трогать. Изменения применяются мгновенно, но до старта netOS сеть не настроена.",
   },
   {
     id: "ifupdown",
     title: "networking (ifupdown)",
+    short: "Сегменты есть уже с загрузки, файлом ifupdown",
     hint: "Дополнительно к прямому управлению netOS пишет /etc/network/interfaces.d/netos.conf, и сегменты существуют уже с загрузки. Привычно для Debian.",
   },
   {
     id: "networkd",
     title: "systemd-networkd",
+    short: "Сегменты есть уже с загрузки, файлами systemd-networkd",
     hint: "То же самое файлами .network и .netdev в /etc/systemd/network.",
   },
 ];
@@ -154,39 +157,27 @@ export function SystemPage({
               <div>
                 <strong>{b.title}</strong>
                 <div className="faint" style={{ fontSize: 12.5 }}>
-                  {b.hint}
+                  {b.short}
                 </div>
               </div>
             </label>
           ))}
         </div>
-        <div style={{ marginTop: "0.9rem" }}>
-          {config.system?.network_backend === "netos" ? (
-            <Notice hint tone="info" title="Интерфейсы переходят под управление netOS">
-              systemd-networkd оставляет перечисленные интерфейсы управляемыми, но
-              пассивными: не выдаёт им адреса и не спорит за маршруты, а ожидание сети
-              при загрузке не упирается в таймаут. Служба networking (ifupdown) в этом
-              режиме отключена, поэтому записи в /etc/network/interfaces не запускают
-              второй сетевой стек параллельно с netOS.
-            </Notice>
-          ) : (
-            <Notice hint tone="info" title="Что попадёт в сгенерированный файл">
-              Бриджи, VLAN, агрегаты и адреса сегментов — они статичны и будут подняты
-              системой ещё до старта netOS. Аплинки только поднимаются: их адресами,
-              маршрутами и метриками управляет netOS, и второй клиент DHCP на том же
-              интерфейсе сломал бы переключение между каналами. Изменения по-прежнему
-              применяются сразу, а не после перезагрузки. netOS включает выбранный
-              системный менеджер и отключает конкурирующий.
-            </Notice>
-          )}
+        {/* Риск относится к самому выбору, поэтому одна строка рядом с ним, а
+            подробности — по желанию: раньше выбор из трёх вариантов требовал
+            прочитать около 120 слов. */}
+        <div className="reason" style={{ marginTop: "0.6rem" }}>
+          Смена способа ненадолго рвёт связь: если панель открыта через настраиваемый интерфейс, подтвердить изменения нужно будет после разрыва.
         </div>
-        <div style={{ marginTop: "0.6rem" }}>
-          <Notice tone="warn" title="Смена способа настройки кратковременно рвёт связность">
-            Тот, у кого забирают интерфейс, снимает выданные им адреса, и netOS
-            назначает свои заново. Если панель открыта через настраиваемый
-            интерфейс, подтвердить изменения нужно будет после короткого разрыва.
-          </Notice>
-        </div>
+        <details className="more">
+          <summary>Подробнее о способах</summary>
+          <div className="stack hint" style={{ maxWidth: 760 }}>
+            {BACKENDS.map((b) => <p key={b.id} style={{ margin: 0 }}><strong>{b.title}.</strong> {b.hint}</p>)}
+            <p style={{ margin: 0 }}>{config.system?.network_backend === "netos"
+              ? "systemd-networkd оставляет перечисленные интерфейсы управляемыми, но пассивными: не выдаёт им адреса и не спорит за маршруты, а ожидание сети при загрузке не упирается в таймаут. Служба networking (ifupdown) в этом режиме отключена, поэтому записи в /etc/network/interfaces не запускают второй сетевой стек параллельно с netOS."
+              : "Бриджи, VLAN, агрегаты и адреса сегментов — они статичны и будут подняты системой ещё до старта netOS. Аплинки только поднимаются: их адресами, маршрутами и метриками управляет netOS, и второй клиент DHCP на том же интерфейсе сломал бы переключение между каналами. Изменения по-прежнему применяются сразу, а не после перезагрузки. netOS включает выбранный системный менеджер и отключает конкурирующий."}</p>
+          </div>
+        </details>
       </Card>
 
       <Card
@@ -375,7 +366,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
       {message && <Notice tone="info" title={message} />}
       {error && <Notice tone="danger" title={error} />}
       <div className="row wrap" style={{ margin: ".8rem 0" }}>
-        <button className="btn primary" disabled={busy || running} onClick={() => action(api.createBackup, "Создание резервной копии запланировано")}>Создать копию</button>
+        <button className="btn" disabled={busy || running} onClick={() => action(api.createBackup, "Создание резервной копии запланировано")}>Создать копию</button>
       </div>
       {backups.length === 0 ? <Empty>Резервных копий пока нет</Empty> : (
         <TableWrap>
@@ -485,7 +476,7 @@ function ChangePassword({ username, onSessionEnded }: { username: string; onSess
         {err && <div style={{ color: "var(--danger)" }}>{err}</div>}
         {msg && <div style={{ color: "var(--ok)" }}>{msg}</div>}
 
-        <div style={{ marginTop: "0.9rem" }}>
+        <div className="row" style={{ marginTop: "0.9rem" }}>
           <button
             type="submit"
             className="btn primary"
@@ -493,6 +484,9 @@ function ChangePassword({ username, onSessionEnded }: { username: string; onSess
           >
             Сменить пароль
           </button>
+          {!busy && !mismatch && (!current || !next || !repeat
+            ? <span className="reason">Заполните все три поля</span>
+            : next.length < 10 && <span className="reason">Новый пароль короче 10 символов</span>)}
         </div>
       </form>
     </Card>

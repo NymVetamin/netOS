@@ -38,7 +38,7 @@ func TestEmbeddedPanelExposesSupportedConfigFieldsAndPlan(t *testing.T) {
 		"автоматическим возвратом",
 		"DNS blocklists",
 		"HTTPS URL списка",
-		"Добавить DNS blocklist",
+		"URL DNS blocklist",
 		"Домены политики",
 	} {
 		if !strings.Contains(text, label) {

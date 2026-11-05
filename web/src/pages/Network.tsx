@@ -10,7 +10,7 @@ import { useContext, useEffect, useState } from "react";
 import { HintContext } from "../HintContext";
 import { api, Problem } from "../api";
 import { newID } from "../id";
-import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { AddMenu, Badge, Cap, Card, Empty, Field, Inactive, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon, INTERFACE_ICONS } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -57,7 +57,7 @@ export function NetworkPage({
     <>
       <div className="page-head">
         <h1><Icon name="network" />Сеть</h1>
-        <p>Подключение к интернету, локальные сети и физические порты</p>
+        <p>Аплинки, локальные сети и физические порты</p>
       </div>
 
       <ProblemsFor problems={problems} prefixes={["wans", "multiwan", "networks", "interfaces"]} />
@@ -74,6 +74,7 @@ export function NetworkPage({
 function UplinkSection({ config, patch, interfaceView }: { config: any; patch: Patch; interfaceView: InterfaceView }) {
   const statusPolling = useStatusPolling();
   const wans: any[] = config.wans || [];
+  const enabledWANs = wans.filter((wan) => wan.enabled).length;
   const [liveWANs, setLiveWANs] = useState<Record<string, any>>({});
   const [networkConflicts, setNetworkConflicts] = useState<string[]>([]);
   useEffect(() => {
@@ -96,7 +97,7 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
       <div className="multiwan-enable">
           <Switch
             checked={!!config.multiwan?.enabled}
-            disabled={wans.filter((wan) => wan.enabled).length < 2}
+            disabled={enabledWANs < 2}
             onChange={(enabled) => patch((draft) => {
               draft.multiwan = draft.multiwan || { mode: "failover", sticky_connections: true };
               if (enabled) assignMissingWANIndexes(draft.wans || []);
@@ -104,8 +105,11 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
             })}
             label="Включить Multi-WAN"
           />
-        {wans.filter((wan) => wan.enabled).length < 2 && <div className="hint">Включите минимум два подключения.</div>}
+        {enabledWANs < 2 && <div className="reason">Нужно минимум два аплинка, {enabledWANs === 0 ? "сейчас ни одного" : "сейчас один"}</div>}
       </div>
+      {/* Пока Multi-WAN выключен, его настройки не действуют — и выглядят
+          неактивными одинаково, а не одна серой, другая зелёной. */}
+      <Inactive when={!config.multiwan?.enabled}>
       <div className="multiwan-grid">
         <Field label="Распределение">
           <select aria-label="Распределение Multi-WAN" disabled={!config.multiwan?.enabled} value={config.multiwan?.mode || "failover"} onChange={(e) => patch((draft) => (draft.multiwan.mode = e.target.value))}>
@@ -124,11 +128,12 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
           />
         </Field>
       </div>
+      </Inactive>
     </Card>
     <Card
       tight
-      title="Подключение к интернету"
-      subtitle="Как роутер выходит наружу"
+      title="Аплинки"
+      subtitle="Подключения к провайдерам: через них роутер выходит наружу"
       actions={
         <button
           className="btn sm"
@@ -156,9 +161,9 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
       }
     >
       {wans.length === 0 ? (
-        <Empty>Подключение не настроено</Empty>
+        <Empty>Аплинков нет.</Empty>
       ) : (
-        <Rows cols={["Подключение", "Порт", "Адрес", "Тип", "Состояние"]} toggle="Включено">
+        <Rows cols={["Аплинк", "Порт", "Адрес", "Тип", "Состояние"]}>
           {wans.map((w, idx) => (
             <Row
               key={w.id}
@@ -419,6 +424,26 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
 function SegmentSection({ config, patch, interfaceView }: { config: any; patch: Patch; interfaceView: InterfaceView }) {
   const networks: any[] = config.networks || [];
   const channels: any[] = config.channels || [];
+  // Состояние сегмента берётся из живой системы, как на Сводке: иначе две
+  // страницы по-разному отвечают, работает ли один и тот же сегмент.
+  const statusPolling = useStatusPolling();
+  const [liveIfaces, setLiveIfaces] = useState<Record<string, any> | null>(null);
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = statusPolling.subscribe(5000, false, request => {
+      void request.then((status) => {
+        if (active) setLiveIfaces(Object.fromEntries((status.interfaces || []).map((iface: any) => [iface.name, iface])));
+      }).catch(() => {});
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [statusPolling]);
+  const segmentState = (n: any) => {
+    if (!n.enabled) return <Badge>не обслуживается</Badge>;
+    if (!liveIfaces) return <Badge>проверяется</Badge>;
+    return liveIfaces[ifaceName(config, n.interface)]?.up
+      ? <Badge tone="ok">поднят</Badge>
+      : <Badge tone="warn"><span title="Сегмент включён, но его интерфейс в системе не поднят">не поднят</span></Badge>;
+  };
 
   return (
     <Card
@@ -463,7 +488,7 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
           него уже был.
         </Empty>
       ) : (
-        <Rows cols={["Сегмент", "Интерфейс", "Адрес и сеть", "DHCP", "Состояние"]} toggle="Включён">
+        <Rows cols={["Сегмент", "Интерфейс", "Адрес и сеть", "DHCP", "Состояние"]}>
           {networks.map((n, idx) => (
             <Row
               key={n.id}
@@ -475,7 +500,7 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
                 <span className="mono">{ifaceName(config, n.interface)}</span>,
                 <span className="mono">{n.router_address || "—"}</span>,
                 <span className="dim">{n.dhcp_pool?.enabled ? "выдаёт адреса" : "выключен"}</span>,
-                <Badge tone={n.enabled ? "ok" : "neutral"}>{n.enabled ? "обслуживается" : "не обслуживается"}</Badge>,
+                segmentState(n),
               ]}
               toggle={<Switch checked={n.enabled} label="" ariaLabel={`${n.name} ${n.enabled ? "обслуживается" : "не обслуживается"}`} onChange={(v) => patch((d) => (d.networks[idx].enabled = v))} />}
             >
@@ -753,13 +778,13 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
         </div>
       }
     >
-      <Rows cols={["Имя", "Тип", "Используется", "MAC", "Состояние"]} toggle="Включён">
+      <Rows cols={["Имя", "Тип", "Используется", "MAC", "Состояние"]}>
           {discovered.map((i: any) => (
             <Row
               key={`discovered-${i.name}`}
               icon="ethernet-port"
               cells={[
-                <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
+                <span><strong className={i.label ? undefined : "mono"}>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="accent">новый порт</Badge>,
                 <span className="dim">не настроен</span>,
                 <span className="mono dim">{i.mac || "—"}</span>,
@@ -788,11 +813,11 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
               id={i.id}
               icon={INTERFACE_ICONS[i.type] || "ethernet-port"}
               cells={[
-                <span><strong>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
+                <span><strong className={i.label ? undefined : "mono"}>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="neutral">{typeLabel(i.type)}</Badge>,
                 <span className="dim">{interfaceView.usage(i) || "свободен"}</span>,
                 <span className="mono">{i.mac || liveInterfaces.find((live: any) => live.name === i.name)?.mac || "—"}</span>,
-                (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?(<span title={linkSpeed(live)}>{linkSpeed(live,true) || "Линк есть"}</span>):"Включён, нет линка"}</Badge> : <Badge tone="neutral">Нет в ОС</Badge>; })(),
+                (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?(<span title={linkSpeed(live)}>{linkSpeed(live,true) || "Линк есть"}</span>):"Включён, нет линка"}</Badge> : i.enabled === false ? <Badge>выключен</Badge> : <Badge tone="warn"><span title="Интерфейс включён в настройках, но в системе его нет">не создан</span></Badge>; })(),
               ]}
               toggle={<Switch
                     checked={i.enabled}

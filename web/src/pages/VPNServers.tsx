@@ -9,7 +9,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError, formatBytes } from "../api";
 import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
 import { newID } from "../id";
-import { AddMenu, Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { AddMenu, Badge, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon, vpnServerIcon } from "../icons";
 
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
@@ -240,16 +240,15 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   return <>
     <div className="page-head"><h1><Icon name="shield-check" />VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
-	{!wireguardInstalled && !xrayInstalled && !ocservInstalled && !strongswanInstalled && !l2tpInstalled && <Notice hint tone="info" title="Нужен VPN-компонент">Установите нужный VPN-компонент в разделе «Компоненты». Черновики серверов можно подготовить заранее.</Notice>}
-    <ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить сервер"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
-      <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]} toggle="Включён">{servers.map((server: any) =>
+    <ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
+      <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]}>{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <OcservServer key={server.id} server={server} config={config} installed={ocservInstalled} patch={patch} /> :
         server.type === "ikev2" ? <IKEv2Server key={server.id} server={server} config={config} installed={strongswanInstalled} patch={patch} /> :
         server.type === "l2tp" ? <L2TPServer key={server.id} server={server} config={config} installed={l2tpInstalled} patch={patch} /> :
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}</Rows>}</div>
-      {servers.length > 0 && <><div className="card-sub"><h3><Icon name="users" />Клиенты</h3><AddMenu label={addingTo ? "Создаём клиента…" : "Добавить клиента"} items={clientItems} /></div>
+      {servers.length > 0 && <><div className="card-sub"><h3><Icon name="users" />Клиенты</h3><AddMenu label={addingTo ? "Создаём клиента…" : "Добавить"} items={clientItems} /></div>
       <div className="vpn-client-groups">{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
@@ -301,8 +300,8 @@ function L2TPServer({ server, config, installed, patch }: any) {
   const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
   const ipsecReady = !cfg.ipsec || (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
   return <ServerRow server={server} type={cfg.ipsec ? "L2TP/IPsec" : "L2TP"} endpoint={cfg.public_endpoint || (cfg.listen === "0.0.0.0" ? "" : cfg.listen)} installed={installed} referenced={referenced} update={update} patch={patch}>
-    {!installed && <Notice hint tone="info" title="Нужен компонент L2TP">Установите L2TP перед включением сервера.</Notice>}
-    {!ipsecReady && <Notice hint tone="info" title="Нужен компонент strongSwan">Установите strongSwan для защиты L2TP/IPsec.</Notice>}
+    {!installed && <NeedComponent name="L2TP" effect="без него сервер не включить" />}
+    {!ipsecReady && <NeedComponent name="strongSwan" effect="без него L2TP/IPsec не защищён" />}
     {!cfg.ipsec && <Notice tone="warn" title="L2TP без шифрования">Без IPsec трафик не шифруется. Доступ с WAN автоматически не разрешается.</Notice>}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
@@ -322,7 +321,7 @@ function L2TPServer({ server, config, installed, patch }: any) {
 function IKEv2Server({ server, config, installed, patch }: any) {
   const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
   return <ServerRow server={server} type="IKEv2" endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
-		{!installed && <Notice hint tone="info" title="Нужен компонент strongSwan">Установите strongSwan перед включением сервера IKEv2.</Notice>}
+		{!installed && <NeedComponent name="strongSwan" effect="без него сервер IKEv2 не включить" />}
 		<div className="form-grid">
 			<Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
 			<Field label="Пул адресов" hint="Адрес сервера и маска"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
@@ -340,7 +339,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 function OcservServer({ server, config, installed, patch }: any) {
   const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
   return <ServerRow server={server} type="OpenConnect" endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
-    {!installed && <Notice hint tone="info" title="Нужен компонент ocserv">Установите ocserv перед включением сервера OpenConnect.</Notice>}
+    {!installed && <NeedComponent name="ocserv" effect="без него сервер OpenConnect не включить" />}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="Пул адресов" hint="Адрес сервера и маска"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
@@ -422,7 +421,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
   }
 
   return <ServerRow server={server} type={XRAY_NAMES[protocol] || protocol} endpoint={cfg.public_endpoint || cfg.listen} installed={installed} referenced={referenced} update={update} patch={patch}>
-    {!installed && <Notice hint tone="info" title="Нужен компонент Xray">Установите Xray перед включением этого сервера.</Notice>}
+    {!installed && <NeedComponent name="Xray" effect="без него сервер не включить" />}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="Протокол"><input value={protocol} readOnly /></Field>
@@ -610,7 +609,7 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
   }
 
   return <ServerRow server={server} type="WireGuard" endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
-    {!installed && <Notice hint tone="info" title="Нужен компонент WireGuard">Установите WireGuard в разделе «Компоненты» перед включением сервера. Профили клиентов можно подготовить заранее.</Notice>}
+    {!installed && <NeedComponent name="WireGuard" effect="без него сервер не включить" />}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-подсеть" hint="Адрес роутера и маска, например 10.9.0.1/24"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>

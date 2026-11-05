@@ -1,4 +1,4 @@
-import { Card, Field, Notice, Switch } from "../ui";
+import { Card, Field, Inactive, NeedComponent, Switch } from "../ui";
 import { useEffect, useState } from "react";
 
 const sourceLines = (text: string) => text.split(/\s+/).filter(Boolean);
@@ -14,7 +14,10 @@ export function IPTVSection({config,patch}: {config:any;patch:(fn:(draft:any)=>v
   const installed=(config.components||[]).some((c:any)=>c.id==="igmpproxy" && c.installed);
   const wans=(config.wans||[]).filter((w:any)=>w.enabled && ["dhcp","static"].includes(w.proto));
   return <Card title="Телевидение провайдера">
-    {!installed && <Notice hint tone="info" title="Нужен компонент IPTV">Установите его в разделе «Компоненты».</Notice>}
+    {!installed && <NeedComponent name="IPTV" effect="без него приставки не получат мультикаст" />}
+    {/* Включённую службу без компонента можно выключить: иначе черновик
+        с ней не применить и не исправить. */}
+    <Inactive when={!installed && !value.enabled}>
     <Switch checked={!!value.enabled} onChange={v=>set("enabled",v)} label="Включить IGMP proxy" />
     <div className="form-grid">
       <Field label="Аплинк IPTV" hint="Если провайдер использует отдельный VLAN, создайте для него аплинк в разделе «Сеть».">
@@ -31,6 +34,7 @@ export function IPTVSection({config,patch}: {config:any;patch:(fn:(draft:any)=>v
         <textarea className="mono" value={sourceText} placeholder="10.0.0.0/8" onChange={e=>{ setSourceText(e.target.value); set("sources",sourceLines(e.target.value)); }} />
       </Field>
     </details>
+    </Inactive>
     <p className="muted">Для мультикастового IPTV (IGMPv1/v2). Интернет-ТВ через HTTP/HLS этой настройки не требует.</p>
   </Card>;
 }

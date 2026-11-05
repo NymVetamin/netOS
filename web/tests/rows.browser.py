@@ -58,9 +58,9 @@ LIVE = [{"name": "eth0", "physical": True, "up": True, "mac": "02:00:00:00:00:01
 EDITS = [
     ("firewall", "Источник правила NAT", "10.0.0.0/8", lambda c: c["firewall"]["nat"][0]["source"]),
     ("firewall", "Внешний порт проброса Web", "8443", lambda c: c["firewall"]["nat"][1]["ext_port"]),
-    ("services", "Адрес DNS-сервера 1", "9.9.9.9", lambda c: c["dns"]["upstreams"][0]["address"]),
-    ("services", "Значение DNS-записи 1", "192.168.10.51", lambda c: c["dns"]["static_records"][0]["value"]),
-    ("services", "URL DNS blocklist 1", "https://example.org/b.txt", lambda c: c["dns"]["blocklists"][0]["url"]),
+    ("services?tab=dns", "Адрес DNS-сервера 1", "9.9.9.9", lambda c: c["dns"]["upstreams"][0]["address"]),
+    ("services?tab=dns", "Значение DNS-записи 1", "192.168.10.51", lambda c: c["dns"]["static_records"][0]["value"]),
+    ("services?tab=dns", "URL DNS blocklist 1", "https://example.org/b.txt", lambda c: c["dns"]["blocklists"][0]["url"]),
     ("routing", "Назначение статического маршрута Office", "10.30.0.0/16", lambda c: c["routing"]["static"][0]["destination"]),
     ("routing", "Источник правила маршрутизации Rule", "192.168.10.0/24", lambda c: c["routing"]["rules"][0]["from"]),
     ("clients", f"Имя устройства {MAC}", "Laptop", lambda c: c["clients"][0]["name"]),
@@ -147,7 +147,7 @@ async def main():
                 await control.fill(value)
             assert read(state["config"]) == value, (name, label, read(state["config"]))
             if shots:
-                await page.locator("main.main").screenshot(path=str(Path(shots) / f"{name}.png"))
+                await page.locator("main.main").screenshot(path=str(Path(shots) / f"{name.split('?')[0]}.png"))
             print(name, label, "PASS")
 
         # Display names never become DHCP hostnames; invalid discovered names

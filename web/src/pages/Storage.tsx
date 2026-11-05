@@ -3,7 +3,7 @@ import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { newID } from "../id";
-import { Badge, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { Badge, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon } from "../icons";
 
 type Props = { config: any; patch: (mutate: (draft: any) => void) => void; admin: boolean };
@@ -36,12 +36,18 @@ export function StoragePage({ config, patch, admin }: Props) {
   const server = networks.find((n: any) => (s.networks || []).includes(n.id))?.router_address?.split("/")[0] || vpns.find((v: any) => (s.vpns || []).includes(v.id))?.subnet?.split("/")[0] || config.system?.hostname || "netos";
   return <>
     <div className="page-head"><h1><Icon name="hard-drive" />Диски и файлы</h1><p>Файлы на USB-дисках по SMB из локальной сети и VPN</p></div>
-    {!installed && <Notice hint tone="info" title="Нужен компонент Samba">Включите «Samba — диски и сетевые папки» в разделе «Компоненты».</Notice>}
-    <Notice hint tone="info" title="Как подключиться">После применения настроек откройте <span className="mono">{`\\\\${server}`}</span> в Проводнике Windows или <span className="mono">{`smb://${server}`}</span> в файловом менеджере. Используйте отдельный логин Samba. Можно просматривать и скачивать файлы, а при разрешённой записи — загружать, переименовывать и удалять их. Для VPN в маршруты клиента должен входить адрес роутера; обнаружение в сетевом окружении работает в LAN.</Notice>
     <fieldset className="storage-settings" disabled={!admin} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <Card title="Файловый сервер">
+        {!installed && <NeedComponent name="Samba" effect="без неё сетевые папки не открыть" />}
         <div className="storage-server">
           <Switch checked={!!s.enabled} disabled={!installed} label="Включить доступ к файлам" onChange={v => edit(d => d.enabled = v)} />
+          {/* Как подключиться — там, где сервер включают, а не над всей страницей. */}
+          <div className="hint storage-address">
+            Адрес: <span className="mono">{`\\\\${server}`}</span> в Проводнике Windows, <span className="mono">{`smb://${server}`}</span> в других системах, вход по логину Samba
+            <details className="more"><summary>Подробнее</summary>
+              <p>Адрес начнёт работать после применения настроек. Можно просматривать и скачивать файлы, а при разрешённой записи — загружать, переименовывать и удалять их. Для VPN в маршруты клиента должен входить адрес роутера; обнаружение в сетевом окружении работает только в LAN.</p>
+            </details>
+          </div>
           <div className="storage-server-grid">
             <Field label="Рабочая группа"><input value={s.workgroup || ""} placeholder="WORKGROUP" maxLength={15} onChange={e => edit(d => d.workgroup = e.target.value)} /></Field>
             <Field label="Сетевое окружение"><Switch checked={!!s.discovery} label="Обнаружение Windows (WS-Discovery)" onChange={v => edit(d => d.discovery = v)} /></Field>
@@ -52,10 +58,11 @@ export function StoragePage({ config, patch, admin }: Props) {
           </div>
         </div>
       </Card>
-      <Card tight title="Накопители" subtitle="Настройка сохраняется по UUID и действует после повторного подключения" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
+      <Card tight title="Накопители" subtitle="Настройка сохраняется по UUID и действует после повторного подключения" actions={<button className="btn ghost sm" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
         <div className="rows-notes">{error && <Notice tone="danger" title="Список дисков недоступен">{error}</Notice>}</div>
-        {deviceSnapshot !== null && !error && devices.length === 0 && <Empty>Вставьте USB-диск с файловой системой ext2/3/4, FAT, exFAT или NTFS. Форматирование не выполняется.</Empty>}
-        <div className="storage-volumes" aria-busy={admin && deviceSnapshot === null && !error}><Rows cols={["Том", "Файловая система", "Размер", "Подключение", "Состояние"]} toggle="Автоподключение">
+        {deviceSnapshot !== null && !error && devices.length === 0 && (s.volumes || []).length === 0 && <Empty>Накопителей нет. Вставьте USB-диск с ext2/3/4, FAT, exFAT или NTFS; форматирование не выполняется.</Empty>}
+        {/* Шапку столбцов без строк не показываем. */}
+        <div className="storage-volumes" aria-busy={admin && deviceSnapshot === null && !error}>{(devices.length > 0 || (s.volumes || []).length > 0) && <Rows cols={["Том", "Файловая система", "Размер", "Подключение", "Состояние"]} toggle="Автоподключение">
         {devices.filter(d => !(s.volumes || []).some((v: any) => v.uuid.toLowerCase() === d.uuid.toLowerCase())).map(d =>
           <Row key={d.path} cells={[<strong>{d.label || d.path}</strong>, d.fstype, `${(Number(d.size) / 1073741824).toFixed(1)} ГБ`, d.tran || "диск", <span className="dim" title={d.reason || d.uuid}>{d.reason || d.uuid}</span>]}
             toggle={<button className="btn sm" disabled={!installed || !d.available} onClick={() => edit(v => v.volumes.push({ id: newID("volume"), uuid: d.uuid, filesystem: d.fstype, enabled: true }))}>Подключить</button>} />)}
@@ -65,10 +72,10 @@ export function StoragePage({ config, patch, admin }: Props) {
           return <Row key={v.id} cells={[<strong>{live?.label || v.uuid}</strong>, v.filesystem, live ? `${(Number(live.size) / 1073741824).toFixed(1)} ГБ` : "—", <button className="btn ghost sm" disabled={v.enabled || (s.shares || []).some((x: any) => x.volume === v.id)} onClick={() => edit(d => d.volumes = d.volumes.filter((x: any) => x.id !== v.id))}>Забыть том</button>, <Badge tone={mounted && !error ? "ok" : "neutral"}>{deviceSnapshot === null || error ? "Нет данных" : mounted ? "Подключён в системе" : live ? "Диск обнаружен" : "Диск отсутствует"}</Badge>]}
             toggle={<Switch checked={!!v.enabled} disabled={!installed} label="" ariaLabel="Автоподключение" onChange={on => edit(d => { d.volumes.find((x: any) => x.id === v.id).enabled = on; if (!on) d.shares.forEach((x: any) => { if (x.volume === v.id) x.enabled = false; }); })} />} />;
         })}
-        </Rows></div>
-        <div className="rows-foot"><span className="faint">Для извлечения выключите автоподключение и примените изменения: связанные папки отключатся. Дождитесь успешного применения. Занятый диск не отключается принудительно. На ext2/3/4 сохраняются существующие права файлов: для записи нужен доступ системному пользователю netos-storage. NTFS, FAT и exFAT подключаются с правами этого пользователя.</span></div>
+        </Rows>}</div>
+        <div className="rows-foot"><details className="more"><summary>Как извлечь диск и какие права у файлов</summary><p className="faint">Для извлечения выключите автоподключение и примените изменения: связанные папки отключатся. Дождитесь успешного применения. Занятый диск не отключается принудительно. На ext2/3/4 сохраняются существующие права файлов: для записи нужен доступ системному пользователю netos-storage. NTFS, FAT и exFAT подключаются с правами этого пользователя.</p></details></div>
       </Card>
-      <Card tight title="Пользователи Samba" subtitle="Отдельные учётные записи для доступа к файлам" actions={<button className="btn" onClick={() => edit(d => d.users.push({ id: openOnCreate(newID("smbuser")), name: "", password: "" }))}>Добавить пользователя</button>}>
+      <Card tight title="Пользователи Samba" subtitle="Отдельные учётные записи для доступа к файлам" actions={<button className="btn sm" onClick={() => edit(d => d.users.push({ id: openOnCreate(newID("smbuser")), name: "", password: "" }))}>Добавить</button>}>
         {(s.users || []).length === 0 && <Empty>Добавьте логин и пароль для подключения к папкам.</Empty>}
         {(s.users || []).length > 0 && <Rows cols={["Логин", "Папки", "", "", ""]}>{(s.users || []).map((u: any) =>
           <Row key={u.id} id={u.id} cells={[<strong>{u.name || "без имени"}</strong>, <span className="dim">{(access.namesByUser.get(u.id) || []).join(", ") || "нет доступа к папкам"}</span>]}>
@@ -76,7 +83,7 @@ export function StoragePage({ config, patch, admin }: Props) {
             <div className="row-actions end"><button className="btn ghost sm" disabled={access.namesByUser.has(u.id)} onClick={() => edit(d => d.users = d.users.filter((x: any) => x.id !== u.id))}>Удалить</button></div>
           </Row>)}</Rows>}
       </Card>
-      <Card tight title="Сетевые папки" subtitle="Одна папка открывает содержимое выбранного тома" actions={<button className="btn" disabled={!(s.volumes || []).length || !(s.users || []).length} onClick={() => edit(d => d.shares.push({ id: openOnCreate(newID("share")), name: "USB" + (d.shares.length + 1), volume: d.volumes.find((v: any) => v.enabled)?.id || "", enabled: false, read_only: true, users: [] }))}>Добавить папку</button>}>
+      <Card tight title="Сетевые папки" subtitle="Одна папка открывает содержимое выбранного тома" actions={<>{(!(s.volumes || []).length || !(s.users || []).length) && <span className="reason">{!(s.volumes || []).length ? "Сначала подключите накопитель" : "Сначала добавьте пользователя Samba"}</span>}<button className="btn sm" disabled={!(s.volumes || []).length || !(s.users || []).length} onClick={() => edit(d => d.shares.push({ id: openOnCreate(newID("share")), name: "USB" + (d.shares.length + 1), volume: d.volumes.find((v: any) => v.enabled)?.id || "", enabled: false, read_only: true, users: [] }))}>Добавить</button></>}>
         {(s.shares || []).length === 0 && <Empty>Выберите том и создайте сетевую папку.</Empty>}
         {(s.shares || []).length > 0 && <Rows cols={["Папка", "Том", "Права", "Доступ", "Состояние"]} toggle="Опубликовать">{(s.shares || []).map((sh: any) => {
           const update = (fn: (x: any) => void) => edit(d => fn(d.shares.find((x: any) => x.id === sh.id)));

@@ -35,7 +35,7 @@ async def main():
               if(window.pollMode!=='hold')done();
             });
           };""")
-        await page.goto('http://netos.test/#services')
+        await page.goto('http://netos.test/#services?tab=socks')
         await page.wait_for_timeout(11200)
         assert await page.evaluate('polls.length')==2, await page.evaluate('polls.length')
         assert await page.evaluate('polls.every(p=>p.signal&&!p.done)')

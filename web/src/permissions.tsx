@@ -20,7 +20,9 @@ export function useAccess() {
   return (section: string, manage = false) => canAccess(session, section, manage);
 }
 
+// section может указывать и на часть раздела: "services?tab=dns". Права
+// проверяются по самому разделу.
 export function SectionLink({ section, children, ...props }: { section: string; children: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href">) {
   const can = useAccess();
-  return can(section) ? <a href={`#${section}`} {...props}>{children}</a> : <span className={props.className}>{children}</span>;
+  return can(section.split("?")[0]) ? <a href={`#${section}`} {...props}>{children}</a> : <span className={props.className}>{children}</span>;
 }

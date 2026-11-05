@@ -45,7 +45,7 @@ async def main():
    elif path.endswith('/clients'): body = []
    await r.fulfill(json=body)
   await page.route('**/*', route)
-  await page.goto('https://netos-ui.test/#services')
+  await page.goto('https://netos-ui.test/#services?tab=ddns')
   await expect(page.get_by_label('Провайдер DDNS')).to_be_visible()
   for width in (1440, 1043, 390):
    await page.set_viewport_size({'width': width, 'height': 1000})
@@ -59,7 +59,7 @@ async def main():
   await page.goto('https://netos-ui.test/#traffic')
   await expect(page.get_by_role('heading', name='Скорость и QoS', exact=True)).to_be_visible()
   await expect(page.get_by_label('Провайдер DDNS')).to_have_count(0)
-  await page.goto('https://netos-ui.test/#services')
+  await page.goto('https://netos-ui.test/#services?tab=ddns')
   password = page.get_by_label('Пароль No-IP', exact=True)
   await expect(password).to_have_attribute('placeholder', '••••••••')
   await expect(password).to_have_value('')
@@ -82,10 +82,10 @@ async def main():
   await expect(page.get_by_label('Cloudflare Record ID')).to_be_visible()
   async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
    await page.get_by_label('Источник адреса DDNS').select_option('interface')
-  await expect(page.get_by_label('Интернет-канал DDNS', exact=True)).to_be_visible()
+  await expect(page.get_by_label('Аплинк DDNS', exact=True)).to_be_visible()
   async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
    await page.get_by_label('Источник адреса DDNS').select_option('web')
-  await expect(page.get_by_label('Интернет-канал DDNS', exact=True)).to_have_count(0)
+  await expect(page.get_by_label('Аплинк DDNS', exact=True)).to_have_count(0)
   await page.goto('https://netos-ui.test/#vpn-servers')
   await expect(page.get_by_label('Закрытый ключ сервера')).to_have_attribute('placeholder', '••••••••')
   peers = page.locator('[data-peers-of="oc"]')

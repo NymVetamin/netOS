@@ -70,7 +70,6 @@ export function ChannelsPage({ config, patch }: Props) {
   const xrayInstalled = ready("xray");
   const l2tpInstalled = ready("l2tp");
   const strongswanInstalled = ready("ikev2");
-  const missing = channelComponents.filter(component => !ready(component.type));
 
   const [disableID, setDisableID] = useState("");
   const [replacement, setReplacement] = useState("");
@@ -197,10 +196,17 @@ export function ChannelsPage({ config, patch }: Props) {
   // В меню только те типы, чей компонент установлен: создать канал, который
   // нельзя включить, панель не даёт.
   const adders: Record<string, () => void> = { wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP };
-  const addItems = channelComponents.filter(component => ready(component.type)).map(component => {
+  // Тип без компонента остаётся в меню, но недоступен и помечен: так видно,
+  // какие каналы бывают и что для них нужно, без отдельной плашки.
+  const addItems = channelComponents.map(component => {
     const name = component.type === "ikev2" ? "IKEv2" : component.title;
-    return { label: name, ariaLabel: name, icon: CHANNEL_ICONS[component.type], onSelect: adders[component.type] };
+    const available = ready(component.type);
+    return { label: name, ariaLabel: name, icon: CHANNEL_ICONS[component.type], onSelect: adders[component.type],
+      disabled: !available, note: available ? undefined : "нужен компонент" };
   });
+  // Чего не хватает каналу в строке: показывается в его состоянии.
+  const needFor = (type: string) => installed !== null && channelComponents.some(item => item.type === type) && !ready(type)
+    ? channelComponents.find(item => item.type === type)?.title || type : null;
   const awaitingComponents = installed === null && !componentError && channelComponents.some(component =>
     (config.components || []).some((item: any) => item.id === component.id && item.installed));
 
@@ -230,31 +236,26 @@ export function ChannelsPage({ config, patch }: Props) {
       </Notice></div>}
       <div className="page-head">
         <h1><Icon name="globe" />Интернет-каналы</h1>
-        <p>VPN-выходы и правила выбора подключения для устройств и сетей</p>
+        <p>Как клиенты выходят в интернет: напрямую или через VPN, и кто каким каналом</p>
       </div>
 
       <Card
         tight
         title="Каналы выхода"
         subtitle="Прямой выход всегда доступен; VPN-каналы защищены настраиваемым kill-switch"
-        actions={(addItems.length > 0 || awaitingComponents) && <div style={{ visibility: awaitingComponents ? "hidden" : undefined }}>
-          <AddMenu label="Добавить канал" items={addItems} />
+        actions={!componentError && <div style={{ visibility: awaitingComponents || installed === null ? "hidden" : undefined }}>
+          <AddMenu label="Добавить" items={installed === null ? [] : addItems} />
         </div>}
       >
         <div className="rows-notes">
-        {componentError ? <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice> : installed !== null && missing.length > 0 &&
-          <Notice hint tone="info" title="Для других типов каналов нужны компоненты">Сначала установите и примените нужный компонент в разделе <SectionLink section="components">«Компоненты»</SectionLink>: {missing.map(item => item.title).join(", ")}. После успешной установки появится кнопка создания канала.</Notice>}
+        {componentError && <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice>}
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
         </div>
         <NATSettings.Provider value={{config, patch}}>
         <Live.Provider value={liveChannels}>
-        <Rows cols={["Канал", "Тип", "Интерфейс", "Проверка", "Состояние"]} toggle="Включён">
+        <NeedFor.Provider value={needFor}>
+        <Rows cols={["Канал", "Тип", "Интерфейс", "Проверка", "Состояние"]}>
         {channels.map((channel: any) => <Fragment key={channel.id}>
-          {installed !== null && channelComponents.some(item => item.type === channel.type) && !ready(channel.type) &&
-            <Notice tone="warn" title={`${channel.name}: включение недоступно`}>
-              {`Для этого канала нужен установленный и выбранный компонент ${channelComponents.find(item => item.type === channel.type)?.title}.`}
-              {" "}<SectionLink section="components">Раздел «Компоненты»</SectionLink>. Настройки канала сохранены.
-            </Notice>}
           {channel.type === "direct" ? (
             <Row key={channel.id} icon="arrow-right-left" cells={[<strong>{channel.name}</strong>, <span className="dim">через провайдера</span>, "—", "—", <Badge tone="ok">активен</Badge>]} />
           ) : channel.type === "wireguard" ? (
@@ -317,6 +318,7 @@ export function ChannelsPage({ config, patch }: Props) {
           )}
         </Fragment>)}
         </Rows>
+        </NeedFor.Provider>
         </Live.Provider>
         </NATSettings.Provider>
       </Card>
@@ -331,6 +333,8 @@ const TYPE_NAMES: Record<string, string> = { wireguard: "WireGuard", openconnect
 // Живое состояние каналов из /api/status: его показывает строка самого канала.
 const Live = createContext<any[] | null>(null);
 const NATSettings = createContext<Props | null>(null);
+// Компонент, без которого канал не работает (null — всё на месте).
+const NeedFor = createContext<(type: string) => string | null>(() => null);
 
 function ChannelRow({ channel, installed, referenced, blocked, update, remove, children }: {
   channel: any; installed: boolean; referenced: boolean; blocked?: boolean;
@@ -339,8 +343,13 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
   const live = (useContext(Live) || []).find((item: any) => item.id === channel.id);
   const settings = useContext(NATSettings);
   const nat = settings ? channelNAT(settings.config, channel) : null;
-  const probe = channel.probe?.enabled === false ? "выключена" : `${String(channel.probe?.type || "").toUpperCase()}, каждые ${channel.probe?.interval || 10} с`;
-  const state = !channel.enabled ? <Badge tone="neutral">выключен</Badge>
+  const need = useContext(NeedFor)(channel.type);
+  // Пустые части не печатаются: без типа проверки строка начиналась с запятой.
+  const probe = channel.probe?.enabled === false ? "выключена" : [String(channel.probe?.type || "").toUpperCase(), `каждые ${channel.probe?.interval || 10} с`].filter(Boolean).join(", ");
+  // Переключатель включённого канала остаётся активным и без компонента:
+  // иначе такой канал нельзя было бы выключить.
+  const state = need ? <Badge tone="warn"><span title={`Установите компонент ${need} в разделе «Компоненты». Настройки канала сохранены.`}>нужен {need}</span></Badge>
+    : !channel.enabled ? <Badge tone="neutral">выключен</Badge>
     : !live ? <Badge tone="ok">включён</Badge>
     : <Badge tone={live.up ? "ok" : "warn"}>{live.probe_down ? "проба не прошла" : live.up ? "поднят" : "нет связи"}</Badge>;
   return <Row as="form" className={`channel-row channel-${channel.type}`} icon={CHANNEL_ICONS[channel.type]} id={channel.id} data-channel-id={channel.id} onSubmit={(event: { preventDefault: () => void }) => event.preventDefault()}
@@ -604,14 +613,17 @@ function WireGuardEditor({
 }
 
 function Policies({ config, patch, policies }: Props & { policies: any[] }) {
-  const [name, setName] = useState("");
-  const [channel, setChannel] = useState("direct");
   const choices = enabledChannels(config);
 
   return (
-    <Card tight title="Политики" subtitle="Меньшее число — более высокий приоритет">
-      {policies.length === 0 ? <Empty>Явных политик нет</Empty> : (
-        <Rows cols={["Политика", "Источник", "Назначение", "Канал", "Приоритет"]} toggle="Вкл.">
+    <Card tight title="Политики" subtitle="Меньшее число — более высокий приоритет"
+      actions={<button className="btn sm" onClick={() => patch((draft) => {
+        const priority = Math.max(0, ...(draft.policies || []).map((item: any) => item.priority || 0)) + 100;
+        draft.policies = draft.policies || [];
+        draft.policies.push({ id: openOnCreate(newID("policy")), name: `Политика ${draft.policies.length + 1}`, enabled: false, priority, channel: "direct", src_ip: "", src_mac: "", network: "", vpn_server: "", vpn_peer: "", protocol: "any", dst_port: "", dst_ip: "", domains: [], comment: "" });
+      })}>Добавить</button>}>
+      {policies.length === 0 ? <Empty>Явных политик нет.</Empty> : (
+        <Rows cols={["Политика", "Источник", "Назначение", "Канал", "Приоритет"]}>
           {policies.map((policy: any) => (
               <Row
                 key={policy.id}
@@ -688,18 +700,6 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
           ))}
         </Rows>
       )}
-      <div className="rows-foot row policy-add-row">
-        <input aria-label="Название новой политики" placeholder="Название новой политики" value={name} onChange={(e) => setName(e.target.value)} />
-        <select aria-label="Канал новой политики" value={channel} onChange={(e) => setChannel(e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-        <button className="btn primary" disabled={!name.trim()} onClick={() => {
-          patch((draft) => {
-            const priority = Math.max(0, ...(draft.policies || []).map((item: any) => item.priority || 0)) + 100;
-            draft.policies = draft.policies || [];
-            draft.policies.push({ id: openOnCreate(newID("policy")), name: name.trim(), enabled: false, priority, channel, src_ip: "", src_mac: "", network: "", vpn_server: "", vpn_peer: "", protocol: "any", dst_port: "", dst_ip: "", domains: [], comment: "" });
-          });
-          setName("");
-        }}>Добавить</button>
-      </div>
     </Card>
   );
 }

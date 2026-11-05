@@ -69,24 +69,29 @@ async def scenario(browser, mode):
     await page.add_init_script(OPEN_ROWS)
     await page.add_init_script("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => {window.copiedText=text}}})")
     await page.route("**/*", route_request)
-    await page.goto("https://netos-ui.test/#services")
+    await page.goto("https://netos-ui.test/#services?tab=socks")
     await expect(page.get_by_role("heading",name="Сетевые службы",exact=True)).to_be_visible()
     toggle = page.get_by_role("checkbox",name="Включить SOCKS5",exact=True)
     await expect(toggle.locator('..')).to_be_visible()
     await expect(toggle).to_be_disabled()
-    await expect(page.get_by_text("Нужен компонент Xray",exact=True)).to_have_count(0)
+    await expect(page.locator("#service-socks .need-line",has_text="Xray")).to_have_count(0)
     await expect(page.get_by_text("проверка состояния…",exact=True)).to_be_visible()
     catalog_gate.set()
     await expect(toggle).to_be_enabled()
-    for name in ['DHCP','DNS','DDNS','SOCKS5']:
-        await expect(page.get_by_role('region',name=name,exact=True)).to_have_count(1)
-    dns=page.get_by_role('region',name='DNS',exact=True)
+    # One service per tab; each tab panel holds its own sections.
+    for name in ['DHCP','DNS','DDNS','SOCKS5','IPTV']:
+        await expect(page.get_by_role('tab',name=name,exact=True)).to_have_count(1)
+    await expect(page.get_by_role('tab',name='SOCKS5',exact=True)).to_have_attribute('aria-selected','true')
+    await expect(page.locator('#service-socks').get_by_role('checkbox',name='Включить SOCKS5',exact=True)).to_have_count(1)
+    await page.get_by_role('tab',name='DNS',exact=True).click()
+    dns=page.get_by_role('tabpanel',name='DNS',exact=True)
     await expect(dns.get_by_role('heading',name='Локальные DNS-записи',exact=True)).to_have_count(1)
     await expect(dns.get_by_role('heading',name='DNS blocklists',exact=True)).to_have_count(1)
-    await expect(page.get_by_role('region',name='SOCKS5',exact=True).get_by_role('checkbox',name='Включить SOCKS5',exact=True)).to_have_count(1)
+    await expect(page.locator('#service-socks')).to_be_hidden()
+    await page.get_by_role('tab',name='SOCKS5',exact=True).click()
     for width in [1440,390]:
         await page.set_viewport_size({'width':width,'height':900})
-        for group in await page.locator('.service-group').all():
+        for group in await page.locator('[role=tabpanel]:not([hidden])').all():
             assert await group.evaluate('e=>e.scrollWidth<=e.clientWidth'), width
         Path('output/playwright').mkdir(parents=True,exist_ok=True)
         await page.screenshot(path=f'output/playwright/services-groups-{width}.png',full_page=True)
@@ -112,7 +117,7 @@ async def scenario(browser, mode):
     await page.get_by_role('checkbox',name='WG test',exact=True).locator('..').click()
     await page.get_by_label("Логин SOCKS5",exact=True).fill("proxy")
     await page.get_by_label("Пароль SOCKS5",exact=True).fill("fixture-password")
-    await page.get_by_text("Дополнительные настройки",exact=True).click()
+    await page.locator("#service-socks").get_by_text("Дополнительные настройки",exact=True).click()
     await expect(page.get_by_role("checkbox",name="UDP через SOCKS5",exact=True)).to_have_count(0)
     wan = page.get_by_role("checkbox",name="Разрешить SOCKS5 с WAN — небезопасно",exact=True)
     await wan.locator("..").click()
@@ -157,10 +162,10 @@ async def scenario(browser, mode):
     state["error"] = True
     await page.reload()
     await expect(page.get_by_text("Не удалось проверить компонент Xray",exact=True)).to_be_visible()
-    await expect(page.get_by_text("Нужен компонент Xray",exact=True)).to_have_count(0)
+    await expect(page.locator("#service-socks .need-line",has_text="Xray")).to_have_count(0)
     state["error"], state["ready"] = False, False
     await page.reload()
-    await expect(page.get_by_text("Нужен компонент Xray",exact=True)).to_be_visible()
+    await expect(page.locator("#service-socks .need-line",has_text="Xray")).to_be_visible()
     assert not errors, errors
     await page.close()
     print(mode, "PASS")

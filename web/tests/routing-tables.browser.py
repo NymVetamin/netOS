@@ -52,7 +52,7 @@ async def scenario(browser, mode):
         await expect(page.get_by_text("blackhole default",exact=True)).to_be_visible()
         await expect(page.get_by_text("eth0",exact=True)).to_have_count(0)
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("3001")
-        await expect(page.get_by_text("Таблица пуста",exact=True)).to_be_visible()
+        await expect(page.get_by_text("Действующих маршрутов нет.",exact=True)).to_be_visible()
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("all")
         await expect(page.get_by_text("eth0",exact=True)).to_be_visible()
     assert not writes, writes

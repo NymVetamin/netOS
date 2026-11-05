@@ -65,7 +65,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		} else if !next.QoS.Enabled && before.Enabled {
 			kind = "delete"
 		}
-		actions = append(actions, apply.Action{Subsystem: s.Name(), Kind: kind, Target: "очереди трафика", Detail: "CAKE на интернет-каналах", Disruptive: true})
+		actions = append(actions, apply.Action{Subsystem: s.Name(), Kind: kind, Target: "очереди трафика", Detail: "CAKE на аплинках", Disruptive: true})
 	}
 	if clientsChanged {
 		beforeLimits, afterLimits := hasClientLimits(oldClients), hasClientLimits(next.Clients)
@@ -262,14 +262,14 @@ func desiredLinks(cfg *config.Config) ([]ownedLink, error) {
 	for _, setting := range cfg.QoS.WANs {
 		wan, ok := wans[setting.WAN]
 		if !ok {
-			return nil, fmt.Errorf("интернет-канал %s не найден", setting.WAN)
+			return nil, fmt.Errorf("аплинк %s не найден", setting.WAN)
 		}
 		name := interfaces[wan.Interface]
 		if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
 			name = "ppp-" + wan.ID
 		}
 		if name == "" {
-			return nil, fmt.Errorf("у интернет-канала %s нет системного интерфейса", wan.ID)
+			return nil, fmt.Errorf("у аплинка %s нет системного интерфейса", wan.ID)
 		}
 		result = append(result, ownedLink{WAN: wan.ID, Interface: name, IFB: fmt.Sprintf("ifb-netos-%d", wan.Index)})
 	}

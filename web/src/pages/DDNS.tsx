@@ -94,15 +94,15 @@ export function DDNSSection({ config, patch }: { config: any; patch: Patch }) {
               <div className="field">
                 <label>Источник адреса</label>
                 <select aria-label="Источник адреса DDNS" value={ddns.address_source || "interface"} onChange={(e) => patch((d) => (d.ddns.address_source = e.target.value))}>
-                  <option value="interface">Интернет-интерфейс</option>
+                  <option value="interface">Адрес аплинка</option>
                   <option value="web">Веб-сервис</option>
                 </select>
                 <div className="hint">Веб-сервис нужен, если роутер находится за NAT модема.</div>
               </div>
               {ddns.address_source !== "web" && (
                 <div className="field">
-                  <label>Интернет-канал</label>
-                  <select aria-label="Интернет-канал DDNS" value={ddns.wan || ""} onChange={(e) => patch((d) => (d.ddns.wan = e.target.value))}>
+                  <label>Аплинк</label>
+                  <select aria-label="Аплинк DDNS" value={ddns.wan || ""} onChange={(e) => patch((d) => (d.ddns.wan = e.target.value))}>
                     <option value="">— выберите —</option>
                     {enabledWANs.map((wan: any) => <option key={wan.id} value={wan.id}>{wan.name || wan.id}</option>)}
                   </select>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { Card, Field, Notice, Switch, Badge } from "../ui";
+import { Card, Field, NeedComponent, Notice, Switch, Badge } from "../ui";
 import { secretInput } from "../secrets";
 import { confirmAction } from "../confirm";
 import { CopyButton } from "../CopyButton";
@@ -43,9 +43,8 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   <div className="stack">
   {error&&<Notice tone="danger" title={error}/>}
   {catalogError&&<Notice tone="warn" title="Не удалось проверить компонент Xray">Повторная проверка выполняется автоматически.</Notice>}
-  {(!chosen||ready===false)&&<Notice hint tone="info" title="Нужен компонент Xray">
-   {!chosen?<button className="btn" onClick={()=>patch(d=>{d.components=d.components||[];const c=d.components.find((v:any)=>v.id==="xray");if(c)c.installed=true;else d.components.push({id:"xray",installed:true})})}>Установить Xray</button>:<span>Примените установку компонента и дождитесь её завершения.</span>}
-  </Notice>}
+  {(!chosen||ready===false)&&<NeedComponent name="Xray" effect="без него прокси не запустится" action={
+   !chosen?<button className="btn sm" onClick={()=>patch(d=>{d.components=d.components||[];const c=d.components.find((v:any)=>v.id==="xray");if(c)c.installed=true;else d.components.push({id:"xray",installed:true})})}>Установить Xray</button>:<span className="reason">Примените установку и дождитесь её завершения</span>}/>}
   <Switch label="Включить SOCKS5" checked={!!p.enabled} disabled={!p.enabled&&(!ready||!chosen)} onChange={async enabled=>{
    if(enabled && p.allow_wan && !(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет")))return;
    edit({enabled,...(!p.port?{port:1080,auth:true,channel:"direct",networks:defaults}: {})});

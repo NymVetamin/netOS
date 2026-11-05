@@ -36,7 +36,7 @@ export function PanelUsers() {
     finally { setBusy(false); }
   }
   return <Card tight title="Пользователи панели" subtitle="Доступ к управлению netOS; учётные записи файлового сервера настраиваются отдельно"
-    actions={<button className="btn sm primary" disabled={busy || !!form} onClick={() => { setCreating(true); setForm(emptyUser()); }}>Добавить пользователя панели</button>}>
+    actions={<button className="btn sm" disabled={busy || !!form} onClick={() => { setCreating(true); setForm(emptyUser()); }}>Добавить</button>}>
     {error && <Notice tone="danger" title={error} />}
     <table className="panel-users-table" aria-label="Пользователи панели">
       <thead><tr><th scope="col">Логин</th><th scope="col">Права</th><th scope="col">Состояние</th><th scope="col" className="user-actions-heading">Действия</th></tr></thead>

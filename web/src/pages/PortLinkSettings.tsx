@@ -4,7 +4,7 @@ import { Field, Notice } from "../ui";
 export function linkSpeed(i:any,compact=false):string {
  if(!i?.physical)return "";
  if(!i.up)return "Нет линка";
- const speed=i.speed_mbps>0 ? i.speed_mbps>=1000 ? `${i.speed_mbps/1000} Гбит/с` : `${i.speed_mbps} Мбит/с` : "Скорость неизвестна";
+ const speed=i.speed_mbps>0 ? i.speed_mbps>=1000 ? `${i.speed_mbps/1000} Гбит/с` : `${i.speed_mbps} Мбит/с` : "Линк есть";
  if(compact)return speed;
  return speed+(i.duplex==="full"?" · полный дуплекс":i.duplex==="half"?" · полудуплекс":"");
 }

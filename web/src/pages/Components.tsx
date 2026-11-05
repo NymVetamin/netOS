@@ -230,7 +230,7 @@ export function ComponentsPage({
           >
             Проверить обновления
           </button>
-          {actionableCount > 0 && <button className="btn primary" disabled={busy}
+          {actionableCount > 0 && <button className="btn" disabled={busy}
             onClick={() => void perform("all")}>
             Обновить всё ({actionableCount})
           </button>}

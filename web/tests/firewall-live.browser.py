@@ -88,7 +88,7 @@ async def main():
   await expect(page.get_by_text('WAN-IN',exact=True)).to_be_visible()
   await expect(saved).to_have_attribute('data-preserved','yes')
   await expect(page.get_by_text('Allow s1 to s2',exact=True)).to_have_count(2)
-  await expect(page.get_by_role('button',name='Создать правило',exact=True)).to_be_visible()
+  await expect(page.locator('section.card',has=page.get_by_role('heading',name='Правила',exact=True)).get_by_role('button',name='Добавить',exact=True)).to_be_visible()
   await expect(saved.get_by_role('button',name='Изменить',exact=True)).to_be_enabled()
   for grip in await page.locator('.grip').all():await expect(grip).to_be_disabled()
   for toggle in await page.locator('.automatic-rule input').all():

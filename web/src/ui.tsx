@@ -1,7 +1,7 @@
 // Базовые элементы интерфейса. Держим их в одном месте, чтобы страницы
 // занимались данными, а не оформлением.
 
-import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
+import { Children, cloneElement, createContext, isValidElement, ReactElement, ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
 import { HintContext } from "./HintContext";
 import { formatBitrate } from "./api";
 import { CARD_ICONS, Icon, IconName } from "./icons";
@@ -201,6 +201,16 @@ export function Notice({
 // Раскрытие — системный <details>, а не состояние React: содержимое остаётся
 // в документе и свёрнутым, так что поиск по странице его находит, а проверки
 // панели видят те же поля, что и раньше.
+//
+// Заголовок столбца переключателя пишется, только когда он говорит, что именно
+// переключается («Автоподключение», «В эфире»). Просто «включено» переключатель
+// сообщает сам, а его имя для вспомогательных технологий задаёт aria-label.
+//
+// На узком экране заголовков столбцов нет, поэтому каждое значение строки несёт
+// подпись своего столбца (data-label): без неё «выключен» под именем сегмента
+// не говорит, что выключен DHCP.
+const RowCols = createContext<string[]>([]);
+
 export function Rows({ cols, toggle, children }: { cols: string[]; toggle?: string; children: ReactNode }) {
   return (
     <div className="xrows">
@@ -209,7 +219,7 @@ export function Rows({ cols, toggle, children }: { cols: string[]; toggle?: stri
         {[0, 1, 2, 3, 4].map((i) => <span key={i}>{cols[i] || ""}</span>)}
         <span>{toggle || ""}</span>
       </div>
-      {children}
+      <RowCols.Provider value={cols}>{children}</RowCols.Provider>
     </div>
   );
 }
@@ -246,6 +256,7 @@ export function Row({
   [attribute: string]: unknown;
 }) {
   const details = useRef<HTMLDetailsElement>(null);
+  const cols = useContext(RowCols);
   const [visited, setVisited] = useState(false);
   useEffect(() => {
     if (id && created.delete(id) && details.current) {
@@ -255,7 +266,7 @@ export function Row({
   }, [id]);
   const summary = [0, 1, 2, 3, 4].map((i) => i === 0 && icon
     ? <span key={i} className="xname"><Icon name={icon} />{cells[i]}</span>
-    : <span key={i}>{cells[i] ?? ""}</span>);
+    : <span key={i} data-label={i > 0 && cells[i] !== "" && cells[i] != null ? cols[i] || undefined : undefined}>{cells[i] ?? ""}</span>);
   const Wrapper = Tag as "div";
   return (
     <Wrapper className={`xrow ${className || ""}`} {...rest}>
@@ -291,7 +302,9 @@ export function AddMenu({
   }, []);
   return (
     <details className="addmenu" ref={menu}>
-      <summary className="btn primary">{label}</summary>
+      {/* Контурная, как одиночная «Добавить»: залитая янтарём кнопка на экране
+          одна — «Применить». */}
+      <summary className="btn sm">{label}</summary>
       <div className="menu">
         {items.map((item) => (
           <button
@@ -311,6 +324,35 @@ export function AddMenu({
       </div>
     </details>
   );
+}
+
+// Компонент не установлен. Это состояние, а не ошибка, поэтому одна нейтральная
+// строка: что нужно, что без него не работает и куда идти. Настройки, которые
+// без компонента не действуют, оборачиваются в <Inactive> и остаются видимыми,
+// но неактивными — видно, что появится после установки.
+export function NeedComponent({
+  name,
+  effect,
+  action,
+}: {
+  name: ReactNode;
+  effect: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="need-line">
+      <Badge>нужен компонент</Badge>
+      <span><strong>{name}</strong> · {effect}</span>
+      {action ?? <a className="btn sm" href="#components">Установить</a>}
+    </div>
+  );
+}
+
+// Зависимые настройки, которые сейчас не действуют: нет компонента или
+// выключена функция, к которой они относятся. Неактивны все одинаково.
+export function Inactive({ when, children }: { when: boolean; children: ReactNode }) {
+  if (!when) return <>{children}</>;
+  return <fieldset className="need-off" disabled>{children}</fieldset>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {

@@ -11,8 +11,8 @@ function origin(comment: string, sources: Record<string,string>): [string,string
  if (comment.startsWith("NAT канала")) return ["Интернет-канал → NAT", "channels"];
  if (comment.startsWith("ACME")) return ["Система → Сертификат панели", "system"];
  if (/samba|SMB|обнаружение Windows/i.test(comment)) return ["Диски и файлы → Файловый сервер", "storage"];
- if (/DNS/i.test(comment)) return ["Сетевые службы → DNS", "services"];
- if (comment.startsWith("SOCKS5:")) return ["SOCKS5 → Доступ", "services"];
+ if (/DNS/i.test(comment)) return ["Сетевые службы → DNS", "services?tab=dns"];
+ if (comment.startsWith("SOCKS5:")) return ["SOCKS5 → Доступ", "services?tab=socks"];
  if (comment.startsWith("VPN-сервер")) return ["VPN → Настройки сервера", "vpn-servers"];
  if (comment === "intersegment default") return ["Защита сети → Обмен между сегментами", "firewall"];
  if (comment === "политика зоны") return ["Защита сети → Политика зоны", "firewall"];

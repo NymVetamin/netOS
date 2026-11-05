@@ -80,21 +80,25 @@ async def scenario(browser, mode):
     else:
         if mode == "error":
             await expect(page.get_by_text("Не удалось проверить компоненты", exact=True)).to_be_visible()
+            # Without a component answer nothing can be offered, so no menu.
+            await expect(add).to_have_count(0)
+            await expect(page.get_by_text("нужен WireGuard", exact=True)).to_have_count(0)
         else:
-            await expect(page.get_by_text("Для других типов каналов нужны компоненты", exact=True)).to_be_visible()
-        # No type can be created, so there is no "add" menu at all.
-        await expect(add).to_have_count(0)
-        if mode == "error":
-            await expect(page.get_by_text("Poland: включение недоступно", exact=True)).to_have_count(0)
-        else:
-            await expect(page.get_by_text("Poland: включение недоступно", exact=True)).to_be_visible()
+            # Every type stays in the menu; without its component it is
+            # disabled and marked instead of a separate banner.
+            await add.click()
+            await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_be_disabled()
+            await expect(page.locator("details.addmenu small", has_text="нужен компонент").first).to_be_visible()
+            await page.keyboard.press("Escape")
+            # The channel itself says what it lacks, in its own state column.
+            await expect(page.get_by_text("нужен WireGuard", exact=True)).to_be_visible()
         if mode == "enabled-missing":
+            # An enabled channel stays switchable: otherwise it could not be turned off.
             await expect(toggle).to_be_enabled()
             await toggle.locator("..").click()
             await expect(toggle).not_to_be_checked()
         else:
             await expect(toggle).to_be_disabled()
-            await expect(page.get_by_text("выключен", exact=True)).to_be_visible()
         if mode in ("pending", "error"):
             state.update(ready=True, error=False)
             await add.click(timeout=10000)
@@ -102,8 +106,8 @@ async def scenario(browser, mode):
             await expect(toggle).to_be_enabled()
             await expect(page.locator('input[value="Poland"]')).to_be_visible()
         else:
-            await page.get_by_role("link", name="«Компоненты»", exact=True).click()
-            await expect(page.get_by_role("heading", name="Компоненты", exact=True)).to_be_visible()
+            title = await page.get_by_text("нужен WireGuard", exact=True).get_attribute("title")
+            assert title and "«Компоненты»" in title, title
     assert not errors, errors
     await page.close()
     print(mode, "PASS")

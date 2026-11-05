@@ -28,8 +28,9 @@ test('initial and repeated page entry have no transient loading block', () => {
   assert.equal(notes(render([installed, false, [], false])), '');
 });
 test('missing components are shown only after a successful response', () => {
-  assert.doesNotMatch(render([null, false, null, false]), /Для других типов каналов/);
-  assert.match(render([{}, false, [], false]), /Для других типов каналов нужны компоненты/);
+  // Типы без компонента — пункты меню «Добавить» с пометкой, а не плашка.
+  assert.doesNotMatch(render([null, false, null, false]), /нужен компонент/);
+  assert.match(render([{}, false, [], false]), /<span>WireGuard<small>нужен компонент<\/small><\/span>/);
 });
 test('failed loading stays actionable and successful retry clears errors', () => {
   const failed = render([null, true, null, true]);
