@@ -2,7 +2,7 @@
 import asyncio
 import importlib.util
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from playwright.async_api import async_playwright, expect
 
 spec = importlib.util.spec_from_file_location("fixture", Path(__file__).with_name("ui-review-regressions.browser.py"))
@@ -22,6 +22,12 @@ async def setup(browser, permissions=None):
             if state["missing"]:
                 available["iperf"] = False
             await r.fulfill(json={"available": available, "interfaces": [{"name": "lo", "addresses": ["127.0.0.1"]}]})
+        elif path.endswith("/current"):
+            kind = parse_qs(urlparse(r.request.url).query).get("kind", [""])[0]
+            if state["starts"] and state["starts"][-1]["kind"] == kind:
+                await r.fulfill(json={"id":"test-job", "kind":kind, "state":"done" if state["done"] else "running", "output":"", "error":"", "elapsed":2, "capture_bytes":128, "input":state["starts"][-1]})
+            else:
+                await r.fulfill(body="null", content_type="application/json")
         elif path.endswith("/jobs"):
             state["starts"].append(r.request.post_data_json)
             if state["delay"]:
@@ -78,14 +84,34 @@ async def main():
             if kind == "dns":
                 await page.get_by_label("Имя для запроса", exact=True).fill("example.test")
             if kind in ["capture", "torch"]:
-                await page.get_by_label("Интерфейс", exact=True).select_option("lo")
-                await page.get_by_label("Фильтр BPF", exact=True).fill("udp port 53")
+                await expect(page.get_by_label("Интерфейс", exact=True)).to_have_value("")
+                await expect(page.get_by_label("Длительность, с", exact=True)).to_have_count(0)
+                await expect(page.get_by_label("Лимит пакетов", exact=True)).to_have_count(0)
+                await page.get_by_label("IP-адрес или подсеть", exact=True).fill("192.0.2.0/24")
+                await page.get_by_label("MAC-адрес", exact=True).fill("02:00:00:00:00:01")
+                await page.get_by_label("Протокол", exact=True).select_option("udp")
+                await page.get_by_label("Порты", exact=True).fill("53,1000-2000")
+                await page.get_by_label("Сторона фильтра", exact=True).select_option("src")
+                await page.get_by_label("Направление", exact=True).select_option("in")
+                await page.get_by_text("Дополнительный фильтр BPF", exact=True).click()
+                await page.get_by_label("Фильтр BPF", exact=True).fill("not host 192.0.2.10")
             if kind == "iperf":
                 await page.get_by_label("Режим", exact=True).select_option("server")
                 await page.get_by_label("Локальный адрес", exact=True).select_option("127.0.0.1")
             await page.get_by_role("button", name="Запустить", exact=True).click()
             await expect(page.locator("pre.output")).to_be_visible()
             assert state["starts"][-1]["kind"] == kind
+            if kind in ["capture", "torch"]:
+                request = state["starts"][-1]
+                assert request["interface"] == "" and request["duration"] == 0 and request["count"] == 0 and request["size"] == 0
+                assert request["address"] == "192.0.2.0/24" and request["mac"] == "02:00:00:00:00:01"
+                assert request["protocol"] == "udp" and request["ports"] == "53,1000-2000"
+                assert request["match"] == "src" and request["direction"] == "in"
+                before = len(state["stops"])
+                await tabs.get_by_role("tab", name="DNS", exact=True).click()
+                await tabs.get_by_role("tab", name=tab, exact=True).click()
+                await expect(page.get_by_role("button", name="Остановить", exact=True)).to_be_visible()
+                assert len(state["stops"]) == before
             if kind == "torch":
                 await expect(page.get_by_role("cell", name="192.0.2.1:5000", exact=True)).to_be_visible()
                 await page.set_viewport_size({"width": 390, "height": 844})

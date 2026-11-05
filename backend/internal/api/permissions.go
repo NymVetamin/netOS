@@ -35,7 +35,7 @@ func limitedEndpoint(r *http.Request) bool {
 	if p == "/api/diagnostics/tools" {
 		return !write && may(r, "diagnostics", false)
 	}
-	if p == "/api/diagnostics/jobs" || strings.HasPrefix(p, "/api/diagnostics/jobs/") {
+	if p == "/api/diagnostics/current" || p == "/api/diagnostics/jobs" || strings.HasPrefix(p, "/api/diagnostics/jobs/") {
 		return may(r, "diagnostics", true)
 	}
 	if strings.HasPrefix(p, "/api/components/") {

@@ -13,6 +13,7 @@ export type Problem = {
 export type DiagnosticJob = {
   id: string; kind: string; state: string; output: string; error: string;
   elapsed: number; truncated: boolean; capture_bytes: number;
+  input?: {interface?: string; address?: string; mac?: string; protocol?: string; ports?: string; match?: string; direction?: string; filter?: string};
   torch?: {total_flows: number; packets: number; skipped: number; flows: {
     source: string; destination: string; protocol: string; source_port: number;
     destination_port: number; packets: number; bytes: number; bitrate: number;
@@ -197,9 +198,10 @@ export const api = {
     }
     return response.blob();
   },
+  diagnosticCurrent: (kind: string) => request<DiagnosticJob | null>("GET", `/api/diagnostics/current?kind=${encodeURIComponent(kind)}`),
   diagnosticTools: () => request<{available: Record<string, boolean>; interfaces: {name: string; addresses: string[]}[]}>("GET", "/api/diagnostics/tools"),
   diagnosticStart: (input: Record<string, unknown>) => request<{id: string}>("POST", "/api/diagnostics/jobs", input),
-  diagnosticJob: (id: string, signal?: AbortSignal) => request<DiagnosticJob>("GET", `/api/diagnostics/jobs/${encodeURIComponent(id)}`, undefined, undefined, signal),
+  diagnosticJob: (id: string, signal?: AbortSignal, page = 0) => request<DiagnosticJob>("GET", `/api/diagnostics/jobs/${encodeURIComponent(id)}?page=${page}`, undefined, undefined, signal),
   diagnosticStop: (id: string) => request<{ok: boolean}>("DELETE", `/api/diagnostics/jobs/${encodeURIComponent(id)}`),
   ocCertificate: (id: string, peer: string) => request<any>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate`),
   ocCertificates: (id: string, signal?: AbortSignal) => request<Record<string, any>>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificates`, undefined, undefined, signal),

@@ -158,6 +158,12 @@ func TestDiagnosticLinuxLifecycle(t *testing.T) {
 		t.Fatal("job did not finish")
 		return nil
 	}
+	defer s.stopDiagnostics()
+	stop := func(id string) {
+		r := httptest.NewRequest("DELETE", "/", nil).WithContext(context.WithValue(context.Background(), ctxUser, "tester"))
+		r.SetPathValue("id", id)
+		s.handleDiagnosticStop(httptest.NewRecorder(), r)
+	}
 	udp, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +171,7 @@ func TestDiagnosticLinuxLifecycle(t *testing.T) {
 	defer udp.Close()
 	port := udp.LocalAddr().(*net.UDPAddr).Port
 	for _, kind := range []string{"capture", "torch"} {
-		id := start(diagnosticInput{Kind: kind, Interface: "lo", Filter: "udp port " + strconv.Itoa(port), Duration: 3, Count: 20}, 202)
+		id := start(diagnosticInput{Kind: kind, Address: "127.0.0.1", Protocol: "udp", Ports: strconv.Itoa(port), Duration: 3, Count: 20}, 202)
 		start(diagnosticInput{Kind: "ping", Host: "127.0.0.1"}, 409)
 		time.Sleep(300 * time.Millisecond)
 		client, err := net.Dial("udp4", udp.LocalAddr().String())
@@ -177,8 +183,9 @@ func TestDiagnosticLinuxLifecycle(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		client.Close()
+		stop(id)
 		result := wait(id)
-		if result["state"] != "done" {
+		if result["state"] != "stopped" {
 			t.Fatalf("%s: %#v", kind, result)
 		}
 		if kind == "torch" {
@@ -217,7 +224,15 @@ func TestDiagnosticLinuxLifecycle(t *testing.T) {
 		t.Fatal(result)
 	}
 	id = start(diagnosticInput{Kind: "capture", Interface: "lo", Filter: "udp port " + strconv.Itoa(port), Duration: 1}, 202)
-	if result := wait(id); result["state"] != "done" {
+	time.Sleep(1200 * time.Millisecond)
+	s.diagnostics.mu.Lock()
+	stillActive := s.diagnostics.active
+	s.diagnostics.mu.Unlock()
+	if !stillActive {
+		t.Fatal("legacy duration stopped capture")
+	}
+	stop(id)
+	if result := wait(id); result["state"] != "stopped" {
 		t.Fatal(result)
 	}
 	id = start(diagnosticInput{Kind: "ping", Host: "127.0.0.1", Count: 1}, 202)

@@ -263,6 +263,7 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/dns/blocklists/status", s.handleBlocklistStatus)
 	auth("POST /api/diagnostics/probe", s.handleDiagnosticProbe)
 	auth("GET /api/diagnostics/tools", s.handleDiagnosticTools)
+	auth("GET /api/diagnostics/current", s.handleDiagnosticCurrent)
 	auth("POST /api/diagnostics/jobs", s.handleDiagnosticStart)
 	auth("GET /api/diagnostics/jobs/{id}", s.handleDiagnosticJob)
 	auth("DELETE /api/diagnostics/jobs/{id}", s.handleDiagnosticStop)
@@ -326,6 +327,7 @@ func (s *Server) withCommonHeaders(next http.Handler) http.Handler {
 
 // Start поднимает HTTPS-панель.
 func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) error {
+	defer s.stopDiagnostics()
 	var certPath, keyPath, fingerprint string
 	var acmeManager acmeCertificateManager
 	var challengeErr <-chan error

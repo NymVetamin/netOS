@@ -8,21 +8,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const diagnosticCaptureLimit = 8 << 20
 const diagnosticTextLimit = 64 << 10
 
 type diagnosticInput struct {
 	Kind      string `json:"kind"`
+	Address   string `json:"address"`
+	MAC       string `json:"mac"`
+	Protocol  string `json:"protocol"`
+	Match     string `json:"match"`
+	Direction string `json:"direction"`
+	Ports     string `json:"ports"`
 	Host      string `json:"host"`
 	Interface string `json:"interface"`
 	Duration  int    `json:"duration"`
@@ -41,9 +48,10 @@ type diagnosticInput struct {
 }
 
 type diagnosticCommand struct {
-	name     string
-	args     []string
-	duration time.Duration
+	name       string
+	args       []string
+	duration   time.Duration
+	interfaces []string
 }
 
 func diagnosticHost(host string) bool {
@@ -54,6 +62,9 @@ func diagnosticHost(host string) bool {
 func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 	c := diagnosticCommand{duration: 30 * time.Second}
 	bad := func(message string) (diagnosticCommand, error) { return c, errors.New(message) }
+	if in.Kind == "capture" || in.Kind == "torch" {
+		return buildCaptureCommand(in)
+	}
 	if in.Duration == 0 {
 		in.Duration = 10
 	}
@@ -122,33 +133,6 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 			}
 			c.args = append(c.args, "@"+in.DNSServer)
 		}
-	case "capture", "torch":
-		if in.Interface == "" {
-			return bad("выберите интерфейс захвата")
-		}
-		if len(in.Filter) > 256 || strings.ContainsAny(in.Filter, "\x00\r\n") {
-			return bad("фильтр BPF: до 256 символов в одной строке")
-		}
-		if in.Count == 0 {
-			in.Count = 10000
-		}
-		if in.Count < 1 || in.Count > 10000 {
-			return bad("лимит захвата: 1–10000 пакетов")
-		}
-		if in.Size == 0 {
-			in.Size = 256
-		}
-		if in.Kind == "torch" {
-			in.Size = 128
-		}
-		if in.Size < 64 || in.Size > 65535 {
-			return bad("длина захвата пакета: 64–65535 байт")
-		}
-		c.name, c.args = "tcpdump", []string{"-n", "-p", "-U", "-i", in.Interface, "-s", strconv.Itoa(in.Size), "-c", strconv.Itoa(in.Count), "-w", "-", "--"}
-		if in.Filter != "" {
-			c.args = append(c.args, in.Filter)
-		}
-		c.duration = time.Duration(in.Duration) * time.Second
 	case "iperf":
 		if in.Port == 0 {
 			in.Port = 5201
@@ -260,10 +244,14 @@ type diagnosticJob struct {
 	started                         time.Time
 	finished                        time.Time
 	cancel                          context.CancelFunc
-	pcap                            []byte
+	pcap                            *os.File
+	captureBytes                    int64
+	captureHeader                   []byte
+	input                           diagnosticInput
 	torch                           *torchReader
 	truncated                       bool
 	expiry                          *time.Timer
+	done                            chan struct{}
 }
 
 func (s *Server) handleDiagnosticStart(w http.ResponseWriter, r *http.Request) {
@@ -289,9 +277,13 @@ func (s *Server) handleDiagnosticStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "не удалось создать запуск")
 		return
 	}
-	// Jobs outlive the POST but have a hard deadline even if the browser disappears.
-	ctx, cancel := context.WithTimeout(context.Background(), command.duration)
-	j := &diagnosticJob{id: hex.EncodeToString(idBytes), owner: userOf(r), kind: input.Kind, started: time.Now(), state: "running", cancel: cancel}
+	// Captures run until stopped; other tools retain their existing deadlines.
+	ctx, cancel := context.WithCancel(context.Background())
+	if command.duration > 0 {
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), command.duration)
+	}
+	j := &diagnosticJob{id: hex.EncodeToString(idBytes), owner: userOf(r), kind: input.Kind, started: time.Now(), state: "running", cancel: cancel, done: make(chan struct{}), input: input}
 	if input.Kind == "torch" {
 		j.torch = newTorchReader()
 	}
@@ -306,28 +298,62 @@ func (s *Server) handleDiagnosticStart(w http.ResponseWriter, r *http.Request) {
 	if m.jobs == nil {
 		m.jobs = make(map[string]*diagnosticJob)
 	}
+	if input.Kind == "capture" {
+		base := os.TempDir()
+		if runtime.GOOS == "linux" {
+			base = "/var/tmp"
+		}
+		j.pcap, err = os.CreateTemp(base, "netos-capture-*.pcap")
+		if err != nil {
+			m.mu.Unlock()
+			cancel()
+			writeError(w, 500, "не удалось создать файл захвата: %s", err)
+			return
+		}
+	}
+	// A new capture replaces only this owner's previous result of that tool.
+	// Unrelated diagnostic commands must not evict a saved capture.
+	for id, previous := range m.jobs {
+		if previous.owner == j.owner && previous.kind == j.kind && (j.kind == "capture" || j.kind == "torch") {
+			delete(m.jobs, id)
+			previous.cleanup()
+		}
+	}
 	if len(m.jobs) >= 4 {
 		var oldest *diagnosticJob
 		for _, previous := range m.jobs {
+			if previous.kind == "capture" || previous.kind == "torch" {
+				continue
+			}
 			if oldest == nil || previous.started.Before(oldest.started) {
 				oldest = previous
 			}
 		}
-		delete(m.jobs, oldest.id)
-		if oldest.expiry != nil {
-			oldest.expiry.Stop()
+		if oldest != nil {
+			delete(m.jobs, oldest.id)
+			if oldest.expiry != nil {
+				oldest.expiry.Stop()
+			}
+			oldest.cleanup()
 		}
 	}
+
 	m.active = true
 	m.jobs[j.id] = j
 	m.mu.Unlock()
 	go func() {
+		defer close(j.done)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, path, command.args...)
-		cmd.Stdout = diagnosticWriter{job: j, binary: input.Kind == "capture" || input.Kind == "torch"}
-		cmd.Stderr = diagnosticWriter{job: j}
-		cmd.WaitDelay = 2 * time.Second
-		err := cmd.Run()
+		var err error
+		if input.Kind == "capture" || input.Kind == "torch" {
+			err = runCapture(ctx, path, command, j)
+		} else {
+			cmd := exec.CommandContext(ctx, path, command.args...)
+			cmd.Stdout = diagnosticWriter{job: j}
+			cmd.Stderr = diagnosticWriter{job: j}
+			cmd.WaitDelay = 2 * time.Second
+			err = cmd.Run()
+		}
 		m.mu.Lock()
 		j.mu.Lock()
 		j.finished = time.Now()
@@ -346,14 +372,16 @@ func (s *Server) handleDiagnosticStart(w http.ResponseWriter, r *http.Request) {
 				j.failure = err.Error()
 			}
 		}
-		// A killed tcpdump may end midway through a record. Only complete packets are downloadable.
-		if input.Kind == "capture" {
-			j.pcap = completePCAP(j.pcap)
+		// The packet writer has already discarded incomplete trailing records.
+		if j.pcap != nil {
+			_ = j.pcap.Close()
 		}
 		j.mu.Unlock()
 		id := j.id
 		m.active = false
-		j.expiry = time.AfterFunc(5*time.Minute, func() { m.mu.Lock(); delete(m.jobs, id); m.mu.Unlock() })
+		if input.Kind != "capture" && input.Kind != "torch" {
+			j.expiry = time.AfterFunc(5*time.Minute, func() { m.mu.Lock(); delete(m.jobs, id); j.cleanup(); m.mu.Unlock() })
+		}
 		m.mu.Unlock()
 	}()
 	writeJSON(w, 202, map[string]string{"id": j.id})
@@ -380,14 +408,7 @@ func (writer diagnosticWriter) Write(p []byte) (int, error) {
 		return n, err
 	}
 	if writer.binary {
-		remaining := diagnosticCaptureLimit - len(j.pcap)
-		if len(p) > remaining {
-			j.pcap = append(j.pcap, p[:remaining]...)
-			j.truncated = true
-			j.cancel()
-			return len(p), nil
-		}
-		j.pcap = append(j.pcap, p...)
+		return 0, errors.New("capture requires packet writer")
 	} else {
 		remaining := diagnosticTextLimit - j.output.Len()
 		if len(p) > remaining {
@@ -421,9 +442,13 @@ func (s *Server) handleDiagnosticJob(w http.ResponseWriter, r *http.Request) {
 	if !j.finished.IsZero() {
 		end = j.finished
 	}
-	response := map[string]any{"id": j.id, "kind": j.kind, "state": j.state, "output": j.output.String(), "error": j.failure, "elapsed": end.Sub(j.started).Seconds(), "truncated": j.truncated, "capture_bytes": len(j.pcap)}
+	response := map[string]any{"id": j.id, "kind": j.kind, "state": j.state, "output": j.output.String(), "error": j.failure, "elapsed": end.Sub(j.started).Seconds(), "truncated": j.truncated, "capture_bytes": j.captureBytes, "input": j.input}
 	if j.torch != nil {
-		response["torch"] = j.torch.snapshot(end.Sub(j.started).Seconds())
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 0 {
+			page = 0
+		}
+		response["torch"] = j.torch.snapshot(end.Sub(j.started).Seconds(), page)
 	}
 	j.mu.Unlock()
 	writeJSON(w, 200, response)
@@ -452,15 +477,66 @@ func (s *Server) handleDiagnosticCapture(w http.ResponseWriter, r *http.Request)
 		writeError(w, 409, "захват ещё не завершён")
 		return
 	}
-	if len(j.pcap) < 24 {
+	if j.pcap == nil || j.captureBytes < 24 {
 		j.mu.Unlock()
 		writeError(w, 404, "нет данных PCAP")
 		return
 	}
-	data := j.pcap // immutable after finished; a slow download must not block job status.
+	file, err := os.Open(j.pcap.Name())
 	j.mu.Unlock()
+	if err != nil {
+		writeError(w, 404, "файл захвата недоступен")
+		return
+	}
+	defer file.Close()
 	w.Header().Set("Content-Type", "application/vnd.tcpdump.pcap")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="netos-%s.pcap"`, j.id))
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = io.Copy(w, bytes.NewReader(data))
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	http.ServeContent(w, r, filepath.Base(file.Name()), j.finished, file)
+}
+
+func (j *diagnosticJob) cleanup() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.pcap != nil {
+		_ = j.pcap.Close()
+		_ = os.Remove(j.pcap.Name())
+	}
+}
+
+func (s *Server) handleDiagnosticCurrent(w http.ResponseWriter, r *http.Request) {
+	s.diagnostics.mu.Lock()
+	var latest *diagnosticJob
+	for _, j := range s.diagnostics.jobs {
+		if j.owner == userOf(r) && j.kind == r.URL.Query().Get("kind") && (latest == nil || j.started.After(latest.started)) {
+			latest = j
+		}
+	}
+	s.diagnostics.mu.Unlock()
+	if latest == nil {
+		writeJSON(w, 200, nil)
+		return
+	}
+	r.SetPathValue("id", latest.id)
+	s.handleDiagnosticJob(w, r)
+}
+
+func (s *Server) stopDiagnostics() {
+	m := &s.diagnostics
+	m.mu.Lock()
+	jobs := make([]*diagnosticJob, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		j.cancel()
+		if j.expiry != nil {
+			j.expiry.Stop()
+		}
+		jobs = append(jobs, j)
+	}
+	m.mu.Unlock()
+	for _, j := range jobs {
+		if j.done != nil {
+			<-j.done
+		}
+		j.cleanup()
+	}
 }

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/binary"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +19,7 @@ func TestDiagnosticValidation(t *testing.T) {
 		{Kind: "ping", Host: "example.org", Count: 31}, {Kind: "ping", Host: "example.org", Size: 65535},
 		{Kind: "traceroute", Host: "example.org", TTL: 65}, {Kind: "mtr", Host: "example.org", Interface: "not-a-netos-interface"},
 		{Kind: "dns", Host: "example.org", DNSServer: "@bad"}, {Kind: "dns", Host: "example.org", QueryType: "-f"},
-		{Kind: "capture"}, {Kind: "torch", Duration: 61}, {Kind: "iperf", Host: "127.0.0.1", Port: 22},
+		{Kind: "capture", Address: "invalid"}, {Kind: "torch", Direction: "invalid"}, {Kind: "iperf", Host: "127.0.0.1", Port: 22},
 		{Kind: "iperf", Mode: "server"}, {Kind: "iperf", Mode: "server", Bind: "0.0.0.0"},
 		{Kind: "iperf", Host: "127.0.0.1", Mbps: 10001}, {Kind: "route", Host: "example.org"}, {Kind: "shell"},
 	} {
@@ -42,7 +44,7 @@ func TestDiagnosticValidation(t *testing.T) {
 
 func TestDiagnosticPermissionsAndOwnership(t *testing.T) {
 	for _, level := range []string{"none", "view", "manage"} {
-		for _, path := range []string{"/api/diagnostics/tools", "/api/diagnostics/jobs", "/api/diagnostics/jobs/id", "/api/diagnostics/jobs/id/capture"} {
+		for _, path := range []string{"/api/diagnostics/tools", "/api/diagnostics/current", "/api/diagnostics/jobs", "/api/diagnostics/jobs/id", "/api/diagnostics/jobs/id/capture"} {
 			r := limitedRequest(map[string]string{"diagnostics": level})
 			r.URL.Path = path
 			want := level == "manage" || (path == "/api/diagnostics/tools" && level == "view")
@@ -51,7 +53,11 @@ func TestDiagnosticPermissionsAndOwnership(t *testing.T) {
 			}
 		}
 	}
-	j := &diagnosticJob{id: "private", owner: "alice", kind: "capture", started: time.Now(), finished: time.Now(), pcap: pcapFixture(1, 1), state: "done"}
+	j := &diagnosticJob{id: "private", owner: "alice", kind: "capture", started: time.Now(), finished: time.Now(), state: "done"}
+	j.pcap, _ = os.Create(filepath.Join(t.TempDir(), "test.pcap"))
+	j.pcap.Write(pcapFixture(1, 1))
+	j.captureBytes = int64(len(pcapFixture(1, 1)))
+	j.pcap.Close()
 	s := &Server{diagnostics: diagnosticManager{jobs: map[string]*diagnosticJob{j.id: j}}}
 	for _, handler := range []func(*httptest.ResponseRecorder){
 		func(w *httptest.ResponseRecorder) {
@@ -81,7 +87,7 @@ func TestDiagnosticPermissionsAndOwnership(t *testing.T) {
 	r.SetPathValue("id", j.id)
 	w := httptest.NewRecorder()
 	s.handleDiagnosticCapture(w, r)
-	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), j.pcap) || w.Header().Get("Cache-Control") != "no-store" {
+	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), pcapFixture(1, 1)) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
@@ -107,14 +113,19 @@ func TestDiagnosticOutputLimitsAndStop(t *testing.T) {
 		t.Fatal("text unbounded")
 	}
 	j.truncated = false
-	w.binary = true
-	p = bytes.Repeat([]byte("b"), diagnosticCaptureLimit+1)
-	if n, err := w.Write(p); n != len(p) || err != nil {
-		t.Fatal(n, err)
+	j.pcap, _ = os.Create(filepath.Join(t.TempDir(), "large.pcap"))
+	recorder := &capturePacketWriter{job: j}
+	fixture := pcapFixture(1, 10000)
+	recorder.Write(fixture)
+	for i := 0; i < 20; i++ {
+		if _, err := recorder.Write(fixture[24:]); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(j.pcap) != diagnosticCaptureLimit || !j.truncated || !cancelled {
-		t.Fatal("capture unbounded")
+	if j.captureBytes <= 8<<20 || j.truncated || cancelled {
+		t.Fatal("capture unexpectedly limited", j.captureBytes)
 	}
+	j.pcap.Close()
 	for _, cut := range []int{0, 4, 23, 24, 25, 39, 40, 65, 81} {
 		full := pcapFixture(1, 2)
 		got := completePCAP(full[:cut])
@@ -201,8 +212,11 @@ func TestDiagnosticTorchStreaming(t *testing.T) {
 	if _, err := r.Write(pcapFixture(1, 10000)); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.flows) != 2048 || r.skipped != 10000-2048 || len(r.snapshot(1)["flows"].([]torchFlow)) != 200 {
+	if len(r.flows) != 10000 || r.skipped != 0 || len(r.snapshot(1)["flows"].([]torchFlow)) != 10000 {
 		t.Fatal("flow limit failed")
+	}
+	if rows := r.snapshot(1, 25)["flows"].([]torchFlow); len(rows) != 100 {
+		t.Fatal("page lost flows")
 	}
 	// VLAN header and non-initial fragment: preserve addresses, never invent ports.
 	r = newTorchReader()

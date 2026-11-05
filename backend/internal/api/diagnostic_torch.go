@@ -3,7 +3,7 @@ package api
 import (
 	"encoding/binary"
 	"errors"
-	"net"
+	"net/netip"
 	"sort"
 )
 
@@ -18,8 +18,9 @@ type torchFlow struct {
 	Bitrate         float64 `json:"bitrate"`
 }
 type torchKey struct {
-	source, destination         [4]byte
+	source, destination         netip.Addr
 	protocol                    byte
+	family                      uint16
 	sourcePort, destinationPort uint16
 }
 type torchReader struct {
@@ -60,7 +61,7 @@ func completePCAP(data []byte) []byte {
 	return data[:at]
 }
 
-// Streaming parser holds only one incomplete packet and a capped flow map.
+// Streaming parser holds only one incomplete packet and flow counters.
 // It never retains payloads once their headers have been counted.
 func (t *torchReader) Write(data []byte) (int, error) {
 	n := len(data)
@@ -103,6 +104,10 @@ func (t *torchReader) packet(p []byte, wire uint32) {
 	offset := 0
 	ether := uint16(0x0800)
 	switch t.link {
+	case 101:
+		if len(p) > 0 && p[0]>>4 == 6 {
+			ether = 0x86dd
+		}
 	case 1:
 		if len(p) < 14 {
 			t.skipped++
@@ -133,31 +138,19 @@ func (t *torchReader) packet(p []byte, wire uint32) {
 		ether = binary.BigEndian.Uint16(p[offset+2 : offset+4])
 		offset += 4
 	}
-	if ether != 0x0800 || len(p) < offset+20 {
+	k, ok := torchPacketKey(ether, p[offset:])
+	if !ok {
 		t.skipped++
 		return
 	}
-	p = p[offset:]
-	header := int(p[0]&15) * 4
-	if p[0]>>4 != 4 || header < 20 || len(p) < header {
-		t.skipped++
-		return
-	}
-	k := torchKey{protocol: p[9]}
-	copy(k.source[:], p[12:16])
-	copy(k.destination[:], p[16:20])
-	// Non-initial IP fragments do not contain transport ports.
-	if (k.protocol == 6 || k.protocol == 17) && binary.BigEndian.Uint16(p[6:8])&0x1fff == 0 && len(p) >= header+4 {
-		k.sourcePort = binary.BigEndian.Uint16(p[header : header+2])
-		k.destinationPort = binary.BigEndian.Uint16(p[header+2 : header+4])
-	}
+
 	f := t.flows[k]
 	if f == nil {
-		if len(t.flows) >= 2048 {
-			t.skipped++
-			return
-		}
+
 		protocol := "IP"
+		if k.family == 0x806 {
+			protocol = "ARP"
+		}
 		switch k.protocol {
 		case 6:
 			protocol = "TCP"
@@ -165,18 +158,20 @@ func (t *torchReader) packet(p []byte, wire uint32) {
 			protocol = "UDP"
 		case 1:
 			protocol = "ICMP"
+		case 58:
+			protocol = "ICMPv6"
 		case 47:
 			protocol = "GRE"
 		case 50:
 			protocol = "ESP"
 		}
-		f = &torchFlow{Source: net.IP(k.source[:]).String(), Destination: net.IP(k.destination[:]).String(), Protocol: protocol, SourcePort: k.sourcePort, DestinationPort: k.destinationPort}
+		f = &torchFlow{Source: k.source.String(), Destination: k.destination.String(), Protocol: protocol, SourcePort: k.sourcePort, DestinationPort: k.destinationPort}
 		t.flows[k] = f
 	}
 	f.Packets++
 	f.Bytes += uint64(wire)
 }
-func (t *torchReader) snapshot(seconds float64) map[string]any {
+func (t *torchReader) snapshot(seconds float64, page ...int) map[string]any {
 	rows := make([]torchFlow, 0, len(t.flows))
 	for _, f := range t.flows {
 		row := *f
@@ -203,8 +198,88 @@ func (t *torchReader) snapshot(seconds float64) map[string]any {
 		}
 		return rows[i].DestinationPort < rows[j].DestinationPort
 	})
-	if len(rows) > 200 {
-		rows = rows[:200]
+	if len(page) > 0 {
+		start := page[0] * 100
+		if start < 0 || start > len(rows) {
+			start = len(rows)
+		}
+		rows = rows[start:min(start+100, len(rows))]
 	}
 	return map[string]any{"flows": rows, "total_flows": len(t.flows), "packets": t.packets, "skipped": t.skipped}
+}
+
+func torchPacketKey(ether uint16, p []byte) (torchKey, bool) {
+	k := torchKey{family: ether}
+	header := 0
+	fragmented := false
+	switch ether {
+	case 0x0800:
+		if len(p) < 20 || p[0]>>4 != 4 {
+			return k, false
+		}
+		header = int(p[0]&15) * 4
+		if header < 20 || len(p) < header {
+			return k, false
+		}
+		k.source = netip.AddrFrom4([4]byte(p[12:16]))
+		k.destination = netip.AddrFrom4([4]byte(p[16:20]))
+		k.protocol = p[9]
+		fragmented = binary.BigEndian.Uint16(p[6:8])&0x1fff != 0
+	case 0x86dd:
+		if len(p) < 40 || p[0]>>4 != 6 {
+			return k, false
+		}
+		k.source = netip.AddrFrom16([16]byte(p[8:24]))
+		k.destination = netip.AddrFrom16([16]byte(p[24:40]))
+		k.protocol = p[6]
+		header = 40
+		for {
+			size := 0
+			switch k.protocol {
+			case 0, 43, 60:
+				if len(p) < header+2 {
+					return k, false
+				}
+				size = (int(p[header+1]) + 1) * 8
+			case 51:
+				if len(p) < header+2 {
+					return k, false
+				}
+				size = (int(p[header+1]) + 2) * 4
+			case 44:
+				size = 8
+				if len(p) < header+size {
+					return k, false
+				}
+				fragmented = binary.BigEndian.Uint16(p[header+2:header+4])&0xfff8 != 0
+			default:
+				size = 0
+			}
+			if size == 0 {
+				break
+			}
+			if len(p) < header+size {
+				return k, false
+			}
+			k.protocol = p[header]
+			header += size
+			if fragmented {
+				break
+			}
+		}
+	case 0x0806:
+		if len(p) < 28 || p[4] != 6 || p[5] != 4 || binary.BigEndian.Uint16(p[2:4]) != 0x800 {
+			return k, false
+		}
+		k.source = netip.AddrFrom4([4]byte(p[14:18]))
+		k.destination = netip.AddrFrom4([4]byte(p[24:28]))
+		return k, true
+	default:
+		return k, false
+	}
+	if !fragmented && (k.protocol == 6 || k.protocol == 17) && len(p) >= header+4 {
+		k.sourcePort = binary.BigEndian.Uint16(p[header : header+2])
+		k.destinationPort = binary.BigEndian.Uint16(p[header+2 : header+4])
+	}
+	return k, true
 }
