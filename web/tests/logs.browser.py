@@ -38,10 +38,7 @@ async def main():
   await page.route('**/*',route)
   await page.goto('https://netos-ui.test/#diagnostics?log=dns')
   await expect(page.get_by_text('Журналы',exact=True)).to_be_visible()
-  await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_count(0)
-  assert state['log_reads']==0
-  await page.locator('.logs-section > summary').click()
-  await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_attribute('aria-selected','true')
+  await expect(page.locator('.logs-content').get_by_role('tab',name='DNS',exact=True)).to_have_attribute('aria-selected','true')
   await expect(page.get_by_text('dns fixture.example <script>safe</script>',exact=True)).to_be_visible()
   await page.get_by_role('tab',name='Общий',exact=True).click()
   await expect(page.get_by_text('services fixture.example <script>safe</script>',exact=True)).to_be_visible()
@@ -54,7 +51,7 @@ async def main():
   assert 'firewall fixture.example' in text and 'dns fixture.example' not in text
   state['fail']=True
   await page.get_by_role('button',name='Обновить журнал',exact=True).click()
-  await expect(page.get_by_text('fixture unavailable',exact=True)).to_be_visible()
+  await expect(page.get_by_text('fixture unavailable',exact=False)).to_be_visible()
   await expect(page.get_by_role('button',name='Скачать журнал',exact=True)).to_be_disabled()
   state['fail']=False
   await page.get_by_role('button',name='Обновить журнал',exact=True).click()
@@ -62,17 +59,13 @@ async def main():
   await page.get_by_label('Поиск в журнале',exact=True).fill('')
   Path('output/playwright').mkdir(parents=True,exist_ok=True)
   await page.screenshot(path='output/playwright/logs.png')
-  await page.locator('.logs-section > summary').click()
-  await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_count(0)
   state['cfg']['dns']['query_log']=False
   await page.goto('https://netos-ui.test/#diagnostics?log=dns')
   await page.reload()
-  state['kinds'].clear()
-  await page.locator('.logs-section > summary').click()
-  await expect(page.get_by_role('tab',name='DNS',exact=True)).to_have_count(0)
+  await expect(page.locator('.logs-content').get_by_role('tab',name='DNS',exact=True)).to_have_count(0)
   await expect(page.get_by_role('tab',name='Общий',exact=True)).to_have_attribute('aria-selected','true')
   await expect(page.get_by_text('services fixture.example <script>safe</script>',exact=True)).to_be_visible()
-  assert state['kinds']==['all'], state['kinds']
+  assert state['kinds'][-1]=='all', state['kinds']
   await page.goto('https://netos-ui.test/#firewall')
   await page.get_by_role('button',name='Изменить',exact=True).click()
   await page.get_by_text('Дополнительно',exact=True).click()

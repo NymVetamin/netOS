@@ -1,5 +1,5 @@
-import { useAccess } from "../permissions";
-import { Logs } from "./Logs";
+import { LogEntries } from "./Logs";
+import { DiagnosticTool, DIAGNOSTIC_TOOLS } from "./DiagnosticTool";
 import { useEffect, useState, ReactNode } from "react";
 import { api } from "../api";
 import { Card, Empty, Notice, TableWrap } from "../ui";
@@ -16,8 +16,56 @@ import { Icon } from "../icons";
 const ROUTES = "netos:routes";
 const NEIGHBORS = "netos:neighbors";
 
+const DIAGNOSTIC_TABS = [
+  ...DIAGNOSTIC_TOOLS.map(t => ({id: t.id, label: t.label})),
+  {id: "state", label: "Маршруты и соседи"},
+  {id: "logs", label: "Журналы"},
+  {id: "configs", label: "Конфиги"},
+];
+let lastDiagnosticTab = "ping";
+function diagnosticTabFromHash() {
+  const query = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  const value = query.get("tab") || (query.has("log") ? "logs" : "");
+  lastDiagnosticTab = DIAGNOSTIC_TABS.some(t => t.id === value) ? value : lastDiagnosticTab;
+  return lastDiagnosticTab;
+}
 export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: boolean; dnsLogging?: boolean }) {
-  const can = useAccess();
+  const [selected, setSelected] = useState(diagnosticTabFromHash);
+  const tab = selected === "configs" && !admin ? "state" : selected;
+  const [tools, setTools] = useState<Awaited<ReturnType<typeof api.diagnosticTools>> | null>(null);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const follow = () => setSelected(diagnosticTabFromHash());
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setError("");
+    api.diagnosticTools().then(value => { if (!cancelled) setTools(value); })
+      .catch(e => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, [attempt]);
+  const tool = DIAGNOSTIC_TOOLS.find(t => t.id === tab);
+  return <>
+    <div className="page-head"><h1><Icon name="activity" />Диагностика</h1><p>Проверка сети и трафика с самого роутера</p></div>
+    <div role="tablist" aria-label="Диагностика" className="row wrap service-tabs">
+      {DIAGNOSTIC_TABS.filter(t => admin || t.id !== "configs").map(t => <a key={t.id} role="tab" id={`diagnostic-tab-${t.id}`} aria-controls={`diagnostic-${t.id}`} aria-selected={tab === t.id} className={`btn sm ${tab === t.id ? "primary" : ""}`} href={`#diagnostics?tab=${t.id}`}>{t.label}</a>)}
+    </div>
+    <div role="tabpanel" id={`diagnostic-${tab}`} aria-labelledby={`diagnostic-tab-${tab}`}>
+      {tool && <>
+        {error && <Notice tone="danger" title="Не удалось проверить инструменты">{error} <button className="btn sm" onClick={() => setAttempt(n => n + 1)}>Повторить</button></Notice>}
+        {!tools && !error && <Empty>Проверка инструментов…</Empty>}
+        {tools && <DiagnosticTool key={tab} tool={tool} capabilities={tools} refresh={() => setAttempt(n => n + 1)} />}
+      </>}
+      {tab === "logs" && <LogEntries dnsLogging={dnsLogging} />}
+      {(tab === "state" || tab === "configs") && <DiagnosticArtifacts key={tab} admin={admin} mode={tab} />}
+    </div>
+  </>;
+}
+
+function DiagnosticArtifacts({ admin, mode }: { admin: boolean; mode: "state" | "configs" }) {
   const [artifacts, setArtifacts] = useState<{ id: string; title: string }[]>([]);
   // Вкладка пуста, пока не пришёл список: открывать что-то до него значило бы
   // сходить на сервер дважды и показать не то, что откроется в итоге.
@@ -31,39 +79,23 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [listAttempt, setListAttempt] = useState(0);
-  const [probeHost, setProbeHost] = useState("1.1.1.1");
-  const [probeRunning, setProbeRunning] = useState(false);
-  const [probeResult, setProbeResult] = useState("");
-
-  async function runProbe(kind: "ping" | "traceroute") {
-    setProbeRunning(true);
-    setProbeResult("");
-    try {
-      const result = await api.diagnosticProbe(kind, probeHost);
-      setProbeResult(result.output || result.error || "Нет ответа");
-    } catch (cause) {
-      setProbeResult(cause instanceof Error ? cause.message : "Проверка не удалась");
-    } finally {
-      setProbeRunning(false);
-    }
-  }
-
+  const [refreshVersion, setRefreshVersion] = useState(0);
   useEffect(() => {
     let cancelled = false;
     setListLoading(true);
     setListError("");
     (async () => {
       try {
-        const list = admin ? await api.renderList() : [];
+        const list = admin && mode === "configs" ? await api.renderList() : [];
         if (cancelled) return;
         setArtifacts(list);
         // Первым открывается первый же артефакт — им всегда оказывается то, что
         // определяет доступность машины: правила iptables.
-        setTab(list.length > 0 ? list[0].id : ROUTES);
+        setTab(previous => list.some(item => item.id === previous) ? previous : list.length > 0 ? list[0].id : mode === "state" ? ROUTES : "");
       } catch (cause) {
         if (!cancelled) {
           setListError(cause instanceof Error ? cause.message : "Не удалось загрузить список диагностики");
-          setTab(ROUTES);
+          setTab(mode === "state" ? ROUTES : "");
         }
       } finally {
         if (!cancelled) setListLoading(false);
@@ -72,7 +104,7 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
     return () => {
       cancelled = true;
     };
-  }, [listAttempt, admin]);
+  }, [listAttempt, admin, mode]);
 
   useEffect(() => {
     if (!tab) return;
@@ -114,12 +146,13 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
     return () => {
       cancelled = true;
     };
-  }, [tab]);
+  }, [tab, refreshVersion]);
 
   const tabs = [
-    ...artifacts,
-    { id: ROUTES, title: "Маршруты" },
-    { id: NEIGHBORS, title: "Таблица соседей" },
+    ...(mode === "configs" ? artifacts : [
+      { id: ROUTES, title: "Маршруты" },
+      { id: NEIGHBORS, title: "Таблица соседей" },
+    ]),
   ];
 
   const selectTab = (id: string) => {
@@ -158,22 +191,6 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
 
   return (
     <>
-      <div className="page-head">
-        <h1><Icon name="activity" />Диагностика</h1>
-        <p>Что получилось из настроек на самом деле</p>
-      </div>
-
-      <Logs dnsLogging={dnsLogging} />
-
-      <Card title="Проверка соединения">
-        <div className="row wrap" style={{ gap: "0.4rem" }}>
-          <input aria-label="Адрес для проверки" value={probeHost} onChange={(event) => setProbeHost(event.target.value)} placeholder="IP-адрес или имя узла" />
-          <button className="btn sm" disabled={!can("diagnostics", true) || probeRunning} onClick={() => runProbe("ping")}>Ping</button>
-          <button className="btn sm" disabled={!can("diagnostics", true) || probeRunning} onClick={() => runProbe("traceroute")}>Traceroute</button>
-        </div>
-        {probeResult && <pre className="output">{probeResult}</pre>}
-      </Card>
-
       {listLoading && <Empty>Загрузка списка диагностики…</Empty>}
       {listError && (
         <Notice tone="danger" title="Не удалось загрузить список диагностики">
@@ -185,6 +202,7 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
       )}
 
       <div className="row wrap" style={{ marginBottom: "1rem", gap: "0.4rem" }}>
+        <button className="btn sm" disabled={pending || !tab} onClick={() => setRefreshVersion(n => n + 1)}>Обновить</button>
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -196,7 +214,7 @@ export function DiagnosticsPage({ admin = true, dnsLogging = false }: { admin?: 
         ))}
       </div>
 
-      {tab === NEIGHBORS ? (
+      {!tab ? (!listLoading && !listError && <Empty>Доступных конфигов нет</Empty>) : tab === NEIGHBORS ? (
         <Card title="Таблица соседей" tight>
           {pending ? (
             <Empty>Загрузка…</Empty>

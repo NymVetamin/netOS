@@ -10,6 +10,15 @@ export type Problem = {
   severity: "error" | "warning";
 };
 
+export type DiagnosticJob = {
+  id: string; kind: string; state: string; output: string; error: string;
+  elapsed: number; truncated: boolean; capture_bytes: number;
+  torch?: {total_flows: number; packets: number; skipped: number; flows: {
+    source: string; destination: string; protocol: string; source_port: number;
+    destination_port: number; packets: number; bytes: number; bitrate: number;
+  }[]};
+};
+
 export type RollbackInfo = {
   at: string;
   revision: number;
@@ -179,6 +188,19 @@ async function request<T>(
 }
 
 export const api = {
+  async diagnosticCapture(id: string): Promise<Blob> {
+    const response = await fetch(`/api/diagnostics/jobs/${encodeURIComponent(id)}/capture`, {credentials:"same-origin", cache:"no-store"});
+    if (response.status === 401) invalidateSession(csrfToken);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new ApiError(response.status, body?.error || `Ошибка ${response.status}`);
+    }
+    return response.blob();
+  },
+  diagnosticTools: () => request<{available: Record<string, boolean>; interfaces: {name: string; addresses: string[]}[]}>("GET", "/api/diagnostics/tools"),
+  diagnosticStart: (input: Record<string, unknown>) => request<{id: string}>("POST", "/api/diagnostics/jobs", input),
+  diagnosticJob: (id: string, signal?: AbortSignal) => request<DiagnosticJob>("GET", `/api/diagnostics/jobs/${encodeURIComponent(id)}`, undefined, undefined, signal),
+  diagnosticStop: (id: string) => request<{ok: boolean}>("DELETE", `/api/diagnostics/jobs/${encodeURIComponent(id)}`),
   ocCertificate: (id: string, peer: string) => request<any>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate`),
   ocCertificates: (id: string, signal?: AbortSignal) => request<Record<string, any>>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificates`, undefined, undefined, signal),
   ocCertificatePassword: (id: string, peer: string) => request<{password: string}>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate/password`),

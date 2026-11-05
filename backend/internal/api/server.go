@@ -46,6 +46,7 @@ type ComponentProbe interface {
 
 // Server — веб-панель.
 type Server struct {
+	diagnostics   diagnosticManager
 	Certificates  *certificates.Manager
 	PKI           *vpnpki.Store
 	StorageRunner system.Runner
@@ -261,6 +262,11 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/routes", s.handleRoutes)
 	auth("GET /api/dns/blocklists/status", s.handleBlocklistStatus)
 	auth("POST /api/diagnostics/probe", s.handleDiagnosticProbe)
+	auth("GET /api/diagnostics/tools", s.handleDiagnosticTools)
+	auth("POST /api/diagnostics/jobs", s.handleDiagnosticStart)
+	auth("GET /api/diagnostics/jobs/{id}", s.handleDiagnosticJob)
+	auth("DELETE /api/diagnostics/jobs/{id}", s.handleDiagnosticStop)
+	auth("GET /api/diagnostics/jobs/{id}/capture", s.handleDiagnosticCapture)
 	auth("GET /api/audit", s.handleAudit)
 	auth("GET /api/render", s.handleRenderList)
 	auth("GET /api/render/{kind}", s.handleRender)

@@ -10,7 +10,7 @@ export function Logs({ dnsLogging }: { dnsLogging: boolean }) {
   {open && <LogEntries dnsLogging={dnsLogging} />}
  </details>;
 }
-function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
+export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
  const [selectedKind,setKind]=useState(fromHash),[attempt,setAttempt]=useState(0),[query,setQuery]=useState("");
  const kind=selectedKind==="dns" && !dnsLogging ? "all" : selectedKind;
  useEffect(()=>{if(!dnsLogging && selectedKind==="dns")setKind("all")},[dnsLogging,selectedKind]);
@@ -24,7 +24,7 @@ function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
  const rows=(data?.entries || []).filter((e:any)=>`${e.time} ${e.source} ${e.unit} ${e.message}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
  function download(){const text=rows.map((e:any)=>`${e.time || "Время неизвестно"}\t${e.source}\t${e.unit}\t${e.message}`).join("\n");const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`netos-${kind}.log`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  return <div className="logs-content" aria-busy={loading}>
-  <div role="tablist" aria-label="Источники журнала" className="row wrap">{tabs.filter(t=>t.id!=="dns" || dnsLogging).map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?log=${t.id}`}}>{t.name}</button>)}</div>
+  <div role="tablist" aria-label="Источники журнала" className="row wrap">{tabs.filter(t=>t.id!=="dns" || dnsLogging).map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?tab=logs&log=${t.id}`}}>{t.name}</button>)}</div>
   <div className="row wrap" style={{margin:"0.8rem 0",gap:"0.5rem"}}>
    <input aria-label="Поиск в журнале" placeholder="Поиск в загруженных записях" value={query} onChange={e=>setQuery(e.target.value)}/>
    <button className="btn sm" disabled={loading} onClick={()=>setAttempt(n=>n+1)}>Обновить журнал</button>

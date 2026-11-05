@@ -185,7 +185,7 @@ var Catalog = []ComponentInfo{
 	{
 		ID: "igmpproxy", Title: "IPTV", Group: "Сетевые службы",
 		Description: "Мультикастовое телевидение провайдера: IGMP proxy для выбранных локальных сетей.",
-		Packages: []string{"igmpproxy"}, Units: []string{"igmpproxy.service"},
+		Packages:    []string{"igmpproxy"}, Units: []string{"igmpproxy.service"},
 		RunUnits: []string{"netos-iptv.service"}, Provides: []string{"iptv"}, SizeHint: "меньше 1 МБ",
 	},
 	{
@@ -197,12 +197,19 @@ var Catalog = []ComponentInfo{
 	},
 	{
 		ID: "diagnostics", Title: "Инструменты диагностики", Group: "Дополнительно",
-		Description: "tcpdump, dig, traceroute и mtr — чтобы разбираться с сетью прямо на роутере.",
+		Description: "ping, tcpdump, dig, traceroute и mtr — диагностика сети из панели роутера.",
 		// dnsutils is only a virtual package on current Debian releases, so it
 		// can never be reported as installed or purged by dpkg-query. Track its
 		// concrete provider instead.
-		Packages: []string{"tcpdump", "bind9-dnsutils", "traceroute", "mtr-tiny"},
+		Packages: []string{"iputils-ping", "tcpdump", "bind9-dnsutils", "traceroute", "mtr-tiny"},
 		SizeHint: "около 10 МБ",
+	},
+	{
+		ID: "iperf3", Title: "iPerf3", Group: "Дополнительно",
+		Description: "Проверка пропускной способности: клиент и временный сервер из диагностики.",
+		Packages:    []string{"iperf3"},
+		Units:       []string{"iperf3.service"},
+		SizeHint:    "около 1 МБ",
 	},
 	{
 		ID: "qos", Title: "Ограничение скорости", Group: "Дополнительно",

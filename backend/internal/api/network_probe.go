@@ -40,6 +40,16 @@ func (s *Server) handleDiagnosticProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "неизвестный вид проверки")
 		return
 	}
+	// Old panels still use this endpoint; share the concurrency limit with jobs.
+	s.diagnostics.mu.Lock()
+	if s.diagnostics.active {
+		s.diagnostics.mu.Unlock()
+		writeError(w, http.StatusConflict, "уже выполняется диагностический запуск")
+		return
+	}
+	s.diagnostics.active = true
+	s.diagnostics.mu.Unlock()
+	defer func() { s.diagnostics.mu.Lock(); s.diagnostics.active = false; s.diagnostics.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(r.Context(), 18*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
