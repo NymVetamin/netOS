@@ -106,6 +106,30 @@ async def segment_status(browser):
     print("segment initial failure/recovery/stale/down/up PASS")
 
 
+async def component_access(browser, level):
+    config = copy.deepcopy(CONFIG)
+    config["components"] = []
+    session = {"role": "admin"} if level == "admin" else {
+        "role": "limited", "permissions": {"services": "manage", "components": level}}
+    page, state = await fixture(browser, session, config)
+    await page.goto("http://netos.test/#services?tab=dhcp")
+    notice = page.locator("#service-dhcp .need-line")
+    await expect(notice).to_be_visible()
+    if level == "none":
+        await expect(notice.locator("a")).to_have_count(0)
+        await expect(notice.get_by_text("Для установки обратитесь к администратору", exact=True)).to_be_visible()
+    else:
+        label = "Открыть компоненты" if level == "view" else "Установить"
+        await notice.get_by_role("link", name=label, exact=True).click()
+        await expect(page.get_by_role("heading", name="Компоненты", exact=True)).to_be_visible()
+        await expect(page.get_by_text("Нет доступа к разделу", exact=True)).to_have_count(0)
+        if level == "view":
+            await expect(page.get_by_text("Режим просмотра", exact=True)).to_be_visible()
+    assert not state["writes"] and not state["errors"], state
+    await page.close()
+    print("component access", level, "PASS")
+
+
 async def main():
     async with async_playwright() as p:
         executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
@@ -117,6 +141,8 @@ async def main():
                                   ({"role": "admin"}, True)]:
             await service_tabs(browser, session, editable)
         await segment_status(browser)
+        for level in ("none", "view", "manage", "admin"):
+            await component_access(browser, level)
         await browser.close()
 
 

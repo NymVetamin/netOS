@@ -3,6 +3,7 @@
 
 import { Children, cloneElement, createContext, isValidElement, ReactElement, ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
 import { HintContext } from "./HintContext";
+import { useAccess } from "./permissions";
 import { formatBitrate } from "./api";
 import { CARD_ICONS, Icon, IconName } from "./icons";
 
@@ -339,11 +340,14 @@ export function NeedComponent({
   effect: string;
   action?: ReactNode;
 }) {
+  const can = useAccess();
   return (
     <div className="need-line">
       <Badge>нужен компонент</Badge>
       <span><strong>{name}</strong> · {effect}</span>
-      {action ?? <a className="btn sm" href="#components">Установить</a>}
+      {action ?? (can("components")
+        ? <a className="btn sm" href="#components">{can("components", true) ? "Установить" : "Открыть компоненты"}</a>
+        : <span className="reason">Для установки обратитесь к администратору</span>)}
     </div>
   );
 }
