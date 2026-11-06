@@ -126,3 +126,16 @@ test("Hysteria rejects invalid or conflicting settings before replacing outbound
   }
   assert.equal(parseXrayLink(hy2Link({})).protocol, "hysteria");
 });
+
+test("imports netOS SOCKS5 and HTTP server links with encoded credentials", () => {
+  for (const [scheme, protocol, port] of [["socks5", "socks", 1080], ["http", "http", 80]]) {
+    for (const address of ["vpn.example", "[2001:db8::1]"]) {
+      for (const explicit of ["", ":18080"]) {
+        const link = `${scheme}://user%40name:p%3Ass%2Fword@${address}${explicit}#netOS`;
+        const expected = { protocol, settings: { servers: [{ address: address.replace(/[\[\]]/g, ""), port: explicit ? 18080 : port, users: [{ user: "user@name", pass: "p:ss/word" }] }] } };
+        for (let i = 0; i < 2; i++) assert.deepEqual(JSON.parse(JSON.stringify(parseXrayLink(link))), expected);
+      }
+    }
+    for (const link of [`${scheme}://host:1080`, `${scheme}://user@host:1080`, `${scheme}://user:pass@host:65536`, `${scheme}://user:pass@host:0`]) assert.throws(() => parseXrayLink(link));
+  }
+});

@@ -20,13 +20,22 @@ export function parseXrayLink(value: string): any {
   const url = new URL(value);
   requireText(url.hostname, "В ссылке нет сервера");
   if (url.protocol === "hysteria2:" || url.protocol === "hy2:") return hysteriaOutbound(url);
+  if (url.protocol === "socks5:" || url.protocol === "http:") {
+    const user = decodeURIComponent(url.username), pass = decodeURIComponent(url.password);
+    requireText(user, "В ссылке нет логина");
+    requireText(pass, "В ссылке нет пароля");
+    const port = parsePort(url.port || (url.protocol === "http:" ? "80" : "1080"));
+    return { protocol: url.protocol === "socks5:" ? "socks" : "http", settings: { servers: [{
+      address: url.hostname.replace(/^\[|\]$/g, ""), port, users: [{ user, pass }],
+    }] } };
+  }
   const port = parsePort(url.port);
   if (url.protocol === "ss:") {
     const credentials = decodeBase64(decodeURIComponent(url.username));
     return shadowsocksOutbound(credentials, `${url.hostname}:${port}`);
   }
   const protocol = url.protocol.slice(0, -1);
-  if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan://, ss://, hysteria2:// и hy2://");
+  if (protocol !== "vless" && protocol !== "trojan") throw new Error("Поддерживаются vless://, vmess://, trojan://, ss://, hysteria2://, hy2://, socks5:// и http://");
   const user = decodeURIComponent(url.username);
   requireText(user, "В ссылке нет идентификатора пользователя или пароля");
   if (protocol === "vless" && !isUUID(user)) throw new Error("Идентификатор пользователя VLESS должен быть UUID");
