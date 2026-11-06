@@ -93,7 +93,7 @@ func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChanne
 	switch owned.Type {
 	case "openconnect":
 		conf, password, script, unit := s.openConnectPaths(config.Channel{Index: owned.Index})
-		paths = []string{conf, password, script, unit}
+		paths = []string{conf, password, script, unit, openConnectCertificatePath(script)}
 	case "xray":
 		conf, unit := s.xrayPaths(config.Channel{Index: owned.Index})
 		paths = []string{conf, unit}
@@ -881,6 +881,19 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 					return err
 				}
 				conf, password, script, unitPath := s.openConnectPaths(ch)
+				certificate, err := oc.CertificateBytes()
+				if err != nil {
+					return err
+				}
+				certificatePath := openConnectCertificatePath(script)
+				if len(certificate) > 0 {
+					if err := healthyChannelFile(certificatePath, certificate, 0o600); err != nil {
+						return err
+					}
+				} else if _, err := os.Stat(certificatePath); !os.IsNotExist(err) {
+					return fmt.Errorf("лишний файл сертификата OpenConnect")
+				}
+
 				files := []struct {
 					path string
 					data []byte

@@ -67,6 +67,9 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 
 func secretField(key string) bool {
 	normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(key))
+	if normalized == "client_certificate" {
+		return true
+	}
 	if normalized == "uuid" || normalized == "shortid" || normalized == "short_id" {
 		return true
 	}

@@ -22,12 +22,25 @@ func (s *Subsystem) openConnectPaths(ch config.Channel) (conf, password, script,
 	return base + ".conf", base + ".password", base + "-script", filepath.Join(s.UnitDir, openConnectUnitName(ch))
 }
 
+func openConnectCertificatePath(script string) string {
+	return strings.TrimSuffix(script, "-script") + ".p12"
+}
+
 func renderOpenConnect(ch config.Channel, oc config.OpenConnectChannelConfig, script string, disableIPv6 bool) string {
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	line("# Сгенерировано netOS. Пароль хранится отдельно; права файла 0600.")
 	line("server=%s", oc.Server)
-	line("user=%s", oc.Username)
+	if oc.AuthMode != "certificate" && oc.Username != "" {
+		line("user=%s", oc.Username)
+	}
+	if oc.AuthMode == "certificate" || oc.AuthMode == "both" {
+		line("certificate=%s", openConnectCertificatePath(script))
+		line("key-password=%s", oc.CertificatePassword)
+	}
+	if oc.AuthMode == "certificate" {
+		line("no-passwd")
+	}
 	line("protocol=anyconnect")
 	line("interface=%s", InterfaceName(ch))
 	line("script=%s", script)
@@ -110,7 +123,12 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 		return false, err
 	}
 	confPath, passwordPath, scriptPath, unitPath := s.openConnectPaths(ch)
-	snapshots, err := captureChannelFiles(confPath, passwordPath, scriptPath, unitPath)
+	certificatePath := openConnectCertificatePath(scriptPath)
+	certificate, err := oc.CertificateBytes()
+	if err != nil {
+		return false, err
+	}
+	snapshots, err := captureChannelFiles(confPath, passwordPath, scriptPath, unitPath, certificatePath)
 	if err != nil {
 		return false, err
 	}
@@ -142,7 +160,9 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 	unit := []byte(renderOpenConnectUnit(ch, confPath, passwordPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(passwordPath, password) ||
 		system.FileChanged(scriptPath, script) || system.FileChanged(unitPath, unit)
-	restart := system.FileChanged(confPath, conf) || system.FileChanged(passwordPath, password) ||
+	_, certificateStatErr := os.Stat(certificatePath)
+	certificateChanged := len(certificate) > 0 && system.FileChanged(certificatePath, certificate) || len(certificate) == 0 && !os.IsNotExist(certificateStatErr)
+	restart := certificateChanged || system.FileChanged(confPath, conf) || system.FileChanged(passwordPath, password) ||
 		system.FileChanged(scriptPath, script) || system.UnitRuntimeChanged(unitPath, unit)
 	for _, file := range []struct {
 		path string
@@ -153,6 +173,13 @@ func (s *Subsystem) applyOpenConnect(ctx context.Context, ch config.Channel, was
 			return false, err
 		}
 		mutated = true
+	}
+	if len(certificate) > 0 {
+		if err := writeFileIfChanged(certificatePath, certificate, 0o600); err != nil {
+			return false, err
+		}
+	} else if err := os.Remove(certificatePath); err != nil && !os.IsNotExist(err) {
+		return false, err
 	}
 	unitName := openConnectUnitName(ch)
 	if changed {
@@ -229,7 +256,7 @@ func (s *Subsystem) cleanupOpenConnect(ctx context.Context, ch config.Channel) {
 	_, _ = s.Runner.Run(ctx, "systemctl", "disable", unitName)
 	_, _ = s.Runner.Run(ctx, "systemctl", "stop", unitName)
 	conf, password, script, unit := s.openConnectPaths(ch)
-	for _, path := range []string{conf, password, script, unit} {
+	for _, path := range []string{conf, password, script, unit, openConnectCertificatePath(script)} {
 		_ = os.Remove(path)
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")

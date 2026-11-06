@@ -482,6 +482,21 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
 }) {
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
+  const [certificateError,setCertificateError] = useState("");
+  const [certificateBusy,setCertificateBusy] = useState(false);
+  const authMode = cfg.auth_mode || "password";
+  async function loadCertificate(file?: File) {
+    if (!file) return;
+    setCertificateBusy(true); setCertificateError("");
+    try {
+      if (file.size===0 || file.size>1024*1024) throw new Error("Нужен P12/PFX размером до 1 МиБ.");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const parts: string[] = [];
+      for (let i=0;i<bytes.length;i+=8192) parts.push(String.fromCharCode(...bytes.subarray(i,i+8192)));
+      update(draft=>{draft.config.client_certificate=btoa(parts.join(""));delete draft.config.certificate_password;if(draft.secrets_set)delete draft.secrets_set.certificate_password;});
+    } catch(error:any) { setCertificateError(error.message || String(error)); }
+    finally {setCertificateBusy(false);}
+  }
   return (
     <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
       <section className="openconnect-connection" aria-label="Подключение">
@@ -489,8 +504,16 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
       <div className="openconnect-grid">
         <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} /></Field>
         <Field label="VPN-сервер" wide><input className="mono" placeholder="https://vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>
+        <Field label="Авторизация"><select aria-label="Авторизация OpenConnect" value={authMode} onChange={e=>setConfig("auth_mode",e.target.value)}><option value="password">Логин и пароль</option><option value="certificate">Сертификат P12/PFX</option><option value="both">Сертификат и пароль</option></select></Field>
+        {authMode!=="password" && <>
+          <Field label="Клиентский сертификат" hint="P12/PFX с приватным ключом. При замене файла введите его пароль заново."><input aria-label="Клиентский сертификат P12" type="file" accept=".p12,.pfx" disabled={certificateBusy} onChange={e=>{void loadCertificate(e.target.files?.[0]);e.target.value="";}} /><span className="hint">{cfg.client_certificate ? "Новый файл загружен" : channel.secrets_set?.client_certificate ? "Сертификат сохранён" : "Файл не загружен"}</span>{(cfg.client_certificate || channel.secrets_set?.client_certificate) && <button type="button" className="btn sm" disabled={certificateBusy} onClick={()=>update(draft=>{delete draft.config.client_certificate;delete draft.config.certificate_password;if(draft.secrets_set){delete draft.secrets_set.client_certificate;delete draft.secrets_set.certificate_password;}})}>Удалить сертификат</button>}</Field>
+          <Field label="Пароль P12/PFX" hint="Пароль контейнера, не пароль учётной записи."><input aria-label="Пароль P12/PFX" type="password" autoComplete="new-password" {...secretInput(channel,"certificate_password")} value={cfg.certificate_password||""} onChange={e=>setConfig("certificate_password",e.target.value)} /></Field>
+          {certificateError && <p role="alert">{certificateError}</p>}
+        </>}
+        {authMode!=="certificate" && <>
         <Field label="Пользователь"><input autoComplete="off" value={cfg.username || ""} onChange={(e) => setConfig("username", e.target.value)} /></Field>
         <Field label="Пароль"><input type="password" autoComplete="new-password" {...secretInput(channel, "password")} value={cfg.password || ""} onChange={(e) => setConfig("password", e.target.value)} /></Field>
+        </>}
         <Field label="Группа / realm"><input value={cfg.authgroup || ""} onChange={(e) => setConfig("authgroup", e.target.value)} /></Field>
       </div>
       </section>

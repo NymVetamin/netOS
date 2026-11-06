@@ -63,7 +63,7 @@ func diagnosticSecretKey(key string) bool {
 		strings.Contains(key, "privatekey") || strings.Contains(key, "presharedkey") ||
 		strings.Contains(key, "token") || key == "uuid" || key == "id" ||
 		key == "shortid" || key == "shortids" || key == "key" ||
-		key == "pass" || key == "auth" || strings.HasSuffix(key, "seed") ||
+		key == "clientcertificate" || key == "pass" || key == "auth" || strings.HasSuffix(key, "seed") ||
 		key == "echserverkeys" || key == "encryption" || key == "decryption" ||
 		key == "authorization" || key == "proxyauthorization" || key == "cookie"
 }

@@ -2464,10 +2464,10 @@ func (c *Config) validateOpenConnectChannel(r *ValidationResult, path string, ch
 	} else if parsed, err := url.Parse(oc.Server); err != nil || parsed.Host == "" || parsed.Scheme != "https" {
 		r.errf(path+".config.server", "сервер должен быть URL вида https://vpn.example.com")
 	}
-	if oc.Username == "" {
+	if oc.AuthMode != "certificate" && oc.Username == "" {
 		r.errf(path+".config.username", "укажите имя пользователя")
 	}
-	if oc.Password == "" {
+	if oc.AuthMode != "certificate" && oc.Password == "" {
 		r.errf(path+".config.password", "укажите пароль")
 	}
 	for field, value := range map[string]string{
@@ -2475,6 +2475,19 @@ func (c *Config) validateOpenConnectChannel(r *ValidationResult, path string, ch
 	} {
 		if strings.ContainsAny(value, "\r\n") {
 			r.errf(path+".config."+field, "переводы строк недопустимы")
+		}
+	}
+	switch oc.AuthMode {
+	case "", "password", "certificate", "both":
+	default:
+		r.errf(path+".config.auth_mode", "неизвестный способ авторизации")
+	}
+	if oc.AuthMode == "certificate" || oc.AuthMode == "both" {
+		if _, err := oc.CertificateBytes(); err != nil {
+			r.errf(path+".config.client_certificate", "%v", err)
+		}
+		if strings.ContainsAny(oc.CertificatePassword, "\r\n\x00") || strings.TrimSpace(oc.CertificatePassword) != oc.CertificatePassword {
+			r.errf(path+".config.certificate_password", "пароль P12 не должен содержать переводы строк, NUL или пробелы по краям")
 		}
 	}
 	if oc.NoSystemTrust && oc.ServerCert == "" {

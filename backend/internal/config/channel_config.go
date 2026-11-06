@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 )
@@ -21,15 +22,18 @@ type WireGuardChannelConfig struct {
 }
 
 type OpenConnectChannelConfig struct {
-	Server        string `json:"server" plan:"Сервер" sensitivity:"public"`
-	Username      string `json:"username" plan:"Логин" sensitivity:"public"`
-	Password      string `json:"password" plan:"Пароль" sensitivity:"secret"`
-	Protocol      string `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
-	AuthGroup     string `json:"authgroup,omitempty" plan:"Группа авторизации" sensitivity:"public"`
-	ServerCert    string `json:"servercert,omitempty" plan:"Отпечаток сертификата сервера" sensitivity:"public"`
-	MTU           int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
-	NoDTLS        bool   `json:"no_dtls,omitempty" plan:"Отключить DTLS" sensitivity:"public"`
-	NoSystemTrust bool   `json:"no_system_trust,omitempty" plan:"Не использовать системные сертификаты" sensitivity:"public"`
+	AuthMode            string `json:"auth_mode,omitempty" plan:"Авторизация" sensitivity:"public"`
+	ClientCertificate   string `json:"client_certificate,omitempty" plan:"Клиентский сертификат P12" sensitivity:"secret"`
+	CertificatePassword string `json:"certificate_password,omitempty" plan:"Пароль P12" sensitivity:"secret"`
+	Server              string `json:"server" plan:"Сервер" sensitivity:"public"`
+	Username            string `json:"username" plan:"Логин" sensitivity:"public"`
+	Password            string `json:"password" plan:"Пароль" sensitivity:"secret"`
+	Protocol            string `json:"protocol,omitempty" plan:"Протокол" sensitivity:"public"`
+	AuthGroup           string `json:"authgroup,omitempty" plan:"Группа авторизации" sensitivity:"public"`
+	ServerCert          string `json:"servercert,omitempty" plan:"Отпечаток сертификата сервера" sensitivity:"public"`
+	MTU                 int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	NoDTLS              bool   `json:"no_dtls,omitempty" plan:"Отключить DTLS" sensitivity:"public"`
+	NoSystemTrust       bool   `json:"no_system_trust,omitempty" plan:"Не использовать системные сертификаты" sensitivity:"public"`
 }
 
 type L2TPChannelConfig struct {
@@ -121,4 +125,19 @@ func (c Channel) XrayConfig() (XrayChannelConfig, error) {
 		return out, fmt.Errorf("параметры Xray: %w", err)
 	}
 	return out, nil
+}
+
+// CertificateBytes decodes only active client-certificate authentication.
+func (oc OpenConnectChannelConfig) CertificateBytes() ([]byte, error) {
+	if oc.AuthMode != "certificate" && oc.AuthMode != "both" {
+		return nil, nil
+	}
+	if len(oc.ClientCertificate) == 0 || len(oc.ClientCertificate) > 1400000 {
+		return nil, fmt.Errorf("загрузите P12/PFX размером до 1 МиБ")
+	}
+	data, err := base64.StdEncoding.DecodeString(oc.ClientCertificate)
+	if err != nil || len(data) == 0 || len(data) > 1024*1024 {
+		return nil, fmt.Errorf("некорректный файл P12/PFX")
+	}
+	return data, nil
 }
