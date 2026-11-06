@@ -29,12 +29,10 @@ export function parseWireGuardConfig(text: string) {
     const [address, mask, extra] = value.split("/");
     return extra === undefined && /^\d+$/.test(mask || "") && Number(mask) <= 32 && address.split(".").length === 4 && address.split(".").every(p => /^\d{1,3}$/.test(p) && Number(p) <= 255);
   };
-  const addresses = list(iface.Address), allowed = list(peer.AllowedIPs);
+  const addresses = list(iface.Address);
   const v4Addresses = addresses.filter(v => !v.includes(":"));
   if (v4Addresses.length !== 1 || !ipv4(v4Addresses[0])) throw new Error("Нужен один IPv4-адрес туннеля с маской.");
-  if (!allowed.includes("0.0.0.0/0")) throw new Error("Для исходящего канала нужен AllowedIPs = 0.0.0.0/0. Файл с отдельными маршрутами не импортирован.");
-  if (allowed.some(v => !v.includes(":") && !ipv4(v))) throw new Error("Некорректная подсеть AllowedIPs.");
-  if ([...addresses, ...allowed].some(v => v.includes(":"))) warnings.push("IPv6 не перенесён: исходящий канал netOS использует IPv4.");
+  if (addresses.some(v => v.includes(":"))) warnings.push("IPv6 не перенесён: исходящий канал netOS использует IPv4.");
   const key = (value: string, label: string) => {
     if (!/^[A-Za-z0-9+/]{43}=$/.test(value || "") || atob(value).length !== 32) throw new Error(`Некорректный или отсутствующий ${label}.`);
     return value;
