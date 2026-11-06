@@ -461,7 +461,11 @@ function L2TPEditor({ channel, channels, installed, referenced, update, remove }
   const cfg = channel.config || {};
   const setConfig = (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; });
   return <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
-    <Notice tone="warn" title="L2TP без шифрования">Используйте этот канал только в доверенной сети или поверх отдельного защищённого транспорта.</Notice>
+    {!cfg.ipsec && <Notice tone="warn" title="L2TP без шифрования">Используйте этот канал только в доверенной сети или поверх отдельного защищённого транспорта.</Notice>}
+    <div className="form-grid">
+      <Field label="Защита IPsec"><Switch checked={!!cfg.ipsec} label="Включена" onChange={(value) => setConfig("ipsec", value)} /></Field>
+      {cfg.ipsec && <Field label="Общий ключ IPsec" hint="Ключ из настроек VPN-сервера. Требуется компонент strongSwan."><input aria-label="Общий ключ IPsec" type="password" autoComplete="new-password" {...secretInput(channel, "preshared_key")} value={cfg.preshared_key || ""} onChange={(e) => setConfig("preshared_key", e.target.value)} /></Field>}
+    </div>
     <div className="form-grid">
       <Field label="Название"><input value={channel.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-сервер"><input className="mono" placeholder="vpn.example.com" value={cfg.server || ""} onChange={(e) => setConfig("server", e.target.value)} /></Field>

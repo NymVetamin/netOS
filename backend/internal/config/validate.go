@@ -2515,6 +2515,14 @@ func (c *Config) validateL2TPChannel(r *ValidationResult, path string, ch Channe
 	if !validDNSHost(l2tp.Server) {
 		r.errf(path+".config.server", "укажите IPv4-адрес или DNS-имя L2TP-сервера")
 	}
+	if l2tp.IPsec {
+		if l2tp.PresharedKey == "" || unsafeConfigText(l2tp.PresharedKey) {
+			r.errf(path+".config.preshared_key", "укажите общий ключ IPsec без управляющих символов")
+		}
+		if ch.Enabled && !c.HasComponent("strongswan") {
+			r.errf(path+".enabled", "для защиты L2TP/IPsec нужен компонент «strongSwan»")
+		}
+	}
 	if l2tp.Username == "" || unsafeConfigText(l2tp.Username) {
 		r.errf(path+".config.username", "укажите безопасный логин")
 	}

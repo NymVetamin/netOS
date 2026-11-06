@@ -826,6 +826,13 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 	b.line(":POSTROUTING ACCEPT [0:0]")
 
 	b.l2tpIPsecTransport(cfg)
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && ch.UsesL2TPIPsec() {
+			for _, rule := range channels.L2TPChannelIPsecRules(ch) {
+				b.line("%s", rule)
+			}
+		}
+	}
 	b.l2tpPeerSources(cfg)
 	b.internetBlockClassification(cfg, false)
 	b.channelPolicies(cfg)

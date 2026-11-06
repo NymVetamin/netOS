@@ -37,10 +37,20 @@ type OpenConnectChannelConfig struct {
 }
 
 type L2TPChannelConfig struct {
-	Server   string `json:"server" plan:"Сервер" sensitivity:"public"`
-	Username string `json:"username" plan:"Логин" sensitivity:"public"`
-	Password string `json:"password" plan:"Пароль" sensitivity:"secret"`
-	MTU      int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	IPsec        bool   `json:"ipsec,omitempty" plan:"Защита IPsec" sensitivity:"public"`
+	PresharedKey string `json:"preshared_key,omitempty" plan:"Общий ключ IPsec" sensitivity:"secret"`
+	Server       string `json:"server" plan:"Сервер" sensitivity:"public"`
+	Username     string `json:"username" plan:"Логин" sensitivity:"public"`
+	Password     string `json:"password" plan:"Пароль" sensitivity:"secret"`
+	MTU          int    `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+}
+
+func (c Channel) UsesL2TPIPsec() bool {
+	if c.Type != "l2tp" {
+		return false
+	}
+	l2tp, err := c.L2TPConfig()
+	return err == nil && l2tp.IPsec
 }
 
 type IKEv2ChannelConfig struct {

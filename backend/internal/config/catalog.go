@@ -134,7 +134,7 @@ var Catalog = []ComponentInfo{
 		Description: "IPsec: каналы IKEv2 и приём подключений от встроенных клиентов iOS, macOS и Windows.",
 		Packages:    []string{"strongswan", "strongswan-swanctl", "charon-systemd", "libstrongswan-standard-plugins", "libcharon-extauth-plugins", "libcharon-extra-plugins", "freeradius"},
 		Units:       []string{"strongswan.service", "freeradius.service"},
-		RunUnits:    []string{"netos-strongswan.service", "netos-ikev2-auth.service", "netos-ikev2-ch*.service"},
+		RunUnits:    []string{"netos-strongswan.service", "netos-ikev2-auth.service", "netos-ikev2-ch*.service", "netos-l2tp-ipsec-ch*.service"},
 		Provides:    []string{"vpn-client", "vpn-server"},
 		SizeHint:    "около 15 МБ",
 	},

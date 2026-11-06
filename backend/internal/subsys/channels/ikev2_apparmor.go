@@ -33,6 +33,11 @@ func channelArmorRules(profile, stateDir string) string {
 	if profile == "usr.sbin.swanctl" {
 		rules += fmt.Sprintf("  %q r,\n  %q r,\n  %q r,\n", root+"/swanctl.conf", root+"/x509ca/", root+"/x509ca/ca.crt")
 	}
+	l2tp := filepath.ToSlash(filepath.Join(stateDir, "netos-l2tp-ipsec-ch[0-9]*"))
+	rules += fmt.Sprintf("  %q r,\n  %q rw,\n", l2tp+"-daemon.conf", "/run/netos-l2tp-ipsec-ch[0-9]*/charon.vici")
+	if profile == "usr.sbin.swanctl" {
+		rules += fmt.Sprintf("  %q r,\n", l2tp+".conf")
+	}
 	return rules
 }
 

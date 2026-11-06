@@ -99,7 +99,8 @@ func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChanne
 		paths = []string{conf, unit}
 	case "l2tp":
 		conf, ppp, unit := s.l2tpPaths(config.Channel{Index: owned.Index})
-		paths = []string{conf, ppp, unit}
+		ic, id, iu := s.l2tpIPsecPaths(config.Channel{Index: owned.Index})
+		paths = []string{conf, ppp, unit, ic, id, iu, s.l2tpIPsecGuardPath(config.Channel{Index: owned.Index})}
 	case "ikev2":
 		p := s.ikev2Paths(config.Channel{Index: owned.Index})
 		paths = []string{p.conf, p.daemon, p.ca, p.unit, filepath.Join(p.root, "dns-update")}
@@ -121,6 +122,15 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 			p := s.ikev2Paths(config.Channel{Index: snapshot.owned.Index})
 			if err := os.MkdirAll(filepath.Dir(p.ca), 0o700); err != nil {
 				return err
+			}
+		}
+		if snapshot.owned.Type == "l2tp" {
+			for _, file := range snapshot.files {
+				if strings.HasSuffix(file.path, "-daemon.conf") && file.existed {
+					if err := s.l2tpIPsecGuard(ctx, config.Channel{Index: snapshot.owned.Index}, true); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		if err := restoreChannelFiles(snapshot.files); err != nil {
@@ -332,10 +342,16 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	}
 	hasIKE, hadIKE := false, false
 	for _, ch := range wanted {
-		hasIKE = hasIKE || ch.Type == "ikev2"
+		hasIKE = hasIKE || ch.Type == "ikev2" || ch.UsesL2TPIPsec()
 	}
 	for _, ch := range owned {
 		hadIKE = hadIKE || ch.Type == "ikev2"
+		if ch.Type == "l2tp" {
+			_, daemon, _ := s.l2tpIPsecPaths(config.Channel{Index: ch.Index})
+			if _, err := os.Stat(daemon); err == nil {
+				hadIKE = true
+			}
+		}
 	}
 	if hasIKE {
 		defer func() {
@@ -924,6 +940,9 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			} else if ch.Type == "l2tp" {
 				l2tp, err := ch.L2TPConfig()
 				if err != nil {
+					return err
+				}
+				if err := s.healthL2TPIPsec(ctx, ch, l2tp); err != nil {
 					return err
 				}
 				conf, ppp, unitPath := s.l2tpPaths(ch)

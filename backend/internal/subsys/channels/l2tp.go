@@ -34,7 +34,7 @@ func renderL2TPPPP(ch config.Channel, l2tp config.L2TPChannelConfig) string {
 }
 
 func renderL2TPUnit(ch config.Channel, conf string) string {
-	return fmt.Sprintf(`[Unit]
+	unit := fmt.Sprintf(`[Unit]
 Description=netOS: L2TP channel %s
 After=network-online.target
 Wants=network-online.target
@@ -48,6 +48,11 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 `, ch.Name, conf, ch.Index, ch.Index)
+	if ch.UsesL2TPIPsec() {
+		unit = strings.Replace(unit, "Wants=network-online.target", "Wants=network-online.target "+l2tpIPsecName(ch)+".service\nAfter="+l2tpIPsecName(ch)+".service", 1)
+		unit = strings.Replace(unit, "ExecStart=", fmt.Sprintf("ExecStartPre=/bin/sh %s\nExecStartPre=/usr/sbin/swanctl --initiate --child netos-l2tp-ch%d --uri %s --timeout 30\nExecStart=", filepath.Join(filepath.Dir(conf), l2tpIPsecName(ch)+"-guard.sh"), ch.Index, l2tpIPsecVICI(ch)), 1)
+	}
+	return unit
 }
 
 func (s *Subsystem) applyL2TP(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (created bool, retErr error) {
@@ -61,7 +66,10 @@ func (s *Subsystem) applyL2TP(ctx context.Context, ch config.Channel, wasOwned, 
 		return false, err
 	}
 	confPath, pppPath, unitPath := s.l2tpPaths(ch)
-	snapshots, err := captureChannelFiles(confPath, pppPath, unitPath)
+	ipsecConf, ipsecDaemon, ipsecUnit := s.l2tpIPsecPaths(ch)
+	oldUnit, _ := os.ReadFile(unitPath)
+	wasSecure := strings.Contains(string(oldUnit), l2tpIPsecName(ch)+".service")
+	snapshots, err := captureChannelFiles(confPath, pppPath, unitPath, ipsecConf, ipsecDaemon, ipsecUnit, s.l2tpIPsecGuardPath(ch))
 	if err != nil {
 		return false, err
 	}
@@ -77,25 +85,75 @@ func (s *Subsystem) applyL2TP(ctx context.Context, ch config.Channel, wasOwned, 
 			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "route", "flush", "table", fmt.Sprint(TableNumber(ch)))
 			return
 		}
+		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "stop", l2tpUnitName(ch))
+		s.stopL2TPIPsec(rollbackCtx, ch)
 		if err := restoreChannelFiles(snapshots); err != nil {
 			retErr = fmt.Errorf("%v; rollback L2TP: %w", retErr, err)
 			return
 		}
+		if err := s.l2tpIPsecGuard(rollbackCtx, ch, wasSecure); err != nil {
+			retErr = fmt.Errorf("%v; rollback IPsec guard: %w", retErr, err)
+			return
+		}
 		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "daemon-reload")
-		_, _ = s.Runner.Run(rollbackCtx, "systemctl", "restart", l2tpUnitName(ch))
+		if _, err := s.Runner.Run(rollbackCtx, "systemctl", "restart", l2tpUnitName(ch)); err != nil {
+			retErr = fmt.Errorf("%v; rollback L2TP restart: %w", retErr, err)
+			return
+		}
+		if wasSecure {
+			deadline := time.Now().Add(45 * time.Second)
+			for !s.openConnectReady(rollbackCtx, name) {
+				if !time.Now().Before(deadline) {
+					retErr = fmt.Errorf("%v; rollback L2TP: интерфейс не восстановлен", retErr)
+					return
+				}
+				time.Sleep(250 * time.Millisecond)
+			}
+		}
 	}()
 	conf := []byte(renderL2TPConf(ch, l2tp, pppPath))
 	ppp := []byte(renderL2TPPPP(ch, l2tp))
 	unit := []byte(renderL2TPUnit(ch, confPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(pppPath, ppp) || system.FileChanged(unitPath, unit)
 	restart := system.FileChanged(confPath, conf) || system.FileChanged(pppPath, ppp) || system.UnitRuntimeChanged(unitPath, unit)
-	for _, file := range []struct {
+	files := []struct {
 		path string
 		data []byte
 		mode os.FileMode
 	}{
 		{confPath, conf, 0o600}, {pppPath, ppp, 0o600}, {unitPath, unit, 0o644},
-	} {
+	}
+	if l2tp.IPsec {
+		for _, file := range []struct {
+			path string
+			data []byte
+			mode os.FileMode
+		}{
+			{s.l2tpIPsecGuardPath(ch), renderL2TPIPsecGuard(ch), 0700}, {ipsecConf, renderL2TPIPsec(ch, l2tp), 0600}, {ipsecDaemon, renderL2TPIPsecDaemon(ch), 0600}, {ipsecUnit, renderL2TPIPsecUnit(ch, ipsecConf, ipsecDaemon), 0644},
+		} {
+			changed = changed || system.FileChanged(file.path, file.data)
+			restart = restart || system.FileChanged(file.path, file.data)
+			files = append(files, file)
+		}
+	}
+	// Stop PPP before changing protection; no unprotected reconnect in the transition.
+	if restart && len(oldUnit) > 0 {
+		mutated = true
+		if _, err := s.Runner.Run(ctx, "systemctl", "stop", l2tpUnitName(ch)); err != nil {
+			return false, err
+		}
+	}
+	if l2tp.IPsec || wasSecure {
+		mutated = true
+		if err := s.l2tpIPsecGuard(ctx, ch, l2tp.IPsec); err != nil {
+			return false, err
+		}
+	}
+	if wasSecure && !l2tp.IPsec {
+		s.stopL2TPIPsec(ctx, ch)
+		changed = true
+	}
+	for _, file := range files {
 		if err := writeFileIfChanged(file.path, file.data, file.mode); err != nil {
 			return false, err
 		}
@@ -103,6 +161,11 @@ func (s *Subsystem) applyL2TP(ctx context.Context, ch config.Channel, wasOwned, 
 	}
 	if changed {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+			return false, err
+		}
+	}
+	if l2tp.IPsec && restart {
+		if _, err := s.Runner.Run(ctx, "systemctl", "restart", l2tpIPsecName(ch)+".service"); err != nil {
 			return false, err
 		}
 	}
@@ -146,8 +209,13 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, ch config.Channel) {
 	unitName := l2tpUnitName(ch)
 	_, _ = s.Runner.Run(ctx, "systemctl", "disable", unitName)
 	_, _ = s.Runner.Run(ctx, "systemctl", "stop", unitName)
+	ipsecConf, _, _ := s.l2tpIPsecPaths(ch)
+	if _, err := os.Stat(ipsecConf); err == nil || ch.UsesL2TPIPsec() {
+		s.stopL2TPIPsec(ctx, ch)
+		_ = s.l2tpIPsecGuard(ctx, ch, false)
+	}
 	conf, ppp, unit := s.l2tpPaths(ch)
-	for _, path := range []string{conf, ppp, unit} {
+	for _, path := range []string{conf, ppp, unit, s.l2tpIPsecGuardPath(ch)} {
 		_ = os.Remove(path)
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
