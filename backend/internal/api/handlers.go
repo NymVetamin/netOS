@@ -53,6 +53,7 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 	var input struct {
 		PrivateKey string `json:"private_key"`
 		ServerID   string `json:"server_id"`
+		ChannelID  string `json:"channel_id"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&input); err != nil {
@@ -62,7 +63,25 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 	}
 	privateKey, publicKey, err := "", "", error(nil)
 	responsePrivate := ""
-	if input.ServerID != "" {
+	if input.ChannelID != "" {
+		if !may(r, "channels", true) || input.PrivateKey != "" || input.ServerID != "" {
+			writeError(w, http.StatusForbidden, "нет доступа к ключу канала")
+			return
+		}
+		if cfg := s.requestConfig(r); cfg != nil {
+			for _, channel := range cfg.Channels {
+				if channel.ID == input.ChannelID && channel.Type == "wireguard" {
+					privateKey, _ = channel.Config["private_key"].(string)
+					break
+				}
+			}
+		}
+		if privateKey == "" {
+			writeError(w, http.StatusNotFound, "ключ WireGuard-канала не найден")
+			return
+		}
+		publicKey, err = wireGuardPublicKey(privateKey)
+	} else if input.ServerID != "" {
 		if !may(r, "vpn-servers", true) || input.PrivateKey != "" {
 			writeError(w, http.StatusForbidden, "доступно только администратору")
 			return
@@ -96,7 +115,7 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 		publicKey, err = wireGuardPublicKey(privateKey)
 	}
 	if err != nil {
-		if input.PrivateKey != "" || input.ServerID != "" {
+		if input.PrivateKey != "" || input.ServerID != "" || input.ChannelID != "" {
 			writeError(w, http.StatusBadRequest, "некорректный закрытый ключ WireGuard")
 		} else {
 			writeError(w, http.StatusInternalServerError, "не удалось сгенерировать ключи WireGuard")

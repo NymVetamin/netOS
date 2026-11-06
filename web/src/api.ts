@@ -256,6 +256,8 @@ export const api = {
     return result;
   },
 
+  wireGuardChannelPublicKey: (channelID: string) => request<{public_key: string}>("POST", "/api/wireguard/keypair", {channel_id: channelID}),
+
   wireGuardKeypair: (privateKey?: string) =>
     request<{ private_key: string; public_key: string }>(
       "POST", "/api/wireguard/keypair", privateKey ? { private_key: privateKey } : undefined,

@@ -6,6 +6,7 @@ import { createContext, Fragment, ReactNode, useContext, useEffect, useState } f
 import { api } from "../api";
 import { channelComponents, channelComponentReady } from "../channelComponents";
 import { newID } from "../id";
+import { parseWireGuardConfig } from "../wireguardImport";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
 import { channelNAT, setChannelNAT, removeChannelNAT } from "../channelNAT";
@@ -544,8 +545,52 @@ function WireGuardEditor({
       draft.config[key] = value;
     });
 
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [keyError, setKeyError] = useState("");
+  const [pair, setPair] = useState({source: "", publicKey: ""});
+  const privateKey = cfg.private_key || "";
+  const keySource = privateKey || (channel.secrets_set?.private_key ? `saved:${channel.id}` : "");
+  useEffect(() => {
+    if (!keySource || (privateKey && pair.source === keySource)) return;
+    let active = true;
+    setKeyError("");
+    if (!privateKey) setPair({source:"", publicKey:""});
+    const timer = window.setTimeout(() => {
+      const request = privateKey ? api.wireGuardKeypair(privateKey) : api.wireGuardChannelPublicKey(channel.id);
+      request.then(value => { if (active) setPair({source:keySource, publicKey:value.public_key}); })
+        .catch(error => { if (active) setKeyError(String(error.message || error)); });
+    }, 300);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [keySource, privateKey, channel.id, cfg]);
+  async function generateKey() {
+    setBusy(true); setMessage("");
+    try {
+      const value = await api.wireGuardKeypair();
+      setPair({source:value.private_key, publicKey:value.public_key});
+      setKeyError(""); setConfig("private_key", value.private_key);
+    } catch (error: any) { setMessage(error.message || String(error)); }
+    finally { setBusy(false); }
+  }
+  async function importFile(file?: File) {
+    if (!file) return;
+    setBusy(true); setMessage("");
+    try {
+      if (file.size > 1024 * 1024) throw new Error("Файл конфигурации больше 1 МиБ.");
+      const parsed = parseWireGuardConfig(await file.text());
+      update(draft => { draft.config = parsed.config; draft.secrets_set = {}; });
+      setMessage(["Конфигурация перенесена в форму. Проверьте её перед применением.", ...parsed.warnings].join(" "));
+    } catch (error: any) { setMessage(error.message || String(error)); }
+    finally { setBusy(false); }
+  }
+
   return (
     <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
+      <fieldset disabled={busy} style={{border:0,padding:0,margin:0,minWidth:0}}>
+      <div className="row wrap" style={{marginBottom:"1rem"}}>
+        <label className="btn sm">Импорт .conf<input aria-label="Импорт конфигурации WireGuard" type="file" accept=".conf,.txt" hidden onChange={e=>{void importFile(e.target.files?.[0]);e.target.value="";}} /></label>
+      </div>
+      {message && <p role="status" className="hint">{message}</p>}
       <div className="form-grid">
         <Field label="Название">
           <input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} />
@@ -556,11 +601,16 @@ function WireGuardEditor({
         <Field label="Endpoint">
           <input className="mono" placeholder="vpn.example.com:51820" value={cfg.endpoint || ""} onChange={(e) => setConfig("endpoint", e.target.value)} />
         </Field>
-        <Field label="AllowedIPs" hint="Исходящий канал должен содержать 0.0.0.0/0">
-          <input className="mono" value={(cfg.allowed_ips || []).join(", ")} onChange={(e) => setConfig("allowed_ips", e.target.value.split(",").map((value) => value.trim()).filter(Boolean))} />
+        <Field label="AllowedIPs" hint="0.0.0.0/0 — все IPv4-адреса. Какие клиенты и назначения используют канал, задайте в политиках.">
+          <input aria-label="AllowedIPs WireGuard" className="mono" readOnly value={(cfg.allowed_ips || []).join(", ")} />
         </Field>
         <Field label="Приватный ключ">
-          <input type="password" className="mono" autoComplete="off" {...secretInput(channel, "private_key")} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value.trim())} />
+          <input aria-label="Приватный ключ WireGuard" type="password" className="mono" autoComplete="off" {...secretInput(channel, "private_key")} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value.trim())} />
+        </Field>
+        <Field label="Ваш публичный ключ" hint="Передайте этот ключ администратору VPN-сервера. Новый приватный ключ меняет публичный ключ.">
+          <input aria-label="Ваш публичный ключ WireGuard" className="mono" readOnly value={pair.source === keySource ? pair.publicKey : ""} placeholder="Появится после задания приватного ключа" />
+          <button type="button" className="btn sm" onClick={()=>void generateKey()}>{keySource ? "Сгенерировать новые ключи" : "Сгенерировать ключи"}</button>
+          {keySource && keyError && <span role="alert" className="hint">{keyError}</span>}
         </Field>
         <Field label="Публичный ключ сервера">
           <input type="password" className="mono" autoComplete="off" value={cfg.peer_public_key || ""} onChange={(e) => setConfig("peer_public_key", e.target.value.trim())} />
@@ -608,6 +658,7 @@ function WireGuardEditor({
         </>}
       </div>
       <div className="hint">Проверка идёт через интерфейс самого туннеля; переключение выполняется только после заданного числа ошибок.</div>
+      </fieldset>
     </ChannelRow>
   );
 }
