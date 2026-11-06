@@ -1,3 +1,5 @@
+import { syncWireGuardPeerChannels } from "../wireGuardPeerChannels";
+import { channelReferences } from "../channelReferences";
 import { indexClientStatuses } from "../clientStatusIndex";
 import { newVPNEndpoint } from "../vpnEndpoint";
 import { CopyButton } from "../CopyButton";
@@ -15,6 +17,7 @@ import { Icon, vpnServerIcon } from "../icons";
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
 type ClientSecret = { publicKey: string; privateKey: string; serverPublicKey: string; presharedKey?: string };
 
+const ReferencedChannels = createContext<Set<string>>(new Set());
 const ClientCreators = createContext<{ current: Record<string, () => void | Promise<void>> }>({ current: {} });
 function useClientCreator(id: string, create: () => void | Promise<void>) {
   const registry = useContext(ClientCreators);
@@ -110,6 +113,7 @@ function VPNCertificate({ server }: { server: any }) {
 const XRAY_NAMES: Record<string, string> = { reality: "VLESS Reality", vless: "VLESS TLS", vmess: "VMess", trojan: "Trojan TLS", shadowsocks: "Shadowsocks", socks: "SOCKS", http: "HTTP proxy", wireguard: "Xray WireGuard", hysteria: "Hysteria 2" };
 
 export function VPNServersPage({ config, patch, beforeRead }: Props) {
+  const referencedChannels = useMemo(() => new Set<string>(channelReferences(config).map(ref => ref.owner[ref.key])), [config]);
   const endpointController = useRef<AbortController | null>(null);
   const [creatingServer, setCreatingServer] = useState(false);
   useEffect(() => () => endpointController.current?.abort(), []);
@@ -240,7 +244,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   return <>
     <div className="page-head"><h1><Icon name="shield-check" />VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
-    <ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
+    <ReferencedChannels.Provider value={referencedChannels}><ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
       <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]}>{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
@@ -255,7 +259,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя IKEv2." /> :
         server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя L2TP." /> : null)}</div></>}
-    </Card></ClientCreators.Provider>
+    </Card></ClientCreators.Provider></ReferencedChannels.Provider>
   </>;
 }
 
@@ -286,7 +290,7 @@ function channelName(channels: any[], peer: any) {
 }
 
 function serverTools(server: any, config: any, patch: any) {
-  const update = (mutate: (item: any) => void) => patch((draft: any) => mutate(draft.vpn_servers.find((item: any) => item.id === server.id)));
+  const update = (mutate: (item: any) => void) => patch((draft: any) => { mutate(draft.vpn_servers.find((item: any) => item.id === server.id)); syncWireGuardPeerChannels(draft); });
   return {
     cfg: server.config || {},
     channels: (config.channels || []).filter((item: any) => item.enabled),
@@ -396,7 +400,7 @@ function OcservPeer({ status, server, peer, referenced, channels, update }: any)
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
     {certAuth && <OcservClientCertificate server={server} peer={peer} active={open} />}
-    <div className="row-actions peer-head"><button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div>
+    <div className="row-actions peer-head"><button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced || peer.use_as_channel} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button></div>
   </Row>;
 }
 
@@ -547,7 +551,7 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
       <button type="button" className="btn sm" onClick={() => void downloadWG("copy")}>{copied ? "Конфиг скопирован" : "Скопировать конфиг"}</button>
       {!profileLink && <button type="button" className="btn sm" onClick={() => void downloadWG("qr")}>Открыть QR-код</button>}
     </>}
-      <button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button>
+      <button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced || peer.use_as_channel} onClick={() => update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); })}>Удалить</button>
     </div>
   </Row>;
 }
@@ -625,6 +629,8 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
 function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setClientSecrets, setError }: any) {
   const { cfg, channels, update } = serverTools(server, config, patch);
   const { statusIndex, statusFailed } = useClientStatuses(server.id);
+  const exitReferenced = useContext(ReferencedChannels).has(`wg-exit-${server.id}`);
+  const exitPeerID = (server.peers || []).find((p:any) => p.use_as_channel)?.id;
 
   async function addPeer() {
     setError("");
@@ -674,11 +680,11 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер — netOS сам подготовит всё необходимое.</Empty> : (server.peers || []).map((peer: any) =>
-      <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : statusIndex.getWithKey(peer.id, peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
+      <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : statusIndex.getWithKey(peer.id, peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} exitReferenced={exitReferenced} exitPeerID={exitPeerID} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
   </PeerGroup>;
 }
 
-function PeerEditor({ beforeRead, status, server, peer, referenced, channels, update, secret, setSecret, removeSecret, setError }: any) {
+function PeerEditor({ beforeRead, status, server, peer, referenced, exitReferenced, exitPeerID, channels, update, secret, setSecret, removeSecret, setError }: any) {
   const profile = effectiveWireGuardProfile(server, peer);
   const editProfile = (mutate: (value: ReturnType<typeof effectiveWireGuardProfile>) => void) => edit((draft) => {
     const saved = draft.wireguard_profile;
@@ -747,16 +753,21 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{known ? status?.endpoint || "Неизвестен" : "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} />
+    <Field label="Выход через этого клиента" hint="Один клиент выхода на WG-сервер. На VPS включите IP forwarding и NAT на его интернет-интерфейсе, затем загрузите обновлённый профиль. Профиль сохраняет обычный интернет VPS.">
+      <Switch checked={!!peer.use_as_channel} label="Использовать как канал" disabled={peer.use_as_channel ? exitReferenced : !!exitPeerID && exitPeerID !== peer.id} onChange={value => edit(draft => { draft.use_as_channel = value; })} />
+      {peer.use_as_channel && exitReferenced && <span className="hint">Чтобы убрать канал, сначала снимите его назначение у клиентов и в политиках.</span>}
+    </Field>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Название клиента"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="block">Блок — без интернета</option></select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
     </div>
-    <div className="form-grid" style={{ marginTop: "0.8rem" }}>
+    {!peer.use_as_channel && <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Трафик через VPN (AllowedIPs)" hint="Подсети, которые это устройство направляет в туннель. 0.0.0.0/0 — весь IPv4-трафик; по одной подсети в строке."><ProfileListInput label="Трафик через VPN (AllowedIPs)" values={profile.allowed_ips} onChange={(items) => editProfile((value) => { value.allowed_ips = items; })} /></Field>
       <Field label="DNS в профиле" hint="DNS роутера — адрес его WireGuard-интерфейса. Для своих DNS отключите переключатель; пустой список оставит DNS устройства. При выборочной маршрутизации включите адрес DNS роутера в AllowedIPs."><Switch checked={profile.use_router_dns} label="DNS роутера" onChange={(enabled) => editProfile((value) => { value.use_router_dns = enabled; })} /><ProfileListInput compact label="DNS в профиле" disabled={profile.use_router_dns} values={profile.dns} onChange={(items) => editProfile((value) => { value.dns = items; })} /></Field>
     </div>
+    }
     <p className="hint">После изменения этих настроек скачайте профиль заново или отсканируйте QR-код на устройстве.</p>
     {secret ? <div className="client-package">
       <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>
@@ -764,7 +775,7 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, channels, up
     </div> : Object.hasOwn(peer.credentials || {}, "private_key") ? <div className="row wrap" style={{ marginTop: "0.8rem" }}><button type="button" className="btn primary" disabled={profileBusy} onClick={() => void openProfile()}>{profileBusy ? "Загрузка…" : "Открыть профиль и QR-код"}</button><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить профиль</button></div> : <Notice tone="info" title="Профиль создан в прежней версии">Подключение клиента продолжает работать. Для повторной выдачи загрузите его прежний .conf: ключ будет сохранён без изменения подключения. Если файла нет, перевыпустите профиль и передайте новый клиенту.<div className="row wrap" style={{ marginTop: "0.65rem" }}><label className="btn">Загрузить прежний .conf<input aria-label="Загрузить прежний .conf" type="file" accept=".conf" hidden onChange={(event) => { void importProfile(event.target.files?.[0]); event.target.value = ""; }} /></label><button type="button" className="btn" onClick={() => void generateClient()}>Перевыпустить профиль</button></div></Notice>}
 
     <details className="advanced"><summary>Технические данные</summary><div className="form-grid"><Field label="Публичный ключ устройства"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; delete draft.credentials.private_key; removeSecret(); })} /></Field><Field label="Предварительный общий ключ"><input className="mono" type="password" autoComplete="off" {...secretInput(peer, "preshared_key")} value={peer.credentials?.preshared_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.preshared_key = e.target.value; })} /></Field></div></details>
-    <div className="row-actions peer-head">{(secret || Object.hasOwn(peer.credentials || {}, "private_key")) && <Badge tone="ok">профиль доступен</Badge>}<button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced} onClick={() => { removeSecret(); update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); }); }}>Удалить</button></div>
+    <div className="row-actions peer-head">{(secret || Object.hasOwn(peer.credentials || {}, "private_key")) && <Badge tone="ok">профиль доступен</Badge>}<button type="button" className="btn ghost sm to-right" disabled={peer.enabled || referenced || peer.use_as_channel} onClick={() => { removeSecret(); update((draft: any) => { draft.peers = draft.peers.filter((item: any) => item.id !== peer.id); }); }}>Удалить</button></div>
   </Row>;
 }
 

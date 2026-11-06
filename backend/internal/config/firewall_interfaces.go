@@ -28,6 +28,9 @@ func (c *Config) firewallInterfaceInZone(name, zone string, interfaceName func(s
 	}
 	if zone == "vpn" {
 		for _, ch := range c.Channels {
+			if ch.WireGuardPeer != nil {
+				continue
+			} // shared interface is listed by its VPN server
 			prefix := map[string]string{"wireguard": "wg-ch", "l2tp": "ppp-ch", "ikev2": "xfrm-ch", "xray": "tun-ch", "openconnect": "tun-ch"}[ch.Type]
 			if prefix != "" && name == fmt.Sprintf("%s%d", prefix, ch.Index) {
 				return true

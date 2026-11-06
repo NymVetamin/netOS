@@ -298,6 +298,7 @@ func (c *Config) EnsureSystemRules() {
 // разбора JSON, чтобы конфигурация со старой версии схемы не приводила к
 // нулевым таймаутам и пустым политикам.
 func (c *Config) Normalize() {
+	c.normalizeWireGuardPeerChannels()
 	sourceVersion := c.Version
 	legacy := sourceVersion < Version
 	if legacy {

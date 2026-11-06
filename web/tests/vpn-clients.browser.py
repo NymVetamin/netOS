@@ -48,6 +48,8 @@ async def scenario(browser, mode):
         cfg["vpn_servers"][0].update(type=kind, config={"protocol": "reality"} if kind == "xray" else {})
         peer["credentials"] = {"username": "alice"}
         cfg["components"].append({"id": kind, "installed": True})
+    if mode == "exit":
+        second=copy.deepcopy(peer);second.update(id="second",name="Второй",address="10.9.0.3");cfg["vpn_servers"][0]["peers"].append(second)
     original = copy.deepcopy(cfg)
     state = {"dirty": False, "config": cfg, "telemetry": "recent", "profiles": 0, "keys": 0}
     if mode.startswith("sessions-"): state["telemetry"] = "online"
@@ -121,6 +123,42 @@ async def scenario(browser, mode):
     await expect(page.get_by_role("heading", name="VPN-доступ", exact=True, level=1)).to_be_visible()
     await expect(page.get_by_text("Онлайн", exact=True)).to_be_visible()
     await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_be_visible()
+    if mode == "exit":
+        peer_row=page.locator('[data-vpn-client="phone"]')
+        other=page.locator('[data-vpn-client="second"]').get_by_role("checkbox",name="Использовать как канал",exact=True)
+        toggle=peer_row.get_by_role("checkbox",name="Использовать как канал",exact=True)
+        await expect(toggle).not_to_be_checked()
+        async with page.expect_response(lambda r:r.request.method=="PUT" and r.url.endswith("/api/config")):
+            await toggle.locator("..").click()
+        await expect(other).to_be_disabled()
+        exit_channel=next(c for c in state["config"]["channels"] if c.get("wireguard_peer"))
+        assert exit_channel["wireguard_peer"]=={"server_id":"srv","peer_id":"phone","server_index":1}
+        await expect(peer_row.get_by_text("Трафик через VPN (AllowedIPs)",exact=True)).to_have_count(0)
+        await peer_row.get_by_role("button",name="Открыть профиль и QR-код",exact=True).click()
+        async with page.expect_download() as pending:
+            await page.get_by_role("button",name="Скачать .conf",exact=True).click()
+        profile=Path(await (await pending.value).path()).read_text()
+        assert "AllowedIPs = 10.9.0.1/32" in profile and "DNS =" not in profile and "0.0.0.0/0" not in profile
+        await page.goto("https://netos-ui.test/#channels")
+        row=page.locator('[data-channel-id="wg-exit-srv"]')
+        await expect(row).to_be_visible()
+        await expect(row.get_by_text("Выход через клиента WG-сервера",exact=False)).to_be_visible()
+        await expect(row.get_by_label("Приватный ключ WireGuard",exact=True)).to_have_count(0)
+        await expect(row.get_by_label("NAT канала Телефон",exact=True)).to_be_checked()
+        await expect(row.get_by_role("button",name="Удалить",exact=True)).to_have_count(0)
+        await page.goto("https://netos-ui.test/#vpn-servers")
+        await expect(toggle).to_be_checked()
+        state["config"]["policies"]=[{"id":"p","enabled":True,"channel":"wg-exit-srv"}]
+        await page.reload();await expect(toggle).to_be_disabled()
+        state["config"]["policies"]=[]
+        await page.reload();await expect(toggle).to_be_enabled()
+        async with page.expect_response(lambda r:r.request.method=="PUT" and r.url.endswith("/api/config")):
+            await toggle.locator("..").click()
+        assert not any(c.get("wireguard_peer") for c in state["config"]["channels"])
+        await expect(peer_row.get_by_text("Трафик через VPN (AllowedIPs)",exact=True)).to_be_visible()
+        await expect(other).to_be_enabled()
+        assert not errors,errors
+        await page.close();print(mode,"PASS");return
     if mode == "isolation":
         label="Изолировать от других локальных и VPN-сетей"
         for server in cfg["vpn_servers"]:

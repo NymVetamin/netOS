@@ -1135,7 +1135,7 @@ function interfacesOfZone(config: any, zone: string): string[] {
   }
 	if (zone === "vpn") {
 		for (const channel of config.channels || []) {
-			if (!channel.enabled || channel.type === "direct") continue;
+			if (!channel.enabled || channel.type === "direct" || channel.wireguard_peer) continue;
 			const prefix = channel.type === "wireguard" ? "wg-ch" :
 				channel.type === "l2tp" ? "ppp-ch" :
 				channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";

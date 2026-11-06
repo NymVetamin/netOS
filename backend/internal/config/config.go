@@ -577,8 +577,15 @@ type Client struct {
 // Каналы и политики
 // ---------------------------------------------------------------------------
 
+type WireGuardPeerChannel struct {
+	ServerID    string `json:"server_id" plan:"WG-сервер" sensitivity:"public"`
+	PeerID      string `json:"peer_id" plan:"WG-клиент" sensitivity:"public"`
+	ServerIndex int    `json:"server_index" plan:"Номер сервера" sensitivity:"public"`
+}
+
 type Channel struct {
-	SecretsSet map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
+	WireGuardPeer *WireGuardPeerChannel `json:"wireguard_peer,omitempty" plan:"Выход через WG-клиента" sensitivity:"public"`
+	SecretsSet    map[string]bool       `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 
 	ID       string         `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`
 	Index    int            `json:"index" plan:"Номер" sensitivity:"public"`
@@ -629,6 +636,7 @@ type VPNServer struct {
 }
 
 type VPNPeer struct {
+	UseAsChannel   bool            `json:"use_as_channel,omitempty" plan:"Использовать как канал" sensitivity:"public"`
 	TLSFingerprint string          `json:"tls_fingerprint,omitempty" plan:"Отпечаток TLS" sensitivity:"public"`
 	SecretsSet     map[string]bool `json:"secrets_set,omitempty" plan:"-" sensitivity:"secret"` // Read response metadata, stripped before saving.
 

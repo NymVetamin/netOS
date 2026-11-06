@@ -119,6 +119,9 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 }
 
 func channelInterface(ch config.Channel) string {
+	if ch.WireGuardPeer != nil {
+		return channels.InterfaceName(ch)
+	}
 	switch ch.Type {
 	case "wireguard":
 		return fmt.Sprintf("wg-ch%d", ch.Index)
@@ -626,6 +629,7 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	// Saved system catch-alls are the WAN/channel NAT switches. Keep their
 	// desired state, but suspend them while their configured egress is disabled.
 	egress := map[string]bool{}
+	peerExits := map[string]config.Channel{}
 	for _, wan := range cfg.WANs {
 		iface := wanInterface(cfg, wan)
 		if iface != "" {
@@ -636,6 +640,9 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		iface := channels.InterfaceName(ch)
 		if iface != "" {
 			egress[iface] = egress[iface] || ch.Enabled
+			if ch.WireGuardPeer != nil {
+				peerExits[iface] = ch
+			}
 		}
 	}
 	for _, n := range cfg.Firewall.NAT {
@@ -649,6 +656,10 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 				}
 			}
 			if n.Enabled {
+				if ch, ok := peerExits[n.Interface]; ok && n.System && n.Source == "" && n.ToSource == "" {
+					b.peerChannelNAT(ch)
+					continue
+				}
 				b.natSource(n)
 			}
 		}
@@ -668,6 +679,10 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 		iface := channels.InterfaceName(ch)
 		if ch.Enabled && !masqueraded[iface] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			masqueraded[iface] = true
+			if ch.WireGuardPeer != nil {
+				b.peerChannelNAT(ch)
+				continue
+			}
 			b.line("-A POSTROUTING -o %s -m comment --comment %q -j MASQUERADE",
 				iface, "NAT канала «"+ch.Name+"»")
 		}
@@ -834,6 +849,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 		}
 	}
 	b.l2tpPeerSources(cfg)
+	b.wireGuardExitSources(cfg)
 	b.internetBlockClassification(cfg, false)
 	b.channelPolicies(cfg)
 	b.channelLocalReplies(cfg)
@@ -892,7 +908,7 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 
 func (b *builder) channelLocalReplies(cfg *config.Config) {
 	for _, ch := range cfg.Channels {
-		if !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "ikev2") {
+		if ch.WireGuardPeer != nil || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "ikev2") {
 			continue
 		}
 		// INPUT only sees connections to the router itself. Remember the
@@ -1352,4 +1368,24 @@ func truncate(s string, max int) string {
 		max--
 	}
 	return s[:max]
+}
+
+// A default AllowedIPs permits Internet replies from the exit peer. All other
+// peers keep their cryptokey /32. Do not admit unsolicited spoofed LAN sources.
+func (b *builder) wireGuardExitSources(cfg *config.Config) {
+	for _, s := range cfg.VPNServers {
+		chain, rules := vpnservers.WireGuardExitGuard(s)
+		if chain == "" {
+			continue
+		}
+		b.line(":%s - [0:0]", chain)
+		b.line("-A PREROUTING -i %s -j %s", serverInterface(s), chain)
+		for _, rule := range rules {
+			b.line("%s", rule)
+		}
+	}
+}
+
+func (b *builder) peerChannelNAT(ch config.Channel) {
+	b.line("-A POSTROUTING -o %s -m connmark --mark 0x%x -m conntrack --ctdir ORIGINAL -m comment --comment %q -j MASQUERADE", channels.InterfaceName(ch), channels.Mark(ch), "NAT канала «"+ch.Name+"»")
 }

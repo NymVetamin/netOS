@@ -475,12 +475,19 @@ func RenderWireGuard(server config.VPNServer) (string, error) {
 		// чего нет в файле, и снятый в панели общий ключ продолжал бы
 		// действовать на живом интерфейсе.
 		fmt.Fprintf(&b, "PresharedKey = %s\n", presharedKeyOrZero(peer.Credentials["preshared_key"]))
-		fmt.Fprintf(&b, "AllowedIPs = %s/32\n", peer.Address)
+		if peer.UseAsChannel {
+			fmt.Fprintln(&b, "AllowedIPs = 0.0.0.0/0")
+		} else {
+			fmt.Fprintf(&b, "AllowedIPs = %s/32\n", peer.Address)
+		}
 	}
 	return b.String(), nil
 }
 
 func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer, wasOwned, disableIPv6 bool) (bool, error) {
+	if err := s.protectWireGuardExit(ctx, server); err != nil {
+		return false, fmt.Errorf("защита WG-выхода: %w", err)
+	}
 	name := InterfaceName(server)
 	existed := s.linkExists(name)
 	if existed && !wasOwned {

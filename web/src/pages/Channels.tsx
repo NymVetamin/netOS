@@ -364,7 +364,7 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
         {nat.manual && <SectionLink className="hint" section="firewall">Маскарад задан ручным правилом — изменить в защите сети</SectionLink>}
       </Field>
     </div>}
-    <div className="row-actions"><button type="button" className="btn ghost sm to-right" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>
+    {channel.wireguard_peer ? <p className="hint">Удаление: выключите «Использовать как канал» у клиента WG-сервера.</p> : <div className="row-actions"><button type="button" className="btn ghost sm to-right" disabled={channel.enabled || referenced} onClick={remove}>Удалить</button></div>}
   </Row>;
 }
 
@@ -614,14 +614,15 @@ function WireGuardEditor({
   return (
     <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
       <fieldset disabled={busy} style={{border:0,padding:0,margin:0,minWidth:0}}>
-      <div className="row wrap" style={{marginBottom:"1rem"}}>
+      {!channel.wireguard_peer && <div className="row wrap" style={{marginBottom:"1rem"}}>
         <label className="btn sm">Импорт .conf<input aria-label="Импорт конфигурации WireGuard" type="file" accept=".conf,.txt" hidden onChange={e=>{void importFile(e.target.files?.[0]);e.target.value="";}} /></label>
-      </div>
+      </div>}
       {message && <p role="status" className="hint">{message}</p>}
       <div className="form-grid">
         <Field label="Название">
           <input value={channel.name || ""} onChange={(e) => update((draft) => (draft.name = e.target.value))} />
         </Field>
+        {!channel.wireguard_peer && <>
         <Field label="Адрес туннеля" hint="Адрес клиента из конфигурации провайдера">
           <input className="mono" placeholder="10.8.0.2/32" value={cfg.address || ""} onChange={(e) => setConfig("address", e.target.value)} />
         </Field>
@@ -651,6 +652,8 @@ function WireGuardEditor({
         <Field label="Persistent keepalive, сек">
           <input type="number" min={0} max={65535} value={cfg.persistent_keepalive || 0} onChange={(e) => setConfig("persistent_keepalive", Number(e.target.value))} />
         </Field>
+        </>}
+        {channel.wireguard_peer && <p className="hint">Выход через клиента WG-сервера, интерфейс wg-srv{channel.wireguard_peer.server_index}. Ключи и подключение настраиваются в VPN-серверах.</p>}
         <Field label="При отказе">
           <select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => (draft.fail_mode = e.target.value))}>
             <option value="block">Блокировать (kill-switch)</option>

@@ -22,7 +22,7 @@ type WireGuardServerConfig struct {
 }
 
 // WireGuardClientProfile configures the exported client, not the server's peer
-// AllowedIPs (which must continue to contain only that peer's tunnel address).
+// AllowedIPs (a normal peer owns its /32; the selected exit owns the default).
 type WireGuardClientProfile struct {
 	UseRouterDNS bool     `json:"use_router_dns" plan:"Использовать DNS роутера" sensitivity:"public"`
 	DNS          []string `json:"dns" plan:"DNS" sensitivity:"public"`
@@ -43,6 +43,9 @@ func (s VPNServer) WireGuardProfileFor(peer VPNPeer) (WireGuardClientProfile, er
 
 // clientProfileFor also accepts a configuration already decoded by validation.
 func (wg WireGuardServerConfig) clientProfileFor(peer VPNPeer, subnet string) WireGuardClientProfile {
+	if peer.UseAsChannel {
+		return WireGuardClientProfile{AllowedIPs: []string{strings.SplitN(subnet, "/", 2)[0] + "/32"}}
+	}
 	var profile WireGuardClientProfile
 	if peer.WireGuardProfile != nil {
 		profile = *peer.WireGuardProfile

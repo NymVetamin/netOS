@@ -1,6 +1,6 @@
-export function channelReferences(config: any, id: string): { owner: any; key: string; label: string }[] {
+export function channelReferences(config: any, id?: string): { owner: any; key: string; label: string }[] {
   const refs: { owner: any; key: string; label: string }[] = [];
-  const add = (owner: any, key: string, label: string) => { if (owner[key] === id) refs.push({ owner, key, label }); };
+  const add = (owner: any, key: string, label: string) => { if (owner[key] && (id === undefined || owner[key] === id)) refs.push({ owner, key, label }); };
   for (const c of config.clients || []) add(c, "channel", `Клиент: ${c.name || c.mac || c.id}`);
   for (const n of config.networks || []) add(n, "default_channel", `Сегмент: ${n.name || n.id}`);
   for (const p of config.policies || []) add(p, "channel", `Правило маршрутизации: ${p.name || p.id}`);

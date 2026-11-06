@@ -96,6 +96,7 @@ var Order = []string{
 	"routing",
 	"channels",
 	"vpn-servers",
+	"peer-channels",
 	"policy",
 	"firewall",
 	"traffic-monitor",

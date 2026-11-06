@@ -5,6 +5,7 @@ export function newWireGuardProfile(): WireGuardProfile {
 }
 
 export function effectiveWireGuardProfile(server: any, peer: any): WireGuardProfile {
+  if (peer.use_as_channel) return {use_router_dns:false,dns:[],allowed_ips:[`${String(server.subnet || "").split("/")[0]}/32`]};
   // Preserve old exports until the client is explicitly edited.
   const profile = peer.wireguard_profile || {
     use_router_dns: false,

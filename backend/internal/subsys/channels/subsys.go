@@ -91,6 +91,8 @@ func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChanne
 	snapshot := removedChannelSnapshot{owned: owned}
 	var paths []string
 	switch owned.Type {
+	case "wireguard-peer":
+		return snapshot, nil
 	case "openconnect":
 		conf, password, script, unit := s.openConnectPaths(config.Channel{Index: owned.Index})
 		paths = []string{conf, password, script, unit, openConnectCertificatePath(script)}
@@ -139,6 +141,7 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 		owned := snapshot.owned
 		ch := config.Channel{Index: owned.Index, Type: owned.Type}
 		switch owned.Type {
+		case "wireguard-peer": // shared server interface is never owned by this channel
 		case "openconnect", "xray", "l2tp", "ikev2":
 			if owned.Type == "ikev2" {
 				if _, err := s.ensureIKEv2ClientInterface(ctx, ch, true); err != nil {
@@ -246,7 +249,17 @@ func New(r system.Runner, stateDir string, loggers ...Logger) *Subsystem {
 
 func (s *Subsystem) Name() string { return "channels" }
 
+func ownedType(ch config.Channel) string {
+	if ch.WireGuardPeer != nil {
+		return "wireguard-peer"
+	}
+	return ch.Type
+}
+
 func InterfaceName(ch config.Channel) string {
+	if ch.WireGuardPeer != nil {
+		return fmt.Sprintf("wg-srv%d", ch.WireGuardPeer.ServerIndex)
+	}
 	switch ch.Type {
 	case "wireguard":
 		return fmt.Sprintf("wg-ch%d", ch.Index)
@@ -382,7 +395,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 		} else if ch.Type == "ikev2" {
 			unit = ikev2UnitName(ch)
 		}
-		wantedOwned[name] = ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit}
+		wantedOwned[name] = ownedChannel{Name: name, Index: ch.Index, Type: ownedType(ch), Unit: unit}
 	}
 	retained := map[string]bool{}
 	var removed []removedChannelSnapshot
@@ -403,7 +416,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	}
 	for _, previous := range owned {
 		expected, exists := wantedOwned[previous.Name]
-		if exists && previous.Type == expected.Type && previous.Unit == expected.Unit {
+		if exists && previous.Index == expected.Index && previous.Type == expected.Type && previous.Unit == expected.Unit {
 			retained[previous.Name] = true
 			continue
 		}
@@ -428,7 +441,15 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 		var unit string
 		switch ch.Type {
 		case "wireguard":
-			createdNow, err = s.applyWireGuard(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
+			if ch.WireGuardPeer != nil {
+				_, err = s.Runner.Run(ctx, "ip", "-4", "route", "replace", "blackhole", "default", "metric", "1000", "table", fmt.Sprint(TableNumber(ch)), "proto", fmt.Sprint(config.RouteProto))
+				if err == nil {
+					err = s.ensureRule(ctx, ch)
+				}
+				createdNow = !retained[name]
+			} else {
+				createdNow, err = s.applyWireGuard(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
+			}
 		case "openconnect":
 			unit = openConnectUnitName(ch)
 			createdNow, err = s.applyOpenConnect(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
@@ -449,9 +470,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 			return rollbackRemoved(fmt.Errorf("канал %s: %w", ch.Name, err))
 		}
 		if createdNow {
-			created = append(created, ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit})
+			created = append(created, ownedChannel{Name: name, Index: ch.Index, Type: ownedType(ch), Unit: unit})
 		}
-		nextOwned = append(nextOwned, ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: unit})
+		nextOwned = append(nextOwned, ownedChannel{Name: name, Index: ch.Index, Type: ownedType(ch), Unit: unit})
 	}
 	if err := s.writeOwned(nextOwned); err != nil {
 		for _, provisional := range created {
@@ -469,6 +490,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 
 func preflightChannels(channels []config.Channel) error {
 	for _, ch := range channels {
+		if ch.WireGuardPeer != nil {
+			continue
+		}
 		var err error
 		switch ch.Type {
 		case "wireguard":
@@ -827,7 +851,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		} else if ch.Type == "ikev2" {
 			unit = ikev2UnitName(ch)
 		}
-		expectedOwned = append(expectedOwned, ownedChannel{Name: InterfaceName(ch), Index: ch.Index, Type: ch.Type, Unit: unit})
+		expectedOwned = append(expectedOwned, ownedChannel{Name: InterfaceName(ch), Index: ch.Index, Type: ownedType(ch), Unit: unit})
 	}
 	owned, err := s.readOwned()
 	if err != nil {
@@ -851,7 +875,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
 		}
-		if ch.Type == "wireguard" {
+		if ch.Type == "wireguard" && ch.WireGuardPeer == nil {
 			if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
 				return fmt.Errorf("интерфейс %s не принят WireGuard: %w", name, err)
 			}
@@ -1111,10 +1135,12 @@ func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
 	}
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(priorityBase+ch.Index))
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprint(tableBase+ch.Index))
-	if s.linkExists(ch.Name) {
-		_, _ = s.Runner.Run(ctx, "ip", "link", "delete", ch.Name)
+	if ch.Type != "wireguard-peer" {
+		if s.linkExists(ch.Name) {
+			_, _ = s.Runner.Run(ctx, "ip", "link", "delete", ch.Name)
+		}
+		_ = os.Remove(filepath.Join(s.StateDir, ch.Name+".conf"))
 	}
-	_ = os.Remove(filepath.Join(s.StateDir, ch.Name+".conf"))
 	if ch.Type == "openconnect" {
 		placeholder := config.Channel{Index: ch.Index, Type: "openconnect"}
 		s.cleanupOpenConnect(ctx, placeholder)
@@ -1137,7 +1163,7 @@ func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
 			return fmt.Errorf("служба %s осталась активной", ch.Unit)
 		}
 	}
-	if s.linkExists(ch.Name) {
+	if ch.Type != "wireguard-peer" && s.linkExists(ch.Name) {
 		return fmt.Errorf("интерфейс %s остался в системе", ch.Name)
 	}
 	rules, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")

@@ -595,6 +595,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		routing.New(runner),
 		channelMonitor,
 		vpnSubsystem,
+		&channels.PeerRoutes{S: channelMonitor},
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
 		sambaController,

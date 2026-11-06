@@ -75,6 +75,7 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateDHCP(r)
 	c.validateDNS(r)
 	c.validateClients(r)
+	c.validateWireGuardPeerChannels(r)
 	c.validateChannels(r)
 	c.validatePolicies(r)
 	c.validateVPNServers(r)
@@ -2400,6 +2401,9 @@ func (c *Config) validateXrayChannel(r *ValidationResult, path string, ch Channe
 }
 
 func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch Channel) {
+	if ch.WireGuardPeer != nil {
+		return
+	}
 	if ch.Mode != "tun" {
 		r.errf(path+".mode", "WireGuard работает только в режиме TUN")
 	}
