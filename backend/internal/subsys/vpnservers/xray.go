@@ -174,7 +174,16 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 		if len(users) == 0 {
 			continue
 		}
-		rule := map[string]any{"type": "field", "outboundTag": outboundTag(policy.Channel)}
+		tag := "policy-block"
+		if policy.Channel == config.InternetBlockChannel {
+			if !tags[tag] {
+				outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "blackhole", "settings": map[string]any{}})
+				tags[tag] = true
+			}
+		} else {
+			tag = outboundTag(policy.Channel)
+		}
+		rule := map[string]any{"type": "field", "outboundTag": tag}
 		if protocol == "socks" || protocol == "http" {
 			// These inbounds identify users by login, not the server/peer email
 			// used above. Validation permits only one enabled peer.

@@ -1123,6 +1123,10 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-POLICY")
 	for _, rule := range rules {
+		if rule.channel == config.InternetBlockChannel {
+			b.line("-A NETOS-POLICY%s -m addrtype ! --dst-type LOCAL -m comment --comment %q -j DROP", rule.match, truncate(rule.comment, 240))
+			continue
+		}
 		if rule.channel == "" || rule.channel == "direct" {
 			b.line("-A NETOS-POLICY%s -m comment --comment %q -j RETURN", rule.match, truncate(rule.comment, 240))
 			continue

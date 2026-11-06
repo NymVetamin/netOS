@@ -2572,8 +2572,11 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 			r.errf(path+".id", "пустой или повторяющийся идентификатор политики")
 		}
 		ids[p.ID] = true
-		if !channels[p.Channel] {
+		if p.Channel != InternetBlockChannel && !channels[p.Channel] {
 			r.errf(path+".channel", "канал %q не существует или выключен", p.Channel)
+		}
+		if p.Enabled && p.Channel == InternetBlockChannel && serverTypes[p.VPNServer] != "xray" && c.IPv6.Mode != "off" {
+			r.errf(path+".channel", "блокировка политикой поддерживает IPv4: отключите сквозной IPv6, чтобы он не обходил правило")
 		}
 		if p.Protocol == "icmp" && channelTypes[p.Channel] == "xray" {
 			report := r.warnf

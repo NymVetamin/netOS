@@ -313,3 +313,39 @@ func TestXrayClientFingerprintDoesNotChangeServer(t *testing.T) {
 		t.Fatal("real client change ignored")
 	}
 }
+
+func TestPolicyBlockUsesBlackholeWithoutChangingClientInternetBlock(t *testing.T) {
+	cfg, server := xrayServerConfig()
+	cfg.Policies = []config.Policy{{ID: "deny", Enabled: true, Channel: config.InternetBlockChannel, VPNServer: server.ID, DstIP: "192.0.2.0/24", Protocol: "tcp", DstPort: "443"}}
+	server.Peers[0].Channel = config.InternetBlockChannel
+	data, err := RenderXray(server, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err = json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]string{}
+	for _, raw := range doc["outbounds"].([]any) {
+		o := raw.(map[string]any)
+		found[o["tag"].(string)] = o["protocol"].(string)
+	}
+	if found["policy-block"] != "blackhole" || found["block"] != "freedom" {
+		t.Fatal(found)
+	}
+	text := string(data)
+	for _, want := range []string{`"outboundTag": "policy-block"`, `"192.0.2.0/24"`, `"port": "443"`, `"network": "tcp"`} {
+		if !strings.Contains(text, want) {
+			t.Fatal("lost condition", want)
+		}
+	}
+	cfg.Policies[0].Enabled = false
+	data, err = RenderXray(server, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "policy-block") {
+		t.Fatal("disabled block emitted")
+	}
+}

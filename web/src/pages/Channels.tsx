@@ -613,7 +613,7 @@ function WireGuardEditor({
 }
 
 function Policies({ config, patch, policies }: Props & { policies: any[] }) {
-  const choices = enabledChannels(config);
+  const choices = [...enabledChannels(config), { id: "block", name: "Блокировать" }];
 
   return (
     <Card tight title="Политики" subtitle="Меньшее число — более высокий приоритет"
