@@ -17,7 +17,8 @@ const internetBlockMark = "0x20000000"
 // stale restriction. ACCEPT ends only this mangle hook, not filter processing.
 func (b *builder) internetBlockClassification(cfg *config.Config, ipv6 bool) {
 	matches := internetBlockMatches(cfg, ipv6)
-	if len(matches) == 0 {
+	b.internetBlock = len(matches) != 0
+	if !b.internetBlock {
 		return
 	}
 	for _, match := range matches {
@@ -58,8 +59,7 @@ func internetBlockMatches(cfg *config.Config, ipv6 bool) []string {
 }
 
 func (b *builder) internetBlockedClients(cfg *config.Config, ipv6 bool) {
-	matches := internetBlockMatches(cfg, ipv6)
-	if len(matches) == 0 {
+	if !b.internetBlock {
 		return
 	}
 	b.line(":NETOS-INTERNET-BLOCK - [0:0]")

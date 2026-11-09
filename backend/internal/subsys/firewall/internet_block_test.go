@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestInternetBlockRebuildAndAddressFamilies(t *testing.T) {
+	cfg := config.Default()
+	cfg.IPv6.Mode = "passthrough"
+	cfg.Clients = []config.Client{{MAC: "02:00:00:00:00:01"}}
+	cfg.VPNServers = []config.VPNServer{{Type: "wireguard", Index: 1, Enabled: true,
+		Peers: []config.VPNPeer{{Enabled: true, Address: "192.0.2.2"}}}}
+	for _, firewall := range []bool{false, true} {
+		cfg.Firewall.Enabled = firewall
+		for _, state := range []struct{ lan, vpn bool }{{true, true}, {false, true}, {false, false}, {true, false}, {true, true}} {
+			cfg.Clients[0].Channel = "direct"
+			cfg.VPNServers[0].Peers[0].Channel = "direct"
+			if state.lan {
+				cfg.Clients[0].Channel = config.InternetBlockChannel
+			}
+			if state.vpn {
+				cfg.VPNServers[0].Peers[0].Channel = config.InternetBlockChannel
+			}
+			rules, err := Build(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for family, text := range []string{rules.IPv4, rules.IPv6} {
+				want := state.lan || (family == 0 && state.vpn)
+				if strings.Contains(text, ":NETOS-INTERNET-BLOCK") != want ||
+					strings.Contains(text, "-j MARK --set-mark "+internetBlockMark) != want {
+					t.Fatalf("firewall=%t state=%+v family=%d: stale or missing block", firewall, state, family)
+				}
+			}
+		}
+	}
+}
+
 func TestInternetBlockPreservesInternalAndRouterAccess(t *testing.T) {
 	cfg := config.Default()
 	cfg.Clients = []config.Client{{ID: "phone", MAC: "02:00:00:00:00:02", Channel: config.InternetBlockChannel}}

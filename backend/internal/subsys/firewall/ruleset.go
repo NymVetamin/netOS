@@ -158,6 +158,8 @@ type builder struct {
 	sb      strings.Builder
 	ruleIDs map[string][]string
 	ruleID  string
+	// Classification in mangle determines whether filter needs the block chain.
+	internetBlock bool
 }
 
 func (b *builder) String() string { return b.sb.String() }
