@@ -3,6 +3,7 @@ import { IPTVSection } from "./IPTV";
 import { DDNSSection } from "./DDNS";
 import { useContext, useEffect, useState } from "react";
 import { HintContext } from "../HintContext";
+import { PermissionContext } from "../permissions";
 import { Badge, Cap, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
 import { newID } from "../id";
@@ -120,6 +121,10 @@ function DHCPSection({
   providers: string[];
 }) {
   const pools = (config.networks || []).filter((n: any) => n.dhcp_pool?.enabled);
+  // Директивы попадают в конфиг демона, работающего от root: ограниченной
+  // учётной записи сервер их не отдаёт и изменить их не даёт.
+  const session = useContext(PermissionContext);
+  const showDirectives = session?.role !== "limited";
 
   return (
     <Card title="Выдача адресов" subtitle="DHCP-сервер для локальных сегментов">
@@ -193,7 +198,7 @@ function DHCPSection({
                   </table>
                 </TableWrap>
               )}
-              {config.dhcp?.provider !== "kea" && (
+              {showDirectives && config.dhcp?.provider !== "kea" && (
                 <Field label="Дополнительные директивы DHCP" hint="Вставляются в конфиг выбранного DHCP-сервера; по одной директиве в строке">
                   <textarea
                     className="mono"
@@ -222,6 +227,8 @@ function DNSSection({
   providers: string[];
 }) {
   const [blocklistStatus, setBlocklistStatus] = useState<Record<string, { source: string; error?: string }>>({});
+  const session = useContext(PermissionContext);
+  const showDirectives = session?.role !== "limited";
   const [statusError, setStatusError] = useState("");
   async function refreshBlocklistStatus() {
     try {
@@ -403,7 +410,7 @@ function DNSSection({
           </Field>
         )}
 
-        {provider === "unbound" && (
+        {showDirectives && provider === "unbound" && (
           <details className="more" open={!!config.dns?.advanced_options}>
             <summary>Дополнительные директивы DNS</summary>
             <Field label="Дополнительные директивы DNS" hint="Вставляются в unbound.conf; по одной директиве в строке">

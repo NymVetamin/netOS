@@ -174,6 +174,67 @@ func TestAllSectionProjectionsPreserveUnchangedConfig(t *testing.T) {
 	}
 }
 
+// Дополнительные директивы вставляются в конфиги dnsmasq, dhcpd и unbound
+// как есть, а эти демоны запускаются от root: директивой user=root и
+// dhcp-script ограниченный пользователь получал бы выполнение программ от root.
+// Поэтому директивы видит и меняет только администратор.
+func TestLimitedServicesCannotTouchAdvancedDirectives(t *testing.T) {
+	cfg := config.Default()
+	cfg.DHCP.AdvancedOptions = "dhcp-option=42,192.0.2.1"
+	cfg.DNS.AdvancedOptions = "server:\n  verbosity: 1"
+	r := limitedRequest(map[string]string{"services": "manage"})
+
+	shown, err := scopedConfig(r, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shown.DHCP.AdvancedOptions != "" || shown.DNS.AdvancedOptions != "" {
+		t.Fatalf("директивы показаны ограниченному пользователю: %q %q", shown.DHCP.AdvancedOptions, shown.DNS.AdvancedOptions)
+	}
+
+	// Не показанное поле остаётся прежним, а остальные настройки служб
+	// по-прежнему меняются.
+	shown.DNS.LocalDomain = "home.arpa"
+	merged, err := mergeScopedConfig(r, cfg, shown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.DHCP.AdvancedOptions != cfg.DHCP.AdvancedOptions || merged.DNS.AdvancedOptions != cfg.DNS.AdvancedOptions {
+		t.Fatalf("директивы администратора потеряны: %q %q", merged.DHCP.AdvancedOptions, merged.DNS.AdvancedOptions)
+	}
+	if merged.DNS.LocalDomain != "home.arpa" {
+		t.Fatal("разрешённое изменение служб не применилось")
+	}
+
+	for name, edit := range map[string]func(*config.Config){
+		"dhcp": func(c *config.Config) { c.DHCP.AdvancedOptions = "user=root\ndhcp-script=/usr/bin/anything" },
+		"dns":  func(c *config.Config) { c.DNS.AdvancedOptions = "server:\n  username: \"\"" },
+	} {
+		attempt, err := scopedConfig(r, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edit(attempt)
+		if _, err := mergeScopedConfig(r, cfg, attempt); err == nil {
+			t.Fatalf("%s: ограниченный пользователь изменил директивы", name)
+		}
+	}
+
+	admin := httptest.NewRequest("GET", "/api/config", nil)
+	admin = withPanelAccess(admin, "admin", store.PanelAccess{Enabled: true})
+	adminView, err := scopedConfig(admin, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminView.DHCP.AdvancedOptions != cfg.DHCP.AdvancedOptions {
+		t.Fatal("администратор не видит директивы")
+	}
+	adminView.DHCP.AdvancedOptions = "dhcp-option=42,192.0.2.2"
+	if merged, err := mergeScopedConfig(admin, cfg, adminView); err != nil || merged.DHCP.AdvancedOptions != "dhcp-option=42,192.0.2.2" {
+		t.Fatalf("администратор не может менять директивы: %v", err)
+	}
+}
+
 func TestClientsCanOnlyChangeVPNExit(t *testing.T) {
 	cfg := config.Default()
 	cfg.VPNServers = []config.VPNServer{{ID: "srv", Name: "server", Type: "wireguard", Subnet: "10.9.0.1/24", Config: map[string]any{"private_key": "secret"}, Peers: []config.VPNPeer{{ID: "peer", Name: "phone", Credentials: map[string]string{"private_key": "client-secret"}}}}}

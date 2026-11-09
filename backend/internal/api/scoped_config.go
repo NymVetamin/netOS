@@ -130,7 +130,15 @@ func projectConfig(r *http.Request, cfg *config.Config) (*config.Config, error) 
 	if anySection(r, false, "map", "dashboard") {
 		visible["system"].(map[string]any)["hostname"] = cfg.System.Hostname
 	}
-	return objectConfig(visible)
+	out, err := objectConfig(visible)
+	if err != nil {
+		return nil, err
+	}
+	// Дополнительные директивы вставляются как есть в конфиги демонов,
+	// работающих от root (user=root, dhcp-script и т. п.), — это права
+	// администратора, а не раздела «Сетевые службы».
+	out.DHCP.AdvancedOptions, out.DNS.AdvancedOptions = "", ""
+	return out, nil
 }
 
 // Merge only authorized differences into the private full draft. Hidden fields
@@ -226,6 +234,17 @@ func mergeScopedConfig(r *http.Request, previous, incoming *config.Config) (*con
 	if err != nil {
 		return nil, err
 	}
+	// Директивы скрыты от этой учётной записи: пустое значение означает
+	// «не трогать», любое другое — попытку их изменить.
+	for _, field := range []struct{ incoming, previous string }{
+		{incoming.DHCP.AdvancedOptions, previous.DHCP.AdvancedOptions},
+		{incoming.DNS.AdvancedOptions, previous.DNS.AdvancedOptions},
+	} {
+		if field.incoming != "" && field.incoming != field.previous {
+			return nil, fmt.Errorf("дополнительные директивы служб меняет только администратор")
+		}
+	}
+	out.DHCP.AdvancedOptions, out.DNS.AdvancedOptions = previous.DHCP.AdvancedOptions, previous.DNS.AdvancedOptions
 	mergeRedactedSecrets(out, previous)
 	out.Normalize()
 	return out, nil
