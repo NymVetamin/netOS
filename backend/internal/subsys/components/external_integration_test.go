@@ -37,6 +37,12 @@ func TestIntegrationXrayInstallAndLifecycle(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	// Версию и SHA256 продукт берёт из последнего релиза перед установкой
+	// (installExternal), в таблице их нет. Тест идёт тем же путём.
+	rel, err := latestRelease(ctx, rel)
+	if err != nil {
+		t.Fatal(err)
+	}
 	componentSubsystem := New(system.NewExec(), quietLogger{})
 	if err := componentSubsystem.installRelease(ctx, "xray", rel); err != nil {
 		t.Fatal(err)
