@@ -380,7 +380,7 @@ func (m *Manager) VPN(ctx context.Context, cfg *config.Config, server config.VPN
 		return false, err
 	}
 	// Public export remains separate; the bundle never leaves the service.
-	if err := system.WriteFileAtomic(filepath.Join(dir, "panel.crt"), pair.Certificate, 0o644); err != nil {
+	if _, err := system.WriteFileAtomicIfChanged(filepath.Join(dir, "panel.crt"), pair.Certificate, 0o644); err != nil {
 		return false, err
 	}
 	return changed, nil
