@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
@@ -89,9 +90,13 @@ func TestIntegrationIPv6PassthroughFilter(t *testing.T) {
 
 	// Ответы на соединение самого роутера проходят.
 	run("ip", "netns", "exec", ns, "sh", "-c", "timeout 5 python3 -c 'import socket;s=socket.socket(socket.AF_INET6);s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind((\"2001:db8:6::2\",18080));s.listen();c,_=s.accept();c.close()' >/dev/null 2>&1 &")
+	// Отказ в соединении приходит мгновенно, пока слушатель ещё запускается:
+	// попытки разнесены по времени.
 	var conn net.Conn
-	for i := 0; i < 20 && conn == nil; i++ {
-		conn, err = net.DialTimeout("tcp6", "[2001:db8:6::2]:18080", 500e6)
+	for i := 0; i < 30 && conn == nil; i++ {
+		if conn, err = net.DialTimeout("tcp6", "[2001:db8:6::2]:18080", 500*time.Millisecond); err != nil {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 	if conn == nil {
 		t.Fatalf("роутер не установил соединение наружу по IPv6: %v", err)
