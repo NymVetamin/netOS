@@ -97,7 +97,7 @@ func fetchBlocklistWithCA(ctx context.Context, rawURL, caFile string) ([]byte, e
 		return validateBlocklistURL(req.URL.String())
 	})
 	if caFile != "" {
-		pemData, err := os.ReadFile(caFile)
+		pemData, err := readBlocklistCA(caFile)
 		if err != nil {
 			return nil, fmt.Errorf("центр сертификации %s: %w", caFile, err)
 		}
@@ -131,6 +131,37 @@ func fetchBlocklistWithCA(ctx context.Context, rawURL, caFile string) ([]byte, e
 	}
 	if len(data) > maxBlocklistBytes {
 		return nil, fmt.Errorf("список больше %d MiB", maxBlocklistBytes>>20)
+	}
+	return data, nil
+}
+
+// maxBlocklistCABytes с запасом вмещает системный набор ca-certificates
+// (около 220 КиБ).
+const maxBlocklistCABytes = 1 << 20
+
+// readBlocklistCA читает только обычный файл ограниченного размера. Путь
+// задаётся в панели: устройство вроде /dev/zero читалось бы до исчерпания
+// памяти netosd, а открытие FIFO ждало бы писателя бесконечно, поэтому тип
+// проверяется до открытия.
+func readBlocklistCA(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("не является обычным файлом")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxBlocklistCABytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxBlocklistCABytes {
+		return nil, fmt.Errorf("файл больше %d MiB", maxBlocklistCABytes>>20)
 	}
 	return data, nil
 }

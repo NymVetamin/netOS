@@ -113,6 +113,29 @@ func TestFetchBlocklistTrustsConfiguredPrivateCA(t *testing.T) {
 	}
 }
 
+// Файл центра сертификации задаётся путём в панели. Читается только
+// обычный файл ограниченного размера, иначе netosd читал бы без предела.
+func TestBlocklistCAFileIsBoundedRegularFile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ads.private.example\n"))
+	}))
+	defer server.Close()
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+
+	oversized := filepath.Join(t.TempDir(), "oversized-ca.pem")
+	padding := bytes.Repeat([]byte("#\n"), maxBlocklistCABytes/2+1)
+	if err := os.WriteFile(oversized, append(caPEM, padding...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fetchBlocklistWithCA(context.Background(), server.URL, oversized); err == nil || !strings.Contains(err.Error(), "больше") {
+		t.Fatalf("файл больше предела принят: %v", err)
+	}
+
+	if _, err := fetchBlocklistWithCA(context.Background(), server.URL, t.TempDir()); err == nil || !strings.Contains(err.Error(), "не является обычным файлом") {
+		t.Fatalf("каталог принят как файл CA: %v", err)
+	}
+}
+
 func TestBlocklistProviderRendersExactDomains(t *testing.T) {
 	domains := []string{"ads.example", "track.example"}
 	for name, output := range map[string]string{
