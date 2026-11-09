@@ -344,6 +344,10 @@ type loginResponse struct {
 	CSRFToken   string            `json:"csrf_token"`
 }
 
+// Самый длинный допустимый запрос входа — логин 64 байта и пароль
+// maxPasswordBytes, где каждый байт экранирован в JSON как \u00XX: около 6,6 КиБ.
+const maxLoginBodyBytes = 8 << 10
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if wait, blocked := s.loginBlocked(ip); blocked {
@@ -351,17 +355,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"слишком много неудачных попыток, повторите через %d секунд", int(wait.Seconds()))
 		return
 	}
-	if s.loginSlots == nil {
-		s.loginSlots = make(chan struct{}, maxConcurrentLogins)
-	}
-	select {
-	case s.loginSlots <- struct{}{}:
-		defer func() { <-s.loginSlots }()
-	default:
-		writeError(w, http.StatusTooManyRequests, "сервер занят проверкой учётных данных, повторите попытку")
-		return
-	}
-
+	// Тело читается до занятия места проверки: медленно передаваемый запрос
+	// иначе держал бы место до ReadTimeout, и двух таких соединений хватало,
+	// чтобы закрыть вход всем. Малый предел тела сохраняет прежнюю границу
+	// памяти на неавторизованные запросы, которую раньше давали те же места.
+	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
 	var req loginRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
@@ -370,6 +368,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if len(req.Username) == 0 || len(req.Username) > 64 || len(req.Password) == 0 || len(req.Password) > maxPasswordBytes {
 		s.recordLoginFailure(ip)
 		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
+		return
+	}
+
+	if s.loginSlots == nil {
+		s.loginSlots = make(chan struct{}, maxConcurrentLogins)
+	}
+	select {
+	case s.loginSlots <- struct{}{}:
+		defer func() { <-s.loginSlots }()
+	default:
+		writeError(w, http.StatusTooManyRequests, "сервер занят проверкой учётных данных, повторите попытку")
 		return
 	}
 
