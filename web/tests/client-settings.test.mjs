@@ -10,19 +10,30 @@ test('new override disappears after undo, including inferred network and seriali
  for(const network of ['', 'lan']) {
   let cfg={clients:[]};
   for(const [key,on,off] of [['blocked',true,false],['channel','block',''],['down_kbit',1000,0],['name','phone',''],['comment','note','']]){
-   update(cfg,mac,{[key]:on},network,new Set()); assert.equal(cfg.clients.length,1);
+   update(cfg,mac,{[key]:on},()=>network,new Set()); assert.equal(cfg.clients.length,1);
    cfg=JSON.parse(JSON.stringify(cfg));
-   update(cfg,mac,{[key]:off},network,new Set());assert.equal(cfg.clients.length,0);
+   update(cfg,mac,{[key]:off},()=>network,new Set());assert.equal(cfg.clients.length,0);
   }
  }
 });
 test('undo preserves other settings, applied entries and unknown future fields',()=>{
- const cfg={clients:[]};update(cfg,mac,{name:'phone',blocked:true},'lan',new Set());update(cfg,mac,{blocked:false},'lan',new Set());assert.equal(cfg.clients[0].name,'phone');
- update(cfg,mac,{name:''},'lan',new Set([mac]));assert.equal(cfg.clients.length,1);
- update(cfg,mac,{future_setting:false},'lan',new Set());assert.equal(cfg.clients.length,1);
+ const cfg={clients:[]};update(cfg,mac,{name:'phone',blocked:true},()=>'lan',new Set());update(cfg,mac,{blocked:false},()=>'lan',new Set());assert.equal(cfg.clients[0].name,'phone');
+ update(cfg,mac,{name:''},()=>'lan',new Set([mac]));assert.equal(cfg.clients.length,1);
+ update(cfg,mac,{future_setting:false},()=>'lan',new Set());assert.equal(cfg.clients.length,1);
 });
 test('default edit does not insert a record; case-insensitive MAC uses original identity',()=>{
- const cfg={clients:[]};update(cfg,mac,{blocked:false},'',new Set());assert.equal(cfg.clients.length,0);
+ const cfg={clients:[]};update(cfg,mac,{blocked:false},()=>'',new Set());assert.equal(cfg.clients.length,0);
  const existing={id:'saved',mac:'AA:BB:CC:DD:EE:FF',name:'',blocked:false,up_kbit:0,down_kbit:0};cfg.clients.push(existing);
- update(cfg,'aa:bb:cc:dd:ee:ff',{blocked:true},'',new Set(['aa:bb:cc:dd:ee:ff']));update(cfg,'aa:bb:cc:dd:ee:ff',{blocked:false},'',new Set(['aa:bb:cc:dd:ee:ff']));assert.equal(cfg.clients.length,1);assert.equal(cfg.clients[0],existing);
+ update(cfg,'aa:bb:cc:dd:ee:ff',{blocked:true},()=>'',new Set(['aa:bb:cc:dd:ee:ff']));update(cfg,'aa:bb:cc:dd:ee:ff',{blocked:false},()=>'',new Set(['aa:bb:cc:dd:ee:ff']));assert.equal(cfg.clients.length,1);assert.equal(cfg.clients[0],existing);
+});
+
+test('network detection runs only for creation, retries failures and keeps saved identity',()=>{
+ const cfg={clients:[]};let calls=0;let network='lan';
+ const detect=()=>{calls++;return network;};
+ update(cfg,mac,{name:'phone'},detect,new Set());assert.equal(calls,1);assert.equal(cfg.clients[0].network,'lan');
+ const saved=cfg.clients[0];network='other';
+ update(cfg,mac,{blocked:true},()=>{throw Error('unexpected lookup');},new Set());assert.equal(cfg.clients[0],saved);assert.equal(saved.network,'lan');
+ update(cfg,mac,{blocked:false,name:''},detect,new Set());assert.equal(calls,1);assert.equal(cfg.clients.length,0);
+ assert.throws(()=>update(cfg,mac,{name:'retry'},()=>{throw Error('lookup failed');},new Set()),/lookup failed/);assert.equal(cfg.clients.length,0);
+ update(cfg,mac,{name:'retry'},detect,new Set());assert.equal(calls,2);assert.equal(cfg.clients[0].network,'other');
 });

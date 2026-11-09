@@ -117,9 +117,10 @@ export function Clients({
   const originalClients = useMemo(() => new Set(baseClientMACs.map(mac => mac.toLowerCase())), [baseClientMACs]);
   function updateClient(mac: string, changes: Record<string, unknown>) {
     patch((draft) => {
-      const live = devices.find((client) => client.mac === mac);
-      const detectedNetwork = live ? reservationNetwork(config, live) : "";
-      updateClientSettings(draft, mac, changes, detectedNetwork, originalClients);
+      updateClientSettings(draft, mac, changes, () => {
+        const live = devices.find((client) => client.mac === mac);
+        return live ? reservationNetwork(config, live) : "";
+      }, originalClients);
     });
   }
 
