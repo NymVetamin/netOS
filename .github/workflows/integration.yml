@@ -77,3 +77,11 @@ jobs:
             echo "::error::упали:$failed"
             exit 1
           fi
+
+      # Отказ «Permission denied» у root почти всегда означает LSM, а не права
+      # файла. Без этого журнала причину падения на раннере не установить.
+      - name: отказы AppArmor при падении
+        if: ${{ failure() }}
+        run: |
+          sudo aa-status 2>&1 | head -80 || true
+          sudo journalctl -k --no-pager 2>/dev/null | grep -i 'apparmor="DENIED"' | tail -60 || true
