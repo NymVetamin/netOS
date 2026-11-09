@@ -41,6 +41,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ppp pppoe ifupdown iproute2
+          # Пакеты компонентов netOS (каталог в config/catalog.go), которые
+          # нужны тестам VPN, каналов и политик: без них тесты пропускаются
+          # или падают на отсутствующей утилите.
+          sudo apt-get install -y -qq conntrack ipset wireguard-tools openconnect \
+            ocserv openssl xl2tpd strongswan strongswan-swanctl charon-systemd \
+            libstrongswan-standard-plugins libcharon-extauth-plugins libcharon-extra-plugins
 
       - name: интеграционные тесты
         working-directory: backend
@@ -51,6 +57,23 @@ jobs:
       - name: интеграционные тесты в изолированном пространстве имён
         if: ${{ !cancelled() }}
         working-directory: backend
+        # Каждому тесту — своё пространство имён: тесты создают одни и те же
+        # интерфейсы, монтируют /sys и заменяют таблицы iptables целиком, и в
+        # общем пространстве имён параллельные пакеты мешают друг другу.
         run: |
-          sudo --preserve-env=PATH env NETOS_INTEGRATION=1 unshare --net --mount \
-            "$(command -v go)" test ./internal/subsys/... -run "$ISOLATED" -v
+          go=$(command -v go)
+          failed=""
+          for test in $(printf '%s' "$ISOLATED" | sed 's/^^(//; s/)\$$//' | tr '|' ' '); do
+            dir=$(grep -rl --include='*_test.go' "^func $test(" internal | xargs -r dirname | sort -u)
+            if [ "$(printf '%s\n' "$dir" | grep -c .)" != 1 ]; then
+              echo "::error::$test: ожидался ровно один пакет, найдено: $dir"
+              failed="$failed $test"
+              continue
+            fi
+            sudo --preserve-env=PATH env NETOS_INTEGRATION=1 unshare --net --mount \
+              "$go" test "./$dir" -run "^$test\$" -count=1 -v || failed="$failed $test"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::упали:$failed"
+            exit 1
+          fi
