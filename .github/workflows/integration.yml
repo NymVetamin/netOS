@@ -90,6 +90,7 @@ jobs:
           # Текст профилей, которые что-то запретили: по нему видно, какие
           # пути им разрешены.
           for profile in $(printf '%s\n' "$denials" | grep -o 'profile="[^"]*"' | cut -d'"' -f2 | sort -u); do
-            file=$(sudo grep -lsF -- "$profile" /etc/apparmor.d/* | head -1)
+            # Имя сверяется с объявлением профиля, а не с любым упоминанием.
+            file=$(sudo grep -lsE -- "^[[:space:]]*(profile[[:space:]]+)?$(printf '%s' "$profile" | sed 's/[][\.*^$]/\\&/g')[[:space:]]+(flags=|\{|/)" /etc/apparmor.d/* | head -1)
             [ -n "$file" ] && { echo "=== $profile: $file"; sudo cat "$file"; }
           done || true
