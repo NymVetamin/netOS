@@ -17,7 +17,7 @@ func TestWireGuardPeerChannelFirewall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"-A PREROUTING -i wg-srv4 -j NETOS-WGEXIT4", "--ctdir REPLY --ctstate ESTABLISHED,RELATED -j RETURN", "-A NETOS-WGEXIT4 -s 10.7.0.3/32 -j RETURN", "-A NETOS-WGEXIT4 -j DROP"} {
+		for _, want := range []string{"-A PREROUTING -i wg-srv4 -j NETOS-WGEXIT4", "--ctdir REPLY --ctstate ESTABLISHED,RELATED -j RETURN", "-A NETOS-WGEXIT4 -s 10.7.0.2/31 -j RETURN", "-A NETOS-WGEXIT4 -j DROP"} {
 			if !strings.Contains(rules.IPv4, want) {
 				t.Fatal(want)
 			}
