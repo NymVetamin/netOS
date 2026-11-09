@@ -579,7 +579,7 @@ function WireGuardEditor({
   const privateKey = cfg.private_key || "";
   const keySource = privateKey || (channel.secrets_set?.private_key ? `saved:${channel.id}` : "");
   useEffect(() => {
-    if (!keySource || (privateKey && pair.source === keySource)) return;
+    if (!keySource || pair.source === keySource) return;
     let active = true;
     setKeyError("");
     if (!privateKey) setPair({source:"", publicKey:""});
