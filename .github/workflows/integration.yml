@@ -83,5 +83,13 @@ jobs:
       - name: отказы AppArmor при падении
         if: ${{ failure() }}
         run: |
+          . /etc/os-release && echo "ОС: $PRETTY_NAME"
           sudo aa-status 2>&1 | head -80 || true
-          sudo journalctl -k --no-pager 2>/dev/null | grep -i 'apparmor="DENIED"' | tail -60 || true
+          denials=$(sudo journalctl -k --no-pager 2>/dev/null | grep -i 'apparmor="DENIED"' || true)
+          printf '%s\n' "$denials" | tail -60
+          # Текст профилей, которые что-то запретили: по нему видно, какие
+          # пути им разрешены.
+          for profile in $(printf '%s\n' "$denials" | grep -o 'profile="[^"]*"' | cut -d'"' -f2 | sort -u); do
+            file=$(sudo grep -lsF -- "$profile" /etc/apparmor.d/* | head -1)
+            [ -n "$file" ] && { echo "=== $profile: $file"; sudo cat "$file"; }
+          done || true
