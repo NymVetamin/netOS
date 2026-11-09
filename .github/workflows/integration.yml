@@ -47,6 +47,16 @@ jobs:
           sudo apt-get install -y -qq conntrack ipset wireguard-tools openconnect \
             ocserv openssl xl2tpd strongswan strongswan-swanctl charon-systemd \
             libstrongswan-standard-plugins libcharon-extauth-plugins libcharon-extra-plugins
+          # Раннер — Ubuntu, а netOS рассчитан на Debian. Профили Ubuntu для
+          # wg и swanctl разрешают только /etc/wireguard и /run/charon.vici,
+          # а тесты держат конфиги и сокеты во временных каталогах. Режим
+          # complain приближает раннер к Debian; совместимость с AppArmor
+          # проверяется отдельно по docs/APPARMOR.md, а записи ALLOWED
+          # остаются в журнале ядра.
+          for profile in /etc/apparmor.d/wg /etc/apparmor.d/usr.sbin.swanctl; do
+            [ -f "$profile" ] && sudo apparmor_parser -r -C "$profile"
+          done
+          sudo aa-status | grep -A2 -i 'complain mode' | head -20 || true
 
       - name: интеграционные тесты
         working-directory: backend
