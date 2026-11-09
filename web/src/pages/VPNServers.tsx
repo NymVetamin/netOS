@@ -508,15 +508,16 @@ function XrayPeerEditor({ status, beforeRead, server, peer, protocol, wgPrivateK
   useEffect(() => { profileRequest.current++; setProfileLink(""); setCopied(false); }, [JSON.stringify(server.config), JSON.stringify(peer.credentials), peer.name, peer.tls_fingerprint]);
   async function exportProfile(action: "download" | "copy" | "qr") {
     setError(""); setProfileBusy(true); setCopied(false);
+    const request = ++profileRequest.current;
     try {
       await beforeRead();
-      const request = ++profileRequest.current;
+      if (request !== profileRequest.current) return;
       const profile = await api.xrayClientProfile(server.id, peer.id);
       if (request !== profileRequest.current) return;
       if (action === "download") saveClientFile(`${peer.name || peer.id}.json`, JSON.stringify(profile.config, null, 2) + "\n");
       if (action === "copy") { await navigator.clipboard.writeText(profile.link); setCopied(true); }
       if (action === "qr") setProfileLink(profile.link);
-    } catch (err: any) { setError(err?.message || "Не удалось получить профиль подключения"); }
+    } catch (err: any) { if (request === profileRequest.current) setError(err?.message || "Не удалось получить профиль подключения"); }
     finally { setProfileBusy(false); }
   }
   return <Row className="peer-card" icon="monitor-smartphone" id={peer.id} data-vpn-server={server.id} data-vpn-client={peer.id}

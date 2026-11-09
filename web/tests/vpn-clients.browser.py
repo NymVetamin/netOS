@@ -99,6 +99,10 @@ async def scenario(browser, mode):
             else:
                 body = [{"id": "phone", "public_key": PUBLIC, "state": state["telemetry"], "last_handshake": 1791800000,
                          "last_seen": 1791800000, "traffic_known": True, "endpoint": "192.0.2.5:43210", "received": 1048576, "sent": 2097152}]
+        elif path.endswith('/xray-profile'):
+            fp=state['config']['vpn_servers'][0]['peers'][0].get('tls_fingerprint') or 'chrome'
+            body={'link':f'vless://fixture@vpn.example.test:443?fp={fp}',
+                  'config':{'outbounds':[{'streamSettings':{'realitySettings':{'fingerprint':fp}}}]}}
         elif path.endswith('/reality-profile'):
             fp=state['config']['vpn_servers'][0]['peers'][0].get('tls_fingerprint') or 'chrome'
             body={'link':f'vless://123e4567-e89b-12d3-a456-426614174000@vpn.example.test:443?security=reality&sni=example.com&pbk=fixture&sid=abcd&fp={fp}'}
