@@ -42,27 +42,33 @@ func connectionNumber(s string) *uint64 {
 	return &n
 }
 func parseTrackedConnection(line string) (diagnosticConnection, bool) {
-	f := strings.Fields(line)
 	c := diagnosticConnection{}
-	if len(f) < 6 {
-		return c, false
-	}
-	at := 0
-	if f[0] == "ipv4" || f[0] == "ipv6" {
-		at = 2
-	}
-	if len(f) < at+4 {
-		return c, false
-	}
-	c.Protocol = strings.ToUpper(f[at])
-	c.Timeout = connectionNumber(f[at+2])
-	c.State = "TRACKED"
-	if !strings.Contains(f[at+3], "=") && !strings.HasPrefix(f[at+3], "[") {
-		c.State = f[at+3]
-	}
-	src, dst := 0, 0
+	at, count, src, dst := 0, 0, 0, 0
 	reply := false
-	for _, value := range f[at+3:] {
+	for value := range strings.FieldsSeq(line) {
+		index := count
+		count++
+		if index == 0 && (value == "ipv4" || value == "ipv6") {
+			at = 2
+		}
+		if index < at {
+			continue
+		}
+		if index == at {
+			c.Protocol = strings.ToUpper(value)
+			continue
+		}
+		if index == at+1 {
+			continue
+		}
+		if index == at+2 {
+			c.Timeout = connectionNumber(value)
+			c.State = "TRACKED"
+			continue
+		}
+		if index == at+3 && !strings.Contains(value, "=") && !strings.HasPrefix(value, "[") {
+			c.State = value
+		}
 		key, v, hasValue := strings.Cut(value, "=")
 		if !hasValue {
 			if value == "[UNREPLIED]" {
@@ -113,6 +119,9 @@ func parseTrackedConnection(line string) (diagnosticConnection, bool) {
 				c.Bytes = connectionNumber(v)
 			}
 		}
+	}
+	if count < 6 || count < at+4 {
+		return diagnosticConnection{}, false
 	}
 	if src != 2 || dst != 2 || c.Timeout == nil {
 		return c, false
