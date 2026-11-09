@@ -368,8 +368,12 @@ func (m *Manager) VPN(ctx context.Context, cfg *config.Config, server config.VPN
 	default:
 		return false, fmt.Errorf("неизвестный управляемый режим TLS %q", spec.Mode)
 	}
-	if err == nil {
-		pair, err = ParsePair(pair.Certificate, pair.Key, host)
+	// Each source already validates and canonicalizes the pair. Shared/ACME
+	// certificates still need to cover this VPN endpoint, not just their domain.
+	if err == nil && spec.Mode != "custom" && host != "" {
+		if pair.Leaf.VerifyHostname(hostname(host)) != nil {
+			err = fmt.Errorf("сертификат не покрывает адрес %s", host)
+		}
 	}
 	m.record("vpn:"+server.ID, pair, err)
 	if err != nil {
