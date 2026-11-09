@@ -21,6 +21,14 @@ permissions:
 jobs:
   integration:
     runs-on: ubuntu-latest
+    # Эти тесты строят сеть из veth и правил ядра и отказываются работать в
+    # пространстве имён самой машины: там они задели бы её сеть. Остальные,
+    # наоборот, проверяют настоящий systemd-networkd, который живёт только в
+    # пространстве имён машины, — поэтому прогон разделён на два шага. Тест,
+    # требующий изоляции и не попавший в список, упадёт в первом шаге с
+    # «refusing host namespace», а не будет молча пропущен.
+    env:
+      ISOLATED: "^(TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -38,4 +46,11 @@ jobs:
         working-directory: backend
         run: |
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
-            "$(command -v go)" test ./internal/subsys/... -run "PPPoE|Integration" -v
+            "$(command -v go)" test ./internal/subsys/... -run "PPPoE|Integration" -skip "$ISOLATED" -v
+
+      - name: интеграционные тесты в изолированном пространстве имён
+        if: ${{ !cancelled() }}
+        working-directory: backend
+        run: |
+          sudo --preserve-env=PATH env NETOS_INTEGRATION=1 unshare --net --mount \
+            "$(command -v go)" test ./internal/subsys/... -run "$ISOLATED" -v
