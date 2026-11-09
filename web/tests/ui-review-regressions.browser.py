@@ -82,7 +82,9 @@ async def service_tabs(browser, session, editable):
 
 
 async def segment_status(browser):
-    page, state = await fixture(browser, {"role": "admin"})
+    config = copy.deepcopy(CONFIG)
+    config["interfaces"][0]["label"] = "Local bridge"
+    page, state = await fixture(browser, {"role": "admin"}, config)
     state["status_error"] = True
     await page.goto("http://netos.test/#network")
     card = page.locator("section.card", has=page.get_by_role("heading", name="Локальные сегменты", exact=True))
@@ -101,9 +103,24 @@ async def segment_status(browser):
     await expect(warning).to_have_count(0)
     state["up"] = True
     await expect(card.get_by_text("поднят", exact=True)).to_be_visible(timeout=10000)
+    await expect(card.get_by_text("Local bridge (br-lan)", exact=True)).to_be_visible()
+    for label in ["Renamed bridge", ""]:
+        state["config"]["interfaces"][0]["label"] = label
+        await page.reload()
+        await expect(card.get_by_text("поднят", exact=True)).to_be_visible()
+        await expect(card.get_by_text(f"{label} (br-lan)" if label else "br-lan", exact=True)).to_be_visible()
+    state["config"]["networks"][0]["enabled"] = False
+    await page.reload()
+    await expect(card.get_by_text("не обслуживается", exact=True)).to_be_visible()
+    state["config"]["networks"][0].update(enabled=True, interface="missing")
+    await page.reload()
+    await expect(card.get_by_text("не поднят", exact=True)).to_be_visible()
+    state["config"]["networks"][0]["interface"] = "lan"
+    await page.reload()
+    await expect(card.get_by_text("поднят", exact=True)).to_be_visible()
     assert not state["writes"] and not state["errors"], state
     await page.close()
-    print("segment initial failure/recovery/stale/down/up PASS")
+    print("segment label/rename/missing/disabled/failure/recovery/stale/down/up PASS")
 
 
 async def component_access(browser, level):

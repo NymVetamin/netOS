@@ -172,7 +172,7 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
               className="subcard"
               cells={[
                 <strong>{w.name}</strong>,
-                <span className="mono">{ifaceName(config, w.interface)}</span>,
+                <span className="mono">{interfaceView.displayName(w.interface)}</span>,
                 <span className="mono">{liveWANs[w.id]?.address || w.address || "—"}</span>,
                 WAN_PROTO[w.proto] || w.proto,
                 w.enabled && liveWANs[w.id]
@@ -445,7 +445,8 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
     if (!n.enabled) return <Badge>не обслуживается</Badge>;
     if (liveError) return <Badge tone="warn">{liveIfaces ? "нет свежих данных" : "нет данных"}</Badge>;
     if (!liveIfaces) return <Badge>проверяется</Badge>;
-    return liveIfaces[ifaceName(config, n.interface)]?.up
+    const name = interfaceView.name(n.interface);
+    return name !== undefined && liveIfaces[name]?.up
       ? <Badge tone="ok">поднят</Badge>
       : <Badge tone="warn"><span title="Сегмент включён, но его интерфейс в системе не поднят">не поднят</span></Badge>;
   };
@@ -505,7 +506,7 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
               className="subcard"
               cells={[
                 <strong>{n.name}</strong>,
-                <span className="mono">{ifaceName(config, n.interface)}</span>,
+                <span className="mono">{interfaceView.displayName(n.interface)}</span>,
                 <span className="mono">{n.router_address || "—"}</span>,
                 <span className="dim">{n.dhcp_pool?.enabled ? "выдаёт адреса" : "выключен"}</span>,
                 segmentState(n),
@@ -1048,11 +1049,6 @@ export function ProblemsFor({
       ))}
     </div>
   );
-}
-
-function ifaceName(config: any, id: string): string {
-  const iface=(config.interfaces || []).find((i: any) => i.id === id);
-  return iface ? iface.label ? `${iface.label} (${iface.name})` : iface.name : "не выбран";
 }
 
 function hasComponent(config: any, id: string): boolean {

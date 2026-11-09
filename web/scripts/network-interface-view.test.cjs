@@ -45,3 +45,13 @@ const next={...c,interfaces:[c.interfaces[0],{...c.interfaces[1],members:[]}]};
 assert.equal(networkInterfaceView(next).usage(next.interfaces[0]),'');
 assert.equal(first.usage(c.interfaces[0]),'в мосту br0');
 });
+
+require('node:test')('system names are separate from labels and use the first matching interface',()=>{
+ const first={id:'lan',name:'br-lan',label:'Local bridge',type:'bridge'},duplicate={id:'lan',name:'wrong',label:'Wrong'};
+ const cfg={interfaces:[first,duplicate]};const view=networkInterfaceView(cfg);
+ assert.equal(view.name('lan'),'br-lan');assert.equal(view.displayName('lan'),'Local bridge (br-lan)');
+ assert.equal(view.name('missing'),undefined);assert.equal(view.displayName('missing'),'не выбран');
+ const next=networkInterfaceView({interfaces:[{...first,name:'br-new',label:''}]});
+ assert.equal(next.name('lan'),'br-new');assert.equal(next.displayName('lan'),'br-new');assert.equal(view.name('lan'),'br-lan');
+ assert.equal(networkInterfaceView({}).name('lan'),undefined);
+});

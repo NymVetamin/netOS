@@ -1,11 +1,13 @@
 ﻿export function networkInterfaceView(config: any) {
   const interfaces: any[] = config.interfaces || [];
+  const byID = new Map<string, any>();
   const masters = new Map<string, any>();
   const wans = new Map<string, any>();
   const networks = new Map<string, any>();
   const vlans = new Map<string, string[]>();
   const labels = new Map<string, string>();
   for (const iface of interfaces) {
+    if (!byID.has(iface.id)) byID.set(iface.id, iface);
     if (iface.type === "bridge" || iface.type === "bond") {
       for (const member of iface.members || []) if (!masters.has(member)) masters.set(member, iface);
     }
@@ -28,6 +30,11 @@
     labels.set(iface.id, parts.join(", "));
   }
   return {
+    name: (id: string): string | undefined => byID.get(id)?.name,
+    displayName: (id: string): string => {
+      const iface = byID.get(id);
+      return iface ? iface.label ? `${iface.label} (${iface.name})` : iface.name : "не выбран";
+    },
     usage: (iface: any): string => labels.get(iface.id) || "",
     // Keep a selected subordinate port visible, as in an incomplete draft.
     options: (selected: string): any[] => interfaces.filter(iface => iface.id === selected || !masters.has(iface.id)),
