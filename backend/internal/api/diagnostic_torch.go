@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container/heap"
 	"encoding/binary"
 	"errors"
 	"net/netip"
@@ -171,42 +172,80 @@ func (t *torchReader) packet(p []byte, wire uint32) {
 	f.Packets++
 	f.Bytes += uint64(wire)
 }
+
+// Caller holds the job mutex while selecting pointers; only value copies escape.
 func (t *torchReader) snapshot(seconds float64, page ...int) map[string]any {
-	rows := make([]torchFlow, 0, len(t.flows))
-	for _, f := range t.flows {
-		row := *f
-		if seconds > 0 {
-			row.Bitrate = float64(row.Bytes) * 8 / seconds
-		}
-		rows = append(rows, row)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Bytes != rows[j].Bytes {
-			return rows[i].Bytes > rows[j].Bytes
-		}
-		if rows[i].Source != rows[j].Source {
-			return rows[i].Source < rows[j].Source
-		}
-		if rows[i].Destination != rows[j].Destination {
-			return rows[i].Destination < rows[j].Destination
-		}
-		if rows[i].Protocol != rows[j].Protocol {
-			return rows[i].Protocol < rows[j].Protocol
-		}
-		if rows[i].SourcePort != rows[j].SourcePort {
-			return rows[i].SourcePort < rows[j].SourcePort
-		}
-		return rows[i].DestinationPort < rows[j].DestinationPort
-	})
+	start, end := 0, len(t.flows)
 	if len(page) > 0 {
-		start := page[0] * 100
-		if start < 0 || start > len(rows) {
-			start = len(rows)
+		start = page[0] * 100
+		if start < 0 || start > end {
+			start = end
 		}
-		rows = rows[start:min(start+100, len(rows))]
+		end = min(start+100, end)
+	}
+	rows := make([]torchFlow, 0)
+	if start < end {
+		// A small prefix needs O(F log K) selection, not a full O(F log F) sort.
+		// For deep pages, the simpler full sort avoids heap overhead.
+		if end < len(t.flows)/4 {
+			selected := make(torchFlowHeap, 0, end)
+			for _, f := range t.flows {
+				if len(selected) < end {
+					heap.Push(&selected, f)
+				} else if torchFlowBefore(f, selected[0]) {
+					selected[0] = f
+					heap.Fix(&selected, 0)
+				}
+			}
+			sort.Slice(selected, func(i, j int) bool { return torchFlowBefore(selected[i], selected[j]) })
+			rows = make([]torchFlow, 0, end-start)
+			for _, f := range selected[start:] {
+				rows = append(rows, *f)
+			}
+		} else {
+			rows = make([]torchFlow, 0, len(t.flows))
+			for _, f := range t.flows {
+				rows = append(rows, *f)
+			}
+			sort.Slice(rows, func(i, j int) bool { return torchFlowBefore(&rows[i], &rows[j]) })
+			rows = rows[start:end]
+		}
+	}
+	if seconds > 0 {
+		for i := range rows {
+			rows[i].Bitrate = float64(rows[i].Bytes) * 8 / seconds
+		}
 	}
 	return map[string]any{"flows": rows, "total_flows": len(t.flows), "packets": t.packets, "skipped": t.skipped}
 }
+
+func torchFlowBefore(a, b *torchFlow) bool {
+	if a.Bytes != b.Bytes {
+		return a.Bytes > b.Bytes
+	}
+	if a.Source != b.Source {
+		return a.Source < b.Source
+	}
+	if a.Destination != b.Destination {
+		return a.Destination < b.Destination
+	}
+	if a.Protocol != b.Protocol {
+		return a.Protocol < b.Protocol
+	}
+	if a.SourcePort != b.SourcePort {
+		return a.SourcePort < b.SourcePort
+	}
+	return a.DestinationPort < b.DestinationPort
+}
+
+// The worst selected flow stays at the root so a better flow can replace it.
+type torchFlowHeap []*torchFlow
+
+func (h torchFlowHeap) Len() int           { return len(h) }
+func (h torchFlowHeap) Less(i, j int) bool { return torchFlowBefore(h[j], h[i]) }
+func (h torchFlowHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *torchFlowHeap) Push(v any)        { *h = append(*h, v.(*torchFlow)) }
+func (h *torchFlowHeap) Pop() any          { old := *h; v := old[len(old)-1]; *h = old[:len(old)-1]; return v }
 
 func torchPacketKey(ether uint16, p []byte) (torchKey, bool) {
 	k := torchKey{family: ether}
