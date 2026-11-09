@@ -218,13 +218,18 @@ func (s *Server) handleDiagnosticTools(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "не удалось прочитать интерфейсы")
 		return
 	}
+	addresses, _ := diagnosticAddresses()
 	for _, item := range list {
 		entry := iface{Name: item.Name, Addresses: []string{}}
-		addrs, _ := item.Addrs()
-		for _, a := range addrs {
-			ip, _, _ := net.ParseCIDR(a.String())
-			if ip.To4() != nil {
-				entry.Addresses = append(entry.Addresses, ip.String())
+		if addresses != nil {
+			entry.Addresses = append(entry.Addresses, addresses[item.Index]...)
+		} else {
+			addrs, _ := item.Addrs()
+			for _, a := range addrs {
+				ip, _, _ := net.ParseCIDR(a.String())
+				if ip.To4() != nil {
+					entry.Addresses = append(entry.Addresses, ip.String())
+				}
 			}
 		}
 		interfaces = append(interfaces, entry)
