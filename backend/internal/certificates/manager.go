@@ -350,6 +350,11 @@ func (m *Manager) VPN(ctx context.Context, cfg *config.Config, server config.VPN
 	if err != nil {
 		return false, err
 	}
+	return m.vpnLocked(ctx, cfg, server, dir, spec, endpoint)
+}
+
+// vpnLocked publishes an already decoded specification while m.op is held.
+func (m *Manager) vpnLocked(ctx context.Context, cfg *config.Config, server config.VPNServer, dir string, spec *config.VPNServerTLS, endpoint string) (bool, error) {
 	host, _, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		return false, fmt.Errorf("укажите публичный адрес VPN в формате домен:порт")
