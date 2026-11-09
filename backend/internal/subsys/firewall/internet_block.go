@@ -68,9 +68,15 @@ func (b *builder) internetBlockedClients(cfg *config.Config, ipv6 bool) {
 	if ipv6 {
 		// Passthrough has no configured IPv6 prefixes: retain forwarding between
 		// internal links, while denying WAN/exit links (including public IPv6).
+		names := make(map[string]string, len(cfg.Interfaces))
+		for _, iface := range cfg.Interfaces {
+			if _, exists := names[iface.ID]; !exists {
+				names[iface.ID] = iface.Name
+			}
+		}
 		for _, n := range cfg.Networks {
 			if n.Enabled {
-				if name := cfg.InterfaceName(n.Interface); name != "" {
+				if name := names[n.Interface]; name != "" {
 					destinations[" -o "+name] = true
 				}
 			}

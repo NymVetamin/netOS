@@ -38,6 +38,36 @@ func TestInternetBlockRebuildAndAddressFamilies(t *testing.T) {
 	}
 }
 
+func TestInternetBlockIPv6InternalInterfaceNames(t *testing.T) {
+	cfg := config.Default()
+	cfg.IPv6.Mode = "passthrough"
+	cfg.Clients = []config.Client{{MAC: "02:00:00:00:00:01", Channel: config.InternetBlockChannel}}
+	cfg.Interfaces = []config.Interface{
+		{ID: "first", Name: "lan0"}, {ID: "first", Name: "wrong0"},
+		{ID: "empty"}, {ID: "empty", Name: "wrong1"},
+		{ID: "unused", Name: "wrong2"}, {ID: "same", Name: "lan0"},
+	}
+	cfg.Networks = []config.Network{
+		{Interface: "first", Enabled: true}, {Interface: "empty", Enabled: true},
+		{Interface: "unknown", Enabled: true}, {Interface: "unused"},
+		{Interface: "same", Enabled: true},
+	}
+	for _, name := range []string{"lan0", "renamed0", ""} {
+		cfg.Interfaces[0].Name = name
+		rules := buildIPv6(cfg)
+		if strings.Contains(rules, "wrong") || strings.Contains(rules, "-o  ") {
+			t.Fatal("duplicate, missing or disabled interface changed selection")
+		}
+		want := "-A NETOS-INTERNET-BLOCK -o lan0 -j RETURN"
+		if strings.Count(rules, want) != 1 {
+			t.Fatal("shared interface not deduplicated")
+		}
+		if strings.Contains(rules, "-o renamed0 -j RETURN") != (name == "renamed0") {
+			t.Fatal("interface rename was not refreshed")
+		}
+	}
+}
+
 func TestInternetBlockPreservesInternalAndRouterAccess(t *testing.T) {
 	cfg := config.Default()
 	cfg.Clients = []config.Client{{ID: "phone", MAC: "02:00:00:00:00:02", Channel: config.InternetBlockChannel}}
