@@ -8,6 +8,7 @@ import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, Row, Rows } from "../ui";
 import { Icon } from "../icons";
 import { ReservationEditor } from "../ReservationEditor";
+import { WakeClient } from "../WakeClient";
 import { reservationAddressIndex, reservationError, reservationNetwork } from "../clientReservation";
 
 function ClientChannel({ config, value, inherited, source, label, onChange }: {
@@ -106,6 +107,7 @@ export function Clients({
     return () => { controller.abort(); clearTimeout(timer); };
   }, [vpnIDs]);
   const devices = localDevices(clients, config);
+  const wakeNetworks = useMemo(() => (config.networks || []).filter((n: any) => n.enabled), [config.networks]);
   const findNetwork = clientNetworkLookup(config);
   const vpn = vpnMapServers(config, vpnTelemetry);
   const vpnCount = vpn.reduce((n, s) => n + s.peers.length, 0);
@@ -154,6 +156,7 @@ export function Clients({
                   const cfgClient: any = known.get(c.mac);
                   const lease = leaseByMAC.get(c.mac);
                   const network = findNetwork(cfgClient?.network, c.interface);
+                  const wakeNetwork = cfgClient?.network || (c.interface ? network?.id : undefined);
                   return (
               <Row
                 lazyBody
@@ -187,6 +190,7 @@ export function Clients({
                 </div>
                 <ReservationEditor key={`${c.mac}:${reserved.get(c.mac)?.id || ''}:${reserved.get(c.mac)?.ip || ''}:${reserved.get(c.mac)?.network || ''}`}
                   config={config} client={c} reservation={reserved.get(c.mac)} baseReservations={baseReservations} devices={reservationDevices} conflicts={reservationConflicts} patch={patch} />
+                {can("clients", true) && <WakeClient key={`${c.mac}:${wakeNetwork || ''}`} mac={c.mac} network={wakeNetwork} networks={wakeNetworks} />}
                 <div className="row-actions end"><button
                           className={`btn sm ${cfgClient?.blocked ? "" : "danger"}`}
                           onClick={() => updateClient(c.mac, { blocked: !cfgClient?.blocked })}

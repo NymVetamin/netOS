@@ -254,6 +254,7 @@ func (s *Server) Routes() http.Handler {
 	auth("POST /api/maintenance/update", s.handleMaintenanceUpdate)
 	auth("POST /api/maintenance/panel", s.handleMaintenancePanel)
 	auth("GET /api/clients", s.handleClients)
+	auth("POST /api/clients/wake", s.handleClientWake)
 	auth("GET /api/interfaces", s.handleInterfaces)
 	auth("GET /api/wifi/hardware", s.handleWiFiHardware)
 	auth("GET /api/interfaces/{name}/modes", s.handlePortModes)

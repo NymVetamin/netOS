@@ -65,6 +65,8 @@ func limitedEndpoint(r *http.Request) bool {
 		return !write && may(r, "network", false)
 	}
 	switch p {
+	case "/api/clients/wake":
+		return r.Method == http.MethodPost && may(r, "clients", true)
 	case "/api/vpn-endpoint":
 		return !write && may(r, "vpn-servers", false)
 	case "/api/status":
