@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/netos-router/netos/internal/system"
 )
 
 // syncWireGuard retains the kernel-selected source port across reconciliation.
@@ -37,6 +39,9 @@ func (s *Subsystem) syncWireGuard(ctx context.Context, name, path string) error 
 		return err
 	}
 	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
 		return err
 	}
 	_, err = s.Runner.Run(ctx, "wg", "syncconf", name, f.Name())

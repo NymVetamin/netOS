@@ -1276,6 +1276,9 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 	if err := vpnservers.RemoveIKEv2AppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
 		return fmt.Errorf("удаление разрешений AppArmor IKEv2: %w", err)
 	}
+	if err := system.RemoveWireGuardAppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
+		return fmt.Errorf("удаление разрешений AppArmor WireGuard: %w", err)
+	}
 	if err := services.RemoveDHCPAppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
 		return fmt.Errorf("удаление разрешений AppArmor DHCP: %w", err)
 	}

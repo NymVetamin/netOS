@@ -519,6 +519,9 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 		}
 		return false, err
 	}
+	if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
+		return fail(fmt.Errorf("AppArmor WireGuard: %w", err))
+	}
 	if _, err := s.Runner.Run(ctx, "wg", "syncconf", name, path); err != nil {
 		return fail(fmt.Errorf("настройка WireGuard: %w", err))
 	}

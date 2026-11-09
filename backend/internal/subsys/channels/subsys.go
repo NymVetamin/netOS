@@ -179,6 +179,9 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 				}
 			}
 			conf := filepath.Join(s.StateDir, owned.Name+".conf")
+			if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
+				return err
+			}
 			if _, err := s.Runner.Run(ctx, "wg", "syncconf", owned.Name, conf); err != nil {
 				return err
 			}
