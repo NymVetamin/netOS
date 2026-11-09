@@ -58,7 +58,9 @@ func TestIntegrationL2TPChannelRename(t *testing.T) {
 	remote("ip", "link", "set", peer, "up")
 	run("iptables", "-I", "INPUT", "1", "-i", host, "-j", "ACCEPT")
 	defer r.Run(ctx, "iptables", "-D", "INPUT", "-i", host, "-j", "ACCEPT")
-	root, err := os.MkdirTemp("/var/lib/netos", "l2tp-rename-")
+	// Не /tmp: у служб PrivateTmp. И не /var/lib/netos: на чистой машине
+	// без установленного netOS этого каталога нет.
+	root, err := os.MkdirTemp("/var/lib", "netos-l2tp-rename-")
 	if err != nil {
 		t.Fatal(err)
 	}
