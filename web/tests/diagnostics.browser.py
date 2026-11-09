@@ -169,4 +169,5 @@ async def main():
         print("diagnostics tabs/tools/permissions/stop/late-start/retry/pcap/mobile PASS")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

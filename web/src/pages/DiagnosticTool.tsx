@@ -47,6 +47,7 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
   const [flowPage, setFlowPage] = useState(0);
   const [recovering, setRecovering] = useState(tool.id === "capture" || tool.id === "torch");
   const [error, setError] = useState("");
+  const [visible, setVisible] = useState(tool.id !== "torch" || !document.hidden);
   const mounted = useRef(false);
   const current = useRef<string | null>(null);
   const pending = recovering || starting || active(job);
@@ -72,7 +73,14 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
     return () => { mounted.current = false; if (!capture && current.current) void api.diagnosticStop(current.current).catch(() => {}); };
   }, []);
   useEffect(() => {
-    if (!job) return;
+    if (tool.id !== "torch") return;
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    update();
+    return () => document.removeEventListener("visibilitychange", update);
+  }, [tool.id]);
+  useEffect(() => {
+    if (!job || !visible) return;
     let disposed = false;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -95,7 +103,7 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
     };
     void poll();
     return () => { disposed = true; abort.abort(); clearTimeout(timer); };
-  }, [job?.id, job?.state, flowPage]);
+  }, [job?.id, job?.state, flowPage, visible]);
 
   async function start() {
     setStarting(true); setError(""); setJob(null); setFlowPage(0);
