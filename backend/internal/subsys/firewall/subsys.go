@@ -82,7 +82,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	if oldRS.IPv6 != newRS.IPv6 {
 		detail := "обновление блокировки IPv6"
 		if new.IPv6.Mode != "off" {
-			detail = "снятие блокировки IPv6"
+			detail = "обновление фильтрации IPv6"
 		}
 		actions = append(actions, apply.Action{Kind: "update", Target: "ip6tables", Detail: detail})
 	}

@@ -1298,18 +1298,18 @@ func buildIPv6(cfg *config.Config) string {
 	b.line("COMMIT")
 	b.line("*filter")
 	if cfg.IPv6.Mode != "off" {
-		// Даже разрешающий ruleset нужно применить: ip6tables-restore тем самым
-		// снимает DROP, оставшийся от предыдущего режима off.
-		b.line(":INPUT ACCEPT [0:0]")
-		b.line(":FORWARD ACCEPT [0:0]")
-		b.line(":OUTPUT ACCEPT [0:0]")
-		b.internetBlockedClients(cfg, true)
-		// Go/Xray may bind an IPv6 dual-stack wildcard even for 0.0.0.0.
-		// SOCKS access scopes are IPv4-only; never bypass them over IPv6.
-		if cfg.Socks.Enabled {
-			b.line("-A INPUT -p tcp --dport %d -j DROP", cfg.Socks.Port)
+		if !cfg.Firewall.Enabled {
+			// Выключенная защита сети — честно открытый роутер, как и в IPv4.
+			// Набор всё равно применяется: так снимается DROP режима off.
+			b.line(":INPUT ACCEPT [0:0]")
+			b.line(":FORWARD ACCEPT [0:0]")
+			b.line(":OUTPUT ACCEPT [0:0]")
+			b.internetBlockedClients(cfg, true)
+			b.ipv6SocksDrop(cfg)
+			b.line("COMMIT")
+			return b.String()
 		}
-		b.line("COMMIT")
+		b.ipv6Filter(cfg)
 		return b.String()
 	}
 	b.line(":INPUT DROP [0:0]")
@@ -1320,6 +1320,65 @@ func buildIPv6(cfg *config.Config) string {
 	b.line("-A OUTPUT -o lo -j ACCEPT")
 	b.line("COMMIT")
 	return b.String()
+}
+
+// Go/Xray may bind an IPv6 dual-stack wildcard even for 0.0.0.0.
+// SOCKS access scopes are IPv4-only; never bypass them over IPv6.
+func (b *builder) ipv6SocksDrop(cfg *config.Config) {
+	if cfg.Socks.Enabled {
+		b.line("-A INPUT -p tcp --dport %d -j DROP", cfg.Socks.Port)
+	}
+}
+
+// ipv6Filter — базовая фильтрация IPv6 в режиме «Разрешить». Адресов и
+// префиксов IPv6 конфигурация не описывает, поэтому правила IPv4 целиком не
+// повторяются. Повторяется то, что от семейства адресов не зависит: политика
+// зон по интерфейсам, ответы на свои соединения и автоматические разрешения.
+// Без этого аплинк по IPv6 открывал роутер и устройства сети целиком, мимо
+// выключенных правил SSH и панели.
+func (b *builder) ipv6Filter(cfg *config.Config) {
+	b.line(":INPUT DROP [0:0]")
+	b.line(":FORWARD DROP [0:0]")
+	b.line(":OUTPUT ACCEPT [0:0]")
+	// Запреты стоят раньше любого разрешения, как и в IPv4.
+	b.blockedClients(cfg)
+	b.internetBlockedClients(cfg, true)
+	b.ipv6SocksDrop(cfg)
+
+	b.line("-A INPUT -i lo -j ACCEPT")
+	b.line("-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
+	b.line("-A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
+	// Обнаружение соседей, объявления маршрутизатора (адрес аплинка по SLAAC)
+	// и PMTU работают только при пропущенном ICMPv6.
+	b.line("-A INPUT -p ipv6-icmp -j ACCEPT")
+
+	if cfg.UsesACME() {
+		b.line("-A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -m comment --comment %q -j ACCEPT", "ACME HTTP-01")
+	}
+	for _, r := range cfg.Firewall.Rules {
+		if r.ID != config.RuleSSH && r.ID != config.RulePanel {
+			continue
+		}
+		// Адрес IPv4 в ip6tables не применить, а без него правило открыло бы
+		// по IPv6 больше, чем по IPv4.
+		if !r.Enabled || r.SrcIP != "" || r.DstIP != "" || r.SrcIPSet != "" || r.DstIPSet != "" {
+			continue
+		}
+		b.emitRule("INPUT", r, "")
+	}
+	b.vpnServerAccept(cfg, "INPUT")
+
+	zones := buildZoneMap(cfg)
+	for _, z := range cfg.Firewall.Zones {
+		if z.Policy != "accept" {
+			continue
+		}
+		for _, iface := range zones[z.Name] {
+			b.line("-A INPUT -i %s -j ACCEPT", iface)
+			b.line("-A FORWARD -i %s -j ACCEPT", iface)
+		}
+	}
+	b.line("COMMIT")
 }
 
 // ---------------------------------------------------------------------------
