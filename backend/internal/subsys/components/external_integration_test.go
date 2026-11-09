@@ -41,6 +41,11 @@ func TestIntegrationXrayInstallAndLifecycle(t *testing.T) {
 	// (installExternal), в таблице их нет. Тест идёт тем же путём.
 	rel, err := latestRelease(ctx, rel)
 	if err != nil {
+		// Адреса раннеров общие, и анонимный лимит API GitHub выбирают все
+		// подряд. Это чужой отказ, а не ошибка netOS; любая другая — падение.
+		if text := err.Error(); strings.HasSuffix(text, "HTTP 403") || strings.HasSuffix(text, "HTTP 429") {
+			t.Skipf("API релизов GitHub ограничил запросы: %v", err)
+		}
 		t.Fatal(err)
 	}
 	componentSubsystem := New(system.NewExec(), quietLogger{})
