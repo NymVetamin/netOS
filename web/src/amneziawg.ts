@@ -1,6 +1,8 @@
 export const isWireGuardType = (type: string) => type === "wireguard" || type === "amneziawg";
 export const wireGuardLabel = (type: string) => type === "amneziawg" ? "AmneziaWG" : "WireGuard";
 export const wireGuardPrefix = (type: string) => type === "amneziawg" ? "awg" : "wg";
+// UAPI's 64 KiB line buffer includes "iN=" and the newline.
+export const amneziaMaxSignatureLength = 64 * 1024 - 4;
 
 export type AmneziaOptions = Record<string, string | number | boolean>;
 type Field = { key: string; native: string; kind: "number" | "range" | "signature" | "key" | "boolean"; max?: number };
@@ -54,7 +56,7 @@ function parseField(field: Field, value: string): string | number | boolean {
 }
 
 function validateSignature(value: string, name: string) {
-  if (value.length > 131100) throw new Error(`${name}: слишком длинная сигнатура.`);
+  if (value.length > amneziaMaxSignatureLength) throw new Error(`${name}: слишком длинная сигнатура.`);
   let offset = 0, size = 0;
   while (offset < value.length) {
     const end = value.indexOf(">", offset + 1);

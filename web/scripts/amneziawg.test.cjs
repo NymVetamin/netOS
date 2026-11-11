@@ -32,6 +32,11 @@ for (const broken of [
 ]) assert.throws(() => validateAmneziaOptions({ ...options, ...broken }), JSON.stringify(broken));
 assert.throws(() => parse(exported.replace("Jc = 3", "Jc = 3\nJc = 4"), true));
 assert.throws(() => parse("#".repeat(1024 * 1024 + 1), true));
+const largestSignature = "<b 0x" + "00".repeat(32763) + ">";
+validateAmneziaOptions({ i1: largestSignature });
+assert.throws(() => validateAmneziaOptions({ i1: "<b 0x" + "00".repeat(32764) + ">" }));
+const boundaryServer = { ...server, config: { ...server.config, amnezia: { ...options, i1: largestSignature } } };
+assert.equal(parse(profile(boundaryServer, peer, key, nextKey), true).config.amnezia.i1, largestSignature);
 const scripts = parse(exported.replace("[Peer]", "PostUp = shutdown\n[Peer]"), true);
 assert.equal(scripts.config.PostUp, undefined);
 assert.ok(scripts.warnings.some(w => w.startsWith("PostUp")));

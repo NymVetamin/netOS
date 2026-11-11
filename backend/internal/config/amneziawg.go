@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// The pinned runtime uses bufio.Scanner's 64 KiB buffer for UAPI lines.
+// Reserve four bytes for "iN=" and the terminating newline.
+const AmneziaWGMaxSignatureLength = 64*1024 - 4
+
 // AmneziaWGOptions contains protocol parameters, never shell commands. Keys
 // shared with ordinary WireGuard remain on the channel/server configuration.
 type AmneziaWGOptions struct {
@@ -187,7 +191,7 @@ func validateAmneziaOptions(r *ValidationResult, path, kind string, options *Amn
 
 // Parse tags without regexp backtracking or allocating the generated packet.
 func validateAmneziaSignature(s string) error {
-	if len(s) > 131100 {
+	if len(s) > AmneziaWGMaxSignatureLength {
 		return fmt.Errorf("слишком длинная сигнатура")
 	}
 	size := uint64(0)

@@ -153,6 +153,22 @@ func TestIntegrationAmneziaWG(t *testing.T) {
 		sync(tc.name, tc.text)
 	}
 	run("ip", "netns", "exec", ns, "ping", "-c", "2", "-W", "3", "10.251.0.1")
+	// Check the actual pinned UAPI scanner at its boundary, then clear the
+	// field without resetting the established peer or sending a new handshake.
+	boundary := "<b 0x" + strings.Repeat("00", 32763) + ">"
+	if len(boundary) != config.AmneziaWGMaxSignatureLength {
+		t.Fatal("signature boundary fixture drifted")
+	}
+	sync("awg-ch999", strings.Replace(clientText, "I2 = \n", "I2 = "+boundary+"\n", 1))
+	live, err := exchange(ctx, filepath.Join(SocketDir, "awg-ch999.sock"), "get=1\n\n")
+	if err != nil || live.Device["i2"] != boundary {
+		t.Fatalf("runtime did not accept boundary signature: %v", err)
+	}
+	sync("awg-ch999", clientText)
+	oversized := strings.Replace(clientText, "I2 = \n", "I2 = <b 0x"+strings.Repeat("00", 32764)+">\n", 1)
+	if _, err := ParseNative(ctx, oversized); err == nil {
+		t.Fatal("oversized signature reached UAPI")
+	}
 	// Removing a peer must actually prevent further traffic; restoring it
 	// must recover without recreating either interface.
 	sync("awg-srv999", strings.Split(serverText, "[Peer]")[0])

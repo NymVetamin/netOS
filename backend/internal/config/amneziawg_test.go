@@ -46,6 +46,20 @@ func TestAmneziaWGOptions(t *testing.T) {
 	}
 }
 
+func TestAmneziaWGSignatureUAPILimit(t *testing.T) {
+	// Both packets fit UDP; only the second text exceeds the upstream UAPI
+	// scanner's 64 KiB line buffer after adding "i1=" and the newline.
+	for _, tc := range []struct {
+		bytes int
+		valid bool
+	}{{32763, true}, {32764, false}} {
+		a := AmneziaWGOptions{I1: "<b 0x" + strings.Repeat("00", tc.bytes) + ">"}
+		if err := a.Validate(); (err == nil) != tc.valid {
+			t.Fatalf("signature length %d, valid=%v: %v", len(a.I1), tc.valid, err)
+		}
+	}
+}
+
 func TestAmneziaWGConfigurationAndComponent(t *testing.T) {
 	c := Default()
 	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
