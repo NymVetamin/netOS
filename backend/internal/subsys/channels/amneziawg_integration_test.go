@@ -3,14 +3,18 @@
 package channels_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,9 +22,23 @@ import (
 	"github.com/netos-router/netos/internal/amneziawg"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
+	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 	"github.com/netos-router/netos/internal/system"
 )
+
+type amneziaRestartFailure struct {
+	system.Runner
+	unit string
+}
+
+func (r *amneziaRestartFailure) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if r.unit != "" && name == "systemctl" && len(args) == 2 && args[0] == "restart" && args[1] == r.unit {
+		r.unit = ""
+		return "", fmt.Errorf("injected one-shot restart failure")
+	}
+	return r.Runner.Run(ctx, name, args...)
+}
 
 // A copy of the test executable runs the same multicall handler as netosd.
 func TestAmneziaWGDaemonProcess(t *testing.T) {
@@ -46,7 +64,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			t.Fatal("refusing host namespace")
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	run := func(name string, args ...string) string {
 		t.Helper()
@@ -133,7 +151,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 		return base64.StdEncoding.EncodeToString(k.Bytes()), base64.StdEncoding.EncodeToString(k.PublicKey().Bytes())
 	}
 	opts := config.AmneziaWGOptions{Jc: 3, Jmin: 30, Jmax: 50, S1: 16, S2: 17, H1: "101", H2: "102", H3: "103", H4: "104"}
-	r := system.NewExec()
+	r := &amneziaRestartFailure{Runner: system.NewExec()}
 	for _, role := range []string{"client", "server"} {
 		func() {
 			t.Log("role:", role)
@@ -187,6 +205,9 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			c := config.Default()
 			c.Components = []config.Component{{ID: "amneziawg", Installed: true}}
 			c.Channels = nil
+			c.Interfaces = []config.Interface{{ID: "transport", Name: "awgtransport"}}
+			c.Networks = nil
+			c.WANs = []config.WAN{{ID: "wan", Index: 1, Interface: "transport", Enabled: true, Proto: "static", Address: "192.0.2.1/30"}}
 			var apply func(*config.Config) error
 			var health func(*config.Config) error
 			if role == "client" {
@@ -205,6 +226,10 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := health(c); err != nil {
+				t.Fatal(err)
+			}
+			fw := firewall.New(r, filepath.Join(root, role, "firewall"))
+			if err := fw.Apply(ctx, c); err != nil {
 				t.Fatal(err)
 			}
 			var port strings.Builder
@@ -231,39 +256,168 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			}
 			pid := run("systemctl", "show", unitName, "-p", "MainPID", "--value")
 			t.Log(role, "initial bidirectional traffic passed")
+			blocked := *c
+			blocked.Firewall.Rules = append([]config.FirewallRule{{ID: "test-awg-block", Enabled: true, Zone: "global", Flow: "in", Interface: name, Protocol: "icmp", Action: "drop"}}, c.Firewall.Rules...)
+			if err := fw.Apply(ctx, &blocked); err != nil {
+				t.Fatal(err)
+			}
+			if err := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "1", "10.252.0.1").Run(); err == nil {
+				t.Fatal("AWG firewall input rule did not block traffic")
+			}
+			if err := fw.Apply(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			remote("ping", "-c", "1", "-W", "2", "10.252.0.1")
 			if err := apply(c); err != nil {
 				t.Fatal(err)
 			}
 			if again := run("systemctl", "show", unitName, "-p", "MainPID", "--value"); again != pid {
 				t.Fatal("unchanged apply restarted tunnel")
 			}
-			run("systemctl", "kill", "--signal=SIGKILL", "--kill-whom=main", unitName)
-			wait(func() bool { return health(c) == nil })
-			// Client source ports can change on restart; send first from the client.
-			if role == "client" {
-				run("ping", "-c", "2", "-W", "2", "10.252.0.2")
-			} else {
-				// The surviving client retains its session. Upstream starts a new
-				// handshake after 10s KeepaliveTimeout + 5s RekeyTimeout + jitter
-				// when data receives no response. Keep sending data through this
-				// bounded recovery window; do not reset the peer to hide recovery.
+			iperf := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "iperf3", "-s", "-B", "10.252.0.2")
+			if err := iperf.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { iperf.Process.Kill(); iperf.Wait() }()
+			wait(func() bool {
+				conn, err := net.DialTimeout("tcp4", "10.252.0.2:5201", time.Second)
+				if err != nil {
+					return false
+				}
+				conn.Close()
+				return true
+			})
+			usage := func() (uint64, uint64) {
+				t.Helper()
+				stat, err := os.ReadFile("/proc/" + pid + "/stat")
+				if err != nil {
+					t.Fatal(err)
+				}
+				fields := strings.Fields(string(stat)[strings.LastIndex(string(stat), ")")+1:])
+				user, _ := strconv.ParseUint(fields[11], 10, 64)
+				kernel, _ := strconv.ParseUint(fields[12], 10, 64)
+				memory, err := os.ReadFile("/proc/" + pid + "/statm")
+				if err != nil {
+					t.Fatal(err)
+				}
+				pages, _ := strconv.ParseUint(strings.Fields(string(memory))[1], 10, 64)
+				return user + kernel, pages * uint64(os.Getpagesize())
+			}
+			for _, size := range []int{1 << 20, 16 << 20} {
+				beforeCPU, beforeRSS := usage()
 				started := time.Now()
-				deadline := started.Add(25 * time.Second)
-				for {
-					err := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "1", "10.252.0.1").Run()
-					if err == nil {
-						t.Logf("server restart traffic recovered after %s", time.Since(started))
-						break
-					}
-					if ctx.Err() != nil || time.Now().After(deadline) {
-						var state strings.Builder
-						amneziawg.Execute(ctx, []string{"show", name, "telemetry"}, &state)
-						t.Fatalf("server restart did not restore traffic: %v; public telemetry: %s", err, state.String())
+				output := run("iperf3", "-c", "10.252.0.2", "-n", strconv.Itoa(size), "-J")
+				var result struct {
+					Error string
+					End   struct {
+						Received struct {
+							Bytes         int64
+							BitsPerSecond float64 `json:"bits_per_second"`
+						} `json:"sum_received"`
 					}
 				}
-				remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
-				run("ping", "-c", "2", "-W", "2", "10.252.0.2")
+				if err := json.Unmarshal([]byte(output), &result); err != nil || result.Error != "" || result.End.Received.Bytes < int64(size) {
+					t.Fatalf("TCP transfer failed: %v %s", err, output)
+				}
+				afterCPU, afterRSS := usage()
+				t.Logf("%s TCP bytes=%d wall=%s received_bits_per_second=%.0f daemon_cpu_ticks=%d RSS_bytes_before=%d after=%d", role, size, time.Since(started), result.End.Received.BitsPerSecond, afterCPU-beforeCPU, beforeRSS, afterRSS)
 			}
+			udp := run("iperf3", "-c", "10.252.0.2", "-u", "-b", "10M", "-t", "1", "-J")
+			var udpResult struct {
+				Error string
+				End   struct {
+					Received struct{ Bytes int64 } `json:"sum_received"`
+				}
+			}
+			if err := json.Unmarshal([]byte(udp), &udpResult); err != nil || udpResult.Error != "" || udpResult.End.Received.Bytes == 0 {
+				t.Fatalf("UDP transfer failed: %v %s", err, udp)
+			}
+			t.Logf("%s UDP received_bytes=%d", role, udpResult.End.Received.Bytes)
+			run("systemctl", "kill", "--signal=SIGKILL", "--kill-whom=main", unitName)
+			wait(func() bool { return health(c) == nil })
+			recoverTraffic := func() {
+				t.Helper()
+				// Client source ports can change on restart; send first from the client.
+				if role == "client" {
+					run("ping", "-c", "2", "-W", "2", "10.252.0.2")
+				} else {
+					// The surviving client retains its session. Upstream starts a new
+					// handshake after 10s KeepaliveTimeout + 5s RekeyTimeout + jitter
+					// when data receives no response. Keep sending data through this
+					// bounded recovery window; do not reset the peer to hide recovery.
+					started := time.Now()
+					deadline := started.Add(25 * time.Second)
+					for {
+						err := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "1", "10.252.0.1").Run()
+						if err == nil {
+							t.Logf("server restart traffic recovered after %s", time.Since(started))
+							break
+						}
+						if ctx.Err() != nil || time.Now().After(deadline) {
+							var state strings.Builder
+							amneziawg.Execute(ctx, []string{"show", name, "telemetry"}, &state)
+							t.Fatalf("server restart did not restore traffic: %v; public telemetry: %s", err, state.String())
+						}
+					}
+					remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
+					run("ping", "-c", "2", "-W", "2", "10.252.0.2")
+				}
+			}
+			recoverTraffic()
+			oldConf, err := os.ReadFile(confPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldUnit, err := os.ReadFile(unitPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			serialized, err := json.Marshal(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var changed config.Config
+			if err := json.Unmarshal(serialized, &changed); err != nil {
+				t.Fatal(err)
+			}
+			var occupied net.PacketConn
+			if role == "client" {
+				changed.Channels[0].Config["mtu"] = 1380
+				r.unit = unitName
+			} else {
+				occupied, err = net.ListenPacket("udp4", "0.0.0.0:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer occupied.Close()
+				changed.VPNServers[0].Port = occupied.LocalAddr().(*net.UDPAddr).Port
+			}
+			if err := apply(&changed); err == nil {
+				t.Fatal("conflicting apply unexpectedly succeeded")
+			} else {
+				t.Log(role, "expected apply error:", err)
+			}
+			if err := health(c); err != nil {
+				t.Fatalf("rollback health: %v", err)
+			}
+			actualConf, err := os.ReadFile(confPath)
+			if err != nil || !bytes.Equal(actualConf, oldConf) {
+				t.Fatal("rollback did not restore config")
+			}
+			actualUnit, err := os.ReadFile(unitPath)
+			if err != nil || !bytes.Equal(actualUnit, oldUnit) {
+				t.Fatal("rollback did not restore unit")
+			}
+			if occupied != nil {
+				occupied.Close()
+			}
+			if err := apply(c); err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+			if err := health(c); err != nil {
+				t.Fatalf("retry health: %v", err)
+			}
+			recoverTraffic()
 			empty := config.Default()
 			empty.Channels = nil
 			if err := apply(empty); err != nil {

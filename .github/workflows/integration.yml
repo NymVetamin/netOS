@@ -40,7 +40,7 @@ jobs:
       - name: зависимости стенда
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2 iputils-ping
+          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2 iputils-ping iperf3
           # Пакеты компонентов netOS (каталог в config/catalog.go), которые
           # нужны тестам VPN, каналов и политик: без них тесты пропускаются
           # или падают на отсутствующей утилите.
