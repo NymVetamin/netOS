@@ -124,13 +124,15 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 		}
 		return base64.StdEncoding.EncodeToString(k.Bytes()), base64.StdEncoding.EncodeToString(k.PublicKey().Bytes())
 	}
-	localKey, localPub := key()
-	peerKey, peerPub := key()
 	opts := config.AmneziaWGOptions{Jc: 3, Jmin: 30, Jmax: 50, S1: 16, S2: 17, H1: "101", H2: "102", H3: "103", H4: "104"}
 	r := system.NewExec()
 	for _, role := range []string{"client", "server"} {
 		func() {
 			t.Log("role:", role)
+			// Separate scenarios must not reuse the previous role's session keys.
+			// Updating an endpoint preserves a live peer's handshake by design.
+			localKey, localPub := key()
+			peerKey, peerPub := key()
 			name := "awg-ch991"
 			if role == "server" {
 				name = "awg-srv991"
@@ -211,8 +213,14 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			}
 			remote("ip", "addr", "replace", "10.252.0.2/24", "dev", "awg-ch992")
 			remote("ip", "link", "set", "awg-ch992", "up")
-			run("ping", "-c", "2", "-W", "2", "10.252.0.2")
-			remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
+			// A server learns its peer endpoint from the client's first handshake.
+			if role == "server" {
+				remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
+				run("ping", "-c", "2", "-W", "2", "10.252.0.2")
+			} else {
+				run("ping", "-c", "2", "-W", "2", "10.252.0.2")
+				remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
+			}
 			pid := run("systemctl", "show", unitName, "-p", "MainPID", "--value")
 			if err := apply(c); err != nil {
 				t.Fatal(err)
