@@ -474,7 +474,8 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 					t.Fatal(err)
 				}
 				remote("ip", "route", "add", "192.0.3.0/24", "dev", "awg-ch992")
-				service := exec.CommandContext(ctx, "ip", "netns", "exec", lanNS, "python3", "-u", "-c", `import http.server,socket,threading
+				service := exec.CommandContext(ctx, "ip", "netns", "exec", lanNS, "python3", "-u", "-c", `import http.server,socket,threading,faulthandler
+faulthandler.dump_traceback_later(2)
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   body=self.client_address[0].encode()+b':' + b'x'*131072
@@ -485,11 +486,21 @@ def udp():
  while True:
   data,addr=s.recvfrom(65535);s.sendto(addr[0].encode()+b':'+data,addr)
 threading.Thread(target=udp,daemon=True).start()
-http.server.HTTPServer(('192.0.3.2',18080),Handler).serve_forever()`)
+server=http.server.HTTPServer(('192.0.3.2',18080),Handler)
+faulthandler.cancel_dump_traceback_later()
+server.serve_forever()`)
+				var serviceErrors bytes.Buffer
+				service.Stderr = &serviceErrors
 				if err := service.Start(); err != nil {
 					t.Fatal(err)
 				}
-				defer func() { service.Process.Kill(); service.Wait() }()
+				defer func() {
+					service.Process.Kill()
+					service.Wait()
+					if t.Failed() {
+						t.Logf("echo service startup diagnostics: %s", serviceErrors.String())
+					}
+				}()
 				wait(func() bool {
 					conn, err := net.DialTimeout("tcp4", "192.0.3.2:18080", time.Second)
 					if err != nil {
