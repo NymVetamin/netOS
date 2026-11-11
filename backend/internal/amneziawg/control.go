@@ -14,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/netos-router/netos/internal/awgruntime"
 )
 
 const SocketDir = "/run/netos/amneziawg"
@@ -189,7 +187,7 @@ func Execute(ctx context.Context, args []string, w io.Writer) error {
 	}
 	name := args[1]
 	if args[0] == "serve" && len(args) == 2 {
-		return awgruntime.Serve(ctx, name)
+		return serve(ctx, name)
 	}
 	path := filepath.Join(SocketDir, name+".sock")
 	switch args[0] {

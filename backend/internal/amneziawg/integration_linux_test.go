@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netos-router/netos/internal/awgruntime"
 	"github.com/netos-router/netos/internal/config"
 )
 
@@ -27,7 +26,7 @@ func TestAmneziaWGProcess(t *testing.T) {
 	if !validInterface(name) {
 		t.Fatal("invalid test interface")
 	}
-	if err := awgruntime.Serve(context.Background(), name); err != nil {
+	if err := serve(context.Background(), name); err != nil {
 		t.Fatal(err)
 	}
 }

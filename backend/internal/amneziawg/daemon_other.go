@@ -1,12 +1,12 @@
 //go:build !linux
 
-package awgruntime
+package amneziawg
 
 import (
 	"context"
 	"fmt"
 )
 
-func Serve(context.Context, string) error {
+func serve(context.Context, string) error {
 	return fmt.Errorf("AmneziaWG работает только в Linux")
 }
