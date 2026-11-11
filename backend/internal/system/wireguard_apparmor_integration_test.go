@@ -73,10 +73,40 @@ func TestIntegrationWireGuardAppArmor(t *testing.T) {
 		t.Fatal(err)
 	}
 	run("wg", "syncconf", "wg-ch999", conf)
+	// Настоящий parser отклоняет испорченный профиль, а ядро сохраняет
+	// прежние разрешения. После восстановления профиля retry обязан
+	// повторить загрузку, а не решить по отсутствию файла, что всё удалено.
+	policyPath := filepath.Join(dir, "wg")
+	policy, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failReload := func(ctx context.Context, name string, args ...string) (string, error) {
+		if err := WriteFileAtomic(policyPath, []byte("invalid netos test profile {\n"), info.Mode().Perm()); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := WriteFileAtomic(policyPath, policy, info.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+		}()
+		return r.Run(ctx, name, args...)
+	}
+	if err := RemoveWireGuardAppArmor(ctx, dir, profiles, failReload); err == nil {
+		t.Fatal("ошибка настоящего parser потеряна")
+	}
+	run("wg", "syncconf", "wg-ch999", conf)
 	if err := RemoveWireGuardAppArmor(ctx, dir, profiles, r.Run); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Run(ctx, "wg", "syncconf", "wg-ch999", conf); err == nil {
 		t.Fatal("после удаления блока разрешение осталось")
+	}
+	if err := RemoveWireGuardAppArmor(ctx, dir, profiles, r.Run); err != nil {
+		t.Fatalf("повтор после успеха: %v", err)
 	}
 }

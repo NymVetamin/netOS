@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,7 +96,15 @@ func RemoveWireGuardAppArmor(ctx context.Context, dir, profilesFile string, run 
 	if err != nil {
 		return err
 	}
-	return reloadWireGuardArmor(ctx, filepath.Join(dir, wireGuardArmorProfile), profilesFile, run)
+	if err := reloadWireGuardArmor(ctx, filepath.Join(dir, wireGuardArmorProfile), profilesFile, run); err != nil {
+		// Без исходного блока повтор решил бы, что разрешения уже убраны,
+		// хотя профиль ядра мог остаться прежним после ошибки загрузки.
+		if restoreErr := WriteFileAtomic(path, []byte(original), mode); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("восстановление локального профиля AppArmor %s: %w", path, restoreErr))
+		}
+		return err
+	}
+	return nil
 }
 
 func readArmorLocal(path string) (data string, existed bool, mode os.FileMode, err error) {

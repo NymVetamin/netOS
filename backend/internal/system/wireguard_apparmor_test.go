@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,118 @@ profile wg /usr/bin/wg flags=(attach_disconnected){
   include if exists <local/wg>
 }
 `
+
+func TestRemoveWireGuardAppArmorFailureRestoresAndRetries(t *testing.T) {
+	for _, mode := range []string{"enforce", "complain"} {
+		for _, before := range []string{"absent", "", "  /srv/vpn/** r,\n"} {
+			t.Run(mode+"/"+before, func(t *testing.T) {
+				f := newArmorFixture(t, "wg ("+mode+")\n")
+				ctx := context.Background()
+				path := filepath.Join(f.dir, "local", "wg")
+				if before != "absent" {
+					if err := os.WriteFile(path, []byte(before), 0o640); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := EnsureWireGuardAppArmor(ctx, f.dir, f.profiles, "/var/lib/netos/generated", f.run); err != nil {
+					t.Fatal(err)
+				}
+				original := f.local(t)
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				failure := errors.New("parser failed")
+				f.fail = failure
+				if err := RemoveWireGuardAppArmor(ctx, f.dir, f.profiles, f.run); !errors.Is(err, failure) {
+					t.Fatalf("lost parser error: %v", err)
+				}
+				if f.local(t) != original {
+					t.Fatal("failed removal lost retry marker or foreign rules")
+				}
+				if after, err := os.Stat(path); err != nil || after.Mode().Perm() != info.Mode().Perm() {
+					t.Fatalf("mode changed: %v", err)
+				}
+				f.fail = nil
+				if err := RemoveWireGuardAppArmor(ctx, f.dir, f.profiles, f.run); err != nil {
+					t.Fatal(err)
+				}
+				if len(f.calls) != 3 {
+					t.Fatalf("retry did not reload: %v", f.calls)
+				}
+				if got := strings.Contains(strings.Join(f.calls[2], " "), " -C "); got != (mode == "complain") {
+					t.Fatal("profile mode changed")
+				}
+				if before == "absent" {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatalf("created file remains: %v", err)
+					}
+				} else if f.local(t) != before {
+					t.Fatal("foreign content changed")
+				}
+				if err := RemoveWireGuardAppArmor(ctx, f.dir, f.profiles, f.run); err != nil || len(f.calls) != 3 {
+					t.Fatalf("successful repeat: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestRemoveWireGuardAppArmorReportsRestoreFailure(t *testing.T) {
+	f := newArmorFixture(t, "wg (enforce)\n")
+	ctx := context.Background()
+	if err := EnsureWireGuardAppArmor(ctx, f.dir, f.profiles, "/var/lib/netos/generated", f.run); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("parser failed")
+	err := RemoveWireGuardAppArmor(ctx, f.dir, f.profiles, func(context.Context, string, ...string) (string, error) {
+		// A non-file target makes the atomic restore fail on both OS families.
+		if err := os.Mkdir(filepath.Join(f.dir, "local", "wg"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return "", failure
+	})
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "восстановление") {
+		t.Fatalf("lost either error: %v", err)
+	}
+}
+
+func BenchmarkRemoveWireGuardAppArmor(b *testing.B) {
+	for _, lines := range []int{1, 1000} {
+		for _, fail := range []bool{false, true} {
+			b.Run(fmt.Sprintf("lines=%d/fail=%t", lines, fail), func(b *testing.B) {
+				dir := b.TempDir()
+				if err := os.Mkdir(filepath.Join(dir, "local"), 0o755); err != nil {
+					b.Fatal(err)
+				}
+				profiles := filepath.Join(dir, "profiles")
+				if err := os.WriteFile(profiles, []byte("wg (enforce)\n"), 0o644); err != nil {
+					b.Fatal(err)
+				}
+				original := strings.Repeat("  /srv/vpn/** r,\n", lines) + wireGuardArmorBegin + "  /var/lib/netos/generated/** r,\n" + wireGuardArmorEnd
+				failure := errors.New("parser failed")
+				run := func(context.Context, string, ...string) (string, error) {
+					if fail {
+						return "", failure
+					}
+					return "", nil
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					// Include preparation, as well as file IO and the error path.
+					if err := os.WriteFile(filepath.Join(dir, "local", "wg"), []byte(original), 0o640); err != nil {
+						b.Fatal(err)
+					}
+					err := RemoveWireGuardAppArmor(context.Background(), dir, profiles, run)
+					if (err != nil) != fail {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
 
 type armorFixture struct {
 	dir, profiles string
