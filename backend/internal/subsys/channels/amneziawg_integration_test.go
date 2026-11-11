@@ -315,7 +315,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			if again := run("systemctl", "show", unitName, "-p", "MainPID", "--value"); again != pid {
 				t.Fatal("unchanged apply restarted tunnel")
 			}
-			iperf := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "iperf3", "-s")
+			iperf := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "iperf3", "-s", "-B", "10.252.0.2")
 			if err := iperf.Start(); err != nil {
 				t.Fatal(err)
 			}
@@ -488,6 +488,23 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			}
 			run("ping", "-c", "1", "-W", "2", "198.51.100.2") // direct WAN route works
 			lan("ping", "-c", "2", "-W", "2", "198.51.100.2")
+			iperf.Process.Kill()
+			iperf.Wait()
+			// Bind the service address so UDP replies use the same source as
+			// the request destination, not the remote tunnel interface address.
+			forwardIperf := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "iperf3", "-s", "-B", "198.51.100.2")
+			if err := forwardIperf.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { forwardIperf.Process.Kill(); forwardIperf.Wait() }()
+			wait(func() bool {
+				conn, err := net.DialTimeout("tcp4", "198.51.100.2:5201", time.Second)
+				if err != nil {
+					return false
+				}
+				conn.Close()
+				return true
+			})
 			for _, transfer := range []struct {
 				args    []string
 				minimum int64
