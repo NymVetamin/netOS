@@ -9,7 +9,7 @@ permissions:
 jobs:
   native-kernel-contract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -29,17 +29,13 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       # Research fixture only. No package is built or published for users.
-      - name: Verify native kernel settings and reset in an empty namespace
+      - name: Verify native kernel settings in a disposable Debian VM
         run: |
-          test -d "/lib/modules/$(uname -r)/build"
-          make -C native-tools/src -j2
-          make -C native-kernel/src -j2
-          (cd backend && go test -c -o "$RUNNER_TEMP/awg-kernel.test" ./internal/amneziawg)
-          sudo modprobe -a udp_tunnel ip6_udp_tunnel
-          sudo insmod native-kernel/src/amneziawg.ko
-          trap 'sudo rmmod amneziawg' EXIT
-          sudo unshare -n env NETOS_AWG_KERNEL_TEST=1 NETOS_AWG_TOOLS_BINARY="$GITHUB_WORKSPACE/native-tools/src/wg" \
-            "$RUNNER_TEMP/awg-kernel.test" -test.run '^TestAmneziaWGNativeKernelContract$' -test.v -test.timeout 120s
+          bash -n scripts/test-amneziawg-kernel-vm.sh
+          (cd backend && CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/awg-kernel.test" ./internal/amneziawg)
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -v "$RUNNER_TEMP/awg-kernel.test:/test-binary:ro" \
+            debian:bookworm bash /workspace/scripts/test-amneziawg-kernel-vm.sh
   native-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
