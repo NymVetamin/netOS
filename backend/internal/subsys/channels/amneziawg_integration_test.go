@@ -257,9 +257,9 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			if err := fw.Apply(ctx, c); err != nil {
 				t.Fatal(err)
 			}
-			configurePeer := func(endpoint string) {
+			configurePeer := func(endpoint, allowed string) {
 				t.Helper()
-				peerConf := "[Interface]\nPrivateKey = " + peerKey + "\nListenPort = 51992\n" + opts.NativeParameters() + "[Peer]\nPublicKey = " + localPub + "\nAllowedIPs = 10.252.0.1/32\n"
+				peerConf := "[Interface]\nPrivateKey = " + peerKey + "\nListenPort = 51992\n" + opts.NativeParameters() + "[Peer]\nPublicKey = " + localPub + "\nAllowedIPs = " + allowed + "\n"
 				if endpoint != "" {
 					peerConf += "Endpoint = " + endpoint + "\nPersistentKeepalive = 1\n"
 				}
@@ -276,7 +276,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			// The remote server must be ready for the client's first handshake.
 			// It learns the client endpoint; it must not initiate a new WAN flow.
 			if role == "client" {
-				configurePeer("")
+				configurePeer("", "10.252.0.1/32")
 			}
 			if err := apply(c); err != nil {
 				t.Fatal(err)
@@ -285,7 +285,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 				t.Fatal(err)
 			}
 			if role == "server" {
-				configurePeer("192.0.2.1:51991")
+				configurePeer("192.0.2.1:51991", "0.0.0.0/0")
 			}
 			// A server learns its peer endpoint from the client's first handshake.
 			if role == "server" {
@@ -467,6 +467,45 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			var shared *channels.Subsystem
 			channelID := "awg"
 			if role == "server" {
+				// A normal incoming client exits via a WAN with source NAT.
+				// The isolated service reports the source it actually received.
+				c.WANs = append(c.WANs, config.WAN{ID: "test-egress", Index: 2, Interface: "lan", Enabled: true, Proto: "static", Address: "192.0.3.1/24"})
+				if err := fw.Apply(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+				remote("ip", "route", "add", "192.0.3.0/24", "dev", "awg-ch992")
+				service := exec.CommandContext(ctx, "ip", "netns", "exec", lanNS, "python3", "-u", "-c", `import http.server,socket,threading
+class Handler(http.server.BaseHTTPRequestHandler):
+ def do_GET(self):
+  body=self.client_address[0].encode()+b':' + b'x'*131072
+  self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+ def log_message(self,*args):pass
+def udp():
+ s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind(('192.0.3.2',18081))
+ while True:
+  data,addr=s.recvfrom(65535);s.sendto(addr[0].encode()+b':'+data,addr)
+threading.Thread(target=udp,daemon=True).start()
+http.server.HTTPServer(('192.0.3.2',18080),Handler).serve_forever()`)
+				if err := service.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer func() { service.Process.Kill(); service.Wait() }()
+				wait(func() bool {
+					conn, err := net.DialTimeout("tcp4", "192.0.3.2:18080", time.Second)
+					if err != nil {
+						return false
+					}
+					conn.Close()
+					return true
+				})
+				remote("python3", "-c", `import urllib.request,socket
+assert urllib.request.urlopen('http://192.0.3.2:18080',timeout=5).read()==b'192.0.3.1:'+b'x'*131072
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(5);s.sendto(b'awg-udp',('192.0.3.2',18081));assert s.recv(1024)==b'192.0.3.1:awg-udp'`)
+				service.Process.Kill()
+				service.Wait()
+				c.WANs = c.WANs[:len(c.WANs)-1]
+				t.Log("ordinary AWG client TCP/UDP WAN egress and source NAT passed")
+				configurePeer("192.0.2.1:51991", "10.252.0.1/32")
 				c.VPNServers[0].Peers[0].UseAsChannel = true
 				c.Normalize()
 				channelID = c.Channels[len(c.Channels)-1].ID
@@ -521,13 +560,17 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 				t.Fatal("LAN leaked through reachable direct WAN while AWG stopped")
 			}
 			run("systemctl", "start", unitName)
+			stopMonitor := func() {}
 			if shared != nil {
-				if err := (&channels.PeerRoutes{S: shared}).Apply(ctx, c); err != nil {
-					t.Fatal(err)
-				}
+				monitorCtx, cancelMonitor := context.WithCancel(ctx)
+				done := make(chan struct{})
+				go func() { shared.Run(monitorCtx, func() *config.Config { return c }); close(done) }()
+				stopMonitor = func() { cancelMonitor(); <-done }
+				defer stopMonitor()
 			}
 			recoverTraffic()
 			lan("ping", "-c", "2", "-W", "2", "198.51.100.2")
+			stopMonitor() // join before changing the config read by the monitor
 			if shared != nil {
 				remote("ip", "addr", "add", "203.0.113.9/32", "dev", "lo")
 				if err := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "ping", "-I", "203.0.113.9", "-c", "1", "-W", "1", "10.252.0.1").Run(); err == nil {
