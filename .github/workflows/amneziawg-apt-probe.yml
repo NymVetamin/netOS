@@ -7,6 +7,30 @@ permissions:
   contents: read
 
 jobs:
+  native-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: amnezia-vpn/amneziawg-tools
+          ref: ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
+          path: native-tools
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # This executable is a test fixture only, never a netOS component or
+      # installation fallback. Official APT package checks remain independent.
+      - name: Check generated profiles with the official native parser
+        run: |
+          make -C native-tools/src -j2
+          cd backend
+          go test -c -o "$RUNNER_TEMP/awg-contract.test" ./internal/amneziawg
+          sudo unshare -n env NETOS_AWG_TOOLS_BINARY="$GITHUB_WORKSPACE/native-tools/src/wg" \
+            "$RUNNER_TEMP/awg-contract.test" -test.run '^TestAmneziaWGNativeToolsContract$' -test.v -test.timeout 120s
   connectivity:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
