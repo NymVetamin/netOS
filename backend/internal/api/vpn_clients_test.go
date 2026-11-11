@@ -108,6 +108,36 @@ func TestVPNPublicKeyEditDoesNotRetainUnrelatedPrivateKey(t *testing.T) {
 	}
 }
 
+func TestAmneziaWGProfileProtectionKeyRequiresExportPermission(t *testing.T) {
+	private, public, _ := generateWireGuardKeypair()
+	serverPrivate, _, _ := generateWireGuardKeypair()
+	header, _, _ := generateWireGuardKeypair()
+	c := config.Default()
+	c.VPNServers = []config.VPNServer{{ID: "srv", Type: "amneziawg", Config: map[string]any{"private_key": serverPrivate, "amnezia": map[string]any{"s1": 16, "s2": 16, "s3": 16, "s4": 16, "header_protection_key": header}}, Peers: []config.VPNPeer{{ID: "peer", Credentials: map[string]string{"private_key": private, "public_key": public}}}}}
+	s := &Server{draft: c}
+	for _, role := range []string{"admin", "viewer"} {
+		r := httptest.NewRequest("GET", "/profile", nil)
+		r.SetPathValue("id", "srv")
+		r.SetPathValue("peer", "peer")
+		r = r.WithContext(context.WithValue(r.Context(), ctxRole, role))
+		w := httptest.NewRecorder()
+		s.handleVPNClientProfile(w, r)
+		if role == "viewer" {
+			if w.Code != 403 || strings.Contains(w.Body.String(), header) {
+				t.Fatal("viewer exported header key")
+			}
+			continue
+		}
+		var got map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || !strings.Contains(got["amneziaParameters"], "HeaderProtectionKey = "+header) || strings.Contains(w.Body.String(), serverPrivate) {
+			t.Fatal("invalid AWG export", w.Code)
+		}
+	}
+}
+
 type vpnTelemetryRunner struct {
 	outputs map[string]string
 	fail    string

@@ -518,7 +518,7 @@ func validLinkName(name string) bool {
 }
 
 func legacyUnambiguousNetOSLink(name string) bool {
-	for _, prefix := range []string{"wg-ch", "tun-ch", "wg-srv", "xfrm-ch", "xfrm-srv", "ifb-netos-"} {
+	for _, prefix := range []string{"wg-ch", "awg-ch", "awg-srv", "tun-ch", "wg-srv", "xfrm-ch", "xfrm-srv", "ifb-netos-"} {
 		if suffix := strings.TrimPrefix(name, prefix); suffix != name && suffix != "" {
 			if _, err := strconv.Atoi(suffix); err == nil {
 				return true

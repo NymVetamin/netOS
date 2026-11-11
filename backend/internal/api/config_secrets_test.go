@@ -7,6 +7,25 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
+func TestAmneziaWGHeaderKeyRoundTrip(t *testing.T) {
+	c := config.Default()
+	c.Channels = []config.Channel{{ID: "awg", Type: "amneziawg", Config: map[string]any{"amnezia": map[string]any{"header_protection_key": "test-header-key", "h1": "100"}}}}
+	c.VPNServers = []config.VPNServer{{ID: "srv", Type: "amneziawg", Config: map[string]any{"amnezia": map[string]any{"header_protection_key": "server-header-key"}}}}
+	visible, err := redactAdminConfig(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []map[string]any{visible.Channels[0].Config, visible.VPNServers[0].Config} {
+		if m["amnezia"].(map[string]any)["header_protection_key"] != "" {
+			t.Fatal("header protection key exposed")
+		}
+	}
+	mergeRedactedSecrets(visible, c)
+	if !reflect.DeepEqual(visible, c) {
+		t.Fatal("redacted save changed header keys")
+	}
+}
+
 func TestAdminConfigRedactsXrayCredentialsRoundTrip(t *testing.T) {
 	original := config.Default()
 	original.Channels = []config.Channel{{ID: "xray", Type: "xray", Config: map[string]any{

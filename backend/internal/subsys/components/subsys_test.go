@@ -36,6 +36,19 @@ func (r *removalFailureRunner) RunInput(ctx context.Context, _ string, name stri
 
 type componentRunner struct{ calls int }
 
+func TestAmneziaWGBuiltinAvailability(t *testing.T) {
+	r := &componentRunner{}
+	s := New(r, testLogger{})
+	installed := s.Status(context.Background(), "amneziawg")
+	if !installed["amneziawg"] || r.calls != 0 {
+		t.Fatalf("builtin availability requires external install: %v, calls=%d", installed, r.calls)
+	}
+	info, _ := config.ComponentByID("amneziawg")
+	if !info.Builtin || len(info.Packages) != 0 || info.External {
+		t.Fatal("incorrect component source")
+	}
+}
+
 func (r *componentRunner) Run(context.Context, string, ...string) (string, error) {
 	r.calls++
 	return "", nil

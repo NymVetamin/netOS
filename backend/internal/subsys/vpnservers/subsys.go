@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/netos-router/netos/internal/amneziawg"
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
@@ -159,7 +160,7 @@ func InterfaceName(server config.VPNServer) string {
 	case "l2tp":
 		return l2tpPPPName(server)
 	default:
-		return fmt.Sprintf("wg-srv%d", server.Index)
+		return fmt.Sprintf("%s-srv%d", config.WireGuardPrefix(server.Type), server.Index)
 	}
 }
 
@@ -194,7 +195,7 @@ func resourceName(server config.VPNServer) string {
 func enabledServers(cfg *config.Config) []config.VPNServer {
 	var out []config.VPNServer
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && (server.Type == "wireguard" || server.Type == "xray" || server.Type == "ocserv" || server.Type == "ikev2" || server.Type == "l2tp") {
+		if server.Enabled && (config.IsWireGuardType(server.Type) || server.Type == "xray" || server.Type == "ocserv" || server.Type == "ikev2" || server.Type == "l2tp") {
 			out = append(out, server)
 		}
 	}
@@ -207,6 +208,8 @@ func ownedServersFor(servers []config.VPNServer) []ownedServer {
 	for _, server := range servers {
 		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: server.Type}
 		switch server.Type {
+		case "amneziawg":
+			item.Unit = system.AmneziaWGUnitName(InterfaceName(server))
 		case "xray":
 			item.Unit = xrayUnitName(server)
 		case "ocserv":
@@ -250,7 +253,7 @@ func sameServerRuntime(a, b config.VPNServer) bool {
 		a.Peers = peersWithoutExitChannels(a.Peers)
 		b.Peers = peersWithoutExitChannels(b.Peers)
 	}
-	if a.Type == "wireguard" && b.Type == "wireguard" {
+	if config.IsWireGuardType(a.Type) && a.Type == b.Type {
 		a = wireGuardRuntimeSettings(a)
 		b = wireGuardRuntimeSettings(b)
 	}
@@ -313,7 +316,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, next *config.Config) (
 		delete(previous, server.ID)
 		kind := "create"
 		if exists {
-			if sameServerRuntime(before, server) && (server.Type != "xray" || (old.TrafficMonitor.Enabled == next.TrafficMonitor.Enabled && reflect.DeepEqual(old.IsolationDestinations(before), next.IsolationDestinations(server)))) {
+			if sameServerRuntime(before, server) && (server.Type != "amneziawg" || old.IPv6.Mode == next.IPv6.Mode) && (server.Type != "xray" || (old.TrafficMonitor.Enabled == next.TrafficMonitor.Enabled && reflect.DeepEqual(old.IsolationDestinations(before), next.IsolationDestinations(server)))) {
 				continue
 			}
 			kind = "update"
@@ -399,6 +402,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: server.Type}
 		var createdNow bool
 		switch server.Type {
+		case "amneziawg":
+			item.Unit = system.AmneziaWGUnitName(InterfaceName(server))
+			createdNow, err = s.applyAmneziaWG(ctx, server, retained[item.Name], cfg.IPv6.Mode == "off")
 		case "wireguard":
 			createdNow, err = s.applyWireGuard(ctx, server, retained[item.Name], cfg.IPv6.Mode == "off")
 		case "xray":
@@ -462,6 +468,11 @@ func RenderWireGuard(server config.VPNServer) (string, error) {
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит секреты; права 0600.")
 	fmt.Fprintln(&b, "[Interface]")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", wg.PrivateKey)
+	parameters, err := config.WireGuardNativeOptions(server.Type, wg.Amnezia)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(parameters)
 	fmt.Fprintf(&b, "ListenPort = %d\n", server.Port)
 	for _, peer := range server.Peers {
 		if !peer.Enabled {
@@ -471,6 +482,13 @@ func RenderWireGuard(server config.VPNServer) (string, error) {
 		fmt.Fprintln(&b, "[Peer]")
 		fmt.Fprintf(&b, "# %s\n", strings.ReplaceAll(peer.Name, "\n", " "))
 		fmt.Fprintf(&b, "PublicKey = %s\n", peer.Credentials["public_key"])
+		if server.Type == "amneziawg" {
+			keepalive := "0"
+			if wg.Amnezia != nil && wg.Amnezia.PersistentKeepalive != "" {
+				keepalive = wg.Amnezia.PersistentKeepalive
+			}
+			fmt.Fprintf(&b, "PersistentKeepalive = %s\n", keepalive)
+		}
 		// Ключ пишем всегда, в том числе нулевым: wg syncconf не сбрасывает то,
 		// чего нет в файле, и снятый в панели общий ключ продолжал бы
 		// действовать на живом интерфейсе.
@@ -493,8 +511,8 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 	if existed && !wasOwned {
 		return false, fmt.Errorf("интерфейс %s существует и не принадлежит netOS", name)
 	}
-	if existed {
-		if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
+	if existed && server.Type != "amneziawg" {
+		if _, err := amneziawg.WireGuardControl(ctx, s.Runner, server.Type, "show", name); err != nil {
 			return false, fmt.Errorf("интерфейс %s не является WireGuard", name)
 		}
 	}
@@ -503,10 +521,23 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 		return false, err
 	}
 	path := filepath.Join(s.StateDir, name+".conf")
+	wg, _ := server.WireGuardConfig()
 	if err := writeFile(path, []byte(conf), 0o600); err != nil {
 		return false, fmt.Errorf("сохранение конфигурации: %w", err)
 	}
-	if !existed {
+	if server.Type == "amneziawg" {
+		mtu := wg.MTU
+		if mtu == 0 {
+			mtu = 1420
+		}
+		unit, err := system.RenderAmneziaWGUnit(name, path, server.Subnet, mtu, 0, disableIPv6)
+		if err != nil {
+			return false, err
+		}
+		if err = system.EnsureAmneziaWGService(ctx, s.Runner, s.UnitDir, name, unit); err != nil {
+			return false, err
+		}
+	} else if !existed {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
 			_ = os.Remove(path)
 			return false, fmt.Errorf("создание интерфейса: %w", err)
@@ -515,20 +546,21 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 	created := !existed
 	fail := func(err error) (bool, error) {
 		if created {
-			s.remove(ctx, ownedServer{Name: name, Index: server.Index})
+			s.remove(ctx, ownedServer{Name: name, Index: server.Index, Type: server.Type, Unit: amneziaServerUnit(server)})
 		}
 		return false, err
 	}
-	if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
-		return fail(fmt.Errorf("AppArmor WireGuard: %w", err))
+	if server.Type != "amneziawg" {
+		if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
+			return fail(fmt.Errorf("AppArmor WireGuard: %w", err))
+		}
 	}
-	if _, err := s.Runner.Run(ctx, "wg", "syncconf", name, path); err != nil {
+	if _, err := amneziawg.WireGuardControl(ctx, s.Runner, server.Type, "syncconf", name, path); err != nil {
 		return fail(fmt.Errorf("настройка WireGuard: %w", err))
 	}
 	if err := s.ensureAddress(ctx, name, server.Subnet); err != nil {
 		return fail(err)
 	}
-	wg, _ := server.WireGuardConfig()
 	mtu := wg.MTU
 	if mtu == 0 {
 		mtu = 1420
@@ -793,7 +825,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("интерфейс %s: чтение disable_ipv6: %w", name, err)
 		}
-		show, err := s.Runner.Run(ctx, "wg", "show", name, "listen-port")
+		show, err := amneziawg.WireGuardControl(ctx, s.Runner, server.Type, "show", name, "listen-port")
 		if err != nil || strings.TrimSpace(show) != fmt.Sprint(server.Port) {
 			return fmt.Errorf("сервер %s не слушает UDP-порт %d", server.Name, server.Port)
 		}
@@ -804,6 +836,18 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		conf, err := RenderWireGuard(server)
 		if err != nil {
 			return err
+		}
+		if server.Type == "amneziawg" {
+			if err := s.unitActiveEnabled(ctx, amneziaServerUnit(server)); err != nil {
+				return err
+			}
+			unit, err := system.RenderAmneziaWGUnit(name, filepath.Join(s.StateDir, name+".conf"), server.Subnet, expectedMTU, 0, cfg.IPv6.Mode == "off")
+			if err != nil {
+				return err
+			}
+			if err := healthyFile(filepath.Join(s.UnitDir, amneziaServerUnit(server)), unit, 0o644); err != nil {
+				return err
+			}
 		}
 		if err := healthyFile(filepath.Join(s.StateDir, name+".conf"), []byte(conf), 0o600); err != nil {
 			return err
@@ -851,6 +895,18 @@ func (s *Subsystem) unitActiveEnabled(ctx context.Context, unit string) error {
 }
 
 func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
+	if item.Type == "amneziawg" {
+		unit := system.AmneziaWGUnitName(item.Name)
+		if err := system.NewSystemd(s.Runner).Disable(ctx, unit); err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(s.UnitDir, unit)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
 	if item.Type == "l2tp" {
 		server := config.VPNServer{Index: item.Index, Type: "l2tp"}
 		s.cleanupL2TP(ctx, server)

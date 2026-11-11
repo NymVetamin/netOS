@@ -72,6 +72,20 @@ func serve(ctx context.Context, name string) error {
 	}()
 	stop := context.AfterFunc(ctx, func() { listener.Close() })
 	defer stop()
+	// Type=notify lets systemd run ExecStartPost only once IPC is ready.
+	// Those commands restore configuration/addressing on automatic restarts.
+	if socket := os.Getenv("NOTIFY_SOCKET"); socket != "" {
+		c, err := net.DialUnix("unixgram", nil, &net.UnixAddr{Name: socket, Net: "unixgram"})
+		if err != nil {
+			return fmt.Errorf("уведомление systemd: %w", err)
+		}
+		_ = c.SetWriteDeadline(time.Now().Add(time.Second))
+		_, err = c.Write([]byte("READY=1"))
+		c.Close()
+		if err != nil {
+			return fmt.Errorf("уведомление systemd: %w", err)
+		}
+	}
 	for {
 		client, err := listener.Accept()
 		if err != nil {

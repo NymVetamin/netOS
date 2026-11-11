@@ -8,10 +8,12 @@ import (
 )
 
 var planChannelSchemas = map[string]reflect.Type{
+	"amneziawg": reflect.TypeOf(config.WireGuardChannelConfig{}),
 	"wireguard": reflect.TypeOf(config.WireGuardChannelConfig{}), "openconnect": reflect.TypeOf(config.OpenConnectChannelConfig{}),
 	"l2tp": reflect.TypeOf(config.L2TPChannelConfig{}), "ikev2": reflect.TypeOf(config.IKEv2ChannelConfig{}), "xray": reflect.TypeOf(config.XrayChannelConfig{}),
 }
 var planServerSchemas = map[string]reflect.Type{
+	"amneziawg": reflect.TypeOf(config.WireGuardServerConfig{}),
 	"wireguard": reflect.TypeOf(config.WireGuardServerConfig{}), "ocserv": reflect.TypeOf(config.OcservServerConfig{}),
 	"l2tp": reflect.TypeOf(config.L2TPServerConfig{}), "ikev2": reflect.TypeOf(config.IKEv2ServerConfig{}), "xray": reflect.TypeOf(config.XrayServerConfig{}),
 }

@@ -28,7 +28,7 @@ jobs:
     # требующий изоляции и не попавший в список, упадёт в первом шаге с
     # «refusing host namespace», а не будет молча пропущен.
     env:
-      ISOLATED: "^(TestIntegrationAmneziaWG|TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardAppArmor|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
+      ISOLATED: "^(TestIntegrationAmneziaWG|TestIntegrationAmneziaWGApply|TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardAppArmor|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 

@@ -46,6 +46,32 @@ func TestAmneziaWGOptions(t *testing.T) {
 	}
 }
 
+func TestAmneziaWGConfigurationAndComponent(t *testing.T) {
+	c := Default()
+	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
+	c.Components = append(c.Components, Component{ID: "amneziawg", Installed: true})
+	c.Channels = append(c.Channels, Channel{ID: "awg", Index: 1, Name: "AWG", Enabled: true, Type: "amneziawg", Mode: "tun", FailMode: "block", Config: map[string]any{"private_key": key, "peer_public_key": key, "address": "10.25.0.2/32", "endpoint": "192.0.2.1:51820", "allowed_ips": []string{"0.0.0.0/0"}, "amnezia": map[string]any{"h1": "100"}}})
+	c.Normalize()
+	r := &ValidationResult{}
+	c.validateChannels(r)
+	c.validateComponents(r)
+	if r.HasErrors() {
+		t.Fatal(r.Problems)
+	}
+	c.Components = nil
+	r = &ValidationResult{}
+	c.validateComponents(r)
+	if !r.HasErrors() {
+		t.Fatal("enabled AWG accepted without component")
+	}
+	c.Channels[1].Type = "wireguard"
+	r = &ValidationResult{}
+	c.validateChannels(r)
+	if !r.HasErrors() {
+		t.Fatal("ordinary WG accepted obfuscation")
+	}
+}
+
 func TestAmneziaWGRange(t *testing.T) {
 	for _, s := range []string{"0", "1-2", "4294967295", "1-4294967295"} {
 		if _, _, err := AmneziaWGRange(s); err != nil {

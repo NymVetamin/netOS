@@ -11,6 +11,7 @@ import (
 // AmneziaWGOptions contains protocol parameters, never shell commands. Keys
 // shared with ordinary WireGuard remain on the channel/server configuration.
 type AmneziaWGOptions struct {
+	PersistentKeepalive    string `json:"persistent_keepalive,omitempty" plan:"Диапазон keepalive" sensitivity:"public"`
 	Jc                     int    `json:"jc,omitempty" plan:"Jc" sensitivity:"public"`
 	Jmin                   int    `json:"jmin,omitempty" plan:"Jmin" sensitivity:"public"`
 	Jmax                   int    `json:"jmax,omitempty" plan:"Jmax" sensitivity:"public"`
@@ -71,6 +72,12 @@ func AmneziaWGRange(value string) (uint32, uint32, error) {
 // Validate checks sizes before the runtime allocates padding/junk packets.
 // One handshake may emit at most 128 junk packets of at most 65507 bytes.
 func (a AmneziaWGOptions) Validate() error {
+	if a.PersistentKeepalive != "" {
+		_, hi, err := AmneziaWGRange(a.PersistentKeepalive)
+		if err != nil || hi > 65535 {
+			return fmt.Errorf("AmneziaWG: некорректный диапазон keepalive")
+		}
+	}
 	if a.Jc < 0 || a.Jc > 128 || a.Jmin < 0 || a.Jmax < a.Jmin || a.Jmax > 65507 {
 		return fmt.Errorf("AmneziaWG: Jc должен быть 0–128, Jmin/Jmax — 0–65507 и Jmin ≤ Jmax")
 	}
@@ -134,6 +141,48 @@ func (a AmneziaWGOptions) Validate() error {
 		}
 	}
 	return nil
+}
+
+func IsWireGuardType(kind string) bool { return kind == "wireguard" || kind == "amneziawg" }
+
+func WireGuardPrefix(kind string) string {
+	if kind == "amneziawg" {
+		return "awg"
+	}
+	return "wg"
+}
+
+// WireGuardNativeOptions is shared by managed configs and exported profiles.
+// Returning defaults is necessary to reset cleared live obfuscation settings.
+func WireGuardNativeOptions(kind string, options *AmneziaWGOptions) (string, error) {
+	if kind != "amneziawg" {
+		if options != nil {
+			return "", fmt.Errorf("параметры AmneziaWG недопустимы для WireGuard")
+		}
+		return "", nil
+	}
+	if options == nil {
+		options = &AmneziaWGOptions{}
+	}
+	if err := options.Validate(); err != nil {
+		return "", err
+	}
+	return options.NativeParameters(), nil
+}
+
+func validateAmneziaOptions(r *ValidationResult, path, kind string, options *AmneziaWGOptions) {
+	if kind != "amneziawg" {
+		if options != nil {
+			r.errf(path, "параметры AmneziaWG требуют типа AmneziaWG")
+		}
+		return
+	}
+	if options == nil {
+		return
+	}
+	if err := options.Validate(); err != nil {
+		r.errf(path, "%v", err)
+	}
 }
 
 // Parse tags without regexp backtracking or allocating the generated packet.

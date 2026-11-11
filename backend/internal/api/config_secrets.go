@@ -67,7 +67,7 @@ func redactAdminConfig(cfg *config.Config) (*config.Config, error) {
 
 func secretField(key string) bool {
 	normalized := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(key))
-	if normalized == "client_certificate" {
+	if normalized == "client_certificate" || normalized == "header_protection_key" {
 		return true
 	}
 	if normalized == "uuid" || normalized == "shortid" || normalized == "short_id" {
@@ -185,7 +185,7 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 			previousCredentials := oldPeers[next.VPNServers[i].Peers[j].ID].Credentials
 			// A manually replaced public key invalidates a retained client key.
 			// Do not merge the old private key into a different identity.
-			if next.VPNServers[i].Type == "wireguard" && credentials["public_key"] != previousCredentials["public_key"] && credentials["private_key"] == "" {
+			if config.IsWireGuardType(next.VPNServers[i].Type) && credentials["public_key"] != previousCredentials["public_key"] && credentials["private_key"] == "" {
 				delete(credentials, "private_key")
 			}
 			for key, value := range credentials {

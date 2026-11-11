@@ -9,9 +9,10 @@ func WireGuardPeerChannelID(serverID string) string { return "wg-exit-" + server
 func (c *Config) normalizeWireGuardPeerChannels() {
 	sources := map[string]WireGuardPeerChannel{}
 	names := map[string]string{}
+	protocols := map[string]string{}
 	var order []string
 	for _, s := range c.VPNServers {
-		if s.Type != "wireguard" {
+		if !IsWireGuardType(s.Type) {
 			continue
 		}
 		for _, p := range s.Peers {
@@ -24,6 +25,7 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 			} // validation reports multiple exits
 			sources[id] = WireGuardPeerChannel{s.ID, p.ID, s.Index}
 			names[id] = p.Name
+			protocols[id] = s.Type
 			order = append(order, id)
 		}
 	}
@@ -40,7 +42,8 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 				continue
 			}
 			ch.WireGuardPeer = &ref
-			managedNAT["channel-nat-"+ch.ID] = fmt.Sprintf("wg-srv%d", ref.ServerIndex)
+			ch.Type = protocols[ch.ID]
+			managedNAT["channel-nat-"+ch.ID] = fmt.Sprintf("%s-srv%d", WireGuardPrefix(ch.Type), ref.ServerIndex)
 		}
 		present[ch.ID] = true
 		out = append(out, ch)
@@ -54,7 +57,7 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 			candidate++
 		}
 		ref := sources[id]
-		out = append(out, Channel{ID: id, Index: candidate, Name: names[id], Enabled: true, Type: "wireguard", Mode: "tun", FailMode: "block", Probe: DefaultProbe(), Config: map[string]any{}, WireGuardPeer: &ref})
+		out = append(out, Channel{ID: id, Index: candidate, Name: names[id], Enabled: true, Type: protocols[id], Mode: "tun", FailMode: "block", Probe: DefaultProbe(), Config: map[string]any{}, WireGuardPeer: &ref})
 		used[candidate] = true
 	}
 	c.Channels = out
@@ -74,6 +77,7 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 func (c *Config) validateWireGuardPeerChannels(r *ValidationResult) {
 	sources := map[string]WireGuardPeerChannel{}
 	active := map[string]bool{}
+	protocols := map[string]string{}
 	for si, s := range c.VPNServers {
 		count := 0
 		for pi, p := range s.Peers {
@@ -82,12 +86,13 @@ func (c *Config) validateWireGuardPeerChannels(r *ValidationResult) {
 			}
 			count++
 			path := fmt.Sprintf("vpn_servers[%d].peers[%d].use_as_channel", si, pi)
-			if s.Type != "wireguard" {
-				r.errf(path, "выход через клиента поддерживает только WireGuard")
+			if !IsWireGuardType(s.Type) {
+				r.errf(path, "выход через клиента поддерживают WireGuard и AmneziaWG")
 			}
 			id := WireGuardPeerChannelID(s.ID)
 			sources[id] = WireGuardPeerChannel{s.ID, p.ID, s.Index}
 			active[id] = s.Enabled && p.Enabled
+			protocols[id] = s.Type
 			if p.Channel == id || (p.Channel == "" && s.DefaultChannel == id) {
 				r.errf(path, "клиент выхода не может направлять собственный трафик в себя")
 			}
@@ -103,7 +108,7 @@ func (c *Config) validateWireGuardPeerChannels(r *ValidationResult) {
 			continue
 		}
 		path := fmt.Sprintf("channels[%d].wireguard_peer", i)
-		if ch.WireGuardPeer == nil || !exists || *ch.WireGuardPeer != expected || ch.Type != "wireguard" || ch.Mode != "tun" || len(ch.Config) != 0 {
+		if ch.WireGuardPeer == nil || !exists || *ch.WireGuardPeer != expected || !IsWireGuardType(ch.Type) || ch.Type != protocols[ch.ID] || ch.Mode != "tun" || len(ch.Config) != 0 {
 			r.errf(path, "канал должен ссылаться на выбранного клиента WG-сервера без отдельной конфигурации туннеля")
 			continue
 		}

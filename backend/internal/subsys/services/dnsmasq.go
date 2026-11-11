@@ -71,8 +71,8 @@ func dnsListenInterfaces(cfg *config.Config) []string {
 			continue
 		}
 		switch server.Type {
-		case "wireguard":
-			add(fmt.Sprintf("wg-srv%d", server.Index))
+		case "wireguard", "amneziawg":
+			add(fmt.Sprintf("%s-srv%d", config.WireGuardPrefix(server.Type), server.Index))
 		case "ikev2":
 			add(fmt.Sprintf("xfrm-srv%d", server.Index))
 		case "ocserv":
@@ -111,7 +111,7 @@ func dnsListenNetworks(cfg *config.Config) []dnsListenNetwork {
 		}
 	}
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && (server.Type == "wireguard" || server.Type == "ikev2") {
+		if server.Enabled && (config.IsWireGuardType(server.Type) || server.Type == "ikev2") {
 			add(server.Subnet)
 		}
 	}

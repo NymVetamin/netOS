@@ -539,6 +539,9 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		}
 	}
 	for i, channel := range c.Channels {
+		if channel.Enabled && channel.Type == "amneziawg" && !c.HasComponent("amneziawg") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i), "для канала AmneziaWG нужен компонент «AmneziaWG»")
+		}
 		if channel.Enabled && channel.Type == "wireguard" && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала WireGuard нужен компонент «WireGuard»")
@@ -559,6 +562,9 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		}
 	}
 	for i, server := range c.VPNServers {
+		if server.Enabled && server.Type == "amneziawg" && !c.HasComponent("amneziawg") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i), "для сервера AmneziaWG нужен компонент «AmneziaWG»")
+		}
 		if server.Enabled && server.Type == "wireguard" && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
 				"для сервера WireGuard нужен компонент «WireGuard»")
@@ -2250,7 +2256,7 @@ func (c *Config) validateChannels(r *ValidationResult) {
 		indexes[ch.Index] = ch.ID
 
 		switch ch.Type {
-		case "direct", "wireguard", "xray", "openconnect", "l2tp", "ikev2":
+		case "direct", "wireguard", "amneziawg", "xray", "openconnect", "l2tp", "ikev2":
 		default:
 			if ch.Enabled {
 				r.errf(path+".type", "неизвестный тип канала %q", ch.Type)
@@ -2258,13 +2264,13 @@ func (c *Config) validateChannels(r *ValidationResult) {
 				r.warnf(path+".type", "неизвестный тип канала %q: настройки сохранены, включение недоступно", ch.Type)
 			}
 		}
-		if ch.Enabled && ch.Type != "direct" && ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2" {
+		if ch.Enabled && ch.Type != "direct" && !IsWireGuardType(ch.Type) && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2" {
 			r.errf(path+".enabled", "каналы типа %s ещё не реализованы", ch.Type)
 		}
 		if ch.Index < 0 || ch.Index > 9999 || (ch.Type != "direct" && ch.Index == 0) {
 			r.errf(path+".index", "индекс канала должен быть в диапазоне 1-9999")
 		}
-		if ch.Type == "wireguard" {
+		if IsWireGuardType(ch.Type) {
 			c.validateWireGuardChannel(r, path, ch)
 		}
 		if ch.Type == "openconnect" {
@@ -2415,6 +2421,7 @@ func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch C
 	if prefix, err := netip.ParsePrefix(wg.Address); err != nil || !prefix.Addr().Is4() {
 		r.errf(path+".config.address", "нужен IPv4-адрес туннеля с маской")
 	}
+	validateAmneziaOptions(r, path+".config.amnezia", ch.Type, wg.Amnezia)
 	validateWGKey(r, path+".config.private_key", wg.PrivateKey, false)
 	validateWGKey(r, path+".config.peer_public_key", wg.PeerPublicKey, false)
 	validateWGKey(r, path+".config.preshared_key", wg.PresharedKey, true)
@@ -2761,11 +2768,11 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			r.errf(path+".index", "индекс VPN-сервера должен быть уникальным числом 1-9999")
 		}
 		indexes[s.Index] = true
-		if s.Enabled && s.Type != "wireguard" && s.Type != "xray" && s.Type != "ocserv" && s.Type != "ikev2" && s.Type != "l2tp" {
+		if s.Enabled && !IsWireGuardType(s.Type) && s.Type != "xray" && s.Type != "ocserv" && s.Type != "ikev2" && s.Type != "l2tp" {
 			r.errf(path+".enabled", "VPN-серверы типа %s ещё не реализованы", s.Type)
 		}
 		switch s.Type {
-		case "wireguard", "ikev2", "ocserv", "xray", "l2tp":
+		case "wireguard", "amneziawg", "ikev2", "ocserv", "xray", "l2tp":
 		default:
 			r.errf(path+".type", "неизвестный тип VPN-сервера %q", s.Type)
 		}
@@ -2794,7 +2801,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		}
 		if s.Enabled {
 			switch s.Type {
-			case "wireguard":
+			case "wireguard", "amneziawg":
 				claimPort(path+".port", "udp", s.Port, fmt.Sprintf("VPN-сервер %q", s.Name))
 			case "xray":
 				protocol := "reality"
@@ -2822,7 +2829,7 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 		if s.DefaultChannel != "" && !channels[s.DefaultChannel] {
 			r.errf(path+".default_channel", "VPN-сервер %q: канал %q отсутствует или выключен; выберите включённый канал", s.Name, s.DefaultChannel)
 		}
-		if s.Type == "wireguard" {
+		if IsWireGuardType(s.Type) {
 			c.validateWireGuardServer(r, path, s)
 		}
 		if s.Type == "xray" {
@@ -3258,6 +3265,7 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 		r.errf(path+".config", "%v", err)
 		return
 	}
+	validateAmneziaOptions(r, path+".config.amnezia", s.Type, wg.Amnezia)
 	if !s.Enabled {
 		return
 	}
@@ -3491,7 +3499,7 @@ func (c *Config) networkIDs() map[string]bool {
 func (c *Config) usableChannelIDs() map[string]bool {
 	m := map[string]bool{}
 	for _, ch := range c.Channels {
-		if ch.Enabled && (ch.Type == "direct" || ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		if ch.Enabled && (ch.Type == "direct" || IsWireGuardType(ch.Type) || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			m[ch.ID] = true
 		}
 	}

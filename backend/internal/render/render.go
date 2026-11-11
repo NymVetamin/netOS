@@ -57,7 +57,7 @@ var (
 
 func wireGuardActive(cfg *config.Config) bool {
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && ch.Type == "wireguard" {
+		if ch.Enabled && config.IsWireGuardType(ch.Type) {
 			return true
 		}
 	}
@@ -67,7 +67,7 @@ func wireGuardActive(cfg *config.Config) bool {
 func renderWireGuard(cfg *config.Config) (string, error) {
 	var b bytes.Buffer
 	for _, ch := range cfg.Channels {
-		if !ch.Enabled || ch.Type != "wireguard" {
+		if !ch.Enabled || !config.IsWireGuardType(ch.Type) {
 			continue
 		}
 		text, err := channels.RenderWireGuard(ch)
@@ -84,7 +84,7 @@ func renderWireGuard(cfg *config.Config) (string, error) {
 
 func wireGuardServersActive(cfg *config.Config) bool {
 	for _, server := range cfg.VPNServers {
-		if server.Enabled && server.Type == "wireguard" {
+		if server.Enabled && config.IsWireGuardType(server.Type) {
 			return true
 		}
 	}
@@ -94,7 +94,7 @@ func wireGuardServersActive(cfg *config.Config) bool {
 func renderWireGuardServers(cfg *config.Config) (string, error) {
 	var b bytes.Buffer
 	for _, server := range cfg.VPNServers {
-		if !server.Enabled || server.Type != "wireguard" {
+		if !server.Enabled || !config.IsWireGuardType(server.Type) {
 			continue
 		}
 		text, err := vpnservers.RenderWireGuard(server)
