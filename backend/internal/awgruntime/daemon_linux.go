@@ -1,6 +1,6 @@
 //go:build linux
 
-package amneziawg
+package awgruntime
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
-func serve(ctx context.Context, name string) error {
+func Serve(ctx context.Context, name string) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("AmneziaWG требует root")
 	}
