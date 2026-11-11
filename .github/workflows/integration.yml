@@ -72,6 +72,8 @@ jobs:
         # общем пространстве имён параллельные пакеты мешают друг другу.
         run: |
           go=$(command -v go)
+          # Root использует свой кэш модулей; внутри unshare сети уже нет.
+          sudo --preserve-env=PATH "$go" mod download
           failed=""
           for test in $(printf '%s' "$ISOLATED" | sed 's/^^(//; s/)\$$//' | tr '|' ' '); do
             dir=$(grep -rl --include='*_test.go' "^func $test(" internal | xargs -r dirname | sort -u)
