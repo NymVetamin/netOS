@@ -7,6 +7,25 @@ permissions:
   contents: read
 
 jobs:
+  connectivity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check official endpoints outside Docker
+        run: |
+          success=0
+          for host in ppa.launchpadcontent.net ppa.launchpad.net; do
+            for scheme in https http; do
+              url="$scheme://$host/amnezia/ppa/ubuntu/dists/focal/InRelease"
+              echo "Checking $url"
+              if curl -4 --fail --location --connect-timeout 10 --max-time 15 \
+                --output "$RUNNER_TEMP/amnezia-InRelease" "$url"; then
+                head -20 "$RUNNER_TEMP/amnezia-InRelease"
+                success=1
+              fi
+            done
+          done
+          test "$success" = 1
   repository:
     runs-on: ubuntu-24.04
     strategy:
@@ -25,7 +44,8 @@ jobs:
           getent ahostsv4 keyserver.ubuntu.com ppa.launchpadcontent.net
           # Diagnostic only; APT below still verifies signed metadata.
           curl -4 --fail --location --connect-timeout 15 --max-time 60 \
-            https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/focal/Release | head -30
+            https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/focal/Release -o /tmp/amnezia-Release
+          head -30 /tmp/amnezia-Release
           curl -4 --fail --location --retry 2 --retry-all-errors --connect-timeout 15 --max-time 60 \
             'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x75C9DD72C799870E310542E24166F2C257290828' -o /tmp/amnezia.asc
           fingerprint=$(gpg --show-keys --with-colons /tmp/amnezia.asc | awk -F: '$1=="fpr" { print $10; exit }')
