@@ -236,30 +236,40 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 				apply = func(c *config.Config) error { return s.Apply(ctx, c) }
 				health = func(c *config.Config) error { return s.Health(ctx, c) }
 			}
+			fw := firewall.New(r, filepath.Join(root, role, "firewall"))
+			if err := fw.Apply(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			configurePeer := func(endpoint string) {
+				t.Helper()
+				peerConf := "[Interface]\nPrivateKey = " + peerKey + "\nListenPort = 51992\n" + opts.NativeParameters() + "[Peer]\nPublicKey = " + localPub + "\nAllowedIPs = 10.252.0.1/32\n"
+				if endpoint != "" {
+					peerConf += "Endpoint = " + endpoint + "\nPersistentKeepalive = 1\n"
+				}
+				peerPath := filepath.Join(root, "peer.conf")
+				if err := os.WriteFile(peerPath, []byte(peerConf), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := amneziawg.Execute(ctx, []string{"syncconf", "awg-ch992", peerPath}, &strings.Builder{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			remote("ip", "addr", "replace", "10.252.0.2/24", "dev", "awg-ch992")
+			remote("ip", "link", "set", "awg-ch992", "up")
+			// The remote server must be ready for the client's first handshake.
+			// It learns the client endpoint; it must not initiate a new WAN flow.
+			if role == "client" {
+				configurePeer("")
+			}
 			if err := apply(c); err != nil {
 				t.Fatal(err)
 			}
 			if err := health(c); err != nil {
 				t.Fatal(err)
 			}
-			fw := firewall.New(r, filepath.Join(root, role, "firewall"))
-			if err := fw.Apply(ctx, c); err != nil {
-				t.Fatal(err)
+			if role == "server" {
+				configurePeer("192.0.2.1:51991")
 			}
-			var port strings.Builder
-			if err := amneziawg.Execute(ctx, []string{"show", name, "listen-port"}, &port); err != nil {
-				t.Fatal(err)
-			}
-			peerConf := "[Interface]\nPrivateKey = " + peerKey + "\nListenPort = 51992\n" + opts.NativeParameters() + "[Peer]\nPublicKey = " + localPub + "\nEndpoint = 192.0.2.1:" + strings.TrimSpace(port.String()) + "\nAllowedIPs = 10.252.0.1/32\nPersistentKeepalive = 1\n"
-			peerPath := filepath.Join(root, "peer.conf")
-			if err := os.WriteFile(peerPath, []byte(peerConf), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := amneziawg.Execute(ctx, []string{"syncconf", "awg-ch992", peerPath}, &strings.Builder{}); err != nil {
-				t.Fatal(err)
-			}
-			remote("ip", "addr", "replace", "10.252.0.2/24", "dev", "awg-ch992")
-			remote("ip", "link", "set", "awg-ch992", "up")
 			// A server learns its peer endpoint from the client's first handshake.
 			if role == "server" {
 				remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
