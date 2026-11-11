@@ -22,7 +22,11 @@ jobs:
           set -euo pipefail
           apt-get update -qq
           apt-get install -y --no-install-recommends ca-certificates curl gnupg
-          curl --fail --location --connect-timeout 15 --max-time 60 \
+          getent ahostsv4 keyserver.ubuntu.com ppa.launchpadcontent.net
+          # Diagnostic only; APT below still verifies signed metadata.
+          curl -4 --fail --location --connect-timeout 15 --max-time 60 \
+            https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/focal/Release | head -30
+          curl -4 --fail --location --retry 2 --retry-all-errors --connect-timeout 15 --max-time 60 \
             'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x75C9DD72C799870E310542E24166F2C257290828' -o /tmp/amnezia.asc
           fingerprint=$(gpg --show-keys --with-colons /tmp/amnezia.asc | awk -F: '$1=="fpr" { print $10; exit }')
           test "$fingerprint" = 75C9DD72C799870E310542E24166F2C257290828
