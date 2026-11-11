@@ -202,6 +202,20 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 				exec.Command("systemctl", "daemon-reload").Run()
 				exec.Command("systemctl", "reset-failed", unitName).Run()
 			}()
+			defer func() {
+				if !t.Failed() {
+					return
+				}
+				for _, args := range [][]string{{"iptables-save", "-c"}, {"ip", "-4", "route", "show", "table", "all"}, {"ip", "-4", "rule", "show"}} {
+					out, _ := exec.Command(args[0], args[1:]...).CombinedOutput()
+					t.Logf("failure diagnostics %v: %s", args, out)
+				}
+				for _, iface := range []string{name, "awg-ch992"} {
+					var public strings.Builder
+					amneziawg.Execute(context.Background(), []string{"show", iface, "telemetry"}, &public)
+					t.Logf("public telemetry %s: %s", iface, public.String())
+				}
+			}()
 			c := config.Default()
 			c.Components = []config.Component{{ID: "amneziawg", Installed: true}}
 			c.Channels = nil

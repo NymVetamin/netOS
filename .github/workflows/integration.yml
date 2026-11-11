@@ -10,6 +10,12 @@ name: integration
 
 on:
   workflow_dispatch:
+    inputs:
+      focus:
+        description: "Область прогона (all — полный)"
+        type: choice
+        default: all
+        options: [all, amneziawg]
   schedule:
     # Раз в неделю: этого достаточно, чтобы заметить, что обновление pppd или
     # systemd в дистрибутиве сломало наши сгенерированные конфигурации.
@@ -59,6 +65,7 @@ jobs:
           sudo aa-status | grep -A2 -i 'complain mode' | head -20 || true
 
       - name: интеграционные тесты
+        if: ${{ inputs.focus != 'amneziawg' }}
         working-directory: backend
         run: |
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
@@ -80,6 +87,9 @@ jobs:
           "$go" build -ldflags "-X github.com/amnezia-vpn/amneziawg-go/v3/ipc.socketDirectory=/run/netos/amneziawg" \
             -o "$peer" github.com/amnezia-vpn/amneziawg-go/v3
           failed=""
+          if [ "${{ inputs.focus }}" = "amneziawg" ]; then
+            ISOLATED='^(TestIntegrationAmneziaWG|TestIntegrationAmneziaWGApply)$'
+          fi
           for test in $(printf '%s' "$ISOLATED" | sed 's/^^(//; s/)\$$//' | tr '|' ' '); do
             dir=$(grep -rl --include='*_test.go' "^func $test(" internal | xargs -r dirname | sort -u)
             if [ "$(printf '%s\n' "$dir" | grep -c .)" != 1 ]; then
