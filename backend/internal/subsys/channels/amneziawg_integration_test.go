@@ -76,6 +76,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 	run("ip", "netns", "add", ns)
 	defer exec.Command("ip", "netns", "del", ns).Run()
 	remote := func(name string, args ...string) string {
+		t.Helper()
 		return run("ip", append([]string{"netns", "exec", ns, name}, args...)...)
 	}
 	run("ip", "link", "add", "awgtransport", "type", "veth", "peer", "name", "awgremote")
@@ -222,6 +223,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 				remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
 			}
 			pid := run("systemctl", "show", unitName, "-p", "MainPID", "--value")
+			t.Log(role, "initial bidirectional traffic passed")
 			if err := apply(c); err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +236,26 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			if role == "client" {
 				run("ping", "-c", "2", "-W", "2", "10.252.0.2")
 			} else {
+				// The surviving client retains its session. Upstream starts a new
+				// handshake after 10s KeepaliveTimeout + 5s RekeyTimeout + jitter
+				// when data receives no response. Keep sending data through this
+				// bounded recovery window; do not reset the peer to hide recovery.
+				started := time.Now()
+				deadline := started.Add(25 * time.Second)
+				for {
+					err := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "1", "10.252.0.1").Run()
+					if err == nil {
+						t.Logf("server restart traffic recovered after %s", time.Since(started))
+						break
+					}
+					if ctx.Err() != nil || time.Now().After(deadline) {
+						var state strings.Builder
+						amneziawg.Execute(ctx, []string{"show", name, "telemetry"}, &state)
+						t.Fatalf("server restart did not restore traffic: %v; public telemetry: %s", err, state.String())
+					}
+				}
 				remote("ping", "-c", "2", "-W", "2", "10.252.0.1")
+				run("ping", "-c", "2", "-W", "2", "10.252.0.2")
 			}
 			empty := config.Default()
 			empty.Channels = nil
