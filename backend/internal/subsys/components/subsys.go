@@ -78,16 +78,6 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 
 	for _, info := range config.Catalog {
 		want := desired[info.ID]
-		if info.Builtin {
-			if (old != nil && old.HasComponent(info.ID)) != want {
-				detail := "выключение встроенного компонента"
-				if want {
-					detail = "включение встроенного компонента"
-				}
-				actions = append(actions, apply.Action{Kind: "update", Target: info.Title, Detail: detail})
-			}
-			continue
-		}
 		if info.Essential && !want {
 			continue
 		}
@@ -363,9 +353,6 @@ func (s *Subsystem) componentState(ctx context.Context, info config.ComponentInf
 }
 
 func (s *Subsystem) componentStateFrom(ctx context.Context, info config.ComponentInfo, snapshot componentLiveSnapshot, useSnapshot bool) (anyInstalled, allInstalled bool) {
-	if info.Builtin {
-		return true, true
-	}
 	if info.External {
 		rel, ok := externalReleases[info.ID]
 		if !ok {
@@ -694,7 +681,7 @@ func (s *Subsystem) Status(ctx context.Context, ids ...string) map[string]bool {
 		return out
 	}
 	for _, info := range catalog {
-		if !info.External && !info.Builtin && len(info.Packages) == 0 {
+		if !info.External && len(info.Packages) == 0 {
 			continue
 		}
 		_, out[info.ID] = s.componentStateFrom(ctx, info, snapshot, snapshotErr == nil)

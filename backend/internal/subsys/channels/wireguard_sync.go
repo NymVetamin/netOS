@@ -7,18 +7,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/netos-router/netos/internal/amneziawg"
-	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
 
 // syncWireGuard retains the kernel-selected source port across reconciliation.
 // The portable stored configuration deliberately does not contain that port.
 func (s *Subsystem) syncWireGuard(ctx context.Context, name, path string) error {
-	if strings.HasPrefix(name, "awg-") {
-		_, err := amneziawg.WireGuardControl(ctx, s.Runner, "amneziawg", "syncconf", name, path)
-		return err
-	}
 	out, err := s.Runner.Run(ctx, "wg", "show", name, "listen-port")
 	if err != nil {
 		return fmt.Errorf("чтение порта WireGuard: %w", err)
@@ -52,11 +46,4 @@ func (s *Subsystem) syncWireGuard(ctx context.Context, name, path string) error 
 	}
 	_, err = s.Runner.Run(ctx, "wg", "syncconf", name, f.Name())
 	return err
-}
-
-func amneziaUnit(ch config.Channel) string {
-	if ch.Type == "amneziawg" && ch.WireGuardPeer == nil {
-		return system.AmneziaWGUnitName(InterfaceName(ch))
-	}
-	return ""
 }

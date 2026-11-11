@@ -125,7 +125,7 @@ func (s *Server) vpnClientSnapshot(ctx context.Context, server config.VPNServer,
 	defer cancel()
 	now := time.Now()
 	var rows []vpnClientStatus
-	if config.IsWireGuardType(server.Type) {
+	if server.Type == "wireguard" {
 		rows = s.wireGuardClients(ctx, server, now)
 	} else {
 		rows = s.sessionClients(ctx, server)

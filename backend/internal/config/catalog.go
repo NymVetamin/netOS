@@ -36,9 +36,6 @@ type ComponentInfo struct {
 	// External означает, что компонент ставится не из репозиториев Debian, а
 	// собственным установщиком.
 	External bool `json:"external,omitempty"`
-	// Builtin components are shipped in netosd; selection enables their use,
-	// without installing/removing packages or starting an otherwise unused VPN.
-	Builtin bool `json:"builtin,omitempty"`
 	// Essential запрещает удалять пакет вместе с выключением функции: пакет
 	// входит в базовую систему и используется самим netOS.
 	Essential bool `json:"essential,omitempty"`
@@ -109,13 +106,6 @@ var Catalog = []ComponentInfo{
 		External:    true,
 	},
 	// --- VPN-клиенты ---
-	{
-		ID: "amneziawg", Title: "AmneziaWG", Group: "VPN",
-		Description: "VPN с маскировкой пакетов. Исходящие каналы и сервер; реализация AmneziaWG 3.1 встроена в netOS.",
-		Builtin:     true, Provides: []string{"vpn-client", "vpn-server"},
-		RunUnits: []string{"netos-awg-ch*.service", "netos-awg-srv*.service"},
-		SizeHint: "входит в netOS",
-	},
 	{
 		ID: "wireguard", Title: "WireGuard", Group: "VPN",
 		Description: "Быстрый современный туннель. Работает в ядре, подходит и для исходящих каналов, и для приёма клиентов.",

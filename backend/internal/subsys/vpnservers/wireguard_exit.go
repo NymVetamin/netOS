@@ -15,7 +15,7 @@ func WireGuardExitGuard(server config.VPNServer) (string, []string) {
 	for _, p := range server.Peers {
 		exit = exit || (p.Enabled && p.UseAsChannel)
 	}
-	if !server.Enabled || !config.IsWireGuardType(server.Type) || !exit {
+	if !server.Enabled || server.Type != "wireguard" || !exit {
 		return "", nil
 	}
 	chain := fmt.Sprintf("NETOS-WGEXIT%d", server.Index)

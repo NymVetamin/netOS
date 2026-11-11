@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/netos-router/netos/internal/amneziawg"
 	"github.com/netos-router/netos/internal/api"
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/bootstrap"
@@ -67,14 +66,6 @@ var (
 )
 
 func main() {
-	// Internal runtime entry point, also used by netOS-owned systemd units.
-	if len(os.Args) > 1 && os.Args[1] == "amneziawg" {
-		if err := amneziawg.Execute(context.Background(), os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
 	// /usr/local/bin/netos — ссылка на тот же бинарник. По публичному имени он
 	// работает как управляющая команда; netosd остаётся только демоном.
 	if strings.TrimSuffix(filepath.Base(os.Args[0]), filepath.Ext(os.Args[0])) == "netos" {

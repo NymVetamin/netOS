@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/netos-router/netos/internal/amneziawg"
-
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/subsys/channels"
@@ -62,7 +60,7 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 		}
 		name := channels.InterfaceName(ch)
 		active := up[name]
-		if active && config.IsWireGuardType(ch.Type) {
+		if active && ch.Type == "wireguard" {
 			active = s.recentWireGuardHandshake(ctx, name)
 		}
 		if active && ch.Type == "ikev2" {
@@ -87,11 +85,7 @@ func (s *Server) recentWireGuardHandshake(ctx context.Context, name string) bool
 	if s.Collector == nil || s.Collector.Runner == nil {
 		return false
 	}
-	protocol := "wireguard"
-	if strings.HasPrefix(name, "awg-") {
-		protocol = "amneziawg"
-	}
-	out, err := amneziawg.WireGuardControl(ctx, s.Collector.Runner, protocol, "show", name, "latest-handshakes")
+	out, err := s.Collector.Runner.Run(ctx, "wg", "show", name, "latest-handshakes")
 	if err != nil {
 		return false
 	}

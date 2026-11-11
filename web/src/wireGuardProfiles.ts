@@ -1,4 +1,3 @@
-import { amneziaClientParameters } from "./amneziawg";
 export type WireGuardProfile = { use_router_dns: boolean; dns: string[]; allowed_ips: string[] };
 
 export function newWireGuardProfile(): WireGuardProfile {
@@ -20,7 +19,7 @@ export function effectiveWireGuardProfile(server: any, peer: any): WireGuardProf
   };
 }
 
-export function wireGuardClientConfig(server: any, peer: any, privateKey: string, serverPublicKey: string, presharedKey?: string, savedAmnezia?: string) {
+export function wireGuardClientConfig(server: any, peer: any, privateKey: string, serverPublicKey: string, presharedKey?: string) {
   const profile = effectiveWireGuardProfile(server, peer);
   const dns = profile.dns.length ? `DNS = ${profile.dns.join(", ")}\n` : "";
   const mtu = server.config?.mtu ? `MTU = ${server.config.mtu}\n` : "";
@@ -29,7 +28,5 @@ export function wireGuardClientConfig(server: any, peer: any, privateKey: string
   const preshared = (peer.credentials?.preshared_key || presharedKey)
     ? `PresharedKey = ${peer.credentials?.preshared_key || presharedKey}\n`
     : "";
-  const extra = server.type === "amneziawg" ? amneziaClientParameters(server.config?.amnezia, savedAmnezia) : "";
-  const keepalive = server.type === "amneziawg" ? server.config?.amnezia?.persistent_keepalive || "25" : "25";
-  return `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\n${dns}${mtu}${extra}\n[Peer]\nPublicKey = ${serverPublicKey}\n${preshared}Endpoint = ${server.config?.public_endpoint || ""}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = ${keepalive}\n`;
+  return `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\n${dns}${mtu}\n[Peer]\nPublicKey = ${serverPublicKey}\n${preshared}Endpoint = ${server.config?.public_endpoint || ""}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = 25\n`;
 }

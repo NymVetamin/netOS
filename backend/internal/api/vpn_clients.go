@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/netos-router/netos/internal/amneziawg"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
@@ -21,7 +20,7 @@ func (s *Server) handleVPNClientProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	for _, server := range s.requestConfig(r).VPNServers {
-		if server.ID != r.PathValue("id") || !config.IsWireGuardType(server.Type) {
+		if server.ID != r.PathValue("id") || server.Type != "wireguard" {
 			continue
 		}
 		for _, peer := range server.Peers {
@@ -40,21 +39,7 @@ func (s *Server) handleVPNClientProfile(w http.ResponseWriter, r *http.Request) 
 				writeError(w, http.StatusConflict, "Сначала настройте ключ WireGuard-сервера")
 				return
 			}
-			profile := map[string]string{"privateKey": private, "publicKey": public, "serverPublicKey": serverPublic, "presharedKey": peer.Credentials["preshared_key"]}
-			if server.Type == "amneziawg" {
-				wg, err := server.WireGuardConfig()
-				if err != nil {
-					writeError(w, http.StatusConflict, "Некорректная конфигурация AmneziaWG")
-					return
-				}
-				parameters, err := config.WireGuardNativeOptions(server.Type, wg.Amnezia)
-				if err != nil {
-					writeError(w, http.StatusConflict, "Некорректные параметры AmneziaWG")
-					return
-				}
-				profile["amneziaParameters"] = parameters
-			}
-			writeJSON(w, http.StatusOK, profile)
+			writeJSON(w, http.StatusOK, map[string]string{"privateKey": private, "publicKey": public, "serverPublicKey": serverPublic, "presharedKey": peer.Credentials["preshared_key"]})
 			return
 		}
 	}
@@ -96,15 +81,11 @@ func (s *Server) wireGuardClients(ctx context.Context, server config.VPNServer, 
 	seen := map[string]int{}
 	available := server.Enabled && s.Collector != nil && s.Collector.Runner != nil
 	// Select only public telemetry. `dump` also contains private and preshared keys.
-	fields := []string{"latest-handshakes", "endpoints", "transfer"}
-	if server.Type == "amneziawg" {
-		fields = []string{"telemetry"}
-	}
-	for fieldIndex, field := range fields {
+	for fieldIndex, field := range []string{"latest-handshakes", "endpoints", "transfer"} {
 		if !available {
 			break
 		}
-		out, err := amneziawg.WireGuardControl(ctx, s.Collector.Runner, server.Type, "show", vpnservers.InterfaceName(server), field)
+		out, err := s.Collector.Runner.Run(ctx, "wg", "show", vpnservers.InterfaceName(server), field)
 		if err != nil {
 			available = false
 			break
@@ -121,27 +102,6 @@ func (s *Server) wireGuardClients(ctx context.Context, server config.VPNServer, 
 				rows[parts[0]] = row
 			}
 			switch field {
-			case "telemetry":
-				if len(parts) != 5 {
-					available = false
-					continue
-				}
-				seen[parts[0]] = 7
-				row.LastHandshake, err = strconv.ParseInt(parts[1], 10, 64)
-				if err != nil || row.LastHandshake < 0 {
-					available = false
-				}
-				if parts[2] != "(none)" {
-					row.Endpoint = parts[2]
-				}
-				row.Received, err = strconv.ParseUint(parts[3], 10, 64)
-				if err != nil {
-					available = false
-				}
-				row.Sent, err = strconv.ParseUint(parts[4], 10, 64)
-				if err != nil {
-					available = false
-				}
 			case "latest-handshakes":
 				row.LastHandshake, err = strconv.ParseInt(parts[1], 10, 64)
 				if err != nil || row.LastHandshake < 0 {

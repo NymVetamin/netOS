@@ -10,12 +10,6 @@ name: integration
 
 on:
   workflow_dispatch:
-    inputs:
-      focus:
-        description: "Область прогона (all — полный)"
-        type: choice
-        default: all
-        options: [all, amneziawg]
   schedule:
     # Раз в неделю: этого достаточно, чтобы заметить, что обновление pppd или
     # systemd в дистрибутиве сломало наши сгенерированные конфигурации.
@@ -34,7 +28,7 @@ jobs:
     # требующий изоляции и не попавший в список, упадёт в первом шаге с
     # «refusing host namespace», а не будет молча пропущен.
     env:
-      ISOLATED: "^(TestIntegrationAmneziaWG|TestIntegrationAmneziaWGCleanup|TestIntegrationAmneziaWGApply|TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardAppArmor|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
+      ISOLATED: "^(TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardAppArmor|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -46,7 +40,7 @@ jobs:
       - name: зависимости стенда
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2 iputils-ping iperf3
+          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2
           # Пакеты компонентов netOS (каталог в config/catalog.go), которые
           # нужны тестам VPN, каналов и политик: без них тесты пропускаются
           # или падают на отсутствующей утилите.
@@ -65,7 +59,6 @@ jobs:
           sudo aa-status | grep -A2 -i 'complain mode' | head -20 || true
 
       - name: интеграционные тесты
-        if: ${{ inputs.focus != 'amneziawg' }}
         working-directory: backend
         run: |
           # Пакеты используют сеть одного хоста и пересекающиеся тестовые IP.
@@ -83,15 +76,7 @@ jobs:
           go=$(command -v go)
           # Root использует свой кэш модулей; внутри unshare сети уже нет.
           sudo --preserve-env=PATH "$go" mod download
-          # Независимый peer: официальный main из закреплённого Go-модуля.
-          # Меняется только каталог UAPI, не код протокола.
-          peer="$RUNNER_TEMP/netos-awg-upstream"
-          "$go" build -ldflags "-X github.com/amnezia-vpn/amneziawg-go/v3/ipc.socketDirectory=/run/netos/amneziawg" \
-            -o "$peer" github.com/amnezia-vpn/amneziawg-go/v3
           failed=""
-          if [ "${{ inputs.focus }}" = "amneziawg" ]; then
-            ISOLATED='^(TestIntegrationAmneziaWG|TestIntegrationAmneziaWGCleanup|TestIntegrationAmneziaWGApply)$'
-          fi
           for test in $(printf '%s' "$ISOLATED" | sed 's/^^(//; s/)\$$//' | tr '|' ' '); do
             dir=$(grep -rl --include='*_test.go' "^func $test(" internal | xargs -r dirname | sort -u)
             if [ "$(printf '%s\n' "$dir" | grep -c .)" != 1 ]; then
@@ -99,7 +84,7 @@ jobs:
               failed="$failed $test"
               continue
             fi
-            sudo --preserve-env=PATH env NETOS_INTEGRATION=1 NETOS_AWG_PEER_BINARY="$peer" unshare --net --mount \
+            sudo --preserve-env=PATH env NETOS_INTEGRATION=1 unshare --net --mount \
               "$go" test "./$dir" -run "^$test\$" -count=1 -v || failed="$failed $test"
           done
           if [ -n "$failed" ]; then

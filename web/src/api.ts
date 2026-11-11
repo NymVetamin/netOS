@@ -68,7 +68,6 @@ export type ComponentInfo = {
   provides?: string[];
   size_hint?: string;
   external?: boolean;
-  builtin?: boolean;
   essential?: boolean;
   run_units?: string[];
 };
@@ -269,7 +268,7 @@ export const api = {
   xrayClientProfile: (serverID: string, peerID: string) =>
     request<{ link: string; config: Record<string, unknown> }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/xray-profile`),
   vpnClientProfile: (serverID: string, peerID: string) =>
-    request<{ privateKey: string; publicKey: string; serverPublicKey: string; presharedKey: string; amneziaParameters?: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/profile`),
+    request<{ privateKey: string; publicKey: string; serverPublicKey: string; presharedKey: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/profile`),
 
   vpnClientStatus: (serverID: string, signal?: AbortSignal) =>
     request<any[]>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/clients`, undefined, undefined, signal).then(rows => {

@@ -289,7 +289,7 @@ export function ComponentsPage({
                           будет установлен или исправлен
                         </Badge>
                       )}
-                      {!on && isReady && !c.essential && !c.builtin && (
+                      {!on && isReady && !c.essential && (
                         <Badge tone="warn">будет удалён</Badge>
                       )}
                       {!on && isReady && c.essential && (
@@ -298,7 +298,6 @@ export function ComponentsPage({
                       {c.external && (
                         <Badge tone="warn">не из репозитория Debian</Badge>
                       )}
-                      {c.builtin && <Badge tone="neutral">встроен в netOS</Badge>}
                     </div>
                     <div className="dim" style={{ marginTop: 2 }}>
                       {c.description}

@@ -14,12 +14,11 @@ const IKEv2AuthPort = 18128
 // WireGuardServerConfig contains server-only WireGuard settings. Peer keys are
 // stored with the peer so every client can be enabled and routed independently.
 type WireGuardServerConfig struct {
-	Amnezia          *AmneziaWGOptions `json:"amnezia,omitempty" plan:"AmneziaWG" sensitivity:"public"`
-	PrivateKey       string            `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
-	MTU              int               `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
-	PublicEndpoint   string            `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
-	ClientDNS        []string          `json:"client_dns,omitempty" plan:"DNS для клиентов" sensitivity:"public"` // Legacy profile defaults, kept for existing clients.
-	ClientAllowedIPs []string          `json:"client_allowed_ips,omitempty" plan:"Маршруты клиентов" sensitivity:"public"`
+	PrivateKey       string   `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
+	MTU              int      `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	PublicEndpoint   string   `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
+	ClientDNS        []string `json:"client_dns,omitempty" plan:"DNS для клиентов" sensitivity:"public"` // Legacy profile defaults, kept for existing clients.
+	ClientAllowedIPs []string `json:"client_allowed_ips,omitempty" plan:"Маршруты клиентов" sensitivity:"public"`
 }
 
 // WireGuardClientProfile configures the exported client, not the server's peer

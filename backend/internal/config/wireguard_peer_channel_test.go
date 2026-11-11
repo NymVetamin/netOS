@@ -12,32 +12,6 @@ func peerExitFixture() *Config {
 	return c
 }
 
-func TestAmneziaWGPeerChannelLifecycle(t *testing.T) {
-	c := peerExitFixture()
-	c.VPNServers[0].Type = "amneziawg"
-	c.Normalize()
-	ch := c.Channels[len(c.Channels)-1]
-	if ch.Type != "amneziawg" || ch.WireGuardPeer.ServerIndex != 4 {
-		t.Fatal("wrong shared channel protocol")
-	}
-	r := &ValidationResult{}
-	c.validateWireGuardPeerChannels(r)
-	if r.HasErrors() {
-		t.Fatal(r.Problems)
-	}
-	c.Firewall.NAT = append(c.Firewall.NAT, NATRule{ID: "channel-nat-" + ch.ID, System: true, Interface: "awg-srv4"})
-	c.VPNServers[0].Type = "wireguard"
-	c.Normalize()
-	if c.Channels[len(c.Channels)-1].Type != "wireguard" || c.Firewall.NAT[len(c.Firewall.NAT)-1].Interface != "wg-srv4" {
-		t.Fatal("protocol switch left stale interface")
-	}
-	c.VPNServers[0].Peers = nil
-	c.Normalize()
-	if len(c.Channels) != 1 {
-		t.Fatal("deleted exit retained channel")
-	}
-}
-
 func TestWireGuardPeerChannelLifecycle(t *testing.T) {
 	c := peerExitFixture()
 	c.Normalize()

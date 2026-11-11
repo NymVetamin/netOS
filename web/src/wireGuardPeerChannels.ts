@@ -1,12 +1,11 @@
-import { isWireGuardType, wireGuardPrefix } from "./amneziawg";
 // Mirrors config normalization so a new exit is immediately selectable in the draft.
 export function syncWireGuardPeerChannels(config: any) {
  const sources = new Map<string, any>();
  for (const s of config.vpn_servers || []) {
-  if (!isWireGuardType(s.type)) continue;
+  if (s.type !== "wireguard") continue;
   for (const p of s.peers || []) if (p.use_as_channel) {
    const id = `wg-exit-${s.id}`;
-   if (!sources.has(id)) sources.set(id, {type:s.type,name:p.name, ref:{server_id:s.id,peer_id:p.id,server_index:s.index}});
+   if (!sources.has(id)) sources.set(id, {name:p.name, ref:{server_id:s.id,peer_id:p.id,server_index:s.index}});
   }
  }
  const used = new Set<number>((config.channels || []).map((c:any) => c.index));
@@ -15,9 +14,9 @@ export function syncWireGuardPeerChannels(config: any) {
  config.channels = (config.channels || []).filter((c:any) => {
   const source = sources.get(c.id);
   if (c.wireguard_peer) {
-   managedNAT.set(`channel-nat-${c.id}`, source ? `${wireGuardPrefix(source.type)}-srv${source.ref.server_index}` : "");
+   managedNAT.set(`channel-nat-${c.id}`, source ? `wg-srv${source.ref.server_index}` : "");
    if (!source) return false;
-   c.wireguard_peer = source.ref; c.type=source.type;
+   c.wireguard_peer = source.ref;
   }
   present.add(c.id);
   return true;
@@ -32,7 +31,7 @@ export function syncWireGuardPeerChannels(config: any) {
  for (const [id,source] of sources) {
   if (present.has(id)) continue;
   while (used.has(index)) index++;
-  config.channels.push({id,index,name:source.name,enabled:true,type:source.type,mode:"tun",fail_mode:"block",config:{},wireguard_peer:source.ref,
+  config.channels.push({id,index,name:source.name,enabled:true,type:"wireguard",mode:"tun",fail_mode:"block",config:{},wireguard_peer:source.ref,
    probe:{enabled:true,type:"icmp",targets:["1.1.1.1","8.8.8.8"],interval:10,timeout:3,fail_threshold:3,rise_threshold:2}});
   used.add(index);
  }

@@ -1,5 +1,4 @@
 export const channelComponents = [
-  { type: "amneziawg", id: "amneziawg", title: "AmneziaWG" },
   { type: "wireguard", id: "wireguard", title: "WireGuard" },
   { type: "openconnect", id: "openconnect", title: "OpenConnect" },
   { type: "xray", id: "xray", title: "Xray" },

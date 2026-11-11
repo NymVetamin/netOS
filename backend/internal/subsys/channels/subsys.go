@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/netos-router/netos/internal/amneziawg"
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
@@ -109,9 +108,6 @@ func (s *Subsystem) captureRemovedChannel(ctx context.Context, owned ownedChanne
 		paths = []string{p.conf, p.daemon, p.ca, p.unit, filepath.Join(p.root, "dns-update")}
 	default:
 		paths = []string{filepath.Join(s.StateDir, owned.Name+".conf")}
-		if owned.Type == "amneziawg" {
-			paths = append(paths, filepath.Join(s.UnitDir, system.AmneziaWGUnitName(owned.Name)))
-		}
 		snapshot.addresses, _ = s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", owned.Name)
 		snapshot.link, _ = s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", owned.Name)
 	}
@@ -146,7 +142,7 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 		ch := config.Channel{Index: owned.Index, Type: owned.Type}
 		switch owned.Type {
 		case "wireguard-peer": // shared server interface is never owned by this channel
-		case "openconnect", "xray", "l2tp", "ikev2", "amneziawg":
+		case "openconnect", "xray", "l2tp", "ikev2":
 			if owned.Type == "ikev2" {
 				if _, err := s.ensureIKEv2ClientInterface(ctx, ch, true); err != nil {
 					return err
@@ -265,11 +261,11 @@ func ownedType(ch config.Channel) string {
 
 func InterfaceName(ch config.Channel) string {
 	if ch.WireGuardPeer != nil {
-		return fmt.Sprintf("%s-srv%d", config.WireGuardPrefix(ch.Type), ch.WireGuardPeer.ServerIndex)
+		return fmt.Sprintf("wg-srv%d", ch.WireGuardPeer.ServerIndex)
 	}
 	switch ch.Type {
-	case "wireguard", "amneziawg":
-		return fmt.Sprintf("%s-ch%d", config.WireGuardPrefix(ch.Type), ch.Index)
+	case "wireguard":
+		return fmt.Sprintf("wg-ch%d", ch.Index)
 	case "openconnect", "xray":
 		return fmt.Sprintf("tun-ch%d", ch.Index)
 	case "l2tp":
@@ -286,7 +282,7 @@ func Priority(ch config.Channel) int    { return priorityBase + ch.Index }
 func enabledChannels(cfg *config.Config) []config.Channel {
 	var out []config.Channel
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && (config.IsWireGuardType(ch.Type) || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		if ch.Enabled && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			out = append(out, ch)
 		}
 	}
@@ -324,7 +320,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 			action := apply.Action{Kind: "update", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true}
 			comparison := before
 			comparison.Name = ch.Name
-			if (ch.Type == "xray" || ch.Type == "wireguard" || ch.Type == "l2tp" || ((ch.Type == "amneziawg" || ch.Type == "openconnect" || ch.Type == "ikev2") && old.IPv6.Mode == new.IPv6.Mode)) && reflect.DeepEqual(comparison, ch) {
+			if (ch.Type == "xray" || ch.Type == "wireguard" || ch.Type == "l2tp" || ((ch.Type == "openconnect" || ch.Type == "ikev2") && old.IPv6.Mode == new.IPv6.Mode)) && reflect.DeepEqual(comparison, ch) {
 				if !healthChecked {
 					oldHealthy = s.Health(ctx, old) == nil
 					healthChecked = true
@@ -392,7 +388,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	wantedOwned := map[string]ownedChannel{}
 	for _, ch := range wanted {
 		name := InterfaceName(ch)
-		unit := amneziaUnit(ch)
+		unit := ""
 		if ch.Type == "openconnect" {
 			unit = openConnectUnitName(ch)
 		} else if ch.Type == "xray" {
@@ -445,9 +441,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	for _, ch := range wanted {
 		name := InterfaceName(ch)
 		var createdNow bool
-		unit := amneziaUnit(ch)
+		var unit string
 		switch ch.Type {
-		case "wireguard", "amneziawg":
+		case "wireguard":
 			if ch.WireGuardPeer != nil {
 				_, err = s.Runner.Run(ctx, "ip", "-4", "route", "replace", "blackhole", "default", "metric", "1000", "table", fmt.Sprint(TableNumber(ch)), "proto", fmt.Sprint(config.RouteProto))
 				if err == nil {
@@ -502,7 +498,7 @@ func preflightChannels(channels []config.Channel) error {
 		}
 		var err error
 		switch ch.Type {
-		case "wireguard", "amneziawg":
+		case "wireguard":
 			_, err = RenderWireGuard(ch)
 		case "openconnect":
 			_, err = ch.OpenConnectConfig()
@@ -529,11 +525,6 @@ func RenderWireGuard(ch config.Channel) (string, error) {
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит секреты; права 0600.")
 	fmt.Fprintln(&b, "[Interface]")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", wg.PrivateKey)
-	parameters, err := config.WireGuardNativeOptions(ch.Type, wg.Amnezia)
-	if err != nil {
-		return "", err
-	}
-	b.WriteString(parameters)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "[Peer]")
 	fmt.Fprintf(&b, "PublicKey = %s\n", wg.PeerPublicKey)
@@ -546,11 +537,7 @@ func RenderWireGuard(ch config.Channel) (string, error) {
 	fmt.Fprintf(&b, "AllowedIPs = %s\n", strings.Join(wg.AllowedIPs, ", "))
 	// Ноль означает «периодических пакетов нет», и сказать это надо вслух: без
 	// строки прежнее значение keepalive оставалось в ядре навсегда.
-	keepalive := fmt.Sprint(max(wg.PersistentKeepalive, 0))
-	if ch.Type == "amneziawg" && wg.Amnezia != nil && wg.Amnezia.PersistentKeepalive != "" {
-		keepalive = wg.Amnezia.PersistentKeepalive
-	}
-	fmt.Fprintf(&b, "PersistentKeepalive = %s\n", keepalive)
+	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", max(wg.PersistentKeepalive, 0))
 	return b.String(), nil
 }
 
@@ -570,11 +557,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 	name := InterfaceName(ch)
 	existedBefore := s.linkExists(InterfaceName(ch))
 	confPath := filepath.Join(s.StateDir, name+".conf")
-	paths := []string{confPath}
-	if ch.Type == "amneziawg" {
-		paths = append(paths, filepath.Join(s.UnitDir, system.AmneziaWGUnitName(name)))
-	}
-	snapshots, err := captureChannelFiles(paths...)
+	snapshots, err := captureChannelFiles(confPath)
 	if err != nil {
 		return false, err
 	}
@@ -588,7 +571,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 	rollbackCtx := context.Background()
 	if !wasOwned {
 		if !existedBefore {
-			_ = s.removeChannel(rollbackCtx, ownedChannel{Name: name, Index: ch.Index, Type: ch.Type, Unit: amneziaUnit(ch)})
+			_ = s.removeChannel(rollbackCtx, ownedChannel{Name: name, Index: ch.Index})
 			_ = os.Remove(confPath)
 		}
 		return false, retErr
@@ -596,14 +579,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 	if err := restoreChannelFiles(snapshots); err != nil {
 		return false, fmt.Errorf("%v; rollback WireGuard: %w", retErr, err)
 	}
-	if ch.Type == "amneziawg" {
-		if _, err := s.Runner.Run(rollbackCtx, "systemctl", "daemon-reload"); err != nil {
-			return false, fmt.Errorf("%v; rollback: %w", retErr, err)
-		}
-		if _, err := s.Runner.Run(rollbackCtx, "systemctl", "restart", amneziaUnit(ch)); err != nil {
-			return false, fmt.Errorf("%v; rollback: %w", retErr, err)
-		}
-	} else if !s.linkExists(name) {
+	if !s.linkExists(name) {
 		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
 			return false, fmt.Errorf("%v; rollback WireGuard interface: %w", retErr, err)
 		}
@@ -665,8 +641,8 @@ func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, 
 	if exists && !wasOwned {
 		return fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", name)
 	}
-	if exists && ch.Type != "amneziawg" {
-		if _, err := amneziawg.WireGuardControl(ctx, s.Runner, ch.Type, "show", name); err != nil {
+	if exists {
+		if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
 			if _, delErr := s.Runner.Run(ctx, "ip", "link", "delete", name); delErr != nil {
 				return fmt.Errorf("чужой тип интерфейса %s: %w", name, delErr)
 			}
@@ -677,19 +653,7 @@ func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, 
 	if err := writeFileIfChanged(confPath, []byte(conf), 0o600); err != nil {
 		return fmt.Errorf("сохранение конфигурации: %w", err)
 	}
-	if ch.Type == "amneziawg" {
-		mtu := wg.MTU
-		if mtu == 0 {
-			mtu = 1420
-		}
-		unit, err := system.RenderAmneziaWGUnit(name, confPath, wg.Address, mtu, TableNumber(ch), disableIPv6)
-		if err != nil {
-			return err
-		}
-		if err := system.EnsureAmneziaWGService(ctx, s.Runner, s.UnitDir, name, unit); err != nil {
-			return err
-		}
-	} else if !exists {
+	if !exists {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
 			return fmt.Errorf("создание интерфейса: %w", err)
 		}
@@ -880,7 +844,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	channels := enabledChannels(cfg)
 	var expectedOwned []ownedChannel
 	for _, ch := range channels {
-		unit := amneziaUnit(ch)
+		unit := ""
 		if ch.Type == "openconnect" {
 			unit = openConnectUnitName(ch)
 		} else if ch.Type == "xray" {
@@ -914,8 +878,8 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		if !s.linkExists(name) {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
 		}
-		if config.IsWireGuardType(ch.Type) && ch.WireGuardPeer == nil {
-			if _, err := amneziawg.WireGuardControl(ctx, s.Runner, ch.Type, "show", name); err != nil {
+		if ch.Type == "wireguard" && ch.WireGuardPeer == nil {
+			if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
 				return fmt.Errorf("интерфейс %s не принят WireGuard: %w", name, err)
 			}
 			wg, err := ch.WireGuardConfig()
@@ -929,22 +893,6 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			conf, err := RenderWireGuard(ch)
 			if err != nil {
 				return err
-			}
-			if ch.Type == "amneziawg" {
-				if err := s.unitActiveEnabled(ctx, amneziaUnit(ch)); err != nil {
-					return err
-				}
-				mtu := wg.MTU
-				if mtu == 0 {
-					mtu = 1420
-				}
-				unit, err := system.RenderAmneziaWGUnit(name, filepath.Join(s.StateDir, name+".conf"), wg.Address, mtu, TableNumber(ch), cfg.IPv6.Mode == "off")
-				if err != nil {
-					return err
-				}
-				if err := healthyChannelFile(filepath.Join(s.UnitDir, amneziaUnit(ch)), unit, 0o644); err != nil {
-					return err
-				}
 			}
 			if err := healthyChannelFile(filepath.Join(s.StateDir, name+".conf"), []byte(conf), 0o600); err != nil {
 				return err
@@ -1184,24 +1132,12 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
 }
 
 func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
-	if ch.Type == "amneziawg" {
-		if err := system.NewSystemd(s.Runner).Disable(ctx, ch.Unit); err != nil {
-			return err
-		}
-	} else if ch.Unit != "" && ch.Type != "openconnect" && ch.Type != "xray" {
+	if ch.Unit != "" && ch.Type != "openconnect" && ch.Type != "xray" {
 		_, _ = s.Runner.Run(ctx, "systemctl", "disable", ch.Unit)
 		_, _ = s.Runner.Run(ctx, "systemctl", "stop", ch.Unit)
 	}
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(priorityBase+ch.Index))
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprint(tableBase+ch.Index))
-	if ch.Type == "amneziawg" {
-		if err := os.Remove(filepath.Join(s.UnitDir, ch.Unit)); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
-			return err
-		}
-	}
 	if ch.Type != "wireguard-peer" {
 		if s.linkExists(ch.Name) {
 			_, _ = s.Runner.Run(ctx, "ip", "link", "delete", ch.Name)

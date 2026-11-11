@@ -11,15 +11,14 @@ import (
 // Config у Channel остаётся расширяемой JSON-картой для разных технологий,
 // но каждая реализованная технология декодирует её в строгую структуру.
 type WireGuardChannelConfig struct {
-	Amnezia             *AmneziaWGOptions `json:"amnezia,omitempty" plan:"AmneziaWG" sensitivity:"public"`
-	Address             string            `json:"address" plan:"Адрес" sensitivity:"public"`
-	PrivateKey          string            `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
-	PeerPublicKey       string            `json:"peer_public_key" plan:"Открытый ключ сервера" sensitivity:"public"`
-	PresharedKey        string            `json:"preshared_key,omitempty" plan:"Предварительно согласованный ключ" sensitivity:"secret"`
-	Endpoint            string            `json:"endpoint" plan:"Адрес подключения" sensitivity:"public"`
-	AllowedIPs          []string          `json:"allowed_ips" plan:"Маршруты клиента" sensitivity:"public"`
-	PersistentKeepalive int               `json:"persistent_keepalive,omitempty" plan:"Интервал keepalive, с" sensitivity:"public"`
-	MTU                 int               `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	Address             string   `json:"address" plan:"Адрес" sensitivity:"public"`
+	PrivateKey          string   `json:"private_key" plan:"Закрытый ключ" sensitivity:"secret"`
+	PeerPublicKey       string   `json:"peer_public_key" plan:"Открытый ключ сервера" sensitivity:"public"`
+	PresharedKey        string   `json:"preshared_key,omitempty" plan:"Предварительно согласованный ключ" sensitivity:"secret"`
+	Endpoint            string   `json:"endpoint" plan:"Адрес подключения" sensitivity:"public"`
+	AllowedIPs          []string `json:"allowed_ips" plan:"Маршруты клиента" sensitivity:"public"`
+	PersistentKeepalive int      `json:"persistent_keepalive,omitempty" plan:"Интервал keepalive, с" sensitivity:"public"`
+	MTU                 int      `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
 }
 
 type OpenConnectChannelConfig struct {

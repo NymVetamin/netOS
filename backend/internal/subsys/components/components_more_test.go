@@ -100,14 +100,8 @@ func TestCatalogMetadataAndExternalReleaseIntegrity(t *testing.T) {
 		if !ok || lookedUp.ID != info.ID {
 			t.Errorf("ComponentByID(%q) failed: %+v, %v", info.ID, lookedUp, ok)
 		}
-		sources := 0
-		for _, present := range []bool{info.External, info.Builtin, len(info.Packages) > 0} {
-			if present {
-				sources++
-			}
-		}
-		if sources != 1 {
-			t.Errorf("component %s must use exactly one installation source: external=%v builtin=%v packages=%v", info.ID, info.External, info.Builtin, info.Packages)
+		if info.External == (len(info.Packages) > 0) {
+			t.Errorf("component %s must use exactly one installation source: external=%v packages=%v", info.ID, info.External, info.Packages)
 		}
 		seenPackages := map[string]bool{}
 		for _, pkg := range info.Packages {

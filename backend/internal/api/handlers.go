@@ -70,7 +70,7 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 		}
 		if cfg := s.requestConfig(r); cfg != nil {
 			for _, channel := range cfg.Channels {
-				if channel.ID == input.ChannelID && config.IsWireGuardType(channel.Type) {
+				if channel.ID == input.ChannelID && channel.Type == "wireguard" {
 					privateKey, _ = channel.Config["private_key"].(string)
 					break
 				}
@@ -91,7 +91,7 @@ func (s *Server) handleWireGuardKeypair(w http.ResponseWriter, r *http.Request) 
 			for _, server := range cfg.VPNServers {
 				if server.ID == input.ServerID {
 					switch server.Type {
-					case "wireguard", "amneziawg":
+					case "wireguard":
 						privateKey, _ = server.Config["private_key"].(string)
 					case "xray":
 						if xr, err := server.XrayConfig(); err == nil && xr.Protocol == "wireguard" {

@@ -123,8 +123,8 @@ func channelInterface(ch config.Channel) string {
 		return channels.InterfaceName(ch)
 	}
 	switch ch.Type {
-	case "wireguard", "amneziawg":
-		return fmt.Sprintf("%s-ch%d", config.WireGuardPrefix(ch.Type), ch.Index)
+	case "wireguard":
+		return fmt.Sprintf("wg-ch%d", ch.Index)
 	case "l2tp":
 		return fmt.Sprintf("ppp-ch%d", ch.Index)
 	case "ikev2":
@@ -142,8 +142,8 @@ func channelInterface(ch config.Channel) string {
 // с одним пакетом — разрешённый трафик клиента доходил до запрета по умолчанию.
 func serverInterface(s config.VPNServer) string {
 	switch s.Type {
-	case "wireguard", "amneziawg":
-		return fmt.Sprintf("%s-srv%d", config.WireGuardPrefix(s.Type), s.Index)
+	case "wireguard":
+		return fmt.Sprintf("wg-srv%d", s.Index)
 	case "ocserv":
 		return fmt.Sprintf("vpns%d+", s.Index)
 	case "ikev2":
@@ -375,7 +375,7 @@ func (b *builder) vpnServerAccept(cfg *config.Config, chain string) {
 		}
 		comment := truncate("VPN-сервер «"+server.Name+"»", 240)
 		switch server.Type {
-		case "wireguard", "amneziawg":
+		case "wireguard":
 			b.line("-A %s -p udp --dport %d -m comment --comment %q -j ACCEPT", chain, server.Port, comment)
 		case "xray":
 			transport := "tcp"
@@ -679,7 +679,7 @@ func (b *builder) nat(cfg *config.Config, zones zoneMap) {
 	}
 	for _, ch := range cfg.Channels {
 		iface := channels.InterfaceName(ch)
-		if ch.Enabled && !masqueraded[iface] && (config.IsWireGuardType(ch.Type) || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		if ch.Enabled && !masqueraded[iface] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			masqueraded[iface] = true
 			if ch.WireGuardPeer != nil {
 				b.peerChannelNAT(ch)
@@ -888,7 +888,7 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && clampZone["vpn"] && (config.IsWireGuardType(ch.Type) || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		if ch.Enabled && clampZone["vpn"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			links = append(links, channelInterface(ch))
 		}
 	}
@@ -910,7 +910,7 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 
 func (b *builder) channelLocalReplies(cfg *config.Config) {
 	for _, ch := range cfg.Channels {
-		if ch.WireGuardPeer != nil || !ch.Enabled || (!config.IsWireGuardType(ch.Type) && ch.Type != "openconnect" && ch.Type != "ikev2") {
+		if ch.WireGuardPeer != nil || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "ikev2") {
 			continue
 		}
 		// INPUT only sees connections to the router itself. Remember the
@@ -939,7 +939,7 @@ func (b *builder) dnsChannelPolicies(cfg *config.Config) {
 	b.line("-A OUTPUT -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j CONNMARK --restore-mark")
 	for _, binding := range bindings {
 		ch, ok := channelByID[binding.ChannelID]
-		if !ok || !ch.Enabled || (!config.IsWireGuardType(ch.Type) && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
+		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
 			continue
 		}
 		mark := fmt.Sprintf("0x%x", channels.Mark(ch))
@@ -1096,7 +1096,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	servers := append([]config.VPNServer(nil), cfg.VPNServers...)
 	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 	for _, server := range servers {
-		if !server.Enabled || (!config.IsWireGuardType(server.Type) && server.Type != "ocserv" && server.Type != "ikev2" && server.Type != "l2tp") {
+		if !server.Enabled || (server.Type != "wireguard" && server.Type != "ocserv" && server.Type != "ikev2" && server.Type != "l2tp") {
 			continue
 		}
 		peers := append([]config.VPNPeer(nil), server.Peers...)
@@ -1157,7 +1157,7 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 			continue
 		}
 		ch, ok := channelByID[rule.channel]
-		if !ok || !ch.Enabled || (!config.IsWireGuardType(ch.Type) && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
+		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
 			continue // валидатор не разрешает применить такую конфигурацию
 		}
 		mark := fmt.Sprintf("0x%x", channels.Mark(ch))

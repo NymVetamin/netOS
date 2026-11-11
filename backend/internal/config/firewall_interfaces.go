@@ -31,7 +31,7 @@ func (c *Config) firewallInterfaceInZone(name, zone string, interfaceName func(s
 			if ch.WireGuardPeer != nil {
 				continue
 			} // shared interface is listed by its VPN server
-			prefix := map[string]string{"wireguard": "wg-ch", "amneziawg": "awg-ch", "l2tp": "ppp-ch", "ikev2": "xfrm-ch", "xray": "tun-ch", "openconnect": "tun-ch"}[ch.Type]
+			prefix := map[string]string{"wireguard": "wg-ch", "l2tp": "ppp-ch", "ikev2": "xfrm-ch", "xray": "tun-ch", "openconnect": "tun-ch"}[ch.Type]
 			if prefix != "" && name == fmt.Sprintf("%s%d", prefix, ch.Index) {
 				return true
 			}
@@ -40,7 +40,7 @@ func (c *Config) firewallInterfaceInZone(name, zone string, interfaceName func(s
 			if s.Type == "l2tp" && name == L2TPInterfacePrefix(s.Index)+"+" {
 				return true
 			}
-			prefix := map[string]string{"wireguard": "wg-srv", "amneziawg": "awg-srv", "ikev2": "xfrm-srv", "ocserv": "vpns"}[s.Type]
+			prefix := map[string]string{"wireguard": "wg-srv", "ikev2": "xfrm-srv", "ocserv": "vpns"}[s.Type]
 			suffix := ""
 			if s.Type == "ocserv" {
 				suffix = "+"

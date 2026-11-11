@@ -1,4 +1,3 @@
-import { isWireGuardType, wireGuardPrefix } from "./amneziawg";
 // Итог доступа «кто куда может ходить» для матрицы в «Защите сети».
 //
 // Считается в том же порядке, в каком backend/internal/subsys/firewall
@@ -59,7 +58,7 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
     }));
   const vpnSegments: Entity[] = (config.vpn_servers || []).filter((s: any) => s.enabled).map((s: any) => ({
     id: `vpn:${s.id}`, title: s.name || s.id, kind: "segment" as const, zone: "vpn", vpn: true,
-    ifaces: isWireGuardType(s.type) ? [`${wireGuardPrefix(s.type)}-srv${s.index}`] : s.type === "ikev2" ? [`xfrm-srv${s.index}`] : s.type === "ocserv" ? [`vpns${s.index}+`] : s.type === "l2tp" ? [`pp${s.index}-+`] : [],
+    ifaces: s.type === "wireguard" ? [`wg-srv${s.index}`] : s.type === "ikev2" ? [`xfrm-srv${s.index}`] : s.type === "ocserv" ? [`vpns${s.index}+`] : s.type === "l2tp" ? [`pp${s.index}-+`] : [],
     subnet: parseCIDR(s.subnet), isolated: !!s.isolated,
   }));
   const zoneEntity = (name: string): Entity[] => {

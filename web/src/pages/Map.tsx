@@ -1,4 +1,3 @@
-import { isWireGuardType } from "../amneziawg";
 import { useAccess } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -158,7 +157,7 @@ function buildGraph(config: any, status: any, clients: any[], rates: Rates, vpnT
 }
 
 function channelType(type: string): string {
-  return ({ amneziawg: "AmneziaWG", wireguard: "WireGuard", xray: "Xray", openconnect: "OpenConnect", ikev2: "IKEv2" } as Record<string, string>)[type] || type;
+  return ({ wireguard: "WireGuard", xray: "Xray", openconnect: "OpenConnect", ikev2: "IKEv2" } as Record<string, string>)[type] || type;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,12 +445,12 @@ function NodeDetails({ graph, id, config, status, clients }: {
           <dt>VPN-адрес</dt><dd className="mono">{peer.address || "—"}</dd>
           <dt>Состояние</dt><dd>{peer.label}</dd>
           <dt>Адрес подключения</dt><dd className="mono">{peer.endpoint || "—"}</dd>
-          <dt>{isWireGuardType(vpnServer.type) ? "Последний handshake" : "Последний раз замечен онлайн"}</dt><dd>{peer.handshake ? new Date(peer.handshake * 1000).toLocaleString() : "—"}</dd>
+          <dt>{vpnServer.type === "wireguard" ? "Последний handshake" : "Последний раз замечен онлайн"}</dt><dd>{peer.handshake ? new Date(peer.handshake * 1000).toLocaleString() : "—"}</dd>
           <dt>Получено / отправлено</dt><dd>{peer.trafficKnown ? `${peer.received.toLocaleString()} / ${peer.sent.toLocaleString()} байт` : "—"}</dd>
           <dt>Канал выхода</dt><dd>{channelName}</dd>
         </> : <><dt>Сервер включён</dt><dd>{vpnServer.enabled ? "да" : "нет"}</dd><dt>Клиенты</dt><dd>{vpnServer.peers.length}</dd></>}
       </dl>
-      {isWireGuardType(vpnServer.type) && <p className="hint">Недавний handshake подтверждает обмен с клиентом, но не непрерывное подключение.</p>}
+      {vpnServer.type === "wireguard" && <p className="hint">Недавний handshake подтверждает обмен с клиентом, но не непрерывное подключение.</p>}
       {can("vpn-servers") && <a href="#vpn-servers">Открыть VPN-серверы</a>}
     </>;
   }
