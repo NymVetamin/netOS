@@ -74,6 +74,11 @@ jobs:
           go=$(command -v go)
           # Root использует свой кэш модулей; внутри unshare сети уже нет.
           sudo --preserve-env=PATH "$go" mod download
+          # Независимый peer: официальный main из закреплённого Go-модуля.
+          # Меняется только каталог UAPI, не код протокола.
+          peer="$RUNNER_TEMP/netos-awg-upstream"
+          "$go" build -ldflags "-X github.com/amnezia-vpn/amneziawg-go/v3/ipc.socketDirectory=/run/netos/amneziawg" \
+            -o "$peer" github.com/amnezia-vpn/amneziawg-go/v3
           failed=""
           for test in $(printf '%s' "$ISOLATED" | sed 's/^^(//; s/)\$$//' | tr '|' ' '); do
             dir=$(grep -rl --include='*_test.go' "^func $test(" internal | xargs -r dirname | sort -u)
@@ -82,7 +87,7 @@ jobs:
               failed="$failed $test"
               continue
             fi
-            sudo --preserve-env=PATH env NETOS_INTEGRATION=1 unshare --net --mount \
+            sudo --preserve-env=PATH env NETOS_INTEGRATION=1 NETOS_AWG_PEER_BINARY="$peer" unshare --net --mount \
               "$go" test "./$dir" -run "^$test\$" -count=1 -v || failed="$failed $test"
           done
           if [ -n "$failed" ]; then

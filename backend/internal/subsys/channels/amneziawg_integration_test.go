@@ -86,7 +86,14 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 	remote("ip", "addr", "add", "192.0.2.2/30", "dev", "awgremote")
 	remote("ip", "link", "set", "awgremote", "up")
 	remote("ip", "link", "set", "lo", "up")
-	peer := exec.CommandContext(ctx, "ip", "netns", "exec", ns, binary, "-test.run=TestAmneziaWGDaemonProcess", "--", "serve", "awg-ch992")
+	peerBinary := os.Getenv("NETOS_AWG_PEER_BINARY")
+	if !filepath.IsAbs(peerBinary) {
+		t.Fatal("NETOS_AWG_PEER_BINARY must name the separately built upstream executable")
+	}
+	if err := os.MkdirAll(amneziawg.SocketDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	peer := exec.CommandContext(ctx, "ip", "netns", "exec", ns, peerBinary, "-f", "awg-ch992")
 	if err := peer.Start(); err != nil {
 		t.Fatal(err)
 	}
