@@ -68,8 +68,10 @@ jobs:
         if: ${{ inputs.focus != 'amneziawg' }}
         working-directory: backend
         run: |
+          # Пакеты используют сеть одного хоста и пересекающиеся тестовые IP.
+          # Параллельный go test заставляет их менять маршруты друг друга.
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
-            "$(command -v go)" test ./internal/subsys/... -run "PPPoE|Integration" -skip "$ISOLATED" -v
+            "$(command -v go)" test -p 1 ./internal/subsys/... -run "PPPoE|Integration" -skip "$ISOLATED" -v
 
       - name: интеграционные тесты в изолированном пространстве имён
         if: ${{ !cancelled() }}
