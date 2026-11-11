@@ -77,6 +77,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 	run("mount", "--make-rprivate", "/")
 	run("mount", "-t", "sysfs", "sysfs", "/sys")
 	run("ip", "link", "set", "lo", "up")
+	run("sysctl", "-w", "net.ipv4.ip_forward=1", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.default.rp_filter=0")
 	root, err := os.MkdirTemp("/var/lib", "netos-awg-ci-")
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +105,22 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 	remote("ip", "addr", "add", "192.0.2.2/30", "dev", "awgremote")
 	remote("ip", "link", "set", "awgremote", "up")
 	remote("ip", "link", "set", "lo", "up")
+	remote("ip", "addr", "add", "198.51.100.2/32", "dev", "lo")
+	run("ip", "route", "add", "default", "via", "192.0.2.2")
+	lanNS := fmt.Sprintf("netos-awg-lan-%d", os.Getpid())
+	run("ip", "netns", "add", lanNS)
+	defer exec.Command("ip", "netns", "del", lanNS).Run()
+	lan := func(args ...string) string {
+		t.Helper()
+		return run("ip", append([]string{"netns", "exec", lanNS}, args...)...)
+	}
+	run("ip", "link", "add", "awglan", "type", "veth", "peer", "name", "lanpeer")
+	run("ip", "link", "set", "lanpeer", "netns", lanNS)
+	run("ip", "addr", "add", "192.0.3.1/24", "dev", "awglan")
+	run("ip", "link", "set", "awglan", "up")
+	lan("ip", "addr", "add", "192.0.3.2/24", "dev", "lanpeer")
+	lan("ip", "link", "set", "lanpeer", "up")
+	lan("ip", "route", "add", "default", "via", "192.0.3.1")
 	peerBinary := os.Getenv("NETOS_AWG_PEER_BINARY")
 	if !filepath.IsAbs(peerBinary) {
 		t.Fatal("NETOS_AWG_PEER_BINARY must name the separately built upstream executable")
@@ -298,7 +315,7 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			if again := run("systemctl", "show", unitName, "-p", "MainPID", "--value"); again != pid {
 				t.Fatal("unchanged apply restarted tunnel")
 			}
-			iperf := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "iperf3", "-s", "-B", "10.252.0.2")
+			iperf := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "iperf3", "-s")
 			if err := iperf.Start(); err != nil {
 				t.Fatal(err)
 			}
@@ -444,6 +461,73 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 			recoverTraffic()
 			empty := config.Default()
 			empty.Channels = nil
+			// Exercise forwarding/NAT and fail-closed policy with a reachable
+			// direct fallback. The remote accepts only the router tunnel /32.
+			c.Interfaces = append(c.Interfaces, config.Interface{ID: "lan", Name: "awglan", Type: "physical", Enabled: true})
+			var shared *channels.Subsystem
+			channelID := "awg"
+			if role == "server" {
+				c.VPNServers[0].Peers[0].UseAsChannel = true
+				c.Normalize()
+				channelID = c.Channels[len(c.Channels)-1].ID
+				shared = channels.New(r, filepath.Join(root, "shared"))
+				shared.RTTablesPath = filepath.Join(root, "shared-tables")
+				if err := shared.Apply(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+				if err := apply(c); err != nil {
+					t.Fatal(err)
+				}
+				if err := (&channels.PeerRoutes{S: shared}).Apply(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c.Networks = []config.Network{{ID: "lan", Interface: "lan", Enabled: true, Zone: "lan", RouterAddress: "192.0.3.1/24", DefaultChannel: channelID}}
+			if err := fw.Apply(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			run("ping", "-c", "1", "-W", "2", "198.51.100.2") // direct WAN route works
+			lan("ping", "-c", "2", "-W", "2", "198.51.100.2")
+			for _, transfer := range []struct {
+				args    []string
+				minimum int64
+			}{{[]string{"-n", "1048576"}, 1048576}, {[]string{"-u", "-b", "1M", "-t", "1"}, 1}} {
+				output := lan(append([]string{"iperf3", "-c", "198.51.100.2", "-J"}, transfer.args...)...)
+				udpResult.Error = ""
+				udpResult.End.Received.Bytes = 0
+				if err := json.Unmarshal([]byte(output), &udpResult); err != nil || udpResult.Error != "" || udpResult.End.Received.Bytes < transfer.minimum {
+					t.Fatalf("LAN transfer failed: %v %s", err, output)
+				}
+			}
+			run("systemctl", "stop", unitName)
+			if err := exec.CommandContext(ctx, "ip", "netns", "exec", lanNS, "ping", "-c", "1", "-W", "1", "198.51.100.2").Run(); err == nil {
+				t.Fatal("LAN leaked through reachable direct WAN while AWG stopped")
+			}
+			run("systemctl", "start", unitName)
+			if shared != nil {
+				if err := (&channels.PeerRoutes{S: shared}).Apply(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recoverTraffic()
+			lan("ping", "-c", "2", "-W", "2", "198.51.100.2")
+			if shared != nil {
+				remote("ip", "addr", "add", "203.0.113.9/32", "dev", "lo")
+				if err := exec.CommandContext(ctx, "ip", "netns", "exec", ns, "ping", "-I", "203.0.113.9", "-c", "1", "-W", "1", "10.252.0.1").Run(); err == nil {
+					t.Fatal("shared AWG exit admitted unsolicited source")
+				}
+				c.Networks[0].DefaultChannel = "direct"
+				c.VPNServers[0].Peers[0].UseAsChannel = false
+				c.Normalize()
+				if err := shared.Apply(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+				if err := apply(c); err != nil {
+					t.Fatal(err)
+				}
+				remote("ping", "-c", "1", "-W", "2", "10.252.0.1")
+			}
+			t.Log(role, "LAN TCP/UDP forwarding, NAT, kill-switch and recovery passed")
 			if err := apply(empty); err != nil {
 				t.Fatal(err)
 			}
