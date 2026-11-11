@@ -84,9 +84,9 @@ Config
 ├── Firewall      зоны, политики, правила, port-forward, NAT, SNAT
 ├── DHCP          провайдер + общие опции + пулы + статические привязки
 ├── DNS           провайдер + upstream'ы (DoT/DoH/DoQ) + split-DNS + blocklists
-├── Channels[]    каналы выхода: direct, wireguard, xray, openconnect
+├── Channels[]    каналы выхода: direct, wireguard, amneziawg, xray, openconnect
 ├── Policies[]    правила «кто через какой канал» (упорядоченный список)
-├── VPNServers[]  входящие: wireguard, ikev2, ocserv, xray inbound
+├── VPNServers[]  входящие: wireguard, amneziawg, ikev2, ocserv, xray inbound
 ├── WiFi[]        hostapd: радио, SSID, привязка к сети
 ├── QoS           CAKE по WAN и лимиты клиентов
 └── DDNS          Cloudflare, DuckDNS или No-IP
@@ -368,6 +368,7 @@ Split-DNS: для каждого канала можно задать свой u
 |---|---|---|
 | `direct` | штатный маршрут через WAN | — |
 | `wireguard` | ядро, `wg-quick` не используется — конфиг через netlink/wg | `wg-chN` |
+| `amneziawg` | встроенный userspace runtime, отдельный systemd-процесс и UAPI | `awg-chN` |
 | `xray` | `xray-core`: VLESS/VMess/Trojan/Shadowsocks, Reality, XTLS, WS, gRPC, mKCP | `tun-chN` |
 | `openconnect` | клиент `openconnect` (AnyConnect) | `tun-chN` |
 | `ikev2` | strongSwan, отдельный процесс и XFRM-интерфейс для каждого канала | `xfrm-chN` |
@@ -385,6 +386,7 @@ Split-DNS: для каждого канала можно задать свой u
 | Тип | Реализация | Что даёт |
 |---|---|---|
 | WireGuard | ядро | Роад-варриор, QR-код конфига в панели |
+| AmneziaWG | встроенный `amneziawg-go/v3`, интерфейс `awg-srvN` | Параметры маскировки, клиентские `.conf` и QR для небольших профилей |
 | IKEv2/IPsec | strongSwan | Нативные клиенты iOS/macOS/Windows без софта |
 | L2TP/IPsec | strongSwan, xl2tpd, pppd | IPsec с общим ключом и отдельными логинами пользователей |
 | OpenConnect | `ocserv` | Маскировка под HTTPS там, где режут WG/IPsec |
@@ -393,6 +395,14 @@ Split-DNS: для каждого канала можно задать свой u
 Каждому peer'у входящего сервера в панели назначается канал выхода — ровно тем
 же движком политик, что и LAN-клиентам. То есть подключившийся по WireGuard
 телефон может ходить в интернет через xray-канал роутера.
+
+AmneziaWG использует существующие подсистемы `channels` и `vpnservers`;
+новой стадии apply и отдельного опроса нет. Компонент встроен в бинарник,
+выбор в конфигурации не устанавливает пакеты. Каждый TUN обслуживает свой
+`netos-awg-*.service`; изменения peers синхронизируются через UAPI, а unit
+восстанавливает конфиг/адрес/MTU/маршрут при автоматическом перезапуске.
+Управляющие сокеты доступны только root. Параметры, ограничения и работа
+с профилями описаны в [AMNEZIAWG.md](AMNEZIAWG.md).
 
 IKEv2 проверяет EAP-MSCHAPv2 через штатный плагин `eap-radius` и локальную
 службу `netos-ikev2-auth` (FreeRADIUS, только `127.0.0.1:18128`). Обе службы
@@ -541,9 +551,9 @@ Firewall пропускает SMB только с выбранных LAN-инт�
 
 Параметры проверены по [руководству Samba](https://www.samba.org/samba/docs/current/man-html/smb.conf.5.html) и [документации WS-Discovery](https://github.com/christgau/wsdd). Проверки U/S/C — раздел 29 каталога QA.
 
-### Выход через входящего клиента WireGuard
+### Выход через входящего клиента WireGuard или AmneziaWG
 
-У клиента WG-сервера переключатель «Использовать как канал» создаёт связанный
+У клиента WG/AWG-сервера переключатель «Использовать как канал» создаёт связанный
 интернет-канал. Его можно выбрать у LAN/VPN-клиентов и в политиках.
 На один WG-сервер допускается один такой клиент; для следующего выхода создайте
 отдельный WG-сервер. Соединение первым устанавливает удалённый VPS.
