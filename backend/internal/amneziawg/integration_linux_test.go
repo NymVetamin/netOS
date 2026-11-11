@@ -159,13 +159,20 @@ func TestIntegrationAmneziaWG(t *testing.T) {
 	if len(boundary) != config.AmneziaWGMaxSignatureLength {
 		t.Fatal("signature boundary fixture drifted")
 	}
-	sync("awg-ch999", strings.Replace(clientText, "I2 = \n", "I2 = "+boundary+"\n", 1))
+	if strings.Count(clientText, "[Interface]\n") != 1 || strings.Contains(clientText, "I2 =") {
+		t.Fatal("signature boundary fixture must have one interface and no I2")
+	}
+	sync("awg-ch999", strings.Replace(clientText, "[Interface]\n", "[Interface]\nI2 = "+boundary+"\n", 1))
 	live, err := exchange(ctx, filepath.Join(SocketDir, "awg-ch999.sock"), "get=1\n\n")
 	if err != nil || live.Device["i2"] != boundary {
 		t.Fatalf("runtime did not accept boundary signature: %v", err)
 	}
 	sync("awg-ch999", clientText)
-	oversized := strings.Replace(clientText, "I2 = \n", "I2 = <b 0x"+strings.Repeat("00", 32764)+">\n", 1)
+	live, err = exchange(ctx, filepath.Join(SocketDir, "awg-ch999.sock"), "get=1\n\n")
+	if err != nil || live.Device["i2"] != "" {
+		t.Fatalf("omitted signature did not clear runtime state: %v", err)
+	}
+	oversized := strings.Replace(clientText, "[Interface]\n", "[Interface]\nI2 = <b 0x"+strings.Repeat("00", 32764)+">\n", 1)
 	if _, err := ParseNative(ctx, oversized); err == nil {
 		t.Fatal("oversized signature reached UAPI")
 	}

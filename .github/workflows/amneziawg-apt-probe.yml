@@ -64,6 +64,10 @@ jobs:
           go test -c -o "$RUNNER_TEMP/awg-contract.test" ./internal/amneziawg
           sudo unshare -n env NETOS_AWG_TOOLS_BINARY="$GITHUB_WORKSPACE/native-tools/src/wg" \
             "$RUNNER_TEMP/awg-contract.test" -test.run '^TestAmneziaWGNativeToolsContract$' -test.v -test.timeout 120s
+      - name: Verify existing runtime traffic and signature reset
+        run: |
+          sudo unshare --net --mount env NETOS_INTEGRATION=1 \
+            "$RUNNER_TEMP/awg-contract.test" -test.run '^TestIntegrationAmneziaWG$' -test.v -test.timeout 60s
   connectivity:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
