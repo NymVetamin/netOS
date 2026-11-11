@@ -222,6 +222,13 @@ func ParseNative(ctx context.Context, text string) (State, error) {
 	if err := settings.Validate(); err != nil {
 		return out, err
 	}
+	// Native tools reject an empty I1= line. Absence still means reset in a
+	// complete netOS configuration, so preserve that meaning in the UAPI delta.
+	for _, key := range []string{"i1", "i2", "i3", "i4", "i5"} {
+		if _, present := out.Device[key]; !present {
+			out.Device[key] = ""
+		}
+	}
 	for _, p := range options {
 		value, present := out.Device[p.key]
 		if !present || p.kind != "string" || strings.HasPrefix(p.key, "i") {

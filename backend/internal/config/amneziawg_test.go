@@ -39,10 +39,19 @@ func TestAmneziaWGOptions(t *testing.T) {
 		})
 	}
 	reset := (AmneziaWGOptions{}).NativeParameters()
-	for _, want := range []string{"Jc = 0\n", "H1 = 1\n", "H4 = 4\n", "I1 = \n", "HeaderProtectionKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n", "RandomTrailers = false\n"} {
+	for _, want := range []string{"Jc = 0\n", "H1 = 1\n", "H4 = 4\n", "HeaderProtectionKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n", "RandomTrailers = 0\n", "DisableCookies = 0\n"} {
 		if !strings.Contains(reset, want) {
 			t.Fatalf("missing reset %q", want)
 		}
+	}
+	for i := 1; i <= 5; i++ {
+		if strings.Contains(reset, fmt.Sprintf("I%d =", i)) {
+			t.Fatal("native tools reject empty signature assignments")
+		}
+	}
+	enabled := (AmneziaWGOptions{RandomTrailers: true, DisableCookies: true}).NativeParameters()
+	if !strings.Contains(enabled, "RandomTrailers = 1\n") || !strings.Contains(enabled, "DisableCookies = 1\n") {
+		t.Fatal("native boolean spelling lost")
 	}
 }
 

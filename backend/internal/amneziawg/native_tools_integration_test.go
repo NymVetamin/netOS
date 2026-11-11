@@ -103,10 +103,11 @@ func TestAmneziaWGNativeToolsContract(t *testing.T) {
 			}
 		})
 	}
-	// Record the native tool's timer boundary independently of our validator.
+	// The native parser accepts both inputs, but this is NOT a value roundtrip:
+	// upstream type.c narrows to uint16. Kernel readback is a separate gate.
 	for _, value := range []string{"65535", "65536"} {
 		t.Run("timer_"+value, func(t *testing.T) {
-			check(t, "[Interface]\nPrivateKey = "+key(1)+"\nRekeyAfterTime = "+value+"\n", value == "65535")
+			check(t, "[Interface]\nPrivateKey = "+key(1)+"\nRekeyAfterTime = "+value+"\n", true)
 		})
 	}
 }

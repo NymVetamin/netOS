@@ -17,6 +17,9 @@ const options = { ...newAmneziaOptions(), header_protection_key: key, persistent
 const server = { type: "amneziawg", subnet: "10.9.0.1/24", config: { public_endpoint: "vpn.example:51820", amnezia: options } };
 const peer = { address: "10.9.0.2", credentials: {}, wireguard_profile: { use_router_dns: true, allowed_ips: ["0.0.0.0/0"] } };
 const exported = profile(server, peer, key, nextKey);
+assert.match(exported, /^RandomTrailers = 1$/m);
+assert.match(amneziaClientParameters({ random_trailers: false, disable_cookies: false }), /^RandomTrailers = 0$/m);
+assert.match(amneziaClientParameters({ disable_cookies: true }), /^DisableCookies = 1$/m);
 const imported = parse(exported, true);
 assert.deepEqual(imported.config.amnezia, options);
 assert.equal(imported.config.endpoint, "vpn.example:51820");

@@ -59,6 +59,23 @@ func TestNativeRejectsScriptsAndMalformedParameters(t *testing.T) {
 	}
 }
 
+func TestNativeOmittedSignaturesClearExistingValues(t *testing.T) {
+	before, err := ParseNative(context.Background(), nativeFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := ParseNative(context.Background(), strings.Replace(nativeFixture(), "I1 = <r 8><t>\n", "", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Delta(after, before); got != "i1=\n" {
+		t.Fatalf("clearing a signature must not retain it or change unrelated state: %q", got)
+	}
+	if got := Delta(after, after); got != "" {
+		t.Fatalf("repeat writes: %q", got)
+	}
+}
+
 func TestTelemetryContainsNoSecrets(t *testing.T) {
 	state := State{Device: map[string]string{"private_key": "PRIVATE", "header_protection_key": "HEADER"}, Peers: []Peer{{Key: strings.Repeat("ab", 32), Values: map[string]string{"preshared_key": "PRESHARED", "last_handshake_time_sec": "3", "rx_bytes": "4", "tx_bytes": "5"}}}}
 	for _, field := range []string{"status", "listen-port", "latest-handshakes", "endpoints", "transfer", "telemetry"} {

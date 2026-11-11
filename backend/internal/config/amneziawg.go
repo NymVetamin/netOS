@@ -237,8 +237,9 @@ func validateAmneziaSignature(s string) error {
 	return nil
 }
 
-// NativeParameters emits all parameters, including defaults: clearing a field
-// must clear its previous live value. Only callers exporting a profile may
+// NativeParameters uses syntax accepted by the official native tools. Empty
+// signatures are omitted; the controller restores their reset semantics.
+// Only callers exporting a profile may
 // expose the header-protection key to an authorized client.
 func (a AmneziaWGOptions) NativeParameters() string {
 	var b strings.Builder
@@ -257,7 +258,9 @@ func (a AmneziaWGOptions) NativeParameters() string {
 		fmt.Fprintf(&b, "H%d = %s\n", i+1, v)
 	}
 	for i, v := range []string{a.I1, a.I2, a.I3, a.I4, a.I5} {
-		fmt.Fprintf(&b, "I%d = %s\n", i+1, v)
+		if v != "" {
+			fmt.Fprintf(&b, "I%d = %s\n", i+1, v)
+		}
 	}
 	key := a.HeaderProtectionKey
 	if key == "" {
@@ -275,7 +278,16 @@ func (a AmneziaWGOptions) NativeParameters() string {
 		}
 		fmt.Fprintf(&b, "%s = %s\n", f.name, v)
 	}
-	fmt.Fprintf(&b, "RandomTrailers = %t\nDisableCookies = %t\n", a.RandomTrailers, a.DisableCookies)
+	for _, field := range []struct {
+		name    string
+		enabled bool
+	}{{"RandomTrailers", a.RandomTrailers}, {"DisableCookies", a.DisableCookies}} {
+		value := 0
+		if field.enabled {
+			value = 1
+		}
+		fmt.Fprintf(&b, "%s = %d\n", field.name, value)
+	}
 	return b.String()
 }
 

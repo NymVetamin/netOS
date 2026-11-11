@@ -113,7 +113,9 @@ export function amneziaClientParameters(options: AmneziaOptions = {}, savedParam
   let text = "";
   for (const field of amneziaFields) {
     const value = values[field.key];
-    if (value !== undefined && value !== "") text += `${field.native} = ${value}\n`;
+    if (value === undefined || value === "") continue;
+    const nativeValue = field.kind === "boolean" ? Number(value === true || value === "true" || value === 1 || value === "1") : value;
+    text += `${field.native} = ${nativeValue}\n`;
   }
   return text;
 }
