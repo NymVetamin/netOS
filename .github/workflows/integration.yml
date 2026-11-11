@@ -28,7 +28,7 @@ jobs:
     # требующий изоляции и не попавший в список, упадёт в первом шаге с
     # «refusing host namespace», а не будет молча пропущен.
     env:
-      ISOLATED: "^(TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardAppArmor|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
+      ISOLATED: "^(TestIntegrationAmneziaWG|TestIntegrationAnnotationConfirmation|TestIntegrationClientPolicyPreservesRouterAccess|TestIntegrationClientRateAndCeilRepair|TestIntegrationDisabledPolicyPreservesActiveSet|TestIntegrationIPTVRulesSurviveSaveAndHealth|TestIntegrationIPv6PassthroughFilter|TestIntegrationInternetBlock|TestIntegrationL2TPGatewayDeadlineAndRetry|TestIntegrationL2TPIPsecChannel|TestIntegrationOpenConnectP12|TestIntegrationPolicyBlock|TestIntegrationWireGuardAppArmor|TestIntegrationWireGuardExitGuardRestore|TestIntegrationWireGuardPeerChannel)$"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -40,7 +40,7 @@ jobs:
       - name: зависимости стенда
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2
+          sudo apt-get install -y -qq ppp pppoe ifupdown iproute2 iputils-ping
           # Пакеты компонентов netOS (каталог в config/catalog.go), которые
           # нужны тестам VPN, каналов и политик: без них тесты пропускаются
           # или падают на отсутствующей утилите.
