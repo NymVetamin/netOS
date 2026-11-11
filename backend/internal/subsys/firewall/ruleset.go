@@ -1355,8 +1355,12 @@ func (b *builder) ipv6Filter(cfg *config.Config) {
 	if cfg.UsesACME() {
 		b.line("-A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -m comment --comment %q -j ACCEPT", "ACME HTTP-01")
 	}
+	zones := buildZoneMap(cfg)
 	for _, r := range cfg.Firewall.Rules {
 		if r.ID != config.RuleSSH && r.ID != config.RulePanel {
+			continue
+		}
+		if r.Flow != "in" && r.Flow != "any" {
 			continue
 		}
 		// Адрес IPv4 в ip6tables не применить, а без него правило открыло бы
@@ -1364,11 +1368,24 @@ func (b *builder) ipv6Filter(cfg *config.Config) {
 		if !r.Enabled || r.SrcIP != "" || r.DstIP != "" || r.SrcIPSet != "" || r.DstIPSet != "" {
 			continue
 		}
-		b.emitRule("INPUT", r, "")
+		if r.Zone == "global" {
+			b.emitRule("INPUT", r, "")
+			continue
+		}
+		// selectors не обрабатывает зону: в IPv4 её ограничивает переход
+		// в цепочку. Здесь пересекаем зону с явным интерфейсом правила;
+		// пустая зона не должна превращаться в глобальное разрешение.
+		for _, iface := range zones[r.Zone] {
+			if r.Interface != "" && r.Interface != iface {
+				continue
+			}
+			copy := r
+			copy.Interface = ""
+			b.emitRule("INPUT", copy, " -i "+iface)
+		}
 	}
 	b.vpnServerAccept(cfg, "INPUT")
 
-	zones := buildZoneMap(cfg)
 	for _, z := range cfg.Firewall.Zones {
 		if z.Policy != "accept" {
 			continue

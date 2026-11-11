@@ -69,7 +69,7 @@ func TestIntegrationIPv6PassthroughFilter(t *testing.T) {
 	}
 
 	// Закрытый порт роутера: системных правил для него нет.
-	listener, err := net.Listen("tcp6", "[2001:db8:6::1]:18022")
+	listener, err := net.Listen("tcp6", "[::]:18022")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,4 +102,58 @@ func TestIntegrationIPv6PassthroughFilter(t *testing.T) {
 		t.Fatalf("роутер не установил соединение наружу по IPv6: %v", err)
 	}
 	conn.Close()
+
+	// Разрешение системного правила должно зависеть от зоны, а не только
+	// от Enabled. Политика LAN — DROP, чтобы успех доказывал само правило.
+	lanNS := fmt.Sprintf("v6lan%d", os.Getpid())
+	run("ip", "netns", "add", lanNS)
+	t.Cleanup(func() { exec.Command("ip", "netns", "del", lanNS).Run() })
+	run("ip", "link", "add", "lan0", "type", "veth", "peer", "name", "lanpeer")
+	run("ip", "link", "set", "lanpeer", "netns", lanNS)
+	run("ip", "-6", "addr", "add", "2001:db8:7::1/64", "dev", "lan0", "nodad")
+	run("ip", "link", "set", "lan0", "up")
+	run("ip", "netns", "exec", lanNS, "sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=0")
+	run("ip", "netns", "exec", lanNS, "ip", "-6", "addr", "add", "2001:db8:7::2/64", "dev", "lanpeer", "nodad")
+	run("ip", "netns", "exec", lanNS, "ip", "link", "set", "lanpeer", "up")
+	cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: "lan", Name: "lan0"})
+	cfg.Networks = []config.Network{{ID: "home", Interface: "lan", Zone: "lan", Enabled: true}}
+	for i := range cfg.Firewall.Zones {
+		cfg.Firewall.Zones[i].Policy = "drop"
+	}
+	for _, id := range []string{config.RuleSSH, config.RulePanel} {
+		for _, zone := range []string{"global", "lan", "wan", "lan", "vpn"} {
+			for i := range cfg.Firewall.Rules {
+				rule := &cfg.Firewall.Rules[i]
+				if rule.ID == config.RuleSSH || rule.ID == config.RulePanel {
+					rule.Enabled = rule.ID == id
+					rule.Zone, rule.DstPort = zone, "18022"
+				}
+			}
+			rules := buildIPv6(cfg)
+			for repeat := 0; repeat < 2; repeat++ {
+				cmd := exec.Command("ip6tables-restore")
+				cmd.Stdin = strings.NewReader(rules)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s/%s restore: %s %v", id, zone, out, err)
+				}
+				if !rulesetMatches(run("ip6tables-save"), rules) {
+					t.Fatalf("%s/%s live rules differ", id, zone)
+				}
+			}
+			for _, source := range []struct{ ns, addr, zone string }{
+				{ns, "2001:db8:6::1", "wan"}, {lanNS, "2001:db8:7::1", "lan"},
+			} {
+				out, err := exec.Command("ip", "netns", "exec", source.ns, "timeout", "1", "bash", "-c", "exec 3<>/dev/tcp/"+source.addr+"/18022").CombinedOutput()
+				allowed := zone == "global" || zone == source.zone
+				if allowed && err != nil {
+					t.Fatalf("%s/%s from %s blocked: %s %v", id, zone, source.zone, out, err)
+				}
+				if !allowed {
+					if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 124 {
+						t.Fatalf("%s/%s from %s: expected drop timeout, got %s %v", id, zone, source.zone, out, err)
+					}
+				}
+			}
+		}
+	}
 }
