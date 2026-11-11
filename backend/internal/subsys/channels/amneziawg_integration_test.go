@@ -474,8 +474,11 @@ func TestIntegrationAmneziaWGApply(t *testing.T) {
 					t.Fatal(err)
 				}
 				remote("ip", "route", "add", "192.0.3.0/24", "dev", "awg-ch992")
-				service := exec.CommandContext(ctx, "ip", "netns", "exec", lanNS, "python3", "-u", "-c", `import http.server,socket,threading,faulthandler
-faulthandler.dump_traceback_later(2)
+				service := exec.CommandContext(ctx, "ip", "netns", "exec", lanNS, "python3", "-u", "-c", `import http.server,socket,socketserver,threading
+class Server(http.server.HTTPServer):
+ def server_bind(self):
+  socketserver.TCPServer.server_bind(self)
+  self.server_name='awg-test';self.server_port=self.server_address[1]
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   body=self.client_address[0].encode()+b':' + b'x'*131072
@@ -486,9 +489,7 @@ def udp():
  while True:
   data,addr=s.recvfrom(65535);s.sendto(addr[0].encode()+b':'+data,addr)
 threading.Thread(target=udp,daemon=True).start()
-server=http.server.HTTPServer(('192.0.3.2',18080),Handler)
-faulthandler.cancel_dump_traceback_later()
-server.serve_forever()`)
+Server(('192.0.3.2',18080),Handler).serve_forever()`)
 				var serviceErrors bytes.Buffer
 				service.Stderr = &serviceErrors
 				if err := service.Start(); err != nil {
