@@ -1,5 +1,7 @@
 // Import data only. wg-quick commands are never executed.
-export function parseWireGuardConfig(text: string) {
+import { amneziaNativeNames, amneziaRange, parseAmneziaOptions } from "./amneziawg";
+export function parseWireGuardConfig(text: string, amnezia = false) {
+  if (text.length > 1024 * 1024) throw new Error("Файл конфигурации больше 1 МиБ.");
   const sections: Record<string, Record<string, string>> = {};
   let section = "";
   for (const raw of text.replace(/^\uFEFF/, "").split(/\r?\n/)) {
@@ -21,8 +23,9 @@ export function parseWireGuardConfig(text: string) {
   const iface = sections.Interface, peer = sections.Peer;
   if (!iface || !peer) throw new Error("Нужны секции [Interface] и [Peer].");
   const warnings: string[] = [];
+  if (!amnezia && Object.keys(iface).some(key => amneziaNativeNames.has(key))) throw new Error("Это профиль AmneziaWG. Создайте канал AmneziaWG для импорта.");
   for (const [values, supported] of [[iface, ["Address", "PrivateKey", "MTU"]], [peer, ["PublicKey", "PresharedKey", "Endpoint", "AllowedIPs", "PersistentKeepalive"]]] as const) {
-    for (const key of Object.keys(values)) if (!(supported as readonly string[]).includes(key)) warnings.push(`${key} не перенесён: netOS управляет этой настройкой отдельно.`);
+    for (const key of Object.keys(values)) if (!(supported as readonly string[]).includes(key) && !(amnezia && values === iface && amneziaNativeNames.has(key))) warnings.push(`${key} не перенесён: netOS управляет этой настройкой отдельно.`);
   }
   const list = (value = "") => value.split(",").map(v => v.trim()).filter(Boolean);
   const ipv4 = (value: string) => {
@@ -48,8 +51,13 @@ export function parseWireGuardConfig(text: string) {
     address: v4Addresses[0], private_key: key(iface.PrivateKey, "приватный ключ"),
     peer_public_key: key(peer.PublicKey, "публичный ключ сервера"), endpoint: peer.Endpoint,
     allowed_ips: ["0.0.0.0/0"], mtu: number(iface.MTU, 1420, 576, 9000, "MTU"),
-    persistent_keepalive: number(peer.PersistentKeepalive, 0, 0, 65535, "PersistentKeepalive"),
+    persistent_keepalive: amnezia ? 0 : number(peer.PersistentKeepalive, 0, 0, 65535, "PersistentKeepalive"),
   };
+  if (amnezia) {
+    const options = parseAmneziaOptions(iface);
+    if (peer.PersistentKeepalive) { amneziaRange(peer.PersistentKeepalive, 65535); options.persistent_keepalive = peer.PersistentKeepalive; }
+    config.amnezia = options;
+  }
   // Omit an absent PSK: the API preserves redacted secrets only for present keys.
   if (peer.PresharedKey) config.preshared_key = key(peer.PresharedKey, "PresharedKey");
   return { config, warnings };

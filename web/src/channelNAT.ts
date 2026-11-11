@@ -1,9 +1,10 @@
+import { wireGuardPrefix } from "./amneziawg";
 import { basicMasquerade } from "./wanNAT";
 
 export function channelNATInterface(channel: any): string {
  if (!channel) return "";
- if (channel.wireguard_peer) return `wg-srv${channel.wireguard_peer.server_index}`;
- const prefix: Record<string, string> = {wireguard:"wg-ch", openconnect:"tun-ch", xray:"tun-ch", l2tp:"ppp-ch", ikev2:"xfrm-ch"};
+ if (channel.wireguard_peer) return `${wireGuardPrefix(channel.type)}-srv${channel.wireguard_peer.server_index}`;
+ const prefix: Record<string, string> = {amneziawg:"awg-ch",wireguard:"wg-ch", openconnect:"tun-ch", xray:"tun-ch", l2tp:"ppp-ch", ikev2:"xfrm-ch"};
  return prefix[channel.type] && Number.isInteger(channel.index) && channel.index > 0 ? `${prefix[channel.type]}${channel.index}` : "";
 }
 export function channelNAT(config: any, channel: any) {

@@ -1,3 +1,4 @@
+import { isWireGuardType, wireGuardPrefix } from "../amneziawg";
 import { interfaceDisplay } from "../interfaceDisplay";
 import { managedWanNAT } from "../wanNAT";
 import { managedChannelNAT } from "../channelNAT";
@@ -1136,14 +1137,14 @@ function interfacesOfZone(config: any, zone: string): string[] {
 	if (zone === "vpn") {
 		for (const channel of config.channels || []) {
 			if (!channel.enabled || channel.type === "direct" || channel.wireguard_peer) continue;
-			const prefix = channel.type === "wireguard" ? "wg-ch" :
+			const prefix = isWireGuardType(channel.type) ? `${wireGuardPrefix(channel.type)}-ch` :
 				channel.type === "l2tp" ? "ppp-ch" :
 				channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";
 			names.push(`${prefix}${channel.index}`);
 		}
 		for (const server of config.vpn_servers || []) {
 			if (!server.enabled) continue;
-			const prefix = server.type === "wireguard" ? "wg-srv" :
+			const prefix = isWireGuardType(server.type) ? `${wireGuardPrefix(server.type)}-srv` :
 				server.type === "ocserv" ? "vpns" :
 				server.type === "ikev2" ? "xfrm-srv" : server.type === "l2tp" ? "pp" : "";
 			if (prefix) names.push(`${prefix}${server.index}${server.type === "ocserv" ? "+" : server.type === "l2tp" ? "-+" : ""}`);

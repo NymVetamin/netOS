@@ -148,12 +148,12 @@ export const CARD_ICONS: Record<string, IconName> = {
 
 export const COMPONENT_ICONS: Record<string, IconName> = {
   samba: "folder", dnsmasq: "tags", "isc-dhcp-server": "tags", kea: "tags", unbound: "server-cog", dnsproxy: "server-cog",
-  wireguard: "wireguard", xray: "shuffle", openconnect: "lock", strongswan: "strongswan", l2tp: "cable", ocserv: "lock",
+  amneziawg: "shield-check", wireguard: "wireguard", xray: "shuffle", openconnect: "lock", strongswan: "strongswan", l2tp: "cable", ocserv: "lock",
   pppoe: "key-round", hostapd: "wifi", ipset: "list", diagnostics: "activity", qos: "gauge",
 };
 
 export const CHANNEL_ICONS: Record<string, IconName> = {
-  direct: "arrow-right-left", wireguard: "wireguard", openconnect: "lock", xray: "shuffle", ikev2: "strongswan", l2tp: "cable",
+  direct: "arrow-right-left", amneziawg: "shield-check", wireguard: "wireguard", openconnect: "lock", xray: "shuffle", ikev2: "strongswan", l2tp: "cable",
 };
 
 export const INTERFACE_ICONS: Record<string, IconName> = { physical: "ethernet-port", bridge: "merge", vlan: "layers", bond: "combine" };
@@ -162,5 +162,5 @@ export const INTERFACE_ICONS: Record<string, IconName> = { physical: "ethernet-p
 // под чужой сайт, остальные просто перемешивают трафик.
 export function vpnServerIcon(type: string, protocol?: string): IconName {
   if (type === "xray") return (protocol || "reality") === "reality" ? "venetian-mask" : "shuffle";
-  return ({ wireguard: "wireguard", ocserv: "lock", ikev2: "strongswan", l2tp: "cable" } as Record<string, IconName>)[type] || "shield-check";
+  return ({ amneziawg: "shield-check", wireguard: "wireguard", ocserv: "lock", ikev2: "strongswan", l2tp: "cable" } as Record<string, IconName>)[type] || "shield-check";
 }

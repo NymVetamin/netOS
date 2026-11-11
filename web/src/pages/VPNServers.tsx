@@ -1,4 +1,6 @@
 import { syncWireGuardPeerChannels } from "../wireGuardPeerChannels";
+import { isWireGuardType, newAmneziaOptions, wireGuardLabel } from "../amneziawg";
+import { AmneziaWGFields } from "../AmneziaWGFields";
 import { channelReferences } from "../channelReferences";
 import { indexClientStatuses } from "../clientStatusIndex";
 import { newVPNEndpoint } from "../vpnEndpoint";
@@ -15,7 +17,7 @@ import { AddMenu, Badge, Card, Empty, Field, NeedComponent, Notice, openOnCreate
 import { Icon, vpnServerIcon } from "../icons";
 
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
-type ClientSecret = { publicKey: string; privateKey: string; serverPublicKey: string; presharedKey?: string };
+type ClientSecret = { publicKey: string; privateKey: string; serverPublicKey: string; presharedKey?: string; amneziaParameters?: string };
 
 const ReferencedChannels = createContext<Set<string>>(new Set());
 const ClientCreators = createContext<{ current: Record<string, () => void | Promise<void>> }>({ current: {} });
@@ -133,6 +135,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   }
   const servers = config.vpn_servers || [];
   const wireguardInstalled = (config.components || []).some((item: any) => item.id === "wireguard" && item.installed);
+  const amneziaInstalled = (config.components || []).some((item: any) => item.id === "amneziawg" && item.installed);
   const xrayInstalled = (config.components || []).some((item: any) => item.id === "xray" && item.installed);
   const ocservInstalled = (config.components || []).some((item: any) => item.id === "ocserv" && item.installed);
 	const strongswanInstalled = (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
@@ -164,7 +167,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
   }, []);
 
-  async function addServer(type: "wireguard" | "xray" | "ocserv" | "ikev2" | "l2tp", protocol = "reality") {
+  async function addServer(type: "wireguard" | "amneziawg" | "xray" | "ocserv" | "ikev2" | "l2tp", protocol = "reality") {
     if (endpointController.current) return;
     const controller = new AbortController();
     endpointController.current = controller;
@@ -173,7 +176,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     try {
       setError("");
       let generatedWireGuardKey = "";
-      if (type === "wireguard") {
+      if (isWireGuardType(type)) {
         try {
           generatedWireGuardKey = (await api.wireGuardKeypair()).private_key;
         } catch (err: any) {
@@ -191,9 +194,9 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         let index = 1;
         while (used.has(index)) index++;
         const common = { id, index, enabled: false, type, subnet: `10.${8 + index}.0.1/24`, default_channel: "direct", peers: [] };
-        const server = type === "wireguard" ? {
-          ...common, name: `WireGuard ${index}`, port: 51819 + index,
-          config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: "" },
+        const server = isWireGuardType(type) ? {
+          ...common, name: `${wireGuardLabel(type)} ${index}`, port: 51819 + index,
+          config: { private_key: generatedWireGuardKey, mtu: 1420, public_endpoint: "", ...(type === "amneziawg" ? { amnezia: newAmneziaOptions() } : {}) },
         } : type === "xray" ? {
           ...common, name: `${XRAY_NAMES[protocol]} ${index}`,
           port: protocol === "reality" ? 443 : 18000 + index,
@@ -221,6 +224,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   const needs = (installed: boolean) => installed ? undefined : "нужен компонент";
   const xrayItem = (protocol: string, name: string) => ({ label: XRAY_NAMES[protocol], ariaLabel: `Добавить ${name}`, icon: vpnServerIcon("xray", protocol), note: needs(xrayInstalled), onSelect: () => void addServer("xray", protocol) });
   const addItems = [
+    { label: "AmneziaWG", ariaLabel: "Добавить AmneziaWG", icon: vpnServerIcon("amneziawg"), note: needs(amneziaInstalled), onSelect: () => void addServer("amneziawg") },
     { label: "WireGuard", ariaLabel: "Добавить WireGuard", icon: vpnServerIcon("wireguard"), note: needs(wireguardInstalled), onSelect: () => void addServer("wireguard") },
     xrayItem("reality", "Reality"), xrayItem("vless", "VLESS TLS"), xrayItem("vmess", "VMess"), xrayItem("trojan", "Trojan TLS"),
     xrayItem("shadowsocks", "Shadowsocks"), xrayItem("socks", "SOCKS"), xrayItem("http", "HTTP proxy"), xrayItem("wireguard", "Xray WireGuard"), xrayItem("hysteria", "Hysteria 2"),
@@ -230,13 +234,13 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   ];
 
   const clientItems = servers
-    .filter((s: any) => ["wireguard", "xray", "ocserv", "ikev2", "l2tp"].includes(s.type))
+    .filter((s: any) => ["wireguard", "amneziawg", "xray", "ocserv", "ikev2", "l2tp"].includes(s.type))
     .map((s: any) => ({
       label: s.name || s.id,
       ariaLabel: `Добавить клиента на ${s.name || s.id}`,
       icon: vpnServerIcon(s.type, s.config?.protocol),
       note: s.type === "xray" ? XRAY_NAMES[s.config?.protocol || "reality"]
-        : ({ wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[s.type],
+        : ({ amneziawg: "AmneziaWG", wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[s.type],
       disabled: !!addingTo,
       onSelect: () => void addClient(s.id),
     }));
@@ -246,7 +250,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
     <ReferencedChannels.Provider value={referencedChannels}><ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
       <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]}>{servers.map((server: any) =>
-        server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
+        isWireGuardType(server.type) ? <WireGuardServer key={server.id} server={server} config={config} installed={server.type === "amneziawg" ? amneziaInstalled : wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <OcservServer key={server.id} server={server} config={config} installed={ocservInstalled} patch={patch} /> :
         server.type === "ikev2" ? <IKEv2Server key={server.id} server={server} config={config} installed={strongswanInstalled} patch={patch} /> :
@@ -254,7 +258,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
           <Notice key={server.id} tone="warn" title={`Сервер ${server.type} пока недоступен`}>Сохранённый черновик не будет запущен.</Notice>)}</Rows>}</div>
       {servers.length > 0 && <><div className="card-sub"><h3><Icon name="users" />Клиенты</h3><AddMenu label={addingTo ? "Создаём клиента…" : "Добавить"} items={clientItems} /></div>
       <div className="vpn-client-groups">{servers.map((server: any) =>
-        server.type === "wireguard" ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
+        isWireGuardType(server.type) ? <WireGuardPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} clientSecrets={clientSecrets} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayPeers beforeRead={beforeRead} key={server.id} server={server} config={config} patch={patch} setError={setError} /> :
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя IKEv2." /> :
@@ -278,7 +282,7 @@ function ServerRow({ server, type, endpoint, installed, referenced, update, patc
 }
 
 function PeerGroup({ server, children }: any) {
-  const type = server.type === "xray" ? XRAY_NAMES[server.config?.protocol || "reality"] : ({ wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[server.type];
+  const type = server.type === "xray" ? XRAY_NAMES[server.config?.protocol || "reality"] : ({ amneziawg: "AmneziaWG", wireguard: "WireGuard", ocserv: "OpenConnect", ikev2: "IKEv2", l2tp: "L2TP" } as Record<string, string>)[server.type];
   return <section className="peer-group" data-peers-of={server.id} aria-label={`Клиенты сервера ${server.name || server.id}`}>
     <header className="peer-group-heading"><div><h3>{server.name || server.id}</h3></div><Badge>{type}</Badge><span className="dim">Клиентов: {(server.peers || []).length}</span></header>
     <Rows cols={["Клиент", "VPN-адрес", "Внешний адрес", "Канал выхода", "Состояние"]} toggle="Доступ">{children}</Rows>
@@ -613,8 +617,8 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
     } catch (err: any) { setError(err?.message || "Генерация ключа завершилась ошибкой"); }
   }
 
-  return <ServerRow server={server} type="WireGuard" endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
-    {!installed && <NeedComponent name="WireGuard" effect="без него сервер не включить" />}
+  return <ServerRow server={server} type={wireGuardLabel(server.type)} endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
+    {!installed && <NeedComponent name={wireGuardLabel(server.type)} effect="без него сервер не включить" />}
     <div className="form-grid">
       <Field label="Название"><input value={server.name || ""} onChange={(e) => update((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-подсеть" hint="Адрес роутера и маска, например 10.9.0.1/24"><input className="mono" value={server.subnet || ""} onChange={(e) => update((draft) => draft.subnet = e.target.value)} /></Field>
@@ -624,6 +628,20 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="Ключ сервера" hint="Создаётся автоматически и хранится только на роутере"><div className="row"><input aria-label="Закрытый ключ сервера" className="mono" type="password" autoComplete="new-password" {...secretInput(server, "private_key")} value={cfg.private_key || ""} readOnly /><button type="button" className="btn sm" onClick={generateServerKey}>Перевыпустить</button></div></Field>
     </div>
+    {server.type === "amneziawg" && <AmneziaWGFields owner={server} update={options => {
+      if (options.header_protection_key !== cfg.amnezia?.header_protection_key) {
+        setClientSecrets((old: Record<string, ClientSecret>) => {
+          let next = old;
+          for (const peer of server.peers || []) {
+            if (!old[peer.id]?.amneziaParameters) continue;
+            if (next === old) next = { ...old };
+            next[peer.id] = { ...old[peer.id], amneziaParameters: undefined };
+          }
+          return next;
+        });
+      }
+      setConfig("amnezia", options);
+    }} />}
   </ServerRow>;
 }
 
@@ -697,11 +715,24 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, exitReferenc
   const edit = (mutate: (item: any) => void) => update((draft: any) => mutate(draft.peers.find((item: any) => item.id === peer.id)));
   secret = secret?.publicKey === peer.credentials?.public_key ? secret : undefined;
   const [profileBusy, setProfileBusy] = useState(false);
-  const preparedConfig = secret ? wireGuardClientConfig(server, peer, secret.privateKey, secret.serverPublicKey, secret.presharedKey) : "";
+  const profileRequest = useRef(0);
+  useEffect(() => { profileRequest.current++; }, [server.config?.amnezia?.header_protection_key, server.config?.private_key, peer.credentials?.public_key]);
+  useEffect(() => () => { profileRequest.current++; }, []);
+  const maskedHeader = server.type === "amneziawg" && Object.hasOwn(server.config?.amnezia || {}, "header_protection_key") &&
+    !server.config.amnezia.header_protection_key && server.secrets_set?.["amnezia.header_protection_key"] && !secret?.amneziaParameters;
+  let preparedConfig = "", profileError = "";
+  try { if (secret && !maskedHeader) preparedConfig = wireGuardClientConfig(server, peer, secret.privateKey, secret.serverPublicKey, secret.presharedKey, secret.amneziaParameters); }
+  catch (err) { profileError = err instanceof Error ? err.message : "Проверьте параметры профиля."; }
   async function openProfile() {
     setProfileBusy(true);
     setError("");
-    try { await beforeRead(); setSecret(await api.vpnClientProfile(server.id, peer.id)); }
+    const request = ++profileRequest.current;
+    try {
+      await beforeRead();
+      if (request !== profileRequest.current) return;
+      const value = await api.vpnClientProfile(server.id, peer.id);
+      if (request === profileRequest.current) setSecret(value);
+    }
     catch (err: any) { setError(err?.message || "Не удалось получить профиль"); }
     finally { setProfileBusy(false); }
   }
@@ -770,9 +801,10 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, exitReferenc
     </div>
     }
     <p className="hint">После изменения этих настроек скачайте профиль заново или отсканируйте QR-код на устройстве.</p>
-    {secret ? <div className="client-package">
-      <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>
-      <div className="client-package-copy"><strong>Профиль готов к импорту</strong><p>Отсканируйте QR-код в приложении WireGuard или скачайте файл. Профиль сохраняется на роутере после применения настроек. Его можно повторно открыть и скачать без замены ключей.</p><div className="row wrap"><button type="button" className="btn primary" onClick={download}>Скачать .conf</button><CopyButton text={preparedConfig} onError={setError} /><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить</button></div></div>
+    {profileError && <Notice tone="warn" title="Профиль пока не готов">{profileError}</Notice>}
+    {preparedConfig ? <div className="client-package">
+      {server.type !== "amneziawg" || new TextEncoder().encode(preparedConfig).length <= 2000 ? <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`${wireGuardLabel(server.type)}-профиль ${peer.name || peer.id}`} /></div> : <p className="hint">Профиль слишком большой для QR-кода. Скачайте .conf.</p>}
+      <div className="client-package-copy"><strong>Профиль готов к импорту</strong><p>Отсканируйте QR-код в приложении {wireGuardLabel(server.type)} или скачайте файл. Профиль сохраняется на роутере после применения настроек. Его можно повторно открыть и скачать без замены ключей.</p><div className="row wrap"><button type="button" className="btn primary" onClick={download}>Скачать .conf</button><CopyButton text={preparedConfig} onError={setError} /><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить</button></div></div>
     </div> : Object.hasOwn(peer.credentials || {}, "private_key") ? <div className="row wrap" style={{ marginTop: "0.8rem" }}><button type="button" className="btn primary" disabled={profileBusy} onClick={() => void openProfile()}>{profileBusy ? "Загрузка…" : "Открыть профиль и QR-код"}</button><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить профиль</button></div> : <Notice tone="info" title="Профиль создан в прежней версии">Подключение клиента продолжает работать. Для повторной выдачи загрузите его прежний .conf: ключ будет сохранён без изменения подключения. Если файла нет, перевыпустите профиль и передайте новый клиенту.<div className="row wrap" style={{ marginTop: "0.65rem" }}><label className="btn">Загрузить прежний .conf<input aria-label="Загрузить прежний .conf" type="file" accept=".conf" hidden onChange={(event) => { void importProfile(event.target.files?.[0]); event.target.value = ""; }} /></label><button type="button" className="btn" onClick={() => void generateClient()}>Перевыпустить профиль</button></div></Notice>}
 
     <details className="advanced"><summary>Технические данные</summary><div className="form-grid"><Field label="Публичный ключ устройства"><input className="mono" value={peer.credentials?.public_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.public_key = e.target.value; delete draft.credentials.private_key; removeSecret(); })} /></Field><Field label="Предварительный общий ключ"><input className="mono" type="password" autoComplete="off" {...secretInput(peer, "preshared_key")} value={peer.credentials?.preshared_key || ""} onChange={(e) => edit((draft) => { draft.credentials = draft.credentials || {}; draft.credentials.preshared_key = e.target.value; })} /></Field></div></details>

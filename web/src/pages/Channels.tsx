@@ -7,6 +7,8 @@ import { api } from "../api";
 import { channelComponents, channelComponentReady } from "../channelComponents";
 import { newID } from "../id";
 import { parseWireGuardConfig } from "../wireguardImport";
+import { isWireGuardType, wireGuardLabel, wireGuardPrefix } from "../amneziawg";
+import { AmneziaWGFields } from "../AmneziaWGFields";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
 import { channelNAT, setChannelNAT, removeChannelNAT } from "../channelNAT";
@@ -66,7 +68,6 @@ export function ChannelsPage({ config, patch }: Props) {
   const channels = config.channels || [];
   const policies = config.policies || [];
   const ready = (type: string) => channelComponentReady(config, installed, type);
-  const wireguardInstalled = ready("wireguard");
   const openconnectInstalled = ready("openconnect");
   const xrayInstalled = ready("xray");
   const l2tpInstalled = ready("l2tp");
@@ -94,9 +95,9 @@ export function ChannelsPage({ config, patch }: Props) {
     patch((draft) => mutate(draft.channels.find((channel: any) => channel.id === id)));
   }
 
-  function addWireGuard() {
-    if (!ready("wireguard")) return;
-    const id = newID("wg");
+  function addWireGuard(type = "wireguard") {
+    if (!ready(type)) return;
+    const id = newID(wireGuardPrefix(type));
     openOnCreate(id);
     patch((draft) => {
       const used = new Set((draft.channels || []).map((channel: any) => channel.index));
@@ -105,9 +106,9 @@ export function ChannelsPage({ config, patch }: Props) {
       draft.channels.push({
         id,
         index,
-        name: `WireGuard ${index}`,
+        name: `${wireGuardLabel(type)} ${index}`,
         enabled: false,
-        type: "wireguard",
+        type,
         mode: "tun",
         fail_mode: "block",
         fallback: "",
@@ -196,7 +197,7 @@ export function ChannelsPage({ config, patch }: Props) {
 
   // В меню только те типы, чей компонент установлен: создать канал, который
   // нельзя включить, панель не даёт.
-  const adders: Record<string, () => void> = { wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP };
+  const adders: Record<string, () => void> = { amneziawg: () => addWireGuard("amneziawg"), wireguard: addWireGuard, openconnect: addOpenConnect, xray: addXray, ikev2: addIKEv2, l2tp: addL2TP };
   // Тип без компонента остаётся в меню, но недоступен и помечен: так видно,
   // какие каналы бывают и что для них нужно, без отдельной плашки.
   const addItems = channelComponents.map(component => {
@@ -259,12 +260,12 @@ export function ChannelsPage({ config, patch }: Props) {
         {channels.map((channel: any) => <Fragment key={channel.id}>
           {channel.type === "direct" ? (
             <Row key={channel.id} icon="arrow-right-left" cells={[<strong>{channel.name}</strong>, <span className="dim">через провайдера</span>, "—", "—", <Badge tone="ok">активен</Badge>]} />
-          ) : channel.type === "wireguard" ? (
+          ) : isWireGuardType(channel.type) ? (
             <WireGuardEditor
               key={channel.id}
               channel={channel}
               channels={channels}
-              installed={wireguardInstalled}
+              installed={ready(channel.type)}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() =>
@@ -329,7 +330,7 @@ export function ChannelsPage({ config, patch }: Props) {
   );
 }
 
-const TYPE_NAMES: Record<string, string> = { wireguard: "WireGuard", openconnect: "OpenConnect", xray: "Xray", ikev2: "IKEv2", l2tp: "L2TP" };
+const TYPE_NAMES: Record<string, string> = { amneziawg: "AmneziaWG", wireguard: "WireGuard", openconnect: "OpenConnect", xray: "Xray", ikev2: "IKEv2", l2tp: "L2TP" };
 
 // Живое состояние каналов из /api/status: его показывает строка самого канала.
 const Live = createContext<any[] | null>(null);
@@ -604,7 +605,7 @@ function WireGuardEditor({
     setBusy(true); setMessage("");
     try {
       if (file.size > 1024 * 1024) throw new Error("Файл конфигурации больше 1 МиБ.");
-      const parsed = parseWireGuardConfig(await file.text());
+      const parsed = parseWireGuardConfig(await file.text(), channel.type === "amneziawg");
       update(draft => { draft.config = parsed.config; draft.secrets_set = {}; });
       setMessage(["Конфигурация перенесена в форму. Проверьте её перед применением.", ...parsed.warnings].join(" "));
     } catch (error: any) { setMessage(error.message || String(error)); }
@@ -615,7 +616,7 @@ function WireGuardEditor({
     <ChannelRow channel={channel} installed={installed} referenced={referenced} update={update} remove={remove}>
       <fieldset disabled={busy} style={{border:0,padding:0,margin:0,minWidth:0}}>
       {!channel.wireguard_peer && <div className="row wrap" style={{marginBottom:"1rem"}}>
-        <label className="btn sm">Импорт .conf<input aria-label="Импорт конфигурации WireGuard" type="file" accept=".conf,.txt" hidden onChange={e=>{void importFile(e.target.files?.[0]);e.target.value="";}} /></label>
+        <label className="btn sm">Импорт .conf<input aria-label={`Импорт конфигурации ${wireGuardLabel(channel.type)}`} type="file" accept=".conf,.txt" hidden onChange={e=>{void importFile(e.target.files?.[0]);e.target.value="";}} /></label>
       </div>}
       {message && <p role="status" className="hint">{message}</p>}
       <div className="form-grid">
@@ -630,13 +631,13 @@ function WireGuardEditor({
           <input className="mono" placeholder="vpn.example.com:51820" value={cfg.endpoint || ""} onChange={(e) => setConfig("endpoint", e.target.value)} />
         </Field>
         <Field label="AllowedIPs" hint="0.0.0.0/0 — все IPv4-адреса. Какие клиенты и назначения используют канал, задайте в политиках.">
-          <input aria-label="AllowedIPs WireGuard" className="mono" readOnly value={(cfg.allowed_ips || []).join(", ")} />
+          <input aria-label={`AllowedIPs ${wireGuardLabel(channel.type)}`} className="mono" readOnly value={(cfg.allowed_ips || []).join(", ")} />
         </Field>
         <Field label="Приватный ключ">
-          <input aria-label="Приватный ключ WireGuard" type="password" className="mono" autoComplete="off" {...secretInput(channel, "private_key")} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value.trim())} />
+          <input aria-label={`Приватный ключ ${wireGuardLabel(channel.type)}`} type="password" className="mono" autoComplete="off" {...secretInput(channel, "private_key")} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value.trim())} />
         </Field>
         <Field label="Ваш публичный ключ" hint="Передайте этот ключ администратору VPN-сервера. Новый приватный ключ меняет публичный ключ.">
-          <input aria-label="Ваш публичный ключ WireGuard" className="mono" readOnly value={pair.source === keySource ? pair.publicKey : ""} placeholder="Появится после задания приватного ключа" />
+          <input aria-label={`Ваш публичный ключ ${wireGuardLabel(channel.type)}`} className="mono" readOnly value={pair.source === keySource ? pair.publicKey : ""} placeholder="Появится после задания приватного ключа" />
           <button type="button" className="btn sm" onClick={()=>void generateKey()}>{keySource ? "Сгенерировать новые ключи" : "Сгенерировать ключи"}</button>
           {keySource && keyError && <span role="alert" className="hint">{keyError}</span>}
         </Field>
@@ -649,11 +650,11 @@ function WireGuardEditor({
         <Field label="MTU">
           <input type="number" min={576} max={9000} value={cfg.mtu || 1420} onChange={(e) => setConfig("mtu", Number(e.target.value))} />
         </Field>
-        <Field label="Persistent keepalive, сек">
+        {channel.type !== "amneziawg" && <Field label="Persistent keepalive, сек">
           <input type="number" min={0} max={65535} value={cfg.persistent_keepalive || 0} onChange={(e) => setConfig("persistent_keepalive", Number(e.target.value))} />
-        </Field>
+        </Field>}
         </>}
-        {channel.wireguard_peer && <p className="hint">Выход через клиента WG-сервера, интерфейс wg-srv{channel.wireguard_peer.server_index}. Ключи и подключение настраиваются в VPN-серверах.</p>}
+        {channel.wireguard_peer && <p className="hint">Выход через клиента VPN-сервера, интерфейс {wireGuardPrefix(channel.type)}-srv{channel.wireguard_peer.server_index}. Ключи и подключение настраиваются в VPN-серверах.</p>}
         <Field label="При отказе">
           <select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => (draft.fail_mode = e.target.value))}>
             <option value="block">Блокировать (kill-switch)</option>
@@ -688,6 +689,7 @@ function WireGuardEditor({
         </>}
       </div>
       <div className="hint">Проверка идёт через интерфейс самого туннеля; переключение выполняется только после заданного числа ошибок.</div>
+      {channel.type === "amneziawg" && !channel.wireguard_peer && <AmneziaWGFields owner={channel} update={options => setConfig("amnezia", options)} />}
       </fieldset>
     </ChannelRow>
   );

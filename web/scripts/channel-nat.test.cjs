@@ -12,7 +12,7 @@ new Function("module", "exports", compiled.outputFiles[0].text)(loaded, loaded.e
 const { channelNAT, setChannelNAT, managedChannelNAT, removeChannelNAT } = loaded.exports;
 
 for (const [type, iface] of Object.entries({
-  wireguard: "wg-ch7", openconnect: "tun-ch7", xray: "tun-ch7",
+  wireguard: "wg-ch7", amneziawg: "awg-ch7", openconnect: "tun-ch7", xray: "tun-ch7",
   l2tp: "ppp-ch7", ikev2: "xfrm-ch7",
 })) {
   test(`${type}: default, repeated toggle, ownership and removal`, () => {

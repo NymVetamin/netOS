@@ -1,3 +1,4 @@
+import { isWireGuardType, wireGuardLabel } from "../amneziawg";
 import { updateClientSettings } from "../clientSettings";
 import { useAccess } from "../permissions";
 import { useEffect, useMemo, useState } from "react";
@@ -209,7 +210,7 @@ export function Clients({
               </svg>
             </a> : undefined}
             cells={[<strong>{peer.name}</strong>,
-              <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
+              <span>VPN · {server.name} · {isWireGuardType(server.type) ? wireGuardLabel(server.type) : server.type}</span>,
               <span className="mono">{peer.address || "—"}</span>,
               <ClientChannel config={config} value={peer.peer.channel || ""} inherited={server.server.default_channel || "direct"}
                 source="По серверу" label={`Канал VPN-клиента ${server.name} / ${peer.name}`}
@@ -221,7 +222,7 @@ export function Clients({
             <div className="form-grid">
               <Cap label="VPN-сервер"><span>{server.name}</span></Cap>
               <Cap label="Адрес подключения"><span>{peer.endpoint || "—"}</span></Cap>
-              <Cap label={server.type === "wireguard" ? "Последний handshake" : "Последний раз замечен онлайн"}><span>{peer.handshake ? formatTime(new Date(peer.handshake * 1000).toISOString()) : "—"}</span></Cap>
+              <Cap label={isWireGuardType(server.type) ? "Последний handshake" : "Последний раз замечен онлайн"}><span>{peer.handshake ? formatTime(new Date(peer.handshake * 1000).toISOString()) : "—"}</span></Cap>
               <Cap label="Получено / отправлено"><span>{peer.trafficKnown ? `${formatBytes(peer.received)} / ${formatBytes(peer.sent)}` : "—"}</span></Cap>
             </div>
           </Row>))}
