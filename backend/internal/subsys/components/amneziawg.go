@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -173,7 +172,8 @@ func (s *Subsystem) readAmneziaRecord() []string {
 	return strings.Fields(string(data))
 }
 
-// installedPackageNames lists every installed package with one dpkg-query.
+// Include interrupted installations and residual configs: neither is absent,
+// and both must be excluded from new ownership and remain eligible for purge.
 func (s *Subsystem) installedPackageNames(ctx context.Context) (map[string]bool, error) {
 	out, err := s.Runner.Run(ctx, "dpkg-query", "-W", "-f=${Package}\t${Status}\n")
 	if err != nil {
@@ -181,8 +181,14 @@ func (s *Subsystem) installedPackageNames(ctx context.Context) (map[string]bool,
 	}
 	names := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
-		if name, status, ok := strings.Cut(line, "\t"); ok && status == "install ok installed" {
-			names[name] = true
+		if name, status, ok := strings.Cut(line, "\t"); ok {
+			fields := strings.Fields(status)
+			if len(fields) == 3 {
+				switch fields[2] {
+				case "installed", "unpacked", "half-installed", "half-configured", "triggers-awaited", "triggers-pending", "config-files":
+					names[name] = true
+				}
+			}
 		}
 	}
 	return names, nil
@@ -191,13 +197,16 @@ func (s *Subsystem) installedPackageNames(ctx context.Context) (map[string]bool,
 // removeAmneziaLeftovers purges recorded packages that apt itself considers
 // unneeded once suggestions are ignored. Simulation first: a package that
 // something still depends on or recommends is not touched.
-func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, recorded []string, keep map[string]bool) error {
+func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, recorded []string, keep, installed map[string]bool) error {
 	if len(recorded) == 0 {
 		return nil
 	}
-	installed, err := s.installedPackageNames(ctx)
-	if err != nil {
-		return err
+	if installed == nil {
+		var err error
+		installed, err = s.installedPackageNames(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	left := map[string]bool{}
 	for _, name := range recorded {
@@ -227,6 +236,9 @@ func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, recorded []strin
 }
 
 func (s *Subsystem) installAmneziaWG(ctx context.Context, info config.ComponentInfo, refresh func() error) error {
+	if err := s.finishAmneziaCapture(); err != nil {
+		return fmt.Errorf("учёт предыдущей установки AmneziaWG: %w", err)
+	}
 	// The repository was written before any refresh of this Apply, so the
 	// shared refresh sees it. Refresh first: the kernel check reads apt lists.
 	if err := ensureAmneziaRepo(); err != nil {
@@ -243,33 +255,26 @@ func (s *Subsystem) installAmneziaWG(ctx context.Context, info config.ComponentI
 	if err != nil {
 		return err
 	}
-	installed, err := s.Packages.EnsureWithRefresh(ctx, refresh, append([]string{kernelHeadersPackage()}, info.Packages...)...)
+	_, err = system.ReadPackageNames(s.amneziaRecord())
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("чтение установленных пакетов: %w", err)
+	}
+	captureRunner, err := s.beginAmneziaCapture(before)
 	if err != nil {
-		return err
+		return fmt.Errorf("начало учёта пакетов AmneziaWG: %w", err)
+	}
+	packages := *s.Packages
+	packages.R = captureRunner
+	installed, installErr := packages.EnsureWithRefresh(ctx, refresh, append([]string{kernelHeadersPackage()}, info.Packages...)...)
+	// Native events survive an apt error, cancellation and a failed record write.
+	if err := s.finishAmneziaCapture(); err != nil {
+		return errors.Join(installErr, fmt.Errorf("учёт установленных пакетов: %w", err))
+	}
+	if installErr != nil {
+		return installErr
 	}
 	if len(installed) > 0 {
 		s.Logger.Infof("установлен компонент %s (%s)", info.Title, strings.Join(installed, ", "))
-		after, err := s.installedPackageNames(ctx)
-		if err != nil {
-			return err
-		}
-		brought := map[string]bool{}
-		for _, name := range s.readAmneziaRecord() { // an earlier partial installation
-			brought[name] = true
-		}
-		for name := range after {
-			if !before[name] {
-				brought[name] = true
-			}
-		}
-		names := make([]string, 0, len(brought))
-		for name := range brought {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		if err := system.WriteFileAtomic(s.amneziaRecord(), []byte(strings.Join(names, "\n")+"\n"), 0o600); err != nil {
-			return fmt.Errorf("запись установленных пакетов: %w", err)
-		}
 	}
 	// A package that installed is not yet a working module: DKMS can fail to
 	// build it for this kernel. Say so instead of reporting success.

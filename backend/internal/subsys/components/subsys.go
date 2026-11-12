@@ -336,6 +336,9 @@ func (s *Subsystem) componentRemovable(ctx context.Context, info config.Componen
 
 func (s *Subsystem) componentRemovableFrom(ctx context.Context, info config.ComponentInfo, protected map[string]bool, snapshot componentLiveSnapshot, useSnapshot bool) bool {
 	if info.ID == amneziaWGID {
+		if s.amneziaCapturePending() {
+			return true
+		}
 		// A failed cleanup can outlive the top-level packages. Read errors
 		// must reach removeProtected instead of hiding a pending operation.
 		if _, err := os.Stat(s.amneziaRecord()); !os.IsNotExist(err) {
@@ -403,6 +406,9 @@ func (s *Subsystem) componentStateFrom(ctx context.Context, info config.Componen
 			disabled = s.Systemd.IsDisabled(ctx, unit)
 		}
 		allInstalled = allInstalled && disabled
+	}
+	if info.ID == amneziaWGID && s.amneziaCapturePending() {
+		allInstalled = false
 	}
 	return anyInstalled, allInstalled
 }
@@ -565,6 +571,11 @@ func (s *Subsystem) remove(ctx context.Context, info config.ComponentInfo) error
 }
 
 func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentInfo, protected map[string]bool) error {
+	if info.ID == amneziaWGID {
+		if err := s.finishAmneziaCapture(); err != nil {
+			return fmt.Errorf("учёт установки AmneziaWG перед удалением: %w", err)
+		}
+	}
 	if info.Essential {
 		// Отключается функция, а не базовый инструмент, которым пользуется сам
 		// netOS. В частности, iproute2 нельзя удалять вместе с QoS.
@@ -620,18 +631,30 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	}
 
 	var recorded []string
+	var amneziaPresent map[string]bool
 	if info.ID == amneziaWGID {
 		data, err := os.ReadFile(s.amneziaRecord())
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("чтение списка пакетов AmneziaWG: %w", err)
 		}
 		recorded = strings.Fields(string(data))
+		amneziaPresent, err = s.installedPackageNames(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	// Удаляем только то, что реально стоит: apt-get purge на отсутствующем
 	// пакете возвращает ошибку и засоряет журнал.
 	var present []string
 	for _, p := range info.Packages {
-		if !protected[p] && s.Packages.Installed(ctx, p) {
+		if protected[p] {
+			continue
+		}
+		installed := amneziaPresent[p]
+		if info.ID != amneziaWGID {
+			installed = s.Packages.Installed(ctx, p)
+		}
+		if installed {
 			present = append(present, p)
 		}
 	}
@@ -639,7 +662,7 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	// when this installation brought them.
 	if info.ID == amneziaWGID {
 		for _, name := range recorded {
-			if strings.HasPrefix(name, "linux-headers-") && !protected[name] && s.Packages.Installed(ctx, name) {
+			if strings.HasPrefix(name, "linux-headers-") && !protected[name] && amneziaPresent[name] {
 				present = append(present, name)
 			}
 		}
@@ -680,9 +703,10 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 		if _, err := s.Runner.Run(ctx, "apt-get", args...); err != nil {
 			return err
 		}
+		amneziaPresent = nil // dpkg state changed; leftovers need a fresh snapshot.
 	}
 	if info.ID == amneziaWGID {
-		if err := s.removeAmneziaLeftovers(ctx, recorded, neverAutoRemove); err != nil {
+		if err := s.removeAmneziaLeftovers(ctx, recorded, neverAutoRemove, amneziaPresent); err != nil {
 			return fmt.Errorf("удаление пакетов сборки модуля: %w", err)
 		}
 		if err := os.Remove(s.amneziaRecord()); err != nil && !os.IsNotExist(err) {

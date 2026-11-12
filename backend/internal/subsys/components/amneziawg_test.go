@@ -74,8 +74,32 @@ func (r *awgRunner) Run(_ context.Context, name string, args ...string) (string,
 			}
 			return b.String(), nil
 		case contains(args, "install"):
+			var events strings.Builder
+			loggerPath := ""
+			for _, arg := range args {
+				if path, ok := strings.CutPrefix(arg, "Dpkg::Options::=--status-logger=cat >> '"); ok {
+					loggerPath = strings.ReplaceAll(strings.TrimSuffix(path, "'"), "'\"'\"'", "'")
+				}
+			}
 			for _, pkg := range append(packages("install"), r.deps...) {
 				r.installed[pkg] = true
+				if loggerPath != "" {
+					events.WriteString("processing: install: " + pkg + "\nstatus: " + pkg + ": half-installed\nstatus: " + pkg + ": unpacked\nprocessing: configure: " + pkg + "\nstatus: " + pkg + ": unpacked\nstatus: " + pkg + ": half-configured\nstatus: " + pkg + ": installed\n")
+				}
+			}
+			if loggerPath != "" {
+				f, err := os.OpenFile(loggerPath, os.O_APPEND|os.O_WRONLY, 0600)
+				if err != nil {
+					return "", err
+				}
+				_, err = f.WriteString(events.String())
+				closeErr := f.Close()
+				if err != nil {
+					return "", err
+				}
+				if closeErr != nil {
+					return "", closeErr
+				}
 			}
 		case contains(args, "purge"):
 			for _, pkg := range packages("purge") {
