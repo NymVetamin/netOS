@@ -173,8 +173,9 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 				return fmt.Errorf("служба %s не восстановила интерфейс %s", unit, owned.Name)
 			}
 		default:
+			linkType, tool := wireGuardKind(owned.Type == "amneziawg")
 			if !s.linkExists(owned.Name) {
-				if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", owned.Name, "type", "wireguard"); err != nil {
+				if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", owned.Name, "type", linkType); err != nil {
 					return err
 				}
 			}
@@ -182,7 +183,7 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 			if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
 				return err
 			}
-			if _, err := s.Runner.Run(ctx, "wg", "syncconf", owned.Name, conf); err != nil {
+			if _, err := s.Runner.Run(ctx, tool, "syncconf", owned.Name, conf); err != nil {
 				return err
 			}
 			addresses := inetAddresses(snapshot.addresses)
@@ -256,7 +257,21 @@ func ownedType(ch config.Channel) string {
 	if ch.WireGuardPeer != nil {
 		return "wireguard-peer"
 	}
+	// The owned record keeps the link kind: rollback must recreate an
+	// AmneziaWG interface as such, and switching kinds replaces the link.
+	if ch.IsAmneziaWG() {
+		return "amneziawg"
+	}
 	return ch.Type
+}
+
+// wireGuardKind returns the link type and the userspace tool of a WireGuard
+// channel. AmneziaWG has its own module and tool; everything else is shared.
+func wireGuardKind(amnezia bool) (linkType, tool string) {
+	if amnezia {
+		return "amneziawg", "awg"
+	}
+	return "wireguard", "wg"
 }
 
 func InterfaceName(ch config.Channel) string {
@@ -525,6 +540,9 @@ func RenderWireGuard(ch config.Channel) (string, error) {
 	fmt.Fprintln(&b, "# Сгенерировано netOS. Файл содержит секреты; права 0600.")
 	fmt.Fprintln(&b, "[Interface]")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", wg.PrivateKey)
+	if wg.AmneziaWG != nil {
+		b.WriteString(wg.AmneziaWG.NativeLines())
+	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "[Peer]")
 	fmt.Fprintf(&b, "PublicKey = %s\n", wg.PeerPublicKey)
@@ -579,13 +597,19 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 	if err := restoreChannelFiles(snapshots); err != nil {
 		return false, fmt.Errorf("%v; rollback WireGuard: %w", retErr, err)
 	}
+	// The restored file is the previous configuration and decides the kind.
+	previousAmnezia := len(snapshots) > 0 && snapshots[0].existed && amneziaLines(string(snapshots[0].data)) != ""
+	linkType, tool := wireGuardKind(previousAmnezia)
+	if s.linkExists(name) && s.linkKind(rollbackCtx, name) != linkType {
+		_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "delete", name)
+	}
 	if !s.linkExists(name) {
-		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
+		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "add", "name", name, "type", linkType); err != nil {
 			return false, fmt.Errorf("%v; rollback WireGuard interface: %w", retErr, err)
 		}
 	}
 	if len(snapshots) > 0 && snapshots[0].existed {
-		if err := s.syncWireGuard(rollbackCtx, name, confPath); err != nil {
+		if err := s.syncWireGuard(rollbackCtx, tool, name, confPath); err != nil {
 			return false, fmt.Errorf("%v; rollback WireGuard config: %w", retErr, err)
 		}
 	}
@@ -637,28 +661,40 @@ func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, 
 	if err != nil {
 		return err
 	}
+	linkType, tool := wireGuardKind(wg.AmneziaWG != nil)
 	exists := s.linkExists(name)
 	if exists && !wasOwned {
 		return fmt.Errorf("интерфейс %s уже существует и не принадлежит netOS", name)
 	}
+	confPath := filepath.Join(s.StateDir, name+".conf")
 	if exists {
-		if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
+		if _, err := s.Runner.Run(ctx, tool, "show", name); err != nil {
 			if _, delErr := s.Runner.Run(ctx, "ip", "link", "delete", name); delErr != nil {
 				return fmt.Errorf("чужой тип интерфейса %s: %w", name, delErr)
 			}
 			exists = false
+		} else if wg.AmneziaWG != nil {
+			// syncconf leaves parameters absent from the file in the kernel, so
+			// a removed signature would keep being sent. Changed obfuscation
+			// recreates the link; unchanged settings keep the tunnel up.
+			previous, _ := os.ReadFile(confPath)
+			if amneziaLines(string(previous)) != amneziaLines(conf) {
+				if _, err := s.Runner.Run(ctx, "ip", "link", "delete", name); err != nil {
+					return fmt.Errorf("пересоздание интерфейса %s: %w", name, err)
+				}
+				exists = false
+			}
 		}
 	}
-	confPath := filepath.Join(s.StateDir, name+".conf")
 	if err := writeFileIfChanged(confPath, []byte(conf), 0o600); err != nil {
 		return fmt.Errorf("сохранение конфигурации: %w", err)
 	}
 	if !exists {
-		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", name, "type", linkType); err != nil {
 			return fmt.Errorf("создание интерфейса: %w", err)
 		}
 	}
-	if err := s.syncWireGuard(ctx, name, confPath); err != nil {
+	if err := s.syncWireGuard(ctx, tool, name, confPath); err != nil {
 		return fmt.Errorf("настройка WireGuard: %w", err)
 	}
 	if err := s.ensureAddress(ctx, name, wg.Address); err != nil {
@@ -879,8 +915,9 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("интерфейс %s отсутствует", name)
 		}
 		if ch.Type == "wireguard" && ch.WireGuardPeer == nil {
-			if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
-				return fmt.Errorf("интерфейс %s не принят WireGuard: %w", name, err)
+			_, tool := wireGuardKind(ch.IsAmneziaWG())
+			if _, err := s.Runner.Run(ctx, tool, "show", name); err != nil {
+				return fmt.Errorf("интерфейс %s не принят %s: %w", name, tool, err)
 			}
 			wg, err := ch.WireGuardConfig()
 			if err != nil {

@@ -539,7 +539,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		}
 	}
 	for i, channel := range c.Channels {
-		if channel.Enabled && channel.Type == "wireguard" && !c.HasComponent("wireguard") {
+		if channel.Enabled && channel.IsAmneziaWG() && !c.HasComponent("amneziawg") {
+			r.errf(fmt.Sprintf("channels[%d].enabled", i),
+				"для канала AmneziaWG нужен компонент «AmneziaWG»")
+		} else if channel.Enabled && channel.Type == "wireguard" && !channel.IsAmneziaWG() && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала WireGuard нужен компонент «WireGuard»")
 		}
@@ -2438,6 +2441,11 @@ func (c *Config) validateWireGuardChannel(r *ValidationResult, path string, ch C
 	}
 	if wg.PersistentKeepalive < 0 || wg.PersistentKeepalive > 65535 {
 		r.errf(path+".config.persistent_keepalive", "значение должно быть в диапазоне 0-65535 секунд")
+	}
+	if wg.AmneziaWG != nil {
+		if err := wg.AmneziaWG.Validate(); err != nil {
+			r.errf(path+".config.amneziawg", "AmneziaWG: %v", err)
+		}
 	}
 	if wg.MTU != 0 && (wg.MTU < 576 || wg.MTU > 9000) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")

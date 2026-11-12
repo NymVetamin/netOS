@@ -733,14 +733,20 @@ func (s *Subsystem) Running(ctx context.Context) map[string]bool {
 		}
 		out[info.ID] = anyUnitActive(info.RunUnits, active)
 	}
-	// WireGuard runs in the kernel. Count only live, enabled interfaces whose
-	// ownership was recorded by netOS, never a foreign tunnel or just a package.
-	out["wireguard"] = s.wireGuardRunning(ctx)
+	// WireGuard and AmneziaWG run in the kernel. Count only live, enabled
+	// interfaces whose ownership was recorded by netOS, never a foreign tunnel
+	// or just a package.
+	for kind, running := range s.kernelTunnelsRunning(ctx) {
+		out[kind] = running
+	}
 	return out
 }
 
-func (s *Subsystem) wireGuardRunning(ctx context.Context) bool {
-	owned := map[string]bool{}
+// kernelTunnelsRunning answers for both kernel tunnel components with one
+// link listing. The owned record carries the kind, so the links need no filter.
+func (s *Subsystem) kernelTunnelsRunning(ctx context.Context) map[string]bool {
+	out := map[string]bool{"wireguard": false, "amneziawg": false}
+	owned := map[string]string{} // interface -> component
 	for _, name := range []string{"owned-channels.json", "owned-vpn-servers.json"} {
 		data, err := os.ReadFile(filepath.Join(s.StateDir, name))
 		if err != nil {
@@ -754,36 +760,37 @@ func (s *Subsystem) wireGuardRunning(ctx context.Context) bool {
 			continue
 		}
 		for _, entry := range entries {
-			if entry.Type == "wireguard" {
-				owned[entry.Name] = true
+			if _, known := out[entry.Type]; known {
+				owned[entry.Name] = entry.Type
 			}
 		}
 	}
 	if len(owned) == 0 {
-		return false
+		return out
 	}
-	data, err := s.Runner.Run(ctx, "ip", "-j", "link", "show", "type", "wireguard")
+	data, err := s.Runner.Run(ctx, "ip", "-j", "link", "show")
 	if err != nil {
-		return false
+		return out
 	}
 	var links []struct {
 		Name  string   `json:"ifname"`
 		Flags []string `json:"flags"`
 	}
 	if json.Unmarshal([]byte(data), &links) != nil {
-		return false
+		return out
 	}
 	for _, link := range links {
-		if !owned[link.Name] {
+		kind, ok := owned[link.Name]
+		if !ok {
 			continue
 		}
 		for _, flag := range link.Flags {
 			if flag == "UP" {
-				return true
+				out[kind] = true
 			}
 		}
 	}
-	return false
+	return out
 }
 
 // anyUnitActive сверяет шаблоны юнитов компонента с работающими. Шаблон нужен

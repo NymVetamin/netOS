@@ -47,12 +47,13 @@ func TestRunningWireGuardRequiresLiveOwnedInterface(t *testing.T) {
 		{"bad-owner", `invalid`, `[{"ifname":"wg-ch4","flags":["UP"]}]`, nil, false},
 		{"bad-links", `[{"name":"wg-ch4","type":"wireguard"}]`, `invalid`, nil, false},
 		{"probe-failed", `[{"name":"wg-ch4","type":"wireguard"}]`, ``, errors.New("ip failed"), false},
+		{"channel-amneziawg", `[{"name":"wg-ch4","type":"amneziawg"}]`, `[{"ifname":"wg-ch4","flags":["UP"]}]`, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(vpnRuntimeRunner{links: tc.links, err: tc.err}, testLogger{})
 			s.StateDir = t.TempDir()
 			filename := "owned-vpn-servers.json"
-			if tc.name == "channel" {
+			if strings.HasPrefix(tc.name, "channel") {
 				filename = "owned-channels.json"
 			}
 			if err := os.WriteFile(filepath.Join(s.StateDir, filename), []byte(tc.ownership), 0o600); err != nil {
@@ -80,6 +81,24 @@ func TestRunningL2TPIncludesWANChannelsAndServers(t *testing.T) {
 	for _, info := range config.Catalog {
 		if info.ID == "l2tp" && !strings.Contains(strings.Join(info.Units, ","), "xl2tpd.service") {
 			t.Fatal("stock daemon suppression lost")
+		}
+	}
+}
+
+func TestRunningAmneziaWGCountsItsOwnInterfacesOnly(t *testing.T) {
+	s := New(vpnRuntimeRunner{links: `[{"ifname":"wg-ch4","flags":["UP"]},{"ifname":"wg-ch5","flags":["UP"]}]`}, testLogger{})
+	s.StateDir = t.TempDir()
+	for owned, want := range map[string][2]bool{
+		`[{"name":"wg-ch4","type":"amneziawg"}]`:                                      {false, true},
+		`[{"name":"wg-ch5","type":"wireguard"}]`:                                      {true, false},
+		`[{"name":"wg-ch4","type":"amneziawg"},{"name":"wg-ch5","type":"wireguard"}]`: {true, true},
+	} {
+		if err := os.WriteFile(filepath.Join(s.StateDir, "owned-channels.json"), []byte(owned), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		running := s.Running(context.Background())
+		if running["wireguard"] != want[0] || running["amneziawg"] != want[1] {
+			t.Fatalf("%s: wireguard=%v amneziawg=%v", owned, running["wireguard"], running["amneziawg"])
 		}
 	}
 }

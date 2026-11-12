@@ -19,6 +19,8 @@ type WireGuardChannelConfig struct {
 	AllowedIPs          []string `json:"allowed_ips" plan:"Маршруты клиента" sensitivity:"public"`
 	PersistentKeepalive int      `json:"persistent_keepalive,omitempty" plan:"Интервал keepalive, с" sensitivity:"public"`
 	MTU                 int      `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
+	// Задана — канал работает на модуле AmneziaWG вместо WireGuard.
+	AmneziaWG *AmneziaWGParams `json:"amneziawg,omitempty" plan:"Маскировка AmneziaWG" sensitivity:"public"`
 }
 
 type OpenConnectChannelConfig struct {
@@ -65,6 +67,12 @@ type IKEv2ChannelConfig struct {
 type XrayChannelConfig struct {
 	MTU      int            `json:"mtu,omitempty" plan:"MTU" sensitivity:"public"`
 	Outbound map[string]any `json:"outbound" plan:"Исходящее подключение Xray" sensitivity:"public"`
+}
+
+// IsAmneziaWG reports a WireGuard channel that runs on the AmneziaWG module.
+// The map lookup avoids decoding the whole configuration on hot paths.
+func (c Channel) IsAmneziaWG() bool {
+	return c.Type == "wireguard" && c.WireGuardPeer == nil && c.Config["amneziawg"] != nil
 }
 
 func (c Channel) WireGuardConfig() (WireGuardChannelConfig, error) {

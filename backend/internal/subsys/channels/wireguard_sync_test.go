@@ -41,7 +41,7 @@ func TestWireGuardSyncPreservesPortAndStoredConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.Runner = listenPortRunner{Runner: runner, output: tc.port}
-			err = s.syncWireGuard(context.Background(), "wg-ch1", path)
+			err = s.syncWireGuard(context.Background(), "wg", "wg-ch1", path)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v err=%v", tc.valid, err)
 			}

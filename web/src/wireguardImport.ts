@@ -1,3 +1,4 @@
+import { AMNEZIAWG_NUMBERS, AMNEZIAWG_TEXTS, amneziaWGNativeName } from "./amneziawg";
 // Import data only. wg-quick commands are never executed.
 export function parseWireGuardConfig(text: string) {
   const sections: Record<string, Record<string, string>> = {};
@@ -21,8 +22,23 @@ export function parseWireGuardConfig(text: string) {
   const iface = sections.Interface, peer = sections.Peer;
   if (!iface || !peer) throw new Error("Нужны секции [Interface] и [Peer].");
   const warnings: string[] = [];
-  for (const [values, supported] of [[iface, ["Address", "PrivateKey", "MTU"]], [peer, ["PublicKey", "PresharedKey", "Endpoint", "AllowedIPs", "PersistentKeepalive"]]] as const) {
-    for (const key of Object.keys(values)) if (!(supported as readonly string[]).includes(key)) warnings.push(`${key} не перенесён: netOS управляет этой настройкой отдельно.`);
+  // AmneziaVPN profiles carry obfuscation in [Interface]; they make the
+  // channel an AmneziaWG channel. Ranges are checked by the backend.
+  const amnezia: Record<string, number | string> = {};
+  for (const key of [...AMNEZIAWG_NUMBERS, ...AMNEZIAWG_TEXTS]) {
+    const native = amneziaWGNativeName(key);
+    const value = iface[native];
+    if (value === undefined) continue;
+    if ((AMNEZIAWG_NUMBERS as readonly string[]).includes(key)) {
+      if (!/^\d+$/.test(value)) throw new Error(`Некорректный ${native}.`);
+      amnezia[key] = Number(value);
+    } else if (value !== "") amnezia[key] = value;
+  }
+  // Sets keep the unknown-key check O(1) per key of the file.
+  const ifaceKeys = new Set(["Address", "PrivateKey", "MTU", ...[...AMNEZIAWG_NUMBERS, ...AMNEZIAWG_TEXTS].map(amneziaWGNativeName)]);
+  const peerKeys = new Set(["PublicKey", "PresharedKey", "Endpoint", "AllowedIPs", "PersistentKeepalive"]);
+  for (const [values, supported] of [[iface, ifaceKeys], [peer, peerKeys]] as const) {
+    for (const key of Object.keys(values)) if (!supported.has(key)) warnings.push(`${key} не перенесён: netOS управляет этой настройкой отдельно.`);
   }
   const list = (value = "") => value.split(",").map(v => v.trim()).filter(Boolean);
   const ipv4 = (value: string) => {
@@ -52,5 +68,6 @@ export function parseWireGuardConfig(text: string) {
   };
   // Omit an absent PSK: the API preserves redacted secrets only for present keys.
   if (peer.PresharedKey) config.preshared_key = key(peer.PresharedKey, "PresharedKey");
+  if (Object.keys(amnezia).length) config.amneziawg = amnezia;
   return { config, warnings };
 }

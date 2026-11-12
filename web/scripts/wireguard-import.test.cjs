@@ -34,3 +34,11 @@ for(const size of [1000,100000]) {
  for(let i=0;i<5;i++) assert.deepEqual(parse(input),parsed);
  console.log(JSON.stringify({bytes:input.length,parse_ms:(performance.now()-started)/5}));
 }
+// AmneziaVPN profile: obfuscation goes into config.amneziawg without warnings.
+const awgConf=config.replace("MTU = 1380","MTU = 1380\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 25\nH1 = 100-200\nH2 = 300\nH3 = 400\nH4 = 500\nI1 = <b 0xc0ffee><r 8><t>");
+const awg=parse(awgConf);
+assert.deepEqual(awg.config.amneziawg,{jc:4,jmin:40,jmax:70,s1:15,s2:25,h1:"100-200",h2:"300",h3:"400",h4:"500",i1:"<b 0xc0ffee><r 8><t>"});
+assert.equal(awg.warnings.length,0);
+assert.ok(!Object.hasOwn(parsed.config,"amneziawg"),"plain WireGuard file gained obfuscation");
+assert.throws(()=>parse(awgConf.replace("Jc = 4","Jc = x")),/Jc/);
+console.log("AmneziaWG import: parameters, no warnings, plain file unchanged, invalid number PASS");

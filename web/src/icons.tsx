@@ -153,7 +153,7 @@ export const COMPONENT_ICONS: Record<string, IconName> = {
 };
 
 export const CHANNEL_ICONS: Record<string, IconName> = {
-  direct: "arrow-right-left", wireguard: "wireguard", openconnect: "lock", xray: "shuffle", ikev2: "strongswan", l2tp: "cable",
+  direct: "arrow-right-left", wireguard: "wireguard", amneziawg: "shield-check", openconnect: "lock", xray: "shuffle", ikev2: "strongswan", l2tp: "cable",
 };
 
 export const INTERFACE_ICONS: Record<string, IconName> = { physical: "ethernet-port", bridge: "merge", vlan: "layers", bond: "combine" };
