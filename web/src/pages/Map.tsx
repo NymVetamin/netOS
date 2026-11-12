@@ -1,3 +1,4 @@
+import { channelKind } from "../channelComponents";
 import { useAccess } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -143,7 +144,7 @@ function buildGraph(config: any, status: any, clients: any[], rates: Rates, vpnT
 
   const channels: ChannelNode[] = (config.channels || [])
     .filter((c: any) => c.enabled && c.type !== "direct")
-    .map((c: any) => ({ id: c.id, name: c.name || c.id, type: channelType(c.type), up: !!liveChannels.get(c.id)?.up, channel: c }));
+    .map((c: any) => ({ id: c.id, name: c.name || c.id, type: channelType(channelKind(c, config)), up: !!liveChannels.get(c.id)?.up, channel: c }));
 
   const segments: SegmentNode[] = (config.networks || [])
     .filter((n: any) => n.enabled)
@@ -157,7 +158,14 @@ function buildGraph(config: any, status: any, clients: any[], rates: Rates, vpnT
 }
 
 function channelType(type: string): string {
-  return ({ wireguard: "WireGuard", xray: "Xray", openconnect: "OpenConnect", ikev2: "IKEv2" } as Record<string, string>)[type] || type;
+  return ({ wireguard: "WireGuard", amneziawg: "AmneziaWG", xray: "Xray", openconnect: "OpenConnect", ikev2: "IKEv2" } as Record<string, string>)[type] || type;
+}
+
+// An AmneziaWG server is a WireGuard server with obfuscation. Map entries
+// keep the configured server in .server.
+function serverType(server: any): string {
+  const config = (server.server || server).config;
+  return channelType(server.type === "wireguard" && config?.amneziawg ? "amneziawg" : server.type);
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +333,7 @@ function MapSVG({ graph, selected, onSelect, config, status, overlay }: {
 
         {segments.map((s, i) => node(`segment:${s.id}`, 840, segY[i], 170, 62, s.name, `${s.address} · ${s.online}/${s.total}`, "ok"))}
         {vpnLayout.map(({server, positions, y}) => <g key={`vpn-nodes-${server.id}`}>
-          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${channelType(server.type)} · ${server.enabled ? "включён" : "отключён"}`, serverEdgeState(server) === "live" ? "ok" : "idle")}
+          {node(`vpn:${server.id}`, 840, y, 170, 62, server.name, `${serverType(server)} · ${server.enabled ? "включён" : "отключён"}`, serverEdgeState(server) === "live" ? "ok" : "idle")}
           {server.peers.map((peer, i) => node(`peer:${encodeURIComponent(server.id)}:${encodeURIComponent(peer.id)}`, 1105, positions[i], 230, 62, peer.name, clip(`${peer.address} · ${peer.label}`, 35), peerEdgeState(peer.state) === "live" ? "ok" : "idle"))}
         </g>)}
     </MapViewport>
@@ -439,7 +447,7 @@ function NodeDetails({ graph, id, config, status, clients }: {
     const channelName = (config.channels || []).find((c: any) => c.id === selectedChannel)?.name || (selectedChannel === "block" ? "Блок" : selectedChannel === "direct" ? "Напрямую" : selectedChannel);
     body = <>
       <dl className="kv">
-        <dt>VPN-сервер</dt><dd>{vpnServer.name} · {channelType(vpnServer.type)}</dd>
+        <dt>VPN-сервер</dt><dd>{vpnServer.name} · {serverType(vpnServer)}</dd>
         <dt>VPN-подсеть</dt><dd className="mono">{vpnServer.subnet || "—"}</dd>
         {peer ? <>
           <dt>VPN-адрес</dt><dd className="mono">{peer.address || "—"}</dd>

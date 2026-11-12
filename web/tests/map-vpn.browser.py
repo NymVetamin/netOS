@@ -22,7 +22,7 @@ async def scenario(browser, mode):
                     {"id":"tablet","name":"Tablet","address":"10.9.0.3","enabled":True},
                     {"id":"denied","name":"Denied","address":"10.9.0.4","enabled":False}]}]
     if mode=="many":
-        cfg["vpn_servers"].append({"id":"wg2","name":"Other server","type":"wireguard","enabled":False,"peers":[{"id":"phone","name":"Other phone","enabled":True}]})
+        cfg["vpn_servers"].append({"id":"wg2","name":"Other server","type":"wireguard","enabled":False,"config":{"amneziawg":{"jc":4}},"peers":[{"id":"phone","name":"Other phone","enabled":True}]})
     cfg['channels']=[{'id':f'ch{i}','name':f'Exit {i}','type':'xray','enabled':True} for i in range(5 if mode=='many' else 2)]
     telemetry_error=mode=="error"
     peer_online = mode != "idle"
@@ -59,6 +59,9 @@ async def scenario(browser, mode):
     assert abs((await layout.bounding_box())['width']-box['width'])<4, 'details must not shrink the map'
     await expect(page.locator('.map-node-overlay')).to_have_count(0)
     await expect(graph.locator('.node.sel')).to_have_count(0)
+    if mode == "many":
+        # An AmneziaWG server is shown as such, not as plain WireGuard.
+        await expect(page.get_by_role("button", name="Other server: AmneziaWG · отключён", exact=True)).to_have_count(1)
     # Checking only the SVG bottom misses overflow caused by page padding
     # and by the app's scroll container ending above the viewport bottom.
     if mode == 'healthy':

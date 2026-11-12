@@ -209,7 +209,7 @@ export function Clients({
               </svg>
             </a> : undefined}
             cells={[<strong>{peer.name}</strong>,
-              <span>VPN · {server.name} · {server.type === "wireguard" ? "WireGuard" : server.type}</span>,
+              <span>VPN · {server.name} · {server.type === "wireguard" ? (server.server?.config?.amneziawg ? "AmneziaWG" : "WireGuard") : server.type}</span>,
               <span className="mono">{peer.address || "—"}</span>,
               <ClientChannel config={config} value={peer.peer.channel || ""} inherited={server.server.default_channel || "direct"}
                 source="По серверу" label={`Канал VPN-клиента ${server.name} / ${peer.name}`}
