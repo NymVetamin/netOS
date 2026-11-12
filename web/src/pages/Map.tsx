@@ -1,4 +1,4 @@
-import { channelKind } from "../channelComponents";
+import { channelKind, channelAWGServers } from "../channelComponents";
 import { useAccess } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -142,9 +142,10 @@ function buildGraph(config: any, status: any, clients: any[], rates: Rates, vpnT
   const primary = wans.filter((w) => w.up).sort((a, b) => (a.wan.metric || 0) - (b.wan.metric || 0))[0];
   if (primary) primary.primary = true;
 
+  const awgServers = channelAWGServers(config);
   const channels: ChannelNode[] = (config.channels || [])
     .filter((c: any) => c.enabled && c.type !== "direct")
-    .map((c: any) => ({ id: c.id, name: c.name || c.id, type: channelType(channelKind(c, config)), up: !!liveChannels.get(c.id)?.up, channel: c }));
+    .map((c: any) => ({ id: c.id, name: c.name || c.id, type: channelType(channelKind(c, awgServers)), up: !!liveChannels.get(c.id)?.up, channel: c }));
 
   const segments: SegmentNode[] = (config.networks || [])
     .filter((n: any) => n.enabled)

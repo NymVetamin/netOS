@@ -4,7 +4,7 @@ import { channelReferences, canReplaceChannel } from "../channelReferences";
 import { secretInput } from "../secrets";
 import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
 import { api } from "../api";
-import { channelComponents, channelComponentReady, channelKind } from "../channelComponents";
+import { channelComponents, channelComponentReady, channelKind, channelAWGServers } from "../channelComponents";
 import { newID } from "../id";
 import { parseWireGuardConfig } from "../wireguardImport";
 import { AMNEZIAWG_DEFAULTS } from "../amneziawg";
@@ -66,6 +66,7 @@ export function ChannelsPage({ config, patch }: Props) {
     return () => { active = false; unsubscribe(); };
   }, [statusPolling]);
   const channels = config.channels || [];
+  const awgServers = channelAWGServers(config);
   const policies = config.policies || [];
   const ready = (type: string) => channelComponentReady(config, installed, type);
   const openconnectInstalled = ready("openconnect");
@@ -256,7 +257,7 @@ export function ChannelsPage({ config, patch }: Props) {
         {componentError && <Notice tone="warn" title="Не удалось проверить компоненты">Создание и включение VPN-каналов временно недоступно. Проверка повторится автоматически.</Notice>}
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
         </div>
-        <NATSettings.Provider value={{config, patch}}>
+        <NATSettings.Provider value={{config, patch, awgServers}}>
         <Live.Provider value={liveChannels}>
         <NeedFor.Provider value={needFor}>
         <Rows cols={["Канал", "Тип", "Интерфейс", "Проверка", "Состояние"]}>
@@ -268,7 +269,7 @@ export function ChannelsPage({ config, patch }: Props) {
               key={channel.id}
               channel={channel}
               channels={channels}
-              installed={ready(channelKind(channel, config))}
+              installed={ready(channelKind(channel, awgServers))}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() =>
@@ -337,7 +338,7 @@ const TYPE_NAMES: Record<string, string> = { wireguard: "WireGuard", amneziawg: 
 
 // Живое состояние каналов из /api/status: его показывает строка самого канала.
 const Live = createContext<any[] | null>(null);
-const NATSettings = createContext<Props | null>(null);
+const NATSettings = createContext<(Props & { awgServers: ReadonlySet<any> }) | null>(null);
 // Компонент, без которого канал не работает (null — всё на месте).
 const NeedFor = createContext<(type: string) => string | null>(() => null);
 
@@ -348,7 +349,7 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
   const live = (useContext(Live) || []).find((item: any) => item.id === channel.id);
   const settings = useContext(NATSettings);
   const nat = settings ? channelNAT(settings.config, channel) : null;
-  const kind = channelKind(channel, settings?.config);
+  const kind = channelKind(channel, settings?.awgServers);
   const need = useContext(NeedFor)(kind);
   // Пустые части не печатаются: без типа проверки строка начиналась с запятой.
   const probe = channel.probe?.enabled === false ? "выключена" : [String(channel.probe?.type || "").toUpperCase(), `каждые ${channel.probe?.interval || 10} с`].filter(Boolean).join(", ");
