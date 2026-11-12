@@ -54,6 +54,14 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 		}
 		wans = append(wans, map[string]any{"id": wan.ID, "name": wan.Name, "interface": name, "address": address, "link_up": up[name], "probe_down": probeDown, "up": up[name] && !probeDown})
 	}
+	// Shared peer channels use their server's interface and have no independent
+	// AWG parameters. Build this lookup once per snapshot, not per channel.
+	awgServers := make(map[string]bool)
+	for _, server := range cfg.VPNServers {
+		if server.IsAmneziaWG() {
+			awgServers[server.ID] = true
+		}
+	}
 	for _, ch := range cfg.Channels {
 		if !ch.Enabled || ch.Type == "direct" {
 			continue
@@ -62,7 +70,7 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 		active := up[name]
 		if active && ch.Type == "wireguard" {
 			tool := "wg"
-			if ch.IsAmneziaWG() {
+			if ch.IsAmneziaWG() || (ch.WireGuardPeer != nil && awgServers[ch.WireGuardPeer.ServerID]) {
 				tool = "awg"
 			}
 			active = s.recentWireGuardHandshake(ctx, tool, name)
