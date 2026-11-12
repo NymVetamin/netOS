@@ -118,3 +118,44 @@ func TestFullUninstallKeepsRecoveryOnPurgeFailure(t *testing.T) {
 		}
 	}
 }
+
+// The purged module would stay loaded until reboot; it is unloaded first.
+func TestUninstallUnloadsAmneziaWGModuleBeforePurge(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	dir := m.sys(system.PackageOwnershipDir)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	_ = system.WritePackageNames(filepath.Join(dir, "initial.txt"), map[string]bool{"curl": true})
+	_ = system.WritePackageNames(filepath.Join(dir, "owned.txt"), map[string]bool{"amneziawg-dkms": true})
+	var order []string
+	purged := false
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		switch name {
+		case "modprobe":
+			order = append(order, "unload")
+		case "apt-get":
+			return "Purg amneziawg-dkms [1]\n", nil
+		case "dpkg-query":
+			if purged {
+				return "curl\tii \n", nil
+			}
+			return "curl\tii \namneziawg-dkms\tii \n", nil
+		}
+		return "", nil
+	}
+	m.Run = func(_ context.Context, c command) error {
+		if c.name == "apt-get" {
+			order = append(order, "purge")
+			purged = true
+		}
+		return nil
+	}
+	if err := m.removeInstalledPackages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "unload,purge" {
+		t.Fatalf("order = %v", order)
+	}
+}

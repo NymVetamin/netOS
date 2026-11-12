@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
@@ -155,6 +156,77 @@ func (s *Subsystem) Unavailable(ctx context.Context, installed map[string]bool) 
 	return out
 }
 
+// The module brings kernel headers and a compiler. Two apt rules keep them
+// after the component is purged: the running kernel's headers are never
+// autoremoved, and the compiler stays while anything merely suggests it
+// (libdpkg-perl suggests a C compiler). netOS records what this installation
+// brought and removes exactly that, never packages it found on the machine.
+func (s *Subsystem) amneziaRecord() string {
+	return filepath.Join(s.StateDir, "amneziawg-packages")
+}
+
+func (s *Subsystem) readAmneziaRecord() []string {
+	data, err := os.ReadFile(s.amneziaRecord())
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(data))
+}
+
+// installedPackageNames lists every installed package with one dpkg-query.
+func (s *Subsystem) installedPackageNames(ctx context.Context) (map[string]bool, error) {
+	out, err := s.Runner.Run(ctx, "dpkg-query", "-W", "-f=${Package}\t${Status}\n")
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if name, status, ok := strings.Cut(line, "\t"); ok && status == "install ok installed" {
+			names[name] = true
+		}
+	}
+	return names, nil
+}
+
+// removeAmneziaLeftovers purges recorded packages that apt itself considers
+// unneeded once suggestions are ignored. Simulation first: a package that
+// something still depends on or recommends is not touched.
+func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, keep map[string]bool) error {
+	recorded := s.readAmneziaRecord()
+	if len(recorded) == 0 {
+		return nil
+	}
+	installed, err := s.installedPackageNames(ctx)
+	if err != nil {
+		return err
+	}
+	left := map[string]bool{}
+	for _, name := range recorded {
+		if installed[name] && !keep[name] {
+			left[name] = true
+		}
+	}
+	if len(left) == 0 {
+		return nil
+	}
+	out, err := s.Runner.Run(ctx, "apt-get", "-s", "-o", "APT::AutoRemove::SuggestsImportant=false", "autoremove")
+	if err != nil {
+		return err
+	}
+	var purge []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 1 && fields[0] == "Remv" && left[fields[1]] {
+			purge = append(purge, fields[1])
+		}
+	}
+	if len(purge) == 0 {
+		return nil
+	}
+	_, err = s.Runner.Run(ctx, "apt-get", append([]string{"-o", "DPkg::Lock::Timeout=60", "purge", "-y"}, purge...)...)
+	return err
+}
+
 func (s *Subsystem) installAmneziaWG(ctx context.Context, info config.ComponentInfo, refresh func() error) error {
 	// The repository was written before any refresh of this Apply, so the
 	// shared refresh sees it. Refresh first: the kernel check reads apt lists.
@@ -165,23 +237,39 @@ func (s *Subsystem) installAmneziaWG(ctx context.Context, info config.ComponentI
 		return err
 	}
 	if problem := s.amneziaKernelProblem(ctx); problem != "" {
-		return errors.New(problem)
+		// The apply error appends its own sentence after this one.
+		return errors.New(strings.TrimSuffix(problem, "."))
 	}
-	headers := kernelHeadersPackage()
-	headersPresent := s.Packages.Installed(ctx, headers)
-	installed, err := s.Packages.EnsureWithRefresh(ctx, refresh, append([]string{headers}, info.Packages...)...)
+	before, err := s.installedPackageNames(ctx)
+	if err != nil {
+		return err
+	}
+	installed, err := s.Packages.EnsureWithRefresh(ctx, refresh, append([]string{kernelHeadersPackage()}, info.Packages...)...)
 	if err != nil {
 		return err
 	}
 	if len(installed) > 0 {
 		s.Logger.Infof("установлен компонент %s (%s)", info.Title, strings.Join(installed, ", "))
-	}
-	// Headers installed for the module leave together with it: purge
-	// --autoremove takes automatic packages, and they stay protected while the
-	// component is selected (protectedComponentPackages).
-	if !headersPresent {
-		if _, err := s.Runner.Run(ctx, "apt-mark", "auto", headers); err != nil {
-			return fmt.Errorf("пометка заголовков ядра: %w", err)
+		after, err := s.installedPackageNames(ctx)
+		if err != nil {
+			return err
+		}
+		brought := map[string]bool{}
+		for _, name := range s.readAmneziaRecord() { // an earlier partial installation
+			brought[name] = true
+		}
+		for name := range after {
+			if !before[name] {
+				brought[name] = true
+			}
+		}
+		names := make([]string, 0, len(brought))
+		for name := range brought {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		if err := system.WriteFileAtomic(s.amneziaRecord(), []byte(strings.Join(names, "\n")+"\n"), 0o600); err != nil {
+			return fmt.Errorf("запись установленных пакетов: %w", err)
 		}
 	}
 	// A package that installed is not yet a working module: DKMS can fail to

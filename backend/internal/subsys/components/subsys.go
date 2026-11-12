@@ -327,13 +327,6 @@ func protectedComponentPackages(desired map[string]bool) map[string]bool {
 			protected[pkg] = true
 		}
 	}
-	// AmneziaWG's headers are marked automatic so they leave with it; until
-	// then purging another component must not autoremove them.
-	if desired[amneziaWGID] {
-		if headers := kernelHeadersPackage(); headers != "" {
-			protected[headers] = true
-		}
-	}
 	return protected
 }
 
@@ -627,6 +620,15 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 			present = append(present, p)
 		}
 	}
+	// The running kernel's headers are never autoremoved; purge them by name
+	// when this installation brought them.
+	if info.ID == amneziaWGID && len(present) > 0 {
+		for _, name := range s.readAmneziaRecord() {
+			if strings.HasPrefix(name, "linux-headers-") && !protected[name] && s.Packages.Installed(ctx, name) {
+				present = append(present, name)
+			}
+		}
+	}
 	if len(present) == 0 {
 		return nil
 	}
@@ -651,10 +653,26 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	for _, pkg := range names {
 		args = append(args, "-o", "APT::NeverAutoRemove::=^"+regexp.QuoteMeta(pkg)+"$")
 	}
+	if info.ID == amneziaWGID {
+		// Unload while the module file exists: after the purge modprobe cannot
+		// find it and the module stays in memory until reboot. A module still
+		// in use refuses, which is harmless.
+		_, _ = s.Runner.Run(ctx, "modprobe", "-r", "amneziawg")
+	}
 	args = append(args, "purge", "--autoremove", "-y")
 	args = append(args, present...)
 	if _, err := s.Runner.Run(ctx, "apt-get", args...); err != nil {
 		return err
+	}
+	if info.ID == amneziaWGID {
+		keep := map[string]bool{}
+		for pkg := range neverAutoRemove {
+			keep[pkg] = true
+		}
+		if err := s.removeAmneziaLeftovers(ctx, keep); err != nil {
+			return fmt.Errorf("удаление пакетов сборки модуля: %w", err)
+		}
+		_ = os.Remove(s.amneziaRecord())
 	}
 	s.Logger.Infof("удалён компонент %s", info.Title)
 	return nil

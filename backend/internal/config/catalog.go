@@ -120,7 +120,7 @@ var Catalog = []ComponentInfo{
 		ID: "amneziawg", Title: "AmneziaWG", Group: "VPN",
 		Description: "WireGuard с маскировкой пакетов: мусорные пакеты перед рукопожатием и изменённые заголовки. Работает в ядре. Ставится из репозитория Amnezia, модуль собирается под ядро роутера.",
 		Packages:    []string{"amneziawg-dkms", "amneziawg-tools"},
-		SizeHint:    "около 100 МБ с заголовками ядра",
+		SizeHint:    "около 450 МБ: модуль собирается компилятором с заголовками ядра",
 	},
 	{
 		ID: "xray", Title: "Xray", Group: "VPN",

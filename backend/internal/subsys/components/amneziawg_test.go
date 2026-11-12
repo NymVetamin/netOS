@@ -16,19 +16,32 @@ import (
 
 const testKernel = "6.12.107+deb13-amd64"
 
-// awgRunner models dpkg, apt-cache, apt-get, apt-mark and modprobe.
+// awgRunner models dpkg, apt-cache, apt-get and modprobe. Installing the
+// component also brings `deps`, like apt pulling the compiler for DKMS.
 type awgRunner struct {
-	installed map[string]bool
-	candidate map[string]string
-	modprobe  error
-	calls     []string
+	installed     map[string]bool
+	candidate     map[string]string
+	deps          []string
+	autoremovable map[string]bool // what apt would remove ignoring suggestions
+	modprobe      error
+	calls         []string
 }
 
 func (r *awgRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	r.calls = append(r.calls, name+" "+strings.Join(args, " "))
 	switch name {
 	case "dpkg-query":
-		if r.installed[args[len(args)-1]] {
+		last := args[len(args)-1]
+		if strings.HasPrefix(last, "-f=") { // the whole package list
+			var b strings.Builder
+			for pkg, on := range r.installed {
+				if on {
+					b.WriteString(pkg + "\tinstall ok installed\n")
+				}
+			}
+			return b.String(), nil
+		}
+		if r.installed[last] {
 			return "install ok installed", nil
 		}
 		return "", errors.New("not installed")
@@ -39,11 +52,34 @@ func (r *awgRunner) Run(_ context.Context, name string, args ...string) (string,
 		}
 		return "", nil // apt-cache policy prints nothing for an unknown package
 	case "apt-get":
-		if len(args) > 0 && contains(args, "install") {
+		packages := func(verb string) []string {
+			var out []string
+			seen := false
 			for _, a := range args {
-				if !strings.HasPrefix(a, "-") && a != "install" && a != "DPkg::Lock::Timeout=60" {
-					r.installed[a] = true
+				if a == verb {
+					seen = true
+				} else if seen && !strings.HasPrefix(a, "-") {
+					out = append(out, a)
 				}
+			}
+			return out
+		}
+		switch {
+		case contains(args, "-s"):
+			var b strings.Builder
+			for pkg := range r.autoremovable {
+				if r.installed[pkg] {
+					b.WriteString("Remv " + pkg + " [1.0]\n")
+				}
+			}
+			return b.String(), nil
+		case contains(args, "install"):
+			for _, pkg := range append(packages("install"), r.deps...) {
+				r.installed[pkg] = true
+			}
+		case contains(args, "purge"):
+			for _, pkg := range packages("purge") {
+				delete(r.installed, pkg)
 			}
 		}
 		return "", nil
@@ -92,6 +128,13 @@ func awgEnv(t *testing.T) string {
 	return dir
 }
 
+func newAWG(t *testing.T, r *awgRunner) *Subsystem {
+	t.Helper()
+	s := New(r, testLogger{})
+	s.StateDir = t.TempDir()
+	return s
+}
+
 func awgInfo(t *testing.T) config.ComponentInfo {
 	t.Helper()
 	info, ok := config.ComponentByID(amneziaWGID)
@@ -120,7 +163,7 @@ func TestAmneziaKernelProblem(t *testing.T) {
 		"headers installed":  {installed: map[string]bool{headers: true}},
 		"headers in archive": {installed: map[string]bool{}, candidate: map[string]string{headers: "6.12.107-1"}},
 	} {
-		if problem := New(r, testLogger{}).amneziaKernelProblem(context.Background()); problem != "" {
+		if problem := newAWG(t, r).amneziaKernelProblem(context.Background()); problem != "" {
 			t.Fatalf("%s: %s", name, problem)
 		}
 	}
@@ -128,7 +171,7 @@ func TestAmneziaKernelProblem(t *testing.T) {
 		"headers gone":   {installed: map[string]bool{}, candidate: map[string]string{headers: "(none)"}},
 		"unknown to apt": {installed: map[string]bool{}},
 	} {
-		problem := New(r, testLogger{}).amneziaKernelProblem(context.Background())
+		problem := newAWG(t, r).amneziaKernelProblem(context.Background())
 		if !strings.Contains(problem, "требуется обновление ядра Linux") || !strings.Contains(problem, testKernel) {
 			t.Fatalf("%s: %q", name, problem)
 		}
@@ -138,7 +181,7 @@ func TestAmneziaKernelProblem(t *testing.T) {
 func TestAmneziaWGInstallRefusesWithoutHeaders(t *testing.T) {
 	awgEnv(t)
 	r := &awgRunner{installed: map[string]bool{}}
-	s := New(r, testLogger{})
+	s := newAWG(t, r)
 	refreshed := 0
 	err := s.install(context.Background(), awgInfo(t), func() error { refreshed++; return nil })
 	if err == nil || !strings.Contains(err.Error(), "требуется обновление ядра Linux") {
@@ -155,8 +198,8 @@ func TestAmneziaWGInstallRefusesWithoutHeaders(t *testing.T) {
 func TestAmneziaWGInstallAddsRepoHeadersAndLoadsModule(t *testing.T) {
 	awgEnv(t)
 	headers := "linux-headers-" + testKernel
-	r := &awgRunner{installed: map[string]bool{}, candidate: map[string]string{headers: "6.12.107-1"}}
-	s := New(r, testLogger{})
+	r := &awgRunner{installed: map[string]bool{"libdpkg-perl": true}, candidate: map[string]string{headers: "6.12.107-1"}, deps: []string{"gcc-14"}}
+	s := newAWG(t, r)
 	if err := s.install(context.Background(), awgInfo(t), func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -171,8 +214,9 @@ func TestAmneziaWGInstallAddsRepoHeadersAndLoadsModule(t *testing.T) {
 			t.Fatalf("%s not installed: %v", pkg, r.calls)
 		}
 	}
-	if !r.called("apt-mark auto " + headers) {
-		t.Fatal("headers installed for the module would outlive it")
+	// Everything this installation brought is recorded for removal.
+	if got := strings.Join(s.readAmneziaRecord(), " "); got != "amneziawg-dkms amneziawg-tools gcc-14 "+headers {
+		t.Fatalf("recorded packages: %q", got)
 	}
 	if !r.called("modprobe amneziawg") {
 		t.Fatal("module load was not verified")
@@ -182,34 +226,69 @@ func TestAmneziaWGInstallAddsRepoHeadersAndLoadsModule(t *testing.T) {
 	}
 }
 
-func TestAmneziaWGKeepsPreinstalledHeadersManual(t *testing.T) {
+func TestAmneziaWGLeavesPreinstalledHeaders(t *testing.T) {
 	awgEnv(t)
 	r := &awgRunner{installed: map[string]bool{"linux-headers-" + testKernel: true}}
-	if err := New(r, testLogger{}).install(context.Background(), awgInfo(t), func() error { return nil }); err != nil {
+	s := newAWG(t, r)
+	if err := s.install(context.Background(), awgInfo(t), func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if r.called("apt-mark") {
-		t.Fatal("headers the administrator installed were marked for autoremoval")
+	for _, name := range s.readAmneziaRecord() {
+		if strings.HasPrefix(name, "linux-headers-") {
+			t.Fatal("headers the administrator installed would be purged with the component")
+		}
 	}
 }
 
 func TestAmneziaWGReportsModuleThatDidNotBuild(t *testing.T) {
 	awgEnv(t)
 	r := &awgRunner{installed: map[string]bool{"linux-headers-" + testKernel: true}, modprobe: errors.New("Module amneziawg not found")}
-	err := New(r, testLogger{}).install(context.Background(), awgInfo(t), func() error { return nil })
+	err := newAWG(t, r).install(context.Background(), awgInfo(t), func() error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "модуль ядра AmneziaWG не загрузился") {
 		t.Fatalf("broken module reported as installed: %v", err)
 	}
 }
 
-func TestAmneziaWGHeadersProtectedOnlyWhileSelected(t *testing.T) {
+func TestAmneziaWGRemovalPurgesWhatItBroughtOnly(t *testing.T) {
 	awgEnv(t)
 	headers := "linux-headers-" + testKernel
-	if !protectedComponentPackages(map[string]bool{amneziaWGID: true})[headers] {
-		t.Fatal("removing another component would autoremove the module's headers")
-	}
-	if protectedComponentPackages(map[string]bool{})[headers] {
-		t.Fatal("headers would survive AmneziaWG removal")
+	for name, recorded := range map[string]string{
+		"brought by netOS":    "amneziawg-dkms amneziawg-tools gcc-14 " + headers,
+		"administrator's own": "amneziawg-dkms amneziawg-tools",
+	} {
+		// gcc-14 stays after purge --autoremove: libdpkg-perl suggests a compiler.
+		r := &awgRunner{installed: map[string]bool{headers: true, "gcc-14": true, "libdpkg-perl": true, "amneziawg-dkms": true, "amneziawg-tools": true},
+			autoremovable: map[string]bool{"gcc-14": true, "unrelated-auto": true}}
+		r.installed["unrelated-auto"] = true
+		s := newAWG(t, r)
+		if err := os.WriteFile(s.amneziaRecord(), []byte(recorded+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.remove(context.Background(), awgInfo(t)); err != nil {
+			t.Fatal(err)
+		}
+		owned := strings.Contains(recorded, headers)
+		if r.installed[headers] == owned || r.installed["gcc-14"] == owned {
+			t.Fatalf("%s: headers installed=%v gcc installed=%v", name, r.installed[headers], r.installed["gcc-14"])
+		}
+		if !r.installed["unrelated-auto"] || !r.installed["libdpkg-perl"] {
+			t.Fatalf("%s: removal touched packages it did not bring", name)
+		}
+		if _, err := os.Stat(s.amneziaRecord()); !os.IsNotExist(err) {
+			t.Fatalf("%s: record left behind", name)
+		}
+		unload, purge := -1, -1
+		for i, call := range r.calls {
+			if call == "modprobe -r amneziawg" && unload < 0 {
+				unload = i
+			}
+			if strings.HasPrefix(call, "apt-get") && strings.Contains(call, " purge ") && purge < 0 {
+				purge = i
+			}
+		}
+		if unload < 0 || unload > purge {
+			t.Fatal("module must be unloaded before its files are purged")
+		}
 	}
 }
 
@@ -241,7 +320,7 @@ func TestAmneziaRepoFollowsSelection(t *testing.T) {
 func TestUnavailableSkipsInstalledAmneziaWG(t *testing.T) {
 	awgEnv(t)
 	r := &awgRunner{installed: map[string]bool{}}
-	s := New(r, testLogger{})
+	s := newAWG(t, r)
 	if got := s.Unavailable(context.Background(), map[string]bool{amneziaWGID: true}); len(got) != 0 || len(r.calls) != 0 {
 		t.Fatalf("installed component probed: %v %v", got, r.calls)
 	}

@@ -69,6 +69,14 @@ func (m *Manager) removeInstalledPackages(ctx context.Context) error {
 			return fmt.Errorf("удаление компонентов затронет сторонний пакет %s; удаление остановлено, данные сохранены", f[1])
 		}
 	}
+	// The AmneziaWG module stays loaded after its files are purged; unload it
+	// while modprobe can still find it. A module in use refuses, harmlessly.
+	for _, name := range packages {
+		if strings.Split(name, ":")[0] == "amneziawg-dkms" {
+			_, _ = m.Output(ctx, "modprobe", "-r", "amneziawg")
+			break
+		}
+	}
 	fmt.Fprintf(m.Out, "Удаляем пакеты, установленные netOS: %s\n", strings.Join(packages, ", "))
 	if err := m.runEnv(ctx, []string{"DEBIAN_FRONTEND=noninteractive", "LC_ALL=C"}, "apt-get", args...); err != nil {
 		return err
