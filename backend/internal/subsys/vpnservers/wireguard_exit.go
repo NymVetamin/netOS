@@ -19,7 +19,9 @@ func WireGuardExitGuard(server config.VPNServer) (string, []string) {
 		return "", nil
 	}
 	chain := fmt.Sprintf("NETOS-WGEXIT%d", server.Index)
-	rules := []string{fmt.Sprintf("-A %s -m conntrack --ctdir REPLY --ctstate ESTABLISHED,RELATED -j RETURN", chain)}
+	// Order as iptables-save prints it (--ctdir last): firewall Health compares
+	// the live ruleset textually and would roll the whole apply back otherwise.
+	rules := []string{fmt.Sprintf("-A %s -m conntrack --ctstate ESTABLISHED,RELATED --ctdir REPLY -j RETURN", chain)}
 	if prefixes := wireGuardExitPrefixes(server.Peers); prefixes != nil {
 		for _, prefix := range prefixes {
 			rules = append(rules, fmt.Sprintf("-A %s -s %s -j RETURN", chain, prefix))

@@ -17,10 +17,23 @@ func TestWireGuardPeerChannelFirewall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"-A PREROUTING -i wg-srv4 -j NETOS-WGEXIT4", "--ctdir REPLY --ctstate ESTABLISHED,RELATED -j RETURN", "-A NETOS-WGEXIT4 -s 10.7.0.2/31 -j RETURN", "-A NETOS-WGEXIT4 -j DROP"} {
+		for _, want := range []string{"-A PREROUTING -i wg-srv4 -j NETOS-WGEXIT4", "--ctstate ESTABLISHED,RELATED --ctdir REPLY -j RETURN", "-A NETOS-WGEXIT4 -s 10.7.0.2/31 -j RETURN", "-A NETOS-WGEXIT4 -j DROP"} {
 			if !strings.Contains(rules.IPv4, want) {
 				t.Fatal(want)
 			}
+		}
+		// iptables 1.8.11 (nf_tables) prints the guard with --ctdir last. Health
+		// compares the live ruleset textually; a mismatch rolled back every
+		// attempt to use a WG-server client as a channel.
+		var live []string
+		for _, line := range strings.Split(rules.IPv4, "\n") {
+			if strings.HasPrefix(line, "-A NETOS-WGEXIT4 -m conntrack ") {
+				line = "-A NETOS-WGEXIT4 -m conntrack --ctstate ESTABLISHED,RELATED --ctdir REPLY -j RETURN"
+			}
+			live = append(live, line)
+		}
+		if !rulesetMatches(strings.Join(live, "\n"), rules.IPv4) {
+			t.Fatal("guard as printed by iptables-save does not match the generated ruleset")
 		}
 		if strings.Contains(rules.IPv4, "-A INPUT -i wg-srv4 -m conntrack --ctdir ORIGINAL -j CONNMARK") {
 			t.Fatal("ordinary client replies must not follow exit failover")

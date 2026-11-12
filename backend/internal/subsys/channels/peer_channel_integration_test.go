@@ -140,6 +140,14 @@ func TestIntegrationWireGuardPeerChannel(t *testing.T) {
 		if _, err = runner.RunInput(ctx, rules.IPv4, "iptables-restore"); err != nil {
 			t.Fatal(err)
 		}
+		if _, err = runner.RunInput(ctx, rules.IPv6, "ip6tables-restore"); err != nil {
+			t.Fatal(err)
+		}
+		// The post-apply check compares the live ruleset with the generated one;
+		// it rolled back the whole configuration on iptables-nft.
+		if err = firewall.New(runner, t.TempDir()).Health(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
 		if err = cs.Health(ctx, cfg); err != nil {
 			t.Fatal(err)
 		}

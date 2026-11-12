@@ -64,7 +64,7 @@ func TestWireGuardExitGuardCompactionAndFreshness(t *testing.T) {
 		{Address: "invalid", Enabled: false},
 	}}
 	want := []string{
-		"-A NETOS-WGEXIT7 -m conntrack --ctdir REPLY --ctstate ESTABLISHED,RELATED -j RETURN",
+		"-A NETOS-WGEXIT7 -m conntrack --ctstate ESTABLISHED,RELATED --ctdir REPLY -j RETURN",
 		"-A NETOS-WGEXIT7 -s 10.8.0.2/31 -j RETURN",
 		"-A NETOS-WGEXIT7 -j DROP",
 	}
