@@ -594,14 +594,27 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 		}
 		return false, retErr
 	}
+	previousObfuscation := ""
+	if len(snapshots) > 0 && snapshots[0].existed {
+		previousObfuscation = config.AmneziaWGConfLines(string(snapshots[0].data))
+	}
+	previousAmnezia := previousObfuscation != ""
+	resetObfuscation := false
+	if previousAmnezia {
+		current, err := os.ReadFile(confPath)
+		resetObfuscation = err != nil || config.AmneziaWGConfLines(string(current)) != previousObfuscation
+	}
+	linkType, tool := wireGuardKind(previousAmnezia)
+	if s.linkExists(name) && (resetObfuscation || s.linkKind(rollbackCtx, name) != linkType) {
+		// Missing AWG parameters survive syncconf. Clear them before restoring
+		// the old file; if deletion fails, keep the changed file so a retry
+		// still detects the difference instead of accepting stale kernel state.
+		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "delete", name); err != nil {
+			return false, fmt.Errorf("%v; rollback WireGuard delete: %w", retErr, err)
+		}
+	}
 	if err := restoreChannelFiles(snapshots); err != nil {
 		return false, fmt.Errorf("%v; rollback WireGuard: %w", retErr, err)
-	}
-	// The restored file is the previous configuration and decides the kind.
-	previousAmnezia := len(snapshots) > 0 && snapshots[0].existed && config.AmneziaWGConfLines(string(snapshots[0].data)) != ""
-	linkType, tool := wireGuardKind(previousAmnezia)
-	if s.linkExists(name) && s.linkKind(rollbackCtx, name) != linkType {
-		_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "delete", name)
 	}
 	if !s.linkExists(name) {
 		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "add", "name", name, "type", linkType); err != nil {
