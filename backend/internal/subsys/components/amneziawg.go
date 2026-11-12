@@ -119,12 +119,27 @@ func kernelHeadersPackage() string {
 // новое ядро, модуль собрать не может. Ответ берётся из текущих списков apt;
 // установка обновляет их и спрашивает заново.
 func (s *Subsystem) amneziaKernelProblem(ctx context.Context) string {
-	release := kernelRelease()
+	return s.amneziaKernelProblemFrom(ctx, nil)
+}
+
+func (s *Subsystem) amneziaKernelProblemFrom(ctx context.Context, snapshot *componentLiveSnapshot) string {
+	release := ""
+	if snapshot != nil {
+		release = snapshot.kernelRelease
+	} else {
+		release = kernelRelease()
+	}
 	if release == "" {
 		return "Невозможно установить AmneziaWG: не удалось определить версию ядра Linux."
 	}
 	headers := "linux-headers-" + release
-	if s.Packages.Installed(ctx, headers) {
+	installed := false
+	if snapshot == nil {
+		installed = s.Packages.Installed(ctx, headers)
+	} else {
+		installed = snapshot.packages[headers]
+	}
+	if installed {
 		return ""
 	}
 	out, err := s.Runner.Run(ctx, "apt-cache", "policy", headers)
@@ -146,9 +161,13 @@ func (s *Subsystem) amneziaKernelProblem(ctx context.Context) string {
 // сейчас нельзя и почему, чтобы это было видно до нажатия «Применить»: ошибка
 // установки откатила бы всю конфигурацию.
 func (s *Subsystem) Unavailable(ctx context.Context, installed map[string]bool) map[string]string {
+	return s.unavailableFrom(ctx, installed, nil)
+}
+
+func (s *Subsystem) unavailableFrom(ctx context.Context, installed map[string]bool, snapshot *componentLiveSnapshot) map[string]string {
 	out := map[string]string{}
 	if !installed[amneziaWGID] {
-		if problem := s.amneziaKernelProblem(ctx); problem != "" {
+		if problem := s.amneziaKernelProblemFrom(ctx, snapshot); problem != "" {
 			out[amneziaWGID] = problem
 		}
 	}

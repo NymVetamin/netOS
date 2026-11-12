@@ -42,7 +42,7 @@ var webFS embed.FS
 type ComponentProbe interface {
 	Status(ctx context.Context, ids ...string) map[string]bool
 	Running(ctx context.Context) map[string]bool
-	Unavailable(ctx context.Context, installed map[string]bool) map[string]string
+	CatalogStatus(ctx context.Context) (map[string]bool, map[string]string)
 }
 
 // Server — веб-панель.

@@ -103,14 +103,15 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 }
 
 type componentLiveSnapshot struct {
-	packages map[string]bool
-	disabled map[string]bool
+	packages      map[string]bool
+	disabled      map[string]bool
+	kernelRelease string
 }
 
 // liveSnapshot collapses the catalog-wide state check to one dpkg-query and
 // two systemctl calls. On a saturated single-core router the old per-item loop
 // multiplied process scheduling latency into minutes.
-func (s *Subsystem) liveSnapshot(ctx context.Context) (componentLiveSnapshot, error) {
+func (s *Subsystem) liveSnapshot(ctx context.Context, availability ...bool) (componentLiveSnapshot, error) {
 	var packages, units []string
 	seenPackages, seenUnits := map[string]bool{}, map[string]bool{}
 	for _, info := range config.Catalog {
@@ -127,6 +128,15 @@ func (s *Subsystem) liveSnapshot(ctx context.Context) (componentLiveSnapshot, er
 			}
 		}
 	}
+	// The full catalog also checks whether the running kernel can build AWG.
+	// dpkg already returns every package; retain the header result in this snapshot.
+	release := ""
+	if len(availability) > 0 && availability[0] {
+		release = kernelRelease()
+		if headers := "linux-headers-" + release; release != "" && !seenPackages[headers] {
+			packages = append(packages, headers)
+		}
+	}
 	installed, err := s.Packages.InstalledPackages(ctx, packages)
 	if err != nil {
 		return componentLiveSnapshot{}, err
@@ -135,7 +145,7 @@ func (s *Subsystem) liveSnapshot(ctx context.Context) (componentLiveSnapshot, er
 	if err != nil {
 		return componentLiveSnapshot{}, err
 	}
-	return componentLiveSnapshot{packages: installed, disabled: disabled}, nil
+	return componentLiveSnapshot{packages: installed, disabled: disabled, kernelRelease: release}, nil
 }
 
 // Apply доводит состав установленного до описанного в конфигурации.
@@ -738,6 +748,21 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error { retu
 // Status сообщает, что из каталога реально присутствует на машине. Панель
 // показывает это рядом с желаемым состоянием, чтобы расхождение было видно.
 func (s *Subsystem) Status(ctx context.Context, ids ...string) map[string]bool {
+	installed, _, _ := s.statusSnapshot(ctx, false, ids...)
+	return installed
+}
+
+// CatalogStatus shares one OS snapshot between installation and availability.
+func (s *Subsystem) CatalogStatus(ctx context.Context) (map[string]bool, map[string]string) {
+	installed, snapshot, err := s.statusSnapshot(ctx, true)
+	var availableSnapshot *componentLiveSnapshot
+	if err == nil && snapshot.packages != nil {
+		availableSnapshot = &snapshot
+	}
+	return installed, s.unavailableFrom(ctx, installed, availableSnapshot)
+}
+
+func (s *Subsystem) statusSnapshot(ctx context.Context, availability bool, ids ...string) (map[string]bool, componentLiveSnapshot, error) {
 	out := map[string]bool{}
 	catalog := config.Catalog
 	if len(ids) > 0 {
@@ -754,12 +779,12 @@ func (s *Subsystem) Status(ctx context.Context, ids ...string) map[string]bool {
 		if !info.External && len(info.Packages) > 0 {
 			// Keep the established batched OS snapshot. Narrowing the unit-file
 			// query to absent optional units triggers systemd's costly fallback.
-			snapshot, snapshotErr = s.liveSnapshot(ctx)
+			snapshot, snapshotErr = s.liveSnapshot(ctx, availability)
 			break
 		}
 	}
 	if snapshotErr != nil && ctx.Err() != nil {
-		return out
+		return out, snapshot, snapshotErr
 	}
 	for _, info := range catalog {
 		if !info.External && len(info.Packages) == 0 {
@@ -767,7 +792,7 @@ func (s *Subsystem) Status(ctx context.Context, ids ...string) map[string]bool {
 		}
 		_, out[info.ID] = s.componentStateFrom(ctx, info, snapshot, snapshotErr == nil)
 	}
-	return out
+	return out, snapshot, snapshotErr
 }
 
 // Running сообщает, какие компоненты не просто установлены, а работают прямо

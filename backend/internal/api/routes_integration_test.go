@@ -173,11 +173,11 @@ func (p catalogComponentProbe) Status(_ context.Context, ids ...string) map[stri
 	}
 	return out
 }
-func (p catalogComponentProbe) Unavailable(_ context.Context, installed map[string]bool) map[string]string {
+func (p catalogComponentProbe) CatalogStatus(_ context.Context) (map[string]bool, map[string]string) {
 	if p.forbidRunning {
 		panic("installed-only request must not probe availability")
 	}
-	return p.unavailable
+	return p.installed, p.unavailable
 }
 func (p catalogComponentProbe) Running(context.Context) map[string]bool {
 	if p.forbidRunning {
