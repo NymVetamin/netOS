@@ -1,3 +1,4 @@
+import { amneziaWGProfileLines } from "./amneziawg";
 export type WireGuardProfile = { use_router_dns: boolean; dns: string[]; allowed_ips: string[] };
 
 export function newWireGuardProfile(): WireGuardProfile {
@@ -28,5 +29,5 @@ export function wireGuardClientConfig(server: any, peer: any, privateKey: string
   const preshared = (peer.credentials?.preshared_key || presharedKey)
     ? `PresharedKey = ${peer.credentials?.preshared_key || presharedKey}\n`
     : "";
-  return `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\n${dns}${mtu}\n[Peer]\nPublicKey = ${serverPublicKey}\n${preshared}Endpoint = ${server.config?.public_endpoint || ""}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = 25\n`;
+  return `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\n${dns}${mtu}${amneziaWGProfileLines(server.config?.amneziawg)}\n[Peer]\nPublicKey = ${serverPublicKey}\n${preshared}Endpoint = ${server.config?.public_endpoint || ""}\nAllowedIPs = ${allowed.join(", ")}\nPersistentKeepalive = 25\n`;
 }

@@ -150,7 +150,7 @@ func TestRenderWireGuardKeepsPlainChannelsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if amneziaLines(plain) != "" {
+	if config.AmneziaWGConfLines(plain) != "" {
 		t.Fatalf("plain WireGuard config gained obfuscation:\n%s", plain)
 	}
 }

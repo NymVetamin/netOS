@@ -202,10 +202,27 @@ func enabledServers(cfg *config.Config) []config.VPNServer {
 	return out
 }
 
+// ownedServerType keeps the link kind in the owned record: switching a
+// WireGuard server to AmneziaWG (or back) replaces its interface.
+func ownedServerType(server config.VPNServer) string {
+	if server.IsAmneziaWG() {
+		return "amneziawg"
+	}
+	return server.Type
+}
+
+// wireGuardKind returns the link type and tool of a WireGuard server.
+func wireGuardKind(server config.VPNServer) (linkType, tool string) {
+	if server.IsAmneziaWG() {
+		return "amneziawg", "awg"
+	}
+	return "wireguard", "wg"
+}
+
 func ownedServersFor(servers []config.VPNServer) []ownedServer {
 	items := make([]ownedServer, 0, len(servers))
 	for _, server := range servers {
-		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: server.Type}
+		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: ownedServerType(server)}
 		switch server.Type {
 		case "xray":
 			item.Unit = xrayUnitName(server)
@@ -396,7 +413,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	var nextOwned []ownedServer
 	var created []ownedServer
 	for _, server := range wanted {
-		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: server.Type}
+		item := ownedServer{Name: resourceName(server), Index: server.Index, Type: ownedServerType(server)}
 		var createdNow bool
 		switch server.Type {
 		case "wireguard":
@@ -463,6 +480,9 @@ func RenderWireGuard(server config.VPNServer) (string, error) {
 	fmt.Fprintln(&b, "[Interface]")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", wg.PrivateKey)
 	fmt.Fprintf(&b, "ListenPort = %d\n", server.Port)
+	if wg.AmneziaWG != nil {
+		b.WriteString(wg.AmneziaWG.NativeLines())
+	}
 	for _, peer := range server.Peers {
 		if !peer.Enabled {
 			continue
@@ -489,13 +509,14 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 		return false, fmt.Errorf("защита WG-выхода: %w", err)
 	}
 	name := InterfaceName(server)
+	linkType, tool := wireGuardKind(server)
 	existed := s.linkExists(name)
 	if existed && !wasOwned {
 		return false, fmt.Errorf("интерфейс %s существует и не принадлежит netOS", name)
 	}
 	if existed {
-		if _, err := s.Runner.Run(ctx, "wg", "show", name); err != nil {
-			return false, fmt.Errorf("интерфейс %s не является WireGuard", name)
+		if _, err := s.Runner.Run(ctx, tool, "show", name); err != nil {
+			return false, fmt.Errorf("интерфейс %s не является %s", name, linkType)
 		}
 	}
 	conf, err := RenderWireGuard(server)
@@ -503,11 +524,22 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 		return false, err
 	}
 	path := filepath.Join(s.StateDir, name+".conf")
+	if existed && server.IsAmneziaWG() {
+		// syncconf keeps parameters absent from the file (a removed signature
+		// would stay in effect); changed obfuscation recreates the interface.
+		previous, _ := os.ReadFile(path)
+		if config.AmneziaWGConfLines(string(previous)) != config.AmneziaWGConfLines(conf) {
+			if _, err := s.Runner.Run(ctx, "ip", "link", "delete", name); err != nil {
+				return false, fmt.Errorf("пересоздание интерфейса %s: %w", name, err)
+			}
+			existed = false
+		}
+	}
 	if err := writeFile(path, []byte(conf), 0o600); err != nil {
 		return false, fmt.Errorf("сохранение конфигурации: %w", err)
 	}
 	if !existed {
-		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", name, "type", "wireguard"); err != nil {
+		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", name, "type", linkType); err != nil {
 			_ = os.Remove(path)
 			return false, fmt.Errorf("создание интерфейса: %w", err)
 		}
@@ -522,7 +554,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, server config.VPNServer,
 	if err := system.EnsureWireGuardAppArmor(ctx, s.AppArmorDir, s.AppArmorProfiles, s.StateDir, s.Runner.Run); err != nil {
 		return fail(fmt.Errorf("AppArmor WireGuard: %w", err))
 	}
-	if _, err := s.Runner.Run(ctx, "wg", "syncconf", name, path); err != nil {
+	if _, err := s.Runner.Run(ctx, tool, "syncconf", name, path); err != nil {
 		return fail(fmt.Errorf("настройка WireGuard: %w", err))
 	}
 	if err := s.ensureAddress(ctx, name, server.Subnet); err != nil {
@@ -793,7 +825,8 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("интерфейс %s: чтение disable_ipv6: %w", name, err)
 		}
-		show, err := s.Runner.Run(ctx, "wg", "show", name, "listen-port")
+		_, tool := wireGuardKind(server)
+		show, err := s.Runner.Run(ctx, tool, "show", name, "listen-port")
 		if err != nil || strings.TrimSpace(show) != fmt.Sprint(server.Port) {
 			return fmt.Errorf("сервер %s не слушает UDP-порт %d", server.Name, server.Port)
 		}

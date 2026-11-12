@@ -103,3 +103,22 @@ func TestAmneziaWGChannelNeedsItsOwnComponent(t *testing.T) {
 		t.Fatal("unknown obfuscation field accepted")
 	}
 }
+
+// The exit through a client of an AmneziaWG server runs on that server's
+// interface: it needs AmneziaWG, not the WireGuard component.
+func TestAmneziaWGServerExitChannelNeedsNoWireGuard(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	c := Default()
+	c.Components = []Component{{ID: "amneziawg", Installed: true}}
+	c.VPNServers = []VPNServer{{ID: "s", Index: 1, Name: "AWG", Type: "wireguard", Enabled: true, Subnet: "10.88.0.1/24", Port: 51900, DefaultChannel: "direct",
+		Config: map[string]any{"private_key": key, "amneziawg": map[string]any{"jc": 4, "jmin": 40, "jmax": 70}},
+		Peers:  []VPNPeer{{ID: "vps", Name: "VPS", Enabled: true, Address: "10.88.0.2", UseAsChannel: true, Credentials: map[string]string{"public_key": key}}}}}
+	c.Normalize()
+	if r := c.Validate(); r.HasErrors() {
+		t.Fatalf("exit of an AmneziaWG server rejected: %s", messages(r))
+	}
+	c.Components = nil
+	if r := c.Validate(); !strings.Contains(messages(r), "компонент «AmneziaWG»") {
+		t.Fatalf("server without its component accepted: %s", messages(r))
+	}
+}

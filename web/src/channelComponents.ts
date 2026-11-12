@@ -8,9 +8,15 @@ export const channelComponents = [
 ] as const;
 
 // An AmneziaWG channel is stored as a WireGuard channel with obfuscation
-// parameters; its kind decides the component, label and icon.
-export function channelKind(channel: any): string {
-  return channel?.type === "wireguard" && !channel.wireguard_peer && channel.config?.amneziawg ? "amneziawg" : channel?.type;
+// parameters; its kind decides the component, label and icon. An exit through
+// a WG-server client runs on that server's interface and takes its kind.
+export function channelKind(channel: any, config?: any): string {
+  if (channel?.type !== "wireguard") return channel?.type;
+  const peer = channel.wireguard_peer;
+  const amnezia = peer
+    ? (config?.vpn_servers || []).some((server: any) => server.id === peer.server_id && server.config?.amneziawg)
+    : !!channel.config?.amneziawg;
+  return amnezia ? "amneziawg" : "wireguard";
 }
 
 // A checkbox in the draft is not proof that the installation succeeded.

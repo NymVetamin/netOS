@@ -149,6 +149,23 @@ func (a AmneziaWGParams) NativeLines() string {
 	return b.String()
 }
 
+// AmneziaWGConfLines extracts the obfuscation lines of a rendered native
+// configuration. Equal results mean syncconf can update the live link; any
+// difference requires recreating it, because syncconf keeps parameters
+// that are merely absent from the file.
+func AmneziaWGConfLines(conf string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(conf, "\n") {
+		key, _, _ := strings.Cut(line, " = ")
+		switch key {
+		case "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5":
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
 // validateAmneziaSignature parses the tag syntax of the native tools without
 // regexp backtracking: <b 0xHEX> bytes, <r N>/<rd N>/<rc N> random data, <t>
 // timestamp, <c> counter. The resulting packet must fit one UDP datagram.

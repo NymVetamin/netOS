@@ -268,7 +268,7 @@ export function ChannelsPage({ config, patch }: Props) {
               key={channel.id}
               channel={channel}
               channels={channels}
-              installed={ready(channelKind(channel))}
+              installed={ready(channelKind(channel, config))}
               referenced={isChannelReferenced(config, channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() =>
@@ -348,7 +348,7 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
   const live = (useContext(Live) || []).find((item: any) => item.id === channel.id);
   const settings = useContext(NATSettings);
   const nat = settings ? channelNAT(settings.config, channel) : null;
-  const kind = channelKind(channel);
+  const kind = channelKind(channel, settings?.config);
   const need = useContext(NeedFor)(kind);
   // Пустые части не печатаются: без типа проверки строка начиналась с запятой.
   const probe = channel.probe?.enabled === false ? "выключена" : [String(channel.probe?.type || "").toUpperCase(), `каждые ${channel.probe?.interval || 10} с`].filter(Boolean).join(", ");

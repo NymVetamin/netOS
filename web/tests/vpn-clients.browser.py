@@ -48,6 +48,9 @@ async def scenario(browser, mode):
         cfg["vpn_servers"][0].update(type=kind, config={"protocol": "reality"} if kind == "xray" else {})
         peer["credentials"] = {"username": "alice"}
         cfg["components"].append({"id": kind, "installed": True})
+    if mode == "amneziawg":
+        cfg["components"].append({"id": "amneziawg", "installed": True})
+        cfg["vpn_servers"][0]["config"]["amneziawg"] = {"jc": 4, "jmin": 40, "jmax": 70, "s1": 15, "s2": 25, "h1": "100", "h2": "200", "h3": "300", "h4": "400", "i1": "<b 0xc0ffee><t>"}
     if mode == "exit":
         second=copy.deepcopy(peer);second.update(id="second",name="Второй",address="10.9.0.3");cfg["vpn_servers"][0]["peers"].append(second)
     original = copy.deepcopy(cfg)
@@ -357,6 +360,31 @@ async def scenario(browser, mode):
         await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_have_count(0)
         state["telemetry"] = "never"
         await expect(page.get_by_text("Оффлайн", exact=True)).to_be_visible(timeout=10000)
+    elif mode == "amneziawg":
+        # The server shows its kind and obfuscation; the profile carries it.
+        server_row = page.locator("form.vpn-server").first
+        await expect(server_row.get_by_text("AmneziaWG", exact=True).first).to_be_visible()
+        await expect(page.get_by_role("spinbutton", name="AmneziaWG Jc", exact=True)).to_have_value("4")
+        await page.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
+        async with page.expect_download() as event:
+            await page.get_by_role("button", name="Скачать .conf", exact=True).click()
+        body = Path(await (await event.value).path()).read_text()
+        iface = body.split("[Peer]")[0]
+        for line in ("Jc = 4", "Jmin = 40", "Jmax = 70", "S1 = 15", "S2 = 25", "H1 = 100", "H4 = 400", "I1 = <b 0xc0ffee><t>"):
+            assert line + "\n" in iface, (line, body)
+        # A new AmneziaWG server gets its own random, valid obfuscation.
+        await page.locator("details.addmenu > summary").filter(has_text="Добавить").first.click()
+        async with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("/api/config")):
+            await page.get_by_role("button", name="Добавить AmneziaWG", exact=True).click()
+        created = state["config"]["vpn_servers"][-1]
+        params = created["config"]["amneziawg"]
+        assert created["type"] == "wireguard" and created["name"].startswith("AmneziaWG"), created
+        assert len({params[k] for k in ("h1", "h2", "h3", "h4")}) == 4, params
+        assert params["s1"] + 56 != params["s2"] and params["jmin"] <= params["jmax"], params
+        await page.close()
+        assert not errors, errors
+        print(mode, "PASS")
+        return
     elif mode == "create":
         await page.locator(".card-sub details.addmenu > summary").click()
         await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
@@ -427,7 +455,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("exit", "sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("exit", "amneziawg", "sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

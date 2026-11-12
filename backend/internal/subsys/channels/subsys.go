@@ -598,7 +598,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 		return false, fmt.Errorf("%v; rollback WireGuard: %w", retErr, err)
 	}
 	// The restored file is the previous configuration and decides the kind.
-	previousAmnezia := len(snapshots) > 0 && snapshots[0].existed && amneziaLines(string(snapshots[0].data)) != ""
+	previousAmnezia := len(snapshots) > 0 && snapshots[0].existed && config.AmneziaWGConfLines(string(snapshots[0].data)) != ""
 	linkType, tool := wireGuardKind(previousAmnezia)
 	if s.linkExists(name) && s.linkKind(rollbackCtx, name) != linkType {
 		_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "delete", name)
@@ -678,7 +678,7 @@ func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, 
 			// a removed signature would keep being sent. Changed obfuscation
 			// recreates the link; unchanged settings keep the tunnel up.
 			previous, _ := os.ReadFile(confPath)
-			if amneziaLines(string(previous)) != amneziaLines(conf) {
+			if config.AmneziaWGConfLines(string(previous)) != config.AmneziaWGConfLines(conf) {
 				if _, err := s.Runner.Run(ctx, "ip", "link", "delete", name); err != nil {
 					return fmt.Errorf("пересоздание интерфейса %s: %w", name, err)
 				}

@@ -542,7 +542,11 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		if channel.Enabled && channel.IsAmneziaWG() && !c.HasComponent("amneziawg") {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала AmneziaWG нужен компонент «AmneziaWG»")
-		} else if channel.Enabled && channel.Type == "wireguard" && !channel.IsAmneziaWG() && !c.HasComponent("wireguard") {
+		} else if channel.Enabled && channel.Type == "wireguard" && !channel.IsAmneziaWG() &&
+			// An exit through a WG-server client runs on the server's interface;
+			// the server check requires that server's own component (WireGuard
+			// or AmneziaWG), so the channel adds no requirement of its own.
+			channel.WireGuardPeer == nil && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("channels[%d].enabled", i),
 				"для канала WireGuard нужен компонент «WireGuard»")
 		}
@@ -562,7 +566,10 @@ func (c *Config) validateComponents(r *ValidationResult) {
 		}
 	}
 	for i, server := range c.VPNServers {
-		if server.Enabled && server.Type == "wireguard" && !c.HasComponent("wireguard") {
+		if server.Enabled && server.IsAmneziaWG() && !c.HasComponent("amneziawg") {
+			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
+				"для сервера AmneziaWG нужен компонент «AmneziaWG»")
+		} else if server.Enabled && server.Type == "wireguard" && !server.IsAmneziaWG() && !c.HasComponent("wireguard") {
 			r.errf(fmt.Sprintf("vpn_servers[%d].enabled", i),
 				"для сервера WireGuard нужен компонент «WireGuard»")
 		}
@@ -3270,6 +3277,11 @@ func (c *Config) validateWireGuardServer(r *ValidationResult, path string, s VPN
 		return
 	}
 	validateWGKey(r, path+".config.private_key", wg.PrivateKey, false)
+	if wg.AmneziaWG != nil {
+		if err := wg.AmneziaWG.Validate(); err != nil {
+			r.errf(path+".config.amneziawg", "AmneziaWG: %v", err)
+		}
+	}
 	if wg.MTU != 0 && (wg.MTU < 576 || wg.MTU > 9000) {
 		r.errf(path+".config.mtu", "MTU вне диапазона 576-9000")
 	}

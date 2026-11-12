@@ -45,8 +45,15 @@ async def scenario(browser, mode):
         channels.append({"id": "plain", "type": "wireguard", "name": "Plain", "enabled": False, "index": 1, "mode": "tun",
                          "config": {"address": "192.0.2.2/32", "endpoint": "example.test:51820", "allowed_ips": ["0.0.0.0/0"]},
                          "probe": {"enabled": False}})
-    state = {"config": {"system": {"hostname": "test"}, "interfaces": [], "networks": [], "policies": [], "channels": channels,
-                        "components": [{"id": "wireguard", "installed": True}, {"id": "amneziawg", "installed": ready}]}, "version": 1}
+    servers = []
+    if mode == "exit":
+        # Exit through a client of an AmneziaWG server; no WireGuard component.
+        servers = [{"id": "awg", "type": "wireguard", "name": "AWG", "index": 1, "enabled": True, "subnet": "10.88.0.1/24", "port": 51900,
+                    "config": {"amneziawg": {"jc": 4}}, "peers": [{"id": "vps", "name": "VPS", "enabled": True, "address": "10.88.0.2", "use_as_channel": True}]}]
+        channels.append({"id": "wg-exit-awg", "type": "wireguard", "name": "VPS", "enabled": True, "index": 2, "mode": "tun",
+                         "wireguard_peer": {"server_id": "awg", "peer_id": "vps", "server_index": 1}, "config": {}, "probe": {"enabled": False}})
+    state = {"config": {"system": {"hostname": "test"}, "interfaces": [], "networks": [], "policies": [], "channels": channels, "vpn_servers": servers,
+                        "components": [{"id": "wireguard", "installed": mode != "exit"}, {"id": "amneziawg", "installed": ready}]}, "version": 1}
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
 
@@ -61,7 +68,7 @@ async def scenario(browser, mode):
         if path == "/api/session":
             body = {"username": "admin", "role": "admin", "csrf_token": "test"}
         elif path == "/api/catalog":
-            body = {"components": [], "installed": {"wireguard": True, "amneziawg": ready}}
+            body = {"components": [], "installed": {"wireguard": mode != "exit", "amneziawg": ready}}
         elif path == "/api/status":
             body = {"interfaces": [], "channels": [], "uptime_seconds": 1}
         elif path == "/api/wireguard/keypair":
@@ -97,6 +104,11 @@ async def scenario(browser, mode):
                 break
             await asyncio.sleep(0.1)
         assert saved() == 6, state["config"]["channels"]
+    elif mode == "exit":
+        row = page.locator('[data-channel-id="wg-exit-awg"]')
+        await expect(row.get_by_text("AmneziaWG", exact=True)).to_be_visible()
+        await expect(row.get_by_text("нужен WireGuard", exact=False)).to_have_count(0)
+        await expect(row.get_by_role("checkbox", name="Использовать", exact=True)).to_be_enabled()
     else:
         await expect(jc).to_have_count(0)
         await page.get_by_label("Импорт конфигурации WireGuard").set_input_files(
@@ -117,7 +129,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("missing", "create", "import"):
+        for mode in ("missing", "create", "import", "exit"):
             await scenario(browser, mode)
         await browser.close()
 

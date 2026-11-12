@@ -85,7 +85,11 @@ func (s *Server) wireGuardClients(ctx context.Context, server config.VPNServer, 
 		if !available {
 			break
 		}
-		out, err := s.Collector.Runner.Run(ctx, "wg", "show", vpnservers.InterfaceName(server), field)
+		tool := "wg"
+		if server.IsAmneziaWG() {
+			tool = "awg"
+		}
+		out, err := s.Collector.Runner.Run(ctx, tool, "show", vpnservers.InterfaceName(server), field)
 		if err != nil {
 			available = false
 			break

@@ -19,6 +19,13 @@ type WireGuardServerConfig struct {
 	PublicEndpoint   string   `json:"public_endpoint,omitempty" plan:"Адрес подключения" sensitivity:"public"`
 	ClientDNS        []string `json:"client_dns,omitempty" plan:"DNS для клиентов" sensitivity:"public"` // Legacy profile defaults, kept for existing clients.
 	ClientAllowedIPs []string `json:"client_allowed_ips,omitempty" plan:"Маршруты клиентов" sensitivity:"public"`
+	// Задана — сервер работает на модуле AmneziaWG; клиентам уходят те же значения.
+	AmneziaWG *AmneziaWGParams `json:"amneziawg,omitempty" plan:"Маскировка AmneziaWG" sensitivity:"public"`
+}
+
+// IsAmneziaWG reports a WireGuard server that runs on the AmneziaWG module.
+func (s VPNServer) IsAmneziaWG() bool {
+	return s.Type == "wireguard" && s.Config["amneziawg"] != nil
 }
 
 // WireGuardClientProfile configures the exported client, not the server's peer

@@ -48,21 +48,6 @@ func (s *Subsystem) syncWireGuard(ctx context.Context, tool, name, path string) 
 	return err
 }
 
-// amneziaLines extracts the obfuscation parameters of a rendered
-// configuration; equal results mean syncconf can update the live link.
-func amneziaLines(conf string) string {
-	var b strings.Builder
-	for _, line := range strings.Split(conf, "\n") {
-		key, _, _ := strings.Cut(line, " = ")
-		switch key {
-		case "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5":
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
-
 // linkKind reads the link type ("wireguard", "amneziawg") from the kernel.
 func (s *Subsystem) linkKind(ctx context.Context, name string) string {
 	out, err := s.Runner.Run(ctx, "ip", "-d", "-o", "link", "show", "dev", name)
