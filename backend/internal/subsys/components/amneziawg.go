@@ -191,8 +191,7 @@ func (s *Subsystem) installedPackageNames(ctx context.Context) (map[string]bool,
 // removeAmneziaLeftovers purges recorded packages that apt itself considers
 // unneeded once suggestions are ignored. Simulation first: a package that
 // something still depends on or recommends is not touched.
-func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, keep map[string]bool) error {
-	recorded := s.readAmneziaRecord()
+func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, recorded []string, keep map[string]bool) error {
 	if len(recorded) == 0 {
 		return nil
 	}
