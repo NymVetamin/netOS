@@ -165,8 +165,9 @@ Torch учитывает IPv4, IPv6 и ARP без отсечения колич�
 - DDNS: Cloudflare, DuckDNS и No-IP, адрес с интерфейса или внешнего сервиса
 
 **VPN**
-- Исходящие WireGuard-, IKEv2-, L2TP-, OpenConnect AnyConnect- и Xray-каналы (VLESS, VMess, Trojan, Shadowsocks, Reality и другие транспорты Xray)
-- Входящие WireGuard, VLESS Reality, OpenConnect и IKEv2: отдельные клиенты, ключи/пароли и клиентские конфигурации
+- Исходящие WireGuard-, AmneziaWG-, IKEv2-, L2TP-, OpenConnect AnyConnect- и Xray-каналы (VLESS, VMess, Trojan, Shadowsocks, Reality и другие транспорты Xray)
+- Входящие WireGuard, AmneziaWG, VLESS Reality, OpenConnect и IKEv2: отдельные клиенты, ключи/пароли и клиентские конфигурации
+- AmneziaWG ставится компонентом из репозитория Amnezia; модуль собирается под ядро роутера, поэтому для работающего ядра нужны заголовки в репозитории Debian — иначе панель попросит обновить ядро и перезагрузиться
 - Выбор канала выхода для клиента, сегмента, IP-адреса, домена, протокола или порта
 - Активные ICMP/TCP/HTTP-проверки каналов с порогами отказа и восстановления
 - Режим отказа на выбор: kill-switch, запасной канал или прямой выход

@@ -368,6 +368,7 @@ Split-DNS: для каждого канала можно задать свой u
 |---|---|---|
 | `direct` | штатный маршрут через WAN | — |
 | `wireguard` | ядро, `wg-quick` не используется — конфиг через netlink/wg | `wg-chN` |
+| `wireguard` + `config.amneziawg` | AmneziaWG: модуль ядра `amneziawg`, утилита `awg`, параметры маскировки Jc…I5; импорт `.conf` AmneziaVPN | `wg-chN` |
 | `xray` | `xray-core`: VLESS/VMess/Trojan/Shadowsocks, Reality, XTLS, WS, gRPC, mKCP | `tun-chN` |
 | `openconnect` | клиент `openconnect` (AnyConnect) | `tun-chN` |
 | `ikev2` | strongSwan, отдельный процесс и XFRM-интерфейс для каждого канала | `xfrm-chN` |
@@ -385,6 +386,7 @@ Split-DNS: для каждого канала можно задать свой u
 | Тип | Реализация | Что даёт |
 |---|---|---|
 | WireGuard | ядро | Роад-варриор, QR-код конфига в панели |
+| AmneziaWG | модуль ядра `amneziawg` из репозитория Amnezia | WireGuard с маскировкой пакетов; параметры попадают в профили клиентов |
 | IKEv2/IPsec | strongSwan | Нативные клиенты iOS/macOS/Windows без софта |
 | L2TP/IPsec | strongSwan, xl2tpd, pppd | IPsec с общим ключом и отдельными логинами пользователей |
 | OpenConnect | `ocserv` | Маскировка под HTTPS там, где режут WG/IPsec |
