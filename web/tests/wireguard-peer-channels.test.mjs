@@ -21,6 +21,14 @@ test('ordinary channels are not rewritten',()=>{
  const c=fixture(1);c.channels=[{id:'normal',index:2,config:{private_key:'test'},enabled:false}];
  const original=JSON.stringify(c.channels[0]);sync(c);assert.equal(JSON.stringify(c.channels[0]),original);assert.equal(c.channels[1].index,1);
 });
+test('unrenamed exit channel follows the new exit client; a custom name stays',()=>{
+ const c=fixture(1);c.vpn_servers[0].peers.push({id:'next',name:'HostVDS'});sync(c);
+ const peers=c.vpn_servers[0].peers;const ch=()=>c.channels[0];ch().probe.interval=23;
+ peers[0].use_as_channel=false;peers[1].use_as_channel=true;sync(c);
+ assert.equal(ch().name,'HostVDS');assert.equal(ch().wireguard_peer.peer_id,'next');assert.equal(ch().probe.interval,23);
+ ch().name='Europe';peers[1].use_as_channel=false;peers[0].use_as_channel=true;sync(c);
+ assert.equal(ch().name,'Europe');assert.equal(ch().wireguard_peer.peer_id,'vps');
+});
 for(const size of [25,2500]){
  const c=fixture(size);sync(c);for(let i=0;i<10;i++)sync(c);
  const start=performance.now();for(let i=0;i<100;i++)sync(c);

@@ -103,3 +103,39 @@ func BenchmarkWireGuardPeerChannels(b *testing.B) {
 		})
 	}
 }
+
+func TestWireGuardPeerChannelNameFollowsExitSwitch(t *testing.T) {
+	c := peerExitFixture()
+	c.VPNServers[0].Peers = append(c.VPNServers[0].Peers, VPNPeer{ID: "next", Name: "HostVDS", Enabled: true})
+	c.Normalize()
+	id := WireGuardPeerChannelID("server")
+	channel := func() *Channel {
+		for i := range c.Channels {
+			if c.Channels[i].ID == id {
+				return &c.Channels[i]
+			}
+		}
+		t.Fatal("exit channel missing")
+		return nil
+	}
+	channel().Probe.Interval = 23
+	index := channel().Index
+	switchExit := func(from, to int) {
+		c.VPNServers[0].Peers[from].UseAsChannel = false
+		c.VPNServers[0].Peers[to].UseAsChannel = true
+		c.Normalize()
+	}
+	switchExit(0, 1)
+	if ch := channel(); ch.Name != "HostVDS" || ch.WireGuardPeer.PeerID != "next" || ch.Index != index || ch.Probe.Interval != 23 {
+		t.Fatalf("unrenamed channel must follow the new exit and keep its identity: %+v", ch)
+	}
+	c.Normalize()
+	if channel().Name != "HostVDS" {
+		t.Fatal("repeat changed the name")
+	}
+	channel().Name = "Europe"
+	switchExit(1, 0)
+	if ch := channel(); ch.Name != "Europe" || ch.WireGuardPeer.PeerID != "vps" {
+		t.Fatalf("administrator's name must survive an exit switch: %+v", ch)
+	}
+}

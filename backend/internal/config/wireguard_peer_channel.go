@@ -39,6 +39,13 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 				managedNAT["channel-nat-"+ch.ID] = ""
 				continue
 			}
+			// The channel is named after its exit client. When the exit moves to
+			// another client, a name nobody changed follows it; otherwise the
+			// panel keeps offering the previous client's name for the new exit.
+			// The previous client is looked up only on an actual switch.
+			if old := *ch.WireGuardPeer; old.PeerID != ref.PeerID && ch.Name == c.wireGuardPeerName(old) {
+				ch.Name = names[ch.ID]
+			}
 			ch.WireGuardPeer = &ref
 			managedNAT["channel-nat-"+ch.ID] = fmt.Sprintf("wg-srv%d", ref.ServerIndex)
 		}
@@ -69,6 +76,22 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 		nat = append(nat, rule)
 	}
 	c.Firewall.NAT = nat
+}
+
+// wireGuardPeerName returns the current name of a referenced client, or ""
+// when the client no longer exists.
+func (c *Config) wireGuardPeerName(ref WireGuardPeerChannel) string {
+	for _, s := range c.VPNServers {
+		if s.ID != ref.ServerID {
+			continue
+		}
+		for _, p := range s.Peers {
+			if p.ID == ref.PeerID {
+				return p.Name
+			}
+		}
+	}
+	return ""
 }
 
 func (c *Config) validateWireGuardPeerChannels(r *ValidationResult) {

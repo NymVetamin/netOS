@@ -16,6 +16,14 @@ export function syncWireGuardPeerChannels(config: any) {
   if (c.wireguard_peer) {
    managedNAT.set(`channel-nat-${c.id}`, source ? `wg-srv${source.ref.server_index}` : "");
    if (!source) return false;
+   // A name nobody changed follows the exit to its new client. The previous
+   // client is looked up only on an actual switch, which is rare.
+   const old = c.wireguard_peer;
+   if (old.peer_id !== source.ref.peer_id) {
+    const server = (config.vpn_servers || []).find((s:any) => s.id === old.server_id);
+    const previous = (server?.peers || []).find((p:any) => p.id === old.peer_id);
+    if (previous && c.name === previous.name) c.name = source.name;
+   }
    c.wireguard_peer = source.ref;
   }
   present.add(c.id);
