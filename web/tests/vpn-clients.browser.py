@@ -48,9 +48,11 @@ async def scenario(browser, mode):
         cfg["vpn_servers"][0].update(type=kind, config={"protocol": "reality"} if kind == "xray" else {})
         peer["credentials"] = {"username": "alice"}
         cfg["components"].append({"id": kind, "installed": True})
-    if mode == "amneziawg":
+    if mode in ("amneziawg", "qr-large"):
         cfg["components"].append({"id": "amneziawg", "installed": True})
         cfg["vpn_servers"][0]["config"]["amneziawg"] = {"jc": 4, "jmin": 40, "jmax": 70, "s1": 15, "s2": 25, "h1": "100", "h2": "200", "h3": "300", "h4": "400", "i1": "<b 0xc0ffee><t>"}
+        if mode == "qr-large":
+            cfg["vpn_servers"][0]["config"]["amneziawg"]["i1"] = "<b 0x" + "ab" * 2000 + ">"
     if mode == "exit":
         second=copy.deepcopy(peer);second.update(id="second",name="Второй",address="10.9.0.3");cfg["vpn_servers"][0]["peers"].append(second)
     original = copy.deepcopy(cfg)
@@ -360,6 +362,40 @@ async def scenario(browser, mode):
         await expect(page.get_by_text("192.0.2.5:43210", exact=True)).to_have_count(0)
         state["telemetry"] = "never"
         await expect(page.get_by_text("Оффлайн", exact=True)).to_be_visible(timeout=10000)
+    elif mode == "qr-large":
+        signature = cfg["vpn_servers"][0]["config"]["amneziawg"]["i1"]
+        await page.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
+        warning = page.get_by_text("Профиль слишком большой для QR-кода.", exact=False)
+        await expect(warning).to_be_visible()
+        await expect(page.locator(".qr-card svg")).to_have_count(0)
+        expected = (f"[Interface]\nPrivateKey = {PRIVATE}\nAddress = 10.9.0.2/32\nDNS = 1.1.1.1\n"
+                    "Jc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 25\nS3 = 0\nS4 = 0\n"
+                    f"H1 = 100\nH2 = 200\nH3 = 300\nH4 = 400\nI1 = {signature}\n\n[Peer]\n"
+                    f"PublicKey = {SERVER_PUBLIC}\nPresharedKey = stored-psk\nEndpoint = vpn.example.test:51820\n"
+                    "AllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n").encode()
+        async def download_matches():
+            async with page.expect_download() as event:
+                await page.get_by_role("button", name="Скачать .conf", exact=True).click()
+            assert Path(await (await event.value).path()).read_bytes() == expected
+        await download_matches()
+        await page.set_viewport_size({"width": 390, "height": 844})
+        await warning.scroll_into_view_if_needed()
+        box = await warning.bounding_box()
+        assert box and box["x"] >= 0 and box["x"] + box["width"] <= 391, box
+        await page.set_viewport_size({"width": 1280, "height": 720})
+        signature_input = page.get_by_role("textbox", name="AmneziaWG I1", exact=True)
+        for value, large in (("<b 0xc0ffee>", False), (signature, True)):
+            async with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("/api/config")):
+                await signature_input.fill(value)
+            await expect(page.locator(".qr-card svg")).to_have_count(0 if large else 1)
+            await expect(warning).to_have_count(1 if large else 0)
+        await download_matches()
+        await page.reload()
+        await page.get_by_role("button", name="Открыть профиль и QR-код", exact=True).click()
+        await expect(warning).to_be_visible()
+        await download_matches()
+        assert state["keys"] == 0 and not errors, (state["keys"], errors)
+        await page.close(); print(mode, "PASS"); return
     elif mode == "amneziawg":
         # The server shows its kind and obfuscation; the profile carries it.
         server_row = page.locator("form.vpn-server").first
@@ -455,7 +491,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("exit", "amneziawg", "sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("exit", "amneziawg", "qr-large", "sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 

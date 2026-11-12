@@ -9,7 +9,7 @@ import { OcservClientCertificate, VPNServerTLSSettings } from "./OcservCertifica
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { api, ApiError, formatBytes } from "../api";
-import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig } from "../wireGuardProfiles";
+import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig, wireGuardProfileFitsQR } from "../wireGuardProfiles";
 import { randomAmneziaWGParams } from "../amneziawg";
 import { AmneziaWGFields } from "../AmneziaWGFields";
 import { newID } from "../id";
@@ -787,7 +787,9 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, exitReferenc
     }
     <p className="hint">После изменения этих настроек скачайте профиль заново или отсканируйте QR-код на устройстве.</p>
     {secret ? <div className="client-package">
-      <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>
+      {wireGuardProfileFitsQR(preparedConfig)
+        ? <div className="qr-card"><QRCodeSVG value={preparedConfig} size={176} level="M" marginSize={2} title={`WireGuard-профиль ${peer.name || peer.id}`} /></div>
+        : <p className="hint">Профиль слишком большой для QR-кода. Скачайте .conf и импортируйте его в VPN-клиент.</p>}
       <div className="client-package-copy"><strong>Профиль готов к импорту</strong><p>Отсканируйте QR-код в приложении WireGuard или скачайте файл. Профиль сохраняется на роутере после применения настроек. Его можно повторно открыть и скачать без замены ключей.</p><div className="row wrap"><button type="button" className="btn primary" onClick={download}>Скачать .conf</button><CopyButton text={preparedConfig} onError={setError} /><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить</button></div></div>
     </div> : Object.hasOwn(peer.credentials || {}, "private_key") ? <div className="row wrap" style={{ marginTop: "0.8rem" }}><button type="button" className="btn primary" disabled={profileBusy} onClick={() => void openProfile()}>{profileBusy ? "Загрузка…" : "Открыть профиль и QR-код"}</button><button type="button" className="btn ghost" onClick={() => void generateClient()}>Перевыпустить профиль</button></div> : <Notice tone="info" title="Профиль создан в прежней версии">Подключение клиента продолжает работать. Для повторной выдачи загрузите его прежний .conf: ключ будет сохранён без изменения подключения. Если файла нет, перевыпустите профиль и передайте новый клиенту.<div className="row wrap" style={{ marginTop: "0.65rem" }}><label className="btn">Загрузить прежний .conf<input aria-label="Загрузить прежний .conf" type="file" accept=".conf" hidden onChange={(event) => { void importProfile(event.target.files?.[0]); event.target.value = ""; }} /></label><button type="button" className="btn" onClick={() => void generateClient()}>Перевыпустить профиль</button></div></Notice>}
 

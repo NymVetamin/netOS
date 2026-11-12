@@ -1,6 +1,12 @@
 import { amneziaWGProfileLines } from "./amneziawg";
 export type WireGuardProfile = { use_router_dns: boolean; dns: string[]; allowed_ips: string[] };
 
+// Profiles use a single UTF-8 byte segment. QR version 40 at level M holds
+// 2331 bytes; reject long strings before allocating an encoded copy.
+export function wireGuardProfileFitsQR(profile: string): boolean {
+  return profile.length <= 2331 && new TextEncoder().encode(profile).length <= 2331;
+}
+
 export function newWireGuardProfile(): WireGuardProfile {
   return { use_router_dns: true, dns: [], allowed_ips: ["0.0.0.0/0"] };
 }
