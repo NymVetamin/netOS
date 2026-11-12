@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -210,21 +210,36 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].Time == "" {
-			return false
-		}
-		if entries[j].Time == "" {
-			return true
-		}
-		a, _ := time.Parse(time.RFC3339Nano, entries[i].Time)
-		b, _ := time.Parse(time.RFC3339Nano, entries[j].Time)
-		if kind == "dns" {
-			return a.After(b)
-		}
-		return a.Before(b)
-	})
+	sortNewestFirst(entries)
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "warnings": warnings, "captured_at": now.UTC().Format(time.RFC3339), "kind": kind})
+}
+
+// sortNewestFirst ставит свежие записи сверху во всех журналах, как в истории
+// ревизий и журнале действий. Записи без времени уходят в конец в исходном
+// порядке. Время разбирается один раз на запись, а не при каждом сравнении.
+func sortNewestFirst(entries []logEntry) {
+	type keyed struct {
+		at    time.Time
+		known bool
+		entry logEntry
+	}
+	rows := make([]keyed, len(entries))
+	for i, e := range entries {
+		at, _ := time.Parse(time.RFC3339Nano, e.Time)
+		rows[i] = keyed{at: at, known: e.Time != "", entry: e}
+	}
+	slices.SortStableFunc(rows, func(a, b keyed) int {
+		if a.known != b.known {
+			if a.known {
+				return -1
+			}
+			return 1
+		}
+		return b.at.Compare(a.at)
+	})
+	for i := range rows {
+		entries[i] = rows[i].entry
+	}
 }
 
 func emptyJournalMatch(raw string, err error) bool {

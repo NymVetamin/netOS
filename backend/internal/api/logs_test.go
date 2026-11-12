@@ -60,7 +60,7 @@ func (r *orderedDNSRunner) Run(_ context.Context, _ string, _ ...string) (string
 		`{"__REALTIME_TIMESTAMP":"1792760305000000","_SYSTEMD_UNIT":"netos-dnsmasq.service","MESSAGE":"query[A] current.example from 127.0.0.1"}`, nil
 }
 
-func TestDNSLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
+func TestLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
 	for _, kind := range []string{"dns", "all"} {
 		t.Run(kind, func(t *testing.T) {
 			s := &Server{StorageRunner: &orderedDNSRunner{}}
@@ -81,11 +81,8 @@ func TestDNSLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
 			if len(rows) != 3 {
 				t.Fatalf("lost or duplicated records: %+v", rows)
 			}
-			first, second := "current.example", "old.example"
-			if kind == "all" {
-				first, second = second, first
-			}
-			if !strings.Contains(rows[0].Message, first) || !strings.Contains(rows[1].Message, second) || rows[2].Time != "" {
+			// Все журналы показывают свежие записи сверху, записи без времени — в конце.
+			if !strings.Contains(rows[0].Message, "current.example") || !strings.Contains(rows[1].Message, "old.example") || rows[2].Time != "" {
 				t.Fatalf("unexpected %s order: %+v", kind, rows)
 			}
 		})
@@ -131,8 +128,8 @@ func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
 	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 3 {
 		t.Fatal(w.Body.String(), runner.calls)
 	}
-	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:02Z" {
-		t.Fatal("merged entries not chronological", data.Entries)
+	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:03Z" {
+		t.Fatal("merged entries are not newest first", data.Entries)
 	}
 	bad := httptest.NewRequest("GET", "/api/logs?kind=/etc/passwd", nil)
 	bad = bad.WithContext(req.Context())
@@ -194,4 +191,23 @@ func TestDNSQueryFiltering(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatal(rows, err)
 	}
+}
+
+func TestSortNewestFirstKeepsUnknownLastAndTiesStable(t *testing.T) {
+	entries := []logEntry{
+		{Time: "", Message: "unknown-1"},
+		{Time: "2026-11-12T10:00:01Z", Message: "older"},
+		{Time: "2026-11-12T10:00:01.5Z", Message: "newer"},
+		{Time: "2026-11-12T10:00:01.5Z", Message: "newer-tie"},
+		{Time: "", Message: "unknown-2"},
+	}
+	sortNewestFirst(entries)
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Message)
+	}
+	if want := "newer newer-tie older unknown-1 unknown-2"; strings.Join(got, " ") != want {
+		t.Fatalf("got %v, want %s", got, want)
+	}
+	sortNewestFirst(nil)
 }
