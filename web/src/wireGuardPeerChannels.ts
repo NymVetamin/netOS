@@ -11,17 +11,35 @@ export function syncWireGuardPeerChannels(config: any) {
  const used = new Set<number>((config.channels || []).map((c:any) => c.index));
  const present = new Set<string>();
  const managedNAT = new Map<string,string>();
+ let previousPeers: Map<any, Map<any, any>> | undefined;
+ let lookedUpPrevious = false;
  config.channels = (config.channels || []).filter((c:any) => {
   const source = sources.get(c.id);
   if (c.wireguard_peer) {
    managedNAT.set(`channel-nat-${c.id}`, source ? `wg-srv${source.ref.server_index}` : "");
    if (!source) return false;
-   // A name nobody changed follows the exit to its new client. The previous
-   // client is looked up only on an actual switch, which is rare.
+   // A name nobody changed follows the exit to its new client.
    const old = c.wireguard_peer;
    if (old.peer_id !== source.ref.peer_id) {
-    const server = (config.vpn_servers || []).find((s:any) => s.id === old.server_id);
-    const previous = (server?.peers || []).find((p:any) => p.id === old.peer_id);
+    // One edit keeps its old lookup cost; a second switch builds the index. Match
+    // find's first server and first peer even for duplicate IDs in a draft.
+    let previous;
+    if (!lookedUpPrevious) {
+     lookedUpPrevious = true;
+     const server = (config.vpn_servers || []).find((s:any) => s.id === old.server_id);
+     previous = (server?.peers || []).find((p:any) => p.id === old.peer_id);
+    } else {
+     if (!previousPeers) {
+      previousPeers = new Map();
+      for (const server of config.vpn_servers || []) {
+       if (previousPeers.has(server.id)) continue;
+       const peers = new Map();
+       for (const peer of server.peers || []) if (!peers.has(peer.id)) peers.set(peer.id, peer);
+       previousPeers.set(server.id, peers);
+      }
+     }
+     previous = previousPeers.get(old.server_id)?.get(old.peer_id);
+    }
     if (previous && c.name === previous.name) c.name = source.name;
    }
    c.wireguard_peer = source.ref;

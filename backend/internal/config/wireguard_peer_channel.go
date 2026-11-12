@@ -30,6 +30,9 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 	used := map[int]bool{}
 	present := map[string]bool{}
 	managedNAT := map[string]string{}
+	type peerKey struct{ server, peer string }
+	var previousNames map[peerKey]string
+	lookedUpPrevious := false
 	out := make([]Channel, 0, len(c.Channels)+len(order))
 	for _, ch := range c.Channels {
 		used[ch.Index] = true
@@ -42,9 +45,30 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 			// The channel is named after its exit client. When the exit moves to
 			// another client, a name nobody changed follows it; otherwise the
 			// panel keeps offering the previous client's name for the new exit.
-			// The previous client is looked up only on an actual switch.
-			if old := *ch.WireGuardPeer; old.PeerID != ref.PeerID && ch.Name == c.wireGuardPeerName(old) {
-				ch.Name = names[ch.ID]
+			if old := *ch.WireGuardPeer; old.PeerID != ref.PeerID {
+				// A single edit keeps its old lookup cost. Only a batch prepares
+				// an index, so at most one linear search precedes the shared index.
+				previousName := ""
+				if !lookedUpPrevious {
+					lookedUpPrevious = true
+					previousName = c.wireGuardPeerName(old)
+				} else {
+					if previousNames == nil {
+						previousNames = make(map[peerKey]string)
+						for _, server := range c.VPNServers {
+							for _, peer := range server.Peers {
+								key := peerKey{server.ID, peer.ID}
+								if _, exists := previousNames[key]; !exists {
+									previousNames[key] = peer.Name
+								}
+							}
+						}
+					}
+					previousName = previousNames[peerKey{old.ServerID, old.PeerID}]
+				}
+				if ch.Name == previousName {
+					ch.Name = names[ch.ID]
+				}
 			}
 			ch.WireGuardPeer = &ref
 			managedNAT["channel-nat-"+ch.ID] = fmt.Sprintf("wg-srv%d", ref.ServerIndex)
@@ -78,8 +102,7 @@ func (c *Config) normalizeWireGuardPeerChannels() {
 	c.Firewall.NAT = nat
 }
 
-// wireGuardPeerName returns the current name of a referenced client, or ""
-// when the client no longer exists.
+// Used once per normalization; batch lookups use the local index above.
 func (c *Config) wireGuardPeerName(ref WireGuardPeerChannel) string {
 	for _, s := range c.VPNServers {
 		if s.ID != ref.ServerID {
