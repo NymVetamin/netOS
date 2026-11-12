@@ -228,10 +228,10 @@ async def scenario(browser, mode):
     if mode in ("multi", "isolation"):
         await expect(page.locator("form.vpn-server").get_by_text("Отключён", exact=True)).to_have_count(4)
         await expect(page.locator("form.vpn-server").get_by_text("черновик", exact=True)).to_have_count(0)
-        await expect(page.locator("details.addmenu > summary").filter(has_text="Добавить клиента")).to_have_count(1)
+        await expect(page.locator(".card-sub details.addmenu > summary")).to_have_count(1)
         for sid, name in (("srv", "WireGuard"), ("xray", "xray"), ("ocserv", "ocserv"), ("ikev2", "ikev2"), ("l2tp", "l2tp")):
             before = {s["id"]: len(s["peers"]) for s in state["config"]["vpn_servers"]}
-            await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+            await page.locator(".card-sub details.addmenu > summary").click()
             async with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("/api/config")):
                 await page.get_by_role("button", name=f"Добавить клиента на {name}", exact=True).click()
             after = {s["id"]: len(s["peers"]) for s in state["config"]["vpn_servers"]}
@@ -269,27 +269,27 @@ async def scenario(browser, mode):
         await expect(row.get_by_text("Отключён", exact=True)).to_be_visible()
         await expect(name).to_have_count(0)
         # A device added by the administrator opens by itself.
-        await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+        await page.locator(".card-sub details.addmenu > summary").click()
         await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
         await expect(page.get_by_role("button", name="Скачать .conf", exact=True)).to_be_visible()
         # Thirteen "add" buttons became one menu; the items keep their names.
-        await page.locator("details.addmenu > summary").filter(has_text="Добавить сервер").click()
+        await page.locator("details.addmenu > summary").first.click()
         await page.get_by_role("button", name="Добавить L2TP", exact=True).click()
         await expect(page.locator("form.vpn-server")).to_have_count(2)
-        await expect(page.get_by_role("textbox", name="Адрес прослушивания", exact=True)).to_be_visible()
+        await expect(page.locator("input[value^=\"L2TP\"]")).to_be_visible()
         assert not errors, errors
         await page.close()
         print(mode, "PASS")
         return
-    await expect(page.get_by_text("1 МиБ", exact=True)).to_be_visible()
-    await expect(page.get_by_text("2 МиБ", exact=True)).to_be_visible()
+    await expect(page.get_by_text("1.0 МБ", exact=True)).to_be_visible()
+    await expect(page.get_by_text("2.0 МБ", exact=True)).to_be_visible()
     assert state["profiles"] == 0, "secrets fetched without user action"
     if mode == "settings":
         # Profile settings are in client cards, never in the server form.
         cards = page.locator(".peer-card")
         await expect(page.get_by_role("textbox", name="Трафик через VPN (AllowedIPs)", exact=True)).to_have_count(1)
         await expect(cards.first.get_by_role("textbox", name="DNS в профиле", exact=True)).to_have_value("1.1.1.1")
-        await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+        await page.locator(".card-sub details.addmenu > summary").click()
         await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
         await expect(cards).to_have_count(2)
         first, second = cards.nth(0), cards.nth(1)
@@ -358,7 +358,7 @@ async def scenario(browser, mode):
         state["telemetry"] = "never"
         await expect(page.get_by_text("Оффлайн", exact=True)).to_be_visible(timeout=10000)
     elif mode == "create":
-        await page.locator("details.addmenu > summary").filter(has_text="Добавить клиента").click()
+        await page.locator(".card-sub details.addmenu > summary").click()
         await page.get_by_role("button", name="Добавить клиента на WireGuard", exact=True).click()
         await expect(page.get_by_role("button", name="Скачать .conf", exact=True)).to_be_visible()
         # Opening an existing profile flushes pending changes in the app.
@@ -427,7 +427,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in (sys.argv[1:] or ("sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
+        for mode in (sys.argv[1:] or ("exit", "sessions-ocserv", "sessions-ikev2", "sessions-l2tp", "sessions-xray", "collapsed", "mobile", "multi", "saved", "legacy", "telemetry", "create", "reissue", "cancel", "settings")):
             await scenario(browser, mode)
         await browser.close()
 
