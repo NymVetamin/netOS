@@ -1,0 +1,193 @@
+package components
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
+)
+
+// AmneziaWG — единственный компонент из стороннего apt-репозитория и
+// единственный, чей модуль ядра собирается на роутере (DKMS). Отсюда две
+// особенности: netOS сам подключает репозиторий Amnezia, а установка возможна
+// только тогда, когда для работающего ядра есть заголовки.
+const amneziaWGID = "amneziawg"
+
+var (
+	amneziaListPath   = "/etc/apt/sources.list.d/netos-amnezia.list"
+	amneziaKeyPath    = "/etc/apt/keyrings/netos-amnezia.asc"
+	kernelReleasePath = "/proc/sys/kernel/osrelease"
+)
+
+// The PPA publishes builds for Ubuntu 20.04; the DKMS source and the tools
+// install on Debian 12/13 as well. The key is pinned here instead of being
+// fetched from a keyserver: fingerprint 75C9DD72C799870E310542E24166F2C257290828
+// ("Launchpad PPA for Iurii Egorov"), the key that signs the PPA's InRelease.
+const amneziaList = "deb [signed-by=/etc/apt/keyrings/netos-amnezia.asc] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu focal main\n"
+
+const amneziaKey = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+Comment: Hostname: 
+Version: Hockeypuck 2.2
+
+xsFNBGV0UhsBEAC33rMndHSN/k+u7gcZbh9/FjgYfGltQAtVe2QDxzn7UV+k/ChX
+OrYRw6Izw/DrhaapkNCThK2jwJE64e0NjboLH7UrrmSJLXMfOlDFbyGJVRA+1sTB
+lo7kKHY0xiZ1CHDzjKNV3czbesu80A9nuTZYyWHEn9ax6wsqKG3N8SvzQkUrIOVD
+2wZjh0p273CCEGkBnax1ghAV3MF8OrsPU6FRJ+ZakzKbu54g68xoV+2813YECme0
+JKsWfUUe/1uEJOXCvuACURSxnYr0sihJd8QI/jHSGlfeq72e5MflFEOrnu5xaDSJ
+r2W5lvUetG7EGSxtNKd7Jm/KhUV04g7arA0qydRjRToW3QqyzG7VB2nXKz3AOBYN
+earWAuBcTkfPvRVchxbjiYonKZA5tIlVrpawMZsdxKvYwl6LVnpBcccFWPhpudfy
+4TpCqCxRoAanOCvSirI3/y7TcZMBw643SaxXi1ifGeg6eyMzrLtP3CeonKBHGzrt
+1eeKGtEw/PFN4RmwpBePxi+uj0CoTD6zjCQa3c8EeB4Qz7tt6PnpibxdtZE8sBdd
+51wSA/fPGi2tFph8IVAsws7oxcQxZYl8CyncKDLcoR4dxVHYdFEDDf1GjRjoQ3Ai
+nD7fxD5qYzExe50DBVpuUbWcAiGICNxfvzQtUSRRtMoSHDcvzsy03KC6VwARAQAB
+zR5MYXVuY2hwYWQgUFBBIGZvciBJdXJpaSBFZ29yb3bCwY4EEwEKADgWIQR1yd1y
+x5mHDjEFQuJBZvLCVykIKAUCZXRSGwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIX
+gAAKCRBBZvLCVykIKBu5D/9akmHCHlUqm2RTTBeTMbLNGc0l6YugpPaCM6vz0O9k
+BFP5PfRaNSRzyF7wHFHNY3JUHcor28my1fD8AE4+C3PwXz8tVYLh57UUsp4wjqHY
++MTl/1ngDViPGD3PRjB8ZlO+19yerfplZv1Jaw7FZZv2BZOAXb+ddqUG4EmlzOnC
+EhcSDdFrzEBB3RGthjIb3QkKWKGbELDiMfogmsO9BE139Raiw23blagDrbnWsG4j
+ReZeu3atjG6AW8eL7m+i7bKKshD2CYVMznI5cYGLMKo9w7sb33uylPj1Vx9O7joP
+2GFf2rTpCY8wgzk7i1RqsipJ80u1/DY91Xdizv3f2BBe6UY7qHKoK00O11J0y8yU
+is2Asycy33Wy51pf6rCFUBLQu+c1fEypHF6jqANmQwaH7pPBliy4gGWvrVggzV4m
+xv7SnRiMi4PFyVwjKWm8dmuMxi/B9s++VG/ed+5aYgJYL58MohG3MUI/L58eitSC
+DDcQ1iAnBmawnGMKPqzMgRFB3OU3wDwfh7LNVvQqWpQ4q7pr4Cq1CvZvGoggXWDo
+1/vylPsRmiiuNetfsoVYmrkgtj1om07m5Xp1v4SyXJH11c3dc/xfMmn/4RlMWIpq
+86IsOjpr3avsw3FVUNCgD5Wf5+rHG+7gNmM6Cm/F8MDfAnnRmsw4h6hgvcJNQT5D
+ig==
+=OY2W
+-----END PGP PUBLIC KEY BLOCK-----
+`
+
+// writeIfChanged keeps the apt source idempotent: rewriting identical files
+// would only bump mtimes and make every Apply look like a change.
+func writeIfChanged(path, content string, mode os.FileMode) error {
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, []byte(content)) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return system.WriteFileAtomic(path, []byte(content), mode)
+}
+
+func ensureAmneziaRepo() error {
+	if err := writeIfChanged(amneziaKeyPath, amneziaKey, 0o644); err != nil {
+		return fmt.Errorf("ключ репозитория Amnezia: %w", err)
+	}
+	if err := writeIfChanged(amneziaListPath, amneziaList, 0o644); err != nil {
+		return fmt.Errorf("репозиторий Amnezia: %w", err)
+	}
+	return nil
+}
+
+// removeAmneziaRepo убирает подключённый netOS репозиторий, когда компонент
+// не выбран. netos uninstall удаляет те же файлы своим списком.
+func removeAmneziaRepo() error {
+	var errs []error
+	for _, path := range []string{amneziaListPath, amneziaKeyPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func kernelRelease() string {
+	data, err := os.ReadFile(kernelReleasePath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func kernelHeadersPackage() string {
+	if release := kernelRelease(); release != "" {
+		return "linux-headers-" + release
+	}
+	return ""
+}
+
+// amneziaKernelProblem отвечает, можно ли собрать модуль под работающее ядро.
+// DKMS нужны заголовки именно этой версии. Когда Debian выпускает новое ядро,
+// заголовки прежнего из репозитория пропадают, и роутер, не перезагруженный в
+// новое ядро, модуль собрать не может. Ответ берётся из текущих списков apt;
+// установка обновляет их и спрашивает заново.
+func (s *Subsystem) amneziaKernelProblem(ctx context.Context) string {
+	release := kernelRelease()
+	if release == "" {
+		return "Невозможно установить AmneziaWG: не удалось определить версию ядра Linux."
+	}
+	headers := "linux-headers-" + release
+	if s.Packages.Installed(ctx, headers) {
+		return ""
+	}
+	out, err := s.Runner.Run(ctx, "apt-cache", "policy", headers)
+	if err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if candidate, ok := strings.CutPrefix(strings.TrimSpace(line), "Candidate:"); ok {
+				if candidate = strings.TrimSpace(candidate); candidate != "" && candidate != "(none)" {
+					return ""
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("Невозможно установить AmneziaWG: требуется обновление ядра Linux. "+
+		"Работает ядро %s, а заголовков для него в репозиториях нет. "+
+		"Обновите систему и перезагрузите роутер, затем установите компонент.", release)
+}
+
+// Unavailable сообщает панели, какие из неустановленных компонентов поставить
+// сейчас нельзя и почему, чтобы это было видно до нажатия «Применить»: ошибка
+// установки откатила бы всю конфигурацию.
+func (s *Subsystem) Unavailable(ctx context.Context, installed map[string]bool) map[string]string {
+	out := map[string]string{}
+	if !installed[amneziaWGID] {
+		if problem := s.amneziaKernelProblem(ctx); problem != "" {
+			out[amneziaWGID] = problem
+		}
+	}
+	return out
+}
+
+func (s *Subsystem) installAmneziaWG(ctx context.Context, info config.ComponentInfo, refresh func() error) error {
+	// The repository was written before any refresh of this Apply, so the
+	// shared refresh sees it. Refresh first: the kernel check reads apt lists.
+	if err := ensureAmneziaRepo(); err != nil {
+		return err
+	}
+	if err := refresh(); err != nil {
+		return err
+	}
+	if problem := s.amneziaKernelProblem(ctx); problem != "" {
+		return errors.New(problem)
+	}
+	headers := kernelHeadersPackage()
+	headersPresent := s.Packages.Installed(ctx, headers)
+	installed, err := s.Packages.EnsureWithRefresh(ctx, refresh, append([]string{headers}, info.Packages...)...)
+	if err != nil {
+		return err
+	}
+	if len(installed) > 0 {
+		s.Logger.Infof("установлен компонент %s (%s)", info.Title, strings.Join(installed, ", "))
+	}
+	// Headers installed for the module leave together with it: purge
+	// --autoremove takes automatic packages, and they stay protected while the
+	// component is selected (protectedComponentPackages).
+	if !headersPresent {
+		if _, err := s.Runner.Run(ctx, "apt-mark", "auto", headers); err != nil {
+			return fmt.Errorf("пометка заголовков ядра: %w", err)
+		}
+	}
+	// A package that installed is not yet a working module: DKMS can fail to
+	// build it for this kernel. Say so instead of reporting success.
+	if _, err := s.Runner.Run(ctx, "modprobe", "amneziawg"); err != nil {
+		return fmt.Errorf("модуль ядра AmneziaWG не загрузился: %w", err)
+	}
+	return nil
+}

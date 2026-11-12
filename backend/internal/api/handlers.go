@@ -1612,7 +1612,11 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		// поднят. Желаемое состояние панель знает из конфигурации, а эти два
 		// поля показывают живую машину: установленный компонент может быть
 		// никем не выбран и не работать.
-		resp["installed"] = s.Components.Status(r.Context())
+		installed := s.Components.Status(r.Context())
+		resp["installed"] = installed
+		// Why a component cannot be installed right now (e.g. AmneziaWG with no
+		// headers for the running kernel), shown before the user applies.
+		resp["unavailable"] = s.Components.Unavailable(r.Context(), installed)
 		running := s.Components.Running(r.Context())
 		if s.QoS != nil && s.Engine != nil {
 			running["qos"] = s.QoS.Active(r.Context(), s.Engine.Current())

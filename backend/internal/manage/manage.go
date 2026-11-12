@@ -1511,6 +1511,9 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		m.sys("/etc/iproute2/rt_tables.d/netos.conf"), m.sys("/etc/iproute2/rt_protos.d/netos.conf"),
 		m.sys("/etc/iproute2/rt_tables.d/netos-channels.conf"),
 		m.sys("/etc/apt/apt.conf.d/99netos"),
+		// Репозиторий Amnezia подключает компонент AmneziaWG.
+		m.sys("/etc/apt/sources.list.d/netos-amnezia.list"),
+		m.sys("/etc/apt/keyrings/netos-amnezia.asc"),
 		m.sys("/etc/bash_completion.d/netos"),
 		m.sys("/usr/share/bash-completion/completions/netos"),
 		m.sys("/etc/unbound/netos.conf"),

@@ -266,6 +266,9 @@ export function ComponentsPage({
               const atWork = running[c.id] === true;
               const update = updates.state?.components?.[c.id];
               const componentOperation = updates.state?.operations?.[c.id];
+              // Installing it would fail and roll back the whole apply; an
+              // already selected component stays switchable so it can be turned off.
+              const blocked = !isReady && catalog.unavailable?.[c.id];
               return (
                 <div key={c.id} className={`component ${on ? "on" : ""}`}>
                   <div className="component-main">
@@ -330,6 +333,11 @@ export function ComponentsPage({
                         )}
                     </div>
                   )}
+                  {blocked && (
+                    <Notice tone="warn" title="Установка сейчас невозможна">
+                      {blocked}
+                    </Notice>
+                  )}
                   <ComponentProgress operation={componentOperation} />
                   </div>
                   <div className="component-controls">
@@ -346,6 +354,7 @@ export function ComponentsPage({
                     checked={on}
                     label=""
                     ariaLabel={`Компонент ${c.title || c.id} включён`}
+                    disabled={Boolean(blocked) && !on}
                     onChange={(v) => toggle(c.id, v)}
                   />
                   </div>

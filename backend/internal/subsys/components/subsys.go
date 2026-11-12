@@ -166,6 +166,13 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 	}
+	// The third-party source must exist before the first shared apt-get update
+	// of this Apply, whichever component triggers it.
+	if desired[amneziaWGID] {
+		if err := ensureAmneziaRepo(); err != nil {
+			return err
+		}
+	}
 
 	for _, info := range config.Catalog {
 		want := desired[info.ID]
@@ -205,6 +212,13 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		if err := s.removeProtected(ctx, info, protected); err != nil {
 			s.Logger.Warnf("удаление компонента %s: %v", info.Title, err)
 			failures = append(failures, "удалить "+info.Title+": "+err.Error())
+		}
+	}
+
+	// Also covers an installation that failed before any package arrived.
+	if !desired[amneziaWGID] {
+		if err := removeAmneziaRepo(); err != nil {
+			failures = append(failures, "удалить репозиторий AmneziaWG: "+err.Error())
 		}
 	}
 
@@ -313,6 +327,13 @@ func protectedComponentPackages(desired map[string]bool) map[string]bool {
 			protected[pkg] = true
 		}
 	}
+	// AmneziaWG's headers are marked automatic so they leave with it; until
+	// then purging another component must not autoremove them.
+	if desired[amneziaWGID] {
+		if headers := kernelHeadersPackage(); headers != "" {
+			protected[headers] = true
+		}
+	}
 	return protected
 }
 
@@ -395,6 +416,9 @@ func (s *Subsystem) install(ctx context.Context, info config.ComponentInfo, refr
 	s.Progress.Stage(info.ID, "Установка")
 	if info.External {
 		return s.installExternal(ctx, info)
+	}
+	if info.ID == amneziaWGID {
+		return s.installAmneziaWG(ctx, info, refresh)
 	}
 	if len(info.Packages) == 0 {
 		return nil

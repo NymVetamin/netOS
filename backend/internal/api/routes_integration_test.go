@@ -155,6 +155,7 @@ func TestReadOnlyRoutesAndKeypairHandlers(t *testing.T) {
 type catalogComponentProbe struct {
 	installed     map[string]bool
 	running       map[string]bool
+	unavailable   map[string]string
 	forbidRunning bool
 }
 
@@ -171,6 +172,12 @@ func (p catalogComponentProbe) Status(_ context.Context, ids ...string) map[stri
 		out[id] = p.installed[id]
 	}
 	return out
+}
+func (p catalogComponentProbe) Unavailable(_ context.Context, installed map[string]bool) map[string]string {
+	if p.forbidRunning {
+		panic("installed-only request must not probe availability")
+	}
+	return p.unavailable
 }
 func (p catalogComponentProbe) Running(context.Context) map[string]bool {
 	if p.forbidRunning {
@@ -202,20 +209,25 @@ func TestCatalogReturnsMetadataAndIndependentLiveStates(t *testing.T) {
 	s, cookie, _ := newAuthedServer(t)
 	initializeAPIEngine(t, s)
 	s.Components = catalogComponentProbe{
-		installed: map[string]bool{"dnsmasq": true, "xray": false},
-		running:   map[string]bool{"dnsmasq": false, "xray": true},
+		installed:   map[string]bool{"dnsmasq": true, "xray": false},
+		running:     map[string]bool{"dnsmasq": false, "xray": true},
+		unavailable: map[string]string{"amneziawg": "требуется обновление ядра Linux"},
 	}
 	w := serveAuthed(s.Routes(), http.MethodGet, "/api/catalog", nil, cookie, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("catalog status=%d body=%s", w.Code, w.Body.String())
 	}
 	var response struct {
-		Components []config.ComponentInfo `json:"components"`
-		Installed  map[string]bool        `json:"installed"`
-		Running    map[string]bool        `json:"running"`
+		Components  []config.ComponentInfo `json:"components"`
+		Installed   map[string]bool        `json:"installed"`
+		Running     map[string]bool        `json:"running"`
+		Unavailable map[string]string      `json:"unavailable"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
+	}
+	if response.Unavailable["amneziawg"] != "требуется обновление ядра Linux" {
+		t.Fatalf("unavailable reason lost: %v", response.Unavailable)
 	}
 	if len(response.Components) != len(config.Catalog) {
 		t.Fatalf("catalog length=%d want=%d", len(response.Components), len(config.Catalog))

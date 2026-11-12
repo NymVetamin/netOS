@@ -148,7 +148,7 @@ export const CARD_ICONS: Record<string, IconName> = {
 
 export const COMPONENT_ICONS: Record<string, IconName> = {
   samba: "folder", dnsmasq: "tags", "isc-dhcp-server": "tags", kea: "tags", unbound: "server-cog", dnsproxy: "server-cog",
-  wireguard: "wireguard", xray: "shuffle", openconnect: "lock", strongswan: "strongswan", l2tp: "cable", ocserv: "lock",
+  wireguard: "wireguard", amneziawg: "shield-check", xray: "shuffle", openconnect: "lock", strongswan: "strongswan", l2tp: "cable", ocserv: "lock",
   pppoe: "key-round", hostapd: "wifi", ipset: "list", diagnostics: "activity", qos: "gauge",
 };
 

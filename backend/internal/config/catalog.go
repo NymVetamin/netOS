@@ -114,6 +114,15 @@ var Catalog = []ComponentInfo{
 		SizeHint:    "меньше 1 МБ",
 	},
 	{
+		// The module is built for the running kernel by DKMS from the Amnezia
+		// apt repository, which netOS adds itself. The kernel headers are
+		// installed alongside and are not listed: their name follows the kernel.
+		ID: "amneziawg", Title: "AmneziaWG", Group: "VPN",
+		Description: "WireGuard с маскировкой пакетов: мусорные пакеты перед рукопожатием и изменённые заголовки. Работает в ядре. Ставится из репозитория Amnezia, модуль собирается под ядро роутера.",
+		Packages:    []string{"amneziawg-dkms", "amneziawg-tools"},
+		SizeHint:    "около 100 МБ с заголовками ядра",
+	},
+	{
 		ID: "xray", Title: "Xray", Group: "VPN",
 		Description: "VLESS, VMess, Trojan, Shadowsocks с Reality и XTLS. Для каналов, которые должны выглядеть обычным трафиком.",
 		Provides:    []string{"vpn-client", "vpn-server"},

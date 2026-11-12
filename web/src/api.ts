@@ -81,6 +81,8 @@ export type CatalogResponse = {
   components: ComponentInfo[];
   installed?: Record<string, boolean>;
   running?: Record<string, boolean>;
+  // Why a component cannot be installed on this machine right now.
+  unavailable?: Record<string, string>;
 };
 
 // RouteEntry — разобранная запись таблицы маршрутизации.
