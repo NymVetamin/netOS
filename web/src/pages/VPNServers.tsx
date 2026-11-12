@@ -754,15 +754,17 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, exitReferenc
     cells={[<strong>{peer.name}</strong>, <span className="mono">{peer.address || "—"}</span>, <span className="mono">{known ? status?.endpoint || "Неизвестен" : "—"}</span>, channelName(channels, peer), <ClientBadge server={server} peer={peer} status={status} />]}
     toggle={<Switch checked={!!peer.enabled} label="" ariaLabel="Доступ разрешён" onChange={(value) => edit((draft) => draft.enabled = value)} />}>
     <ClientConnection status={status} />
-    <Field label="Выход через этого клиента" hint="Один клиент выхода на WG-сервер. На VPS включите IP forwarding и NAT на его интернет-интерфейсе, затем загрузите обновлённый профиль. Профиль сохраняет обычный интернет VPS.">
-      <Switch checked={!!peer.use_as_channel} label="Использовать как канал" disabled={peer.use_as_channel ? exitReferenced : !!exitPeerID && exitPeerID !== peer.id} onChange={value => edit(draft => { draft.use_as_channel = value; })} />
-      {peer.use_as_channel && exitReferenced && <span className="hint">Чтобы убрать канал, сначала снимите его назначение у клиентов и в политиках.</span>}
-    </Field>
     <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Название клиента"><input value={peer.name || ""} onChange={(e) => edit((draft) => draft.name = e.target.value)} /></Field>
       <Field label="VPN-адрес"><input className="mono" value={peer.address || ""} onChange={(e) => edit((draft) => draft.address = e.target.value)} /></Field>
       <Field label="Канал выхода"><select value={peer.channel || ""} onChange={(e) => edit((draft) => draft.channel = e.target.value)}><option value="">По настройке сервера</option>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="block">Блок — без интернета</option></select></Field>
       <Field label="Комментарий"><input value={peer.comment || ""} onChange={(e) => edit((draft) => draft.comment = e.target.value)} /></Field>
+      <Field wide label="Канал через этого клиента" hint={
+        peer.use_as_channel && exitReferenced ? "Чтобы убрать канал, сначала снимите его назначение у клиентов и в политиках."
+          : !peer.use_as_channel && exitPeerID ? "Каналом уже служит другой клиент этого сервера — допускается только один."
+          : "Роутер сможет выходить в интернет через это устройство, обычно VPS. На VPS включите IP forwarding и NAT, затем загрузите обновлённый профиль."}>
+        <Switch checked={!!peer.use_as_channel} label="Использовать как канал" disabled={peer.use_as_channel ? exitReferenced : !!exitPeerID && exitPeerID !== peer.id} onChange={value => edit(draft => { draft.use_as_channel = value; })} />
+      </Field>
     </div>
     {!peer.use_as_channel && <div className="form-grid" style={{ marginTop: "0.8rem" }}>
       <Field label="Трафик через VPN (AllowedIPs)" hint="Подсети, которые это устройство направляет в туннель. 0.0.0.0/0 — весь IPv4-трафик; по одной подсети в строке."><ProfileListInput label="Трафик через VPN (AllowedIPs)" values={profile.allowed_ips} onChange={(items) => editProfile((value) => { value.allowed_ips = items; })} /></Field>

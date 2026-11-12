@@ -135,6 +135,7 @@ async def scenario(browser, mode):
         async with page.expect_response(lambda r:r.request.method=="PUT" and r.url.endswith("/api/config")):
             await toggle.locator("..").click()
         await expect(other).to_be_disabled()
+        await expect(page.locator('[data-vpn-client="second"]').get_by_text("Каналом уже служит другой клиент этого сервера",exact=False)).to_be_visible()
         exit_channel=next(c for c in state["config"]["channels"] if c.get("wireguard_peer"))
         assert exit_channel["wireguard_peer"]=={"server_id":"srv","peer_id":"phone","server_index":1}
         await expect(peer_row.get_by_text("Трафик через VPN (AllowedIPs)",exact=True)).to_have_count(0)
