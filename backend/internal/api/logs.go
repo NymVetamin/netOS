@@ -197,7 +197,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	runner := s.StorageRunner
 	if runner == nil {
-		runner = &system.Exec{Timeout: 5 * time.Second}
+		runner = &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}
 	}
 	entries := []logEntry{}
 	warnings := []string{}

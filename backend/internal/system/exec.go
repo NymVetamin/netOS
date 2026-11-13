@@ -7,6 +7,7 @@ package system
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,6 +31,9 @@ type Exec struct {
 	// PackageTimeout применяется к apt/dpkg: установка пакетов на слабом
 	// устройстве закономерно занимает заметно больше сетевых команд.
 	PackageTimeout time.Duration
+	// MaxOutputBytes limits each of stdout and stderr; zero keeps unlimited output.
+	// Exceeding either limit cancels the command and returns ErrOutputLimit.
+	MaxOutputBytes int
 	// OnCommand вызывается перед каждым запуском — используется для журнала.
 	OnCommand func(name string, args []string)
 }
@@ -75,8 +79,18 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	var outLimit, errLimit *commandOutputLimit
+	if e.MaxOutputBytes > 0 {
+		outLimit = &commandOutputLimit{buffer: &stdout, limit: e.MaxOutputBytes, cancel: cancel}
+		errLimit = &commandOutputLimit{buffer: &stderr, limit: e.MaxOutputBytes, cancel: cancel}
+		cmd.Stdout, cmd.Stderr = outLimit, errLimit
+	}
 
 	err := cmd.Run()
+	// Run waits for both copy goroutines before these flags are read.
+	if outLimit != nil && (outLimit.exceeded || errLimit.exceeded) {
+		return stdout.String(), fmt.Errorf("%s: %w (%d bytes per stream)", name, ErrOutputLimit, e.MaxOutputBytes)
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
@@ -85,6 +99,27 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
 	}
 	return stdout.String(), nil
+}
+
+var ErrOutputLimit = errors.New("command output limit exceeded")
+
+// Each stream has its own writer, used by one os/exec copy goroutine.
+type commandOutputLimit struct {
+	buffer   *bytes.Buffer
+	limit    int
+	cancel   context.CancelFunc
+	exceeded bool
+}
+
+func (w *commandOutputLimit) Write(p []byte) (int, error) {
+	remaining := w.limit - w.buffer.Len()
+	if len(p) <= remaining {
+		return w.buffer.Write(p)
+	}
+	n, _ := w.buffer.Write(p[:remaining])
+	w.exceeded = true
+	w.cancel()
+	return n, ErrOutputLimit
 }
 
 // WriteFileAtomic пишет файл через временный файл и rename, чтобы демон,
