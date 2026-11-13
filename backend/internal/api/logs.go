@@ -81,7 +81,7 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		return classifyAllUnitEntry(entry, field)
 	}
 	if source == "services" {
-		if panelJournalFields(&entry) {
+		if panelJournalFields(&entry) || xrayLogFields(&entry, field("_SYSTEMD_UNIT")) {
 			return logEntry{}, false
 		}
 		var keep bool
@@ -100,7 +100,10 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		}
 	}
 	if source == "vpn" {
-		keep := false
+		keep := xrayLogFields(&entry, field("_SYSTEMD_UNIT"))
+		if keep {
+			return entry, true
+		}
 		if entry.Unit == "netos-strongswan.service" {
 			keep = ikeLogFields(&entry, field)
 		} else {

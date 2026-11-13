@@ -80,8 +80,8 @@ func TestServicePageTypesAndLegacyVPNToken(t *testing.T) {
 	}
 	legacy, _ := json.Marshal(map[string]any{"anchor": "c0", "from": c.From, "to": c.To, "result": "", "object": ""})
 	token := base64.RawURLEncoding.EncodeToString(legacy)
-	if got, err := journalPageRequest(httptest.NewRequest("GET", "/?kind=vpn&cursor="+token, nil), now); err != nil || got.Kind != "vpn" {
-		t.Fatal(got, err)
+	if _, err := journalPageRequest(httptest.NewRequest("GET", "/?kind=vpn&cursor="+token, nil), now); err == nil {
+		t.Fatal("pre-Xray VPN snapshot accepted after expanding event sources")
 	}
 	if _, err := journalPageRequest(httptest.NewRequest("GET", "/?kind=services&cursor="+token, nil), now); err == nil {
 		t.Fatal("legacy VPN token accepted for services")

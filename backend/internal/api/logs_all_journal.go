@@ -103,6 +103,10 @@ func allJournalEntry(row map[string]json.RawMessage, kernel bool) (logEntry, boo
 // decoders in succession would parse the same timestamp for every attempt.
 func classifyAllUnitEntry(entry logEntry, field func(string) string) (logEntry, bool) {
 	unit := field("_SYSTEMD_UNIT")
+	if xrayLogFields(&entry, unit) {
+		entry.Source = "vpn"
+		return entry, true
+	}
 	if unit == "netosd.service" && panelJournalFields(&entry) {
 		entry.Source = "access"
 		return entry, true

@@ -17,6 +17,7 @@ const logPageSize = 100
 const logScanSize = 500
 
 type journalLogCursor struct {
+	Schema int                `json:"schema,omitempty"`
 	All    *allLogPosition    `json:"all,omitempty"`
 	DNS    *dnsLogPosition    `json:"dns,omitempty"`
 	Access *accessLogPosition `json:"access,omitempty"`
@@ -45,7 +46,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	if kind == "" {
 		kind = "vpn"
 	}
-	c := journalLogCursor{Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
+	c := journalLogCursor{Schema: 1, Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
 	if token := q.Get("cursor"); token != "" {
 		if len(token) > 8192 {
 			return c, fmt.Errorf("курсор журнала слишком длинный")
@@ -61,6 +62,9 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		}
 		if c.Kind != kind {
 			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
+		}
+		if (kind == "vpn" || kind == "all") && c.Schema != 1 {
+			return c, fmt.Errorf("состав событий журнала изменился; обновите журнал")
 		}
 		if kind != "all" && c.All != nil {
 			return c, fmt.Errorf("неверный курсор журнала; обновите журнал")
@@ -154,7 +158,7 @@ func (s *Server) handleJournalLogPage(w http.ResponseWriter, r *http.Request) {
 		// Unlike -k this includes all available boots in the selected period.
 		args = append(args, "_TRANSPORT=kernel")
 	} else {
-		args = append(args, "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service")
+		args = append(args, "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service", "-u", "netos-xray-srv*.service")
 	}
 	if c.Anchor != "" {
 		args = append(args, "--cursor="+c.Anchor)

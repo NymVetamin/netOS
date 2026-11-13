@@ -45,7 +45,7 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
    <input name="object" aria-label={kind==="all"?"Объект или текст события":kind==="services"?"Служба":kind==="firewall"?"Правило или адрес":kind==="dns"?"Домен или адрес":kind==="access"?"Объект доступа":"Объект VPN"} placeholder={kind==="all"?"Служба, сервер, пользователь, адрес или текст":kind==="services"?"Имя службы":kind==="firewall"?"Правило, адрес или текст записи":kind==="dns"?"Домен, адрес или текст запроса":kind==="access"?"Пользователь, адрес или протокол":"Сервер, пользователь, адрес или протокол"} maxLength={128} defaultValue={filters.object}/>
    <button className="btn sm" type="submit">Применить фильтры</button>
   </form>
-  {kind==="vpn"&&<p className="hint">События OpenConnect, IKEv2 и L2TP. Установка соединения и аутентификация пользователя — отдельные события. Отсутствие записи не означает отсутствия попытки подключения.</p>}
+  {kind==="vpn"&&<p className="hint">События OpenConnect, IKEv2, L2TP и Xray. Установка соединения и аутентификация пользователя — отдельные события. В Xray приём соединения не подтверждает доступность назначения; записи создаются при включённой истории трафика. Отсутствие записи не означает отсутствия попытки подключения.</p>}
   {kind==="firewall"&&<p className="hint">Записи правил с включённым логированием. Запись показывает совпадение с правилом, но не подтверждает разрешение или блокировку пакета. Частота записей ограничена.</p>}
   {error&&<Notice tone="danger" title="Не удалось загрузить журнал">{error}{data&&" Показана предыдущая страница."}<button className="btn sm" disabled={loading} onClick={()=>setAttempt(n=>n+1)}>Повторить запрос</button></Notice>}
   {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>

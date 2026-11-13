@@ -93,7 +93,7 @@ func TestVPNPagesFilterBeforeLimitAndKeepAllEvents(t *testing.T) {
 
 func TestVPNPageCursorAndErrors(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	c := journalLogCursor{From: now.Add(-24 * time.Hour), To: now, Anchor: "c1"}
+	c := journalLogCursor{Schema: 1, From: now.Add(-24 * time.Hour), To: now, Anchor: "c1"}
 	if _, stale, err := readJournalLogPage(vpnPageRow(2, "noise"), c); err != nil || !stale {
 		t.Fatal("missing anchor not rejected", stale, err)
 	}
