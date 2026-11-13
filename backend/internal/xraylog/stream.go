@@ -20,6 +20,19 @@ var rejectedHeader = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+
 var dnsRecord = regexp.MustCompile(`(?:got answer:|cache HIT:|cache OPTIMISTE:)\s+\S+\s+->\s+\[[0-9a-fA-F:.,\s]*\]\s*$`)
 var diagnosticLevel = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?\[(Warning|Error)\] `)
 
+// DiagnosticPriority recognizes a native header, never a level mentioned
+// inside an access record or arbitrary message.
+func DiagnosticPriority(s string) (int, bool) {
+	level := diagnosticLevel.FindStringSubmatch(s)
+	if level == nil {
+		return 0, false
+	}
+	if level[1] == "Error" {
+		return 3, true
+	}
+	return 4, true
+}
+
 type sanitizedError struct{ cause error }
 
 func (e sanitizedError) Error() string { return Sanitize(e.cause.Error()) }
@@ -60,7 +73,7 @@ func Sanitize(s string) string {
 	// The known SOCKS diagnostic names the credential field but prints no value.
 	if credentialLabel.MatchString(strings.ReplaceAll(s, "proxy/socks: invalid username or password", "")) {
 		level := "Warning"
-		if header := diagnosticLevel.FindStringSubmatch(s); header != nil && header[1] == "Error" {
+		if priority, ok := DiagnosticPriority(s); ok && priority == 3 {
 			level = "Error"
 		}
 		return "[" + level + "] Xray: подробности диагностики скрыты: возможны учётные данные"
@@ -106,9 +119,9 @@ func (s *stream) emit(text string) {
 	}
 	// journald otherwise stores both console streams at info priority. Only
 	// the native diagnostic header is a level, not a label inside a message.
-	if level := diagnosticLevel.FindStringSubmatch(text); level != nil {
+	if priority, ok := DiagnosticPriority(text); ok {
 		prefix := "<4>"
-		if level[1] == "Error" {
+		if priority == 3 {
 			prefix = "<3>"
 		}
 		text = prefix + text

@@ -116,3 +116,45 @@ func BenchmarkServicePage(b *testing.B) {
 		})
 	}
 }
+
+func TestServiceCursorRejectsPreviousSourceSet(t *testing.T) {
+	now := time.Now().UTC()
+	for _, kind := range []string{"services", "all", "vpn"} {
+		old, _ := json.Marshal(journalLogCursor{Schema: 2, Kind: kind, Anchor: "c0", From: now.Add(-time.Hour), To: now})
+		request := httptest.NewRequest("GET", "/?kind="+kind+"&cursor="+base64.RawURLEncoding.EncodeToString(old), nil)
+		if _, err := journalPageRequest(request, now); err == nil || !strings.Contains(err.Error(), "состав событий") {
+			t.Fatalf("old snapshot not rejected for source change: %s %v", kind, err)
+		}
+	}
+}
+
+func BenchmarkLegacyXrayServicePage(b *testing.B) {
+	for _, n := range []int{30, 30000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			run := &pagedVPNRunner{}
+			for i := 0; i < n; i++ {
+				message := "from 192.0.2.2:1234 accepted tcp:example.org:443 [in -> out]"
+				if i == 0 {
+					message = "[Warning] core: started"
+				}
+				row, _ := json.Marshal(map[string]string{"__CURSOR": fmt.Sprint("c", i), "__REALTIME_TIMESTAMP": vpnPageFixtureTime, "_SYSTEMD_UNIT": "netos-xray-ch12.service", "PRIORITY": "6", "MESSAGE": message})
+				run.rows = append(run.rows, string(row))
+			}
+			s := &Server{StorageRunner: run}
+			r := httptest.NewRequest("GET", "/api/logs?kind=services", nil)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				w := httptest.NewRecorder()
+				s.handleJournalLogPage(w, r)
+				if w.Code != 200 || !strings.Contains(w.Body.String(), "[Warning] core: started") {
+					b.Fatal(w.Body.String())
+				}
+			}
+			b.StopTimer()
+			if run.calls != b.N {
+				b.Fatal("extra queries", run.calls, b.N)
+			}
+		})
+	}
+}

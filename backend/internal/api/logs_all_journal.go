@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/netos-router/netos/internal/system"
+	"github.com/netos-router/netos/internal/xraylog"
 )
 
 // Each journal stream keeps its own snapshot even when another source fills
@@ -146,6 +147,9 @@ func classifyAllUnitEntry(entry logEntry, field func(string) string) (logEntry, 
 		entry.Source = "services"
 		entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, entry.Message)
 		if keep {
+			if xrayServiceUnit.MatchString(entry.Unit) {
+				entry.Message = xraylog.Sanitize(entry.Message)
+			}
 			return entry, true
 		}
 	}

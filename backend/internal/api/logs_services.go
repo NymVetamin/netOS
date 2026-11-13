@@ -1,10 +1,15 @@
 package api
 
 import (
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/netos-router/netos/internal/xraylog"
 )
+
+var xrayServiceUnit = regexp.MustCompile(`^netos-xray-(?:srv|ch)[0-9]+\.service$`)
 
 // Stable systemd MESSAGE_ID values, independent of the manager's locale.
 // UNIT_STARTED describes a completed start job, not the current unit state.
@@ -33,7 +38,8 @@ func serviceJournalMatches() []string {
 	for _, id := range ids {
 		args = append(args, "MESSAGE_ID="+id)
 	}
-	return append(args, "+", "PRIORITY=0", "PRIORITY=1", "PRIORITY=2", "PRIORITY=3", "PRIORITY=4")
+	return append(args, "+", "PRIORITY=0", "PRIORITY=1", "PRIORITY=2", "PRIORITY=3", "PRIORITY=4",
+		"+", "_COMM=xray", "+", "SYSLOG_IDENTIFIER=netos-xray")
 }
 
 func serviceLogFields(field func(string) string, message string) (unit, event, severity string, keep bool) {
@@ -50,6 +56,16 @@ func serviceLogFields(field func(string) string, message string) (unit, event, s
 			unit = target
 		}
 		event = serviceEvents[field("MESSAGE_ID")]
+	}
+	// Xray's historical and direct console output also embeds native levels.
+	if severity != "error" && xrayServiceUnit.MatchString(unit) {
+		if native, ok := xraylog.DiagnosticPriority(message); ok {
+			if native == 3 {
+				severity = "error"
+			} else {
+				severity = "warning"
+			}
+		}
 	}
 	// Existing netosd versions print their level into stderr, which journald
 	// may store at info priority. Retain those warnings without changing logging.

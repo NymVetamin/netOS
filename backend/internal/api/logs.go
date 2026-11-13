@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/netos-router/netos/internal/xraylog"
 )
 
 type logEntry struct {
@@ -89,6 +91,9 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, message)
 		if !keep {
 			return logEntry{}, false
+		}
+		if xrayServiceUnit.MatchString(entry.Unit) {
+			entry.Message = xraylog.Sanitize(entry.Message)
 		}
 	}
 	if source == "access" {

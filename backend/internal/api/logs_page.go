@@ -46,7 +46,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	if kind == "" {
 		kind = "vpn"
 	}
-	c := journalLogCursor{Schema: 2, Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
+	c := journalLogCursor{Schema: 3, Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
 	if token := q.Get("cursor"); token != "" {
 		if len(token) > 8192 {
 			return c, fmt.Errorf("курсор журнала слишком длинный")
@@ -63,7 +63,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		if c.Kind != kind {
 			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
 		}
-		if (kind == "vpn" || kind == "all") && c.Schema != 2 {
+		if (kind == "vpn" || kind == "all" || kind == "services") && c.Schema != 3 {
 			return c, fmt.Errorf("состав событий журнала изменился; обновите журнал")
 		}
 		if kind != "all" && c.All != nil {

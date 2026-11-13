@@ -22,6 +22,11 @@ func TestServiceSeverityAndOriginalMessage(t *testing.T) {
 		{"netos-test.service", "4", "", "", "warning detail", "Предупреждение службы", "warning"},
 		{"netosd.service", "6", "", "", "2026/11/13 [пред] TLS error", "Предупреждение службы", "warning"},
 		{"netosd.service", "6", "", "", "2026/11/13 [ошиб] retry failed", "Ошибка службы", "error"},
+		{"netos-xray-srv12.service", "6", "", "", "2026/11/13 17:00:00.123 [Warning] core: started", "Предупреждение службы", "warning"},
+		{"netos-xray-ch12.service", "6", "", "", "[Error] bind failed", "Ошибка службы", "error"},
+		{"netos-xray-ch12.service", "3", "", "", "[Warning] detail", "Ошибка службы", "error"},
+		{"netos-xray-ch12.service", "6", "", "", "ordinary text [Error] detail", "", ""},
+		{"netos-other.service", "6", "", "", "[Error] untrusted format", "", ""},
 		{"netos-test.service", "6", "", "", "ordinary info", "", ""},
 		{"netos-test.service", "6", "", "39f53479d3a045ac8e11786248231fbf", "untrusted manager id", "", ""},
 		{"netos-test.service", "3", "1", "d9b373ed55a64feb8242e02dbe79a49c", "Failed with result exit-code", "Служба перешла в ошибку", "error"},
@@ -39,6 +44,27 @@ func TestServiceSeverityAndOriginalMessage(t *testing.T) {
 		}
 		if len(rows) != 1 || rows[0].Event != tt.event || rows[0].Severity != tt.severity || rows[0].Message != tt.message {
 			t.Fatalf("%+v: %+v", tt, rows)
+		}
+	}
+}
+
+func TestXrayServiceDiagnosticsPrivacyAndClassification(t *testing.T) {
+	for _, unit := range []string{"netos-xray-srv12.service", "netos-xray-ch12.service"} {
+		for _, source := range []string{"services", "all"} {
+			for _, priority := range []string{"3", "6"} {
+				raw, _ := json.Marshal(map[string]string{
+					"_SYSTEMD_UNIT": unit, "PRIORITY": priority,
+					"MESSAGE": "2026/11/13 17:00:00.123 [Error] invalid uuid: sensitive-value",
+				})
+				rows, err := parseJournalEntries(string(raw), source)
+				if err != nil || len(rows) != 1 || rows[0].Source != "services" || rows[0].Severity != "error" || strings.Contains(rows[0].Message, "sensitive-value") {
+					t.Fatalf("%s/%s/%s: %+v %v", unit, source, priority, rows, err)
+				}
+				vpn, err := parseJournalEntries(string(raw), "vpn")
+				if err != nil || len(vpn) != 0 {
+					t.Fatalf("diagnostic duplicated into VPN: %+v %v", vpn, err)
+				}
+			}
 		}
 	}
 }
