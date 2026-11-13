@@ -115,6 +115,49 @@ func TestIntegrationL2TPChannelPreservesSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	originalPPP, err := os.ReadFile(ppp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ppp, []byte(strings.ReplaceAll(string(originalPPP), "qa-l2tp-secret", "wrong-password")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bad := exec.Command("ip", "netns", "exec", ns, "xl2tpd", "-D", "-c", conf, "-p", filepath.Join(root, "bad.pid"), "-C", filepath.Join(root, "bad.ctl"))
+	invocation := run("systemctl", "show", l2tpUnitName(server), "-p", "InvocationID", "--value")
+	if invocation == "" {
+		t.Fatal("missing server invocation")
+	}
+	if err := bad.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bad.Process.Kill() })
+	rejected := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		records, _ := runner.Run(ctx, "journalctl", "-u", l2tpUnitName(server), "--no-pager", "-n", "60", "-o", "cat", "_SYSTEMD_INVOCATION_ID="+invocation)
+		if strings.Contains(records, "Peer qa-l2tp failed CHAP authentication") {
+			rejected = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	addresses := run("ip", "netns", "exec", ns, "ip", "-4", "addr", "show")
+	if strings.Contains(addresses, "inet 10.96.0.2 ") {
+		t.Error("invalid password received a VPN address")
+	}
+	_ = bad.Process.Kill()
+	_ = bad.Wait()
+	pids, _ := runner.Run(ctx, "ip", "netns", "pids", ns)
+	for _, pid := range strings.Fields(pids) {
+		_, _ = runner.Run(ctx, "kill", "-TERM", pid)
+	}
+	if !rejected {
+		t.Fatal("real CHAP rejection missing")
+	}
+	if err := os.WriteFile(ppp, originalPPP, 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	log, err := os.Create(filepath.Join(root, "client.log"))
 	if err != nil {
 		t.Fatal(err)

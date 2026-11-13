@@ -103,8 +103,16 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 		if source == "access" && !sshLogFields(&entry) {
 			continue
 		}
-		if source == "vpn" && !vpnLogFields(&entry) {
-			continue
+		if source == "vpn" {
+			keep := false
+			if entry.Unit == "netos-strongswan.service" {
+				keep = ikeLogFields(&entry, field)
+			} else {
+				keep = vpnLogFields(&entry) || l2tpLogFields(&entry)
+			}
+			if !keep {
+				continue
+			}
 		}
 		result = append(result, entry)
 	}
@@ -198,7 +206,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		if kind != "all" && kind != src {
 			continue
 		}
-		base := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,MESSAGE_ID,PRIORITY"}
+		base := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,MESSAGE_ID,PRIORITY,IKE_SA_NAME"}
 		args := append([]string{}, base...)
 		switch src {
 		case "dns":
@@ -208,7 +216,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		case "services":
 			args = append(args, serviceJournalMatches()...)
 		case "vpn":
-			args = append(args, "-u", "netos-ocserv-srv*.service", "--grep="+ocservEventPattern)
+			args = append(args, "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service", "--grep="+ocservEventPattern+"|"+ikeEventPattern+"|"+l2tpEventPattern)
 		case "access":
 			args = append(args, "-u", "ssh.service", "-u", "sshd.service", "--grep="+sshEventPattern)
 		}

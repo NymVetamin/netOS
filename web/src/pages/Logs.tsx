@@ -32,7 +32,7 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
    <button className="btn sm" disabled={loading || !!error || !rows.length} onClick={download}>Скачать журнал</button>
   </div>
 
-  {kind==="vpn"&&<p className="hint">События OpenConnect. Отсутствие записи не означает отсутствия попытки подключения.</p>}
+  {kind==="vpn"&&<p className="hint">События OpenConnect, IKEv2 и L2TP. Установка соединения и аутентификация пользователя — отдельные события. Отсутствие записи не означает отсутствия попытки подключения.</p>}
   {error&&<Notice tone="danger" title="Не удалось загрузить журнал">{error}{data&&" Показан предыдущий снимок журнала."}</Notice>}
   {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>
    {data?.warnings?.map((text:string,i:number)=><Notice key={i} tone="warn" title={text}/>)}

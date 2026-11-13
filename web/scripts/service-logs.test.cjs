@@ -38,3 +38,12 @@ test('VPN records show server and peer and preserve escaped raw event',()=>{
  assert.match(render([e],'srv12'),/Вход в VPN/);
  assert.match(html,/&lt;private&gt;/);
 });
+
+test('VPN authentication and transport events remain distinct',()=>{
+ const rows=[
+  {...entry,source:'vpn',protocol:'ikev2',server:'srv7',event:'Пользователь VPN прошёл аутентификацию',user:'alice',result:'success'},
+  {...entry,source:'vpn',protocol:'l2tp',server:'srv8',event:'Установлено соединение L2TP до аутентификации',result:'info',severity:undefined},
+ ];
+ assert.match(render(rows),/IKEV2/);assert.match(render(rows),/L2TP/);
+ assert.doesNotMatch(render([rows[1]]),/Успешно|Пользователь:/);
+});
