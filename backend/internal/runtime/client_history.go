@@ -283,6 +283,12 @@ func (h *ClientHistory) sample(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	identities := h.identity(ctx, cfg)
+	scope := monitor.NewClientScope(cfg)
+	for addr := range identities {
+		if !scope.Contains(addr) {
+			delete(identities, addr)
+		}
+	}
 	h.mu.Lock()
 	h.addresses = identities
 	if h.dnsCancel == nil {
@@ -303,6 +309,11 @@ func (h *ClientHistory) sample(parent context.Context) {
 	}
 	samples := []ClientCounter{}
 	for addr, v := range counts {
+		// Old accounting sets survive apply and may contain exit destinations.
+		// Never turn those addresses into clients of the current configuration.
+		if !scope.Contains(addr) {
+			continue
+		}
 		known, ok := identities[addr]
 		if !ok {
 			known = ClientCounter{ID: "ip:" + addr, Name: addr, Address: addr}

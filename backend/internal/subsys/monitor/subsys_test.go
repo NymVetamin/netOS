@@ -15,7 +15,7 @@ func TestAccountingDisabledAndReapply(t *testing.T) {
 	}
 	c.TrafficMonitor.Enabled = true
 	c.Interfaces = []config.Interface{{ID: "lan", Name: "br-lan", Enabled: true}}
-	c.Networks = []config.Network{{Interface: "lan", Enabled: true}}
+	c.Networks = []config.Network{{Interface: "lan", RouterAddress: "192.0.2.1/24", Enabled: true}}
 	first := Render(c, false)
 	again := Render(c, true)
 	if !strings.Contains(first, "hook forward priority 10") || !strings.Contains(first, "update @up4") || strings.Contains(first, " drop") {

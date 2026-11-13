@@ -99,20 +99,45 @@ func Render(c *config.Config, exists bool) string {
 	} else {
 		w("flush chain inet %s clients", Table)
 	}
-	ifaces := Interfaces(c)
-	if len(ifaces) > 0 {
-		quoted := make([]string, len(ifaces))
-		for i, iface := range ifaces {
-			quoted[i] = fmt.Sprintf("%q", iface)
+	scope := NewClientScope(c)
+	names := make([]string, 0, len(scope.links))
+	for name := range scope.links {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, family := range []string{"4", "6"} {
+		proto := "ip"
+		if family == "6" {
+			proto = "ip6"
 		}
-		ifaceSet := "{ " + strings.Join(quoted, ", ") + " }"
-		for _, family := range []string{"4", "6"} {
-			proto, nf := "ip", "ipv4"
-			if family == "6" {
-				proto, nf = "ip6", "ipv6"
+		pairs := []string{}
+		for _, name := range names {
+			prefixes := []string{}
+			for prefix := range scope.links[name] {
+				if prefix.Addr().Is4() == (family == "4") {
+					prefixes = append(prefixes, prefix.String())
+				}
 			}
-			w("add rule inet %s clients iifname %s meta nfproto %s update @up%s { %s saddr timeout 24h counter }", Table, ifaceSet, nf, family, proto)
-			w("add rule inet %s clients oifname %s meta nfproto %s update @down%s { %s daddr timeout 24h counter }", Table, ifaceSet, nf, family, proto)
+			sort.Strings(prefixes)
+			if len(prefixes) == 0 {
+				continue
+			}
+			if strings.HasSuffix(name, "*") {
+				addresses := "{ " + strings.Join(prefixes, ", ") + " }"
+				w("add rule inet %s clients iifname %q %s saddr %s update @up%s { %s saddr timeout 24h counter }", Table, name, proto, addresses, family, proto)
+				w("add rule inet %s clients oifname %q %s daddr %s update @down%s { %s daddr timeout 24h counter }", Table, name, proto, addresses, family, proto)
+			} else {
+				for _, prefix := range prefixes {
+					pairs = append(pairs, fmt.Sprintf("%q . %s", name, prefix))
+				}
+			}
+		}
+		// A concatenated interval set matches interface AND client address without
+		// walking one rule per segment for every forwarded packet.
+		if len(pairs) > 0 {
+			addresses := "{ " + strings.Join(pairs, ", ") + " }"
+			w("add rule inet %s clients iifname . %s saddr %s update @up%s { %s saddr timeout 24h counter }", Table, proto, addresses, family, proto)
+			w("add rule inet %s clients oifname . %s daddr %s update @down%s { %s daddr timeout 24h counter }", Table, proto, addresses, family, proto)
 		}
 	}
 
