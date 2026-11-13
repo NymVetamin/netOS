@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS audit (
     success   INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_access ON audit(id DESC) WHERE action IN ('login','logout');
 
 CREATE TABLE IF NOT EXISTS panel_access (
     username TEXT PRIMARY KEY,
@@ -675,6 +676,22 @@ func (s *Store) ListAudit(limit int) ([]AuditEntry, error) {
 	}
 	rows, err := s.db.Query(
 		`SELECT id, at, user, action, target, detail, source_ip, success FROM audit ORDER BY id DESC LIMIT ?`, limit)
+	return scanAuditRows(rows, err)
+}
+
+// Filter before LIMIT so configuration activity cannot hide access events.
+func (s *Store) ListAccessAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
+	if limit < 1 {
+		limit = 100
+	} else if limit > 300 {
+		limit = 300
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, at, user, action, target, detail, source_ip, success FROM audit
+ WHERE action IN ('login','logout') ORDER BY id DESC LIMIT ?`, limit)
+	return scanAuditRows(rows, err)
+}
+
+func scanAuditRows(rows *sql.Rows, err error) ([]AuditEntry, error) {
 	if err != nil {
 		return nil, err
 	}

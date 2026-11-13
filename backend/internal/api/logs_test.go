@@ -128,7 +128,7 @@ func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 4 {
+	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 5 {
 		t.Fatal(w.Body.String(), runner.calls)
 	}
 	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:03Z" {
@@ -138,7 +138,7 @@ func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
 	bad = bad.WithContext(req.Context())
 	w = httptest.NewRecorder()
 	s.handleLogs(w, bad)
-	if w.Code != 400 || len(runner.calls) != 4 {
+	if w.Code != 400 || len(runner.calls) != 5 {
 		t.Fatal("unvalidated source")
 	}
 }

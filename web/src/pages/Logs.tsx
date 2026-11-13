@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Empty, Notice, TableWrap } from "../ui";
-const tabs = [{id:"all",name:"Общий"},{id:"dns",name:"DNS"},{id:"firewall",name:"Firewall"},{id:"services",name:"Службы"}];
+const tabs = [{id:"all",name:"Общий"},{id:"dns",name:"DNS"},{id:"firewall",name:"Firewall"},{id:"services",name:"Службы"},{id:"access",name:"Доступ"}];
 const fromHash=()=>{const kind=new URLSearchParams(window.location.hash.split("?")[1] || "").get("log");return tabs.some(t=>t.id===kind)?kind!:"all"};
 export function Logs({ dnsLogging }: { dnsLogging: boolean }) {
  const [open,setOpen]=useState(false);
@@ -22,7 +22,7 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
   return()=>{active=false};
  },[kind,attempt]);
  const needle=query.toLocaleLowerCase();
- const rows=(data?.entries || []).filter((e:any)=>`${e.time} ${e.source} ${e.unit} ${e.event||""} ${e.message}`.toLocaleLowerCase().includes(needle));
+ const rows=(data?.entries || []).filter((e:any)=>`${e.time} ${e.source} ${e.unit} ${e.event||""} ${e.user||""} ${e.address||""} ${e.protocol||""} ${e.message}`.toLocaleLowerCase().includes(needle));
  function download(){const text=rows.map((e:any)=>`${e.time || "Время неизвестно"}\t${e.source}\t${e.unit}\t${e.message}`).join("\n");const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`netos-${kind}.log`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  return <div className="logs-content" aria-busy={loading}>
   <div role="tablist" aria-label="Источники журнала" className="row wrap navigation-subtabs">{tabs.filter(t=>t.id!=="dns" || dnsLogging).map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?tab=logs&log=${t.id}`}}>{t.name}</button>)}</div>
@@ -38,7 +38,7 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
    <p className="hint">Показано {rows.length} из {data?.entries?.length || 0} · Снимок: {data?.captured_at ? new Date(data.captured_at).toLocaleString("ru-RU") : "—"}</p>
    {rows.length===0?<Empty>{query?"Совпадений нет":kind==="dns"?"Запросов DNS пока нет":"Записей пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table className="logs-table">
     <thead><tr><th>Время</th><th>Источник</th><th>Сообщение</th></tr></thead>
-    <tbody>{rows.map((e:any,i:number)=><tr key={i}><td style={{whiteSpace:"nowrap"}}>{e.time?new Date(e.time).toLocaleString("ru-RU"):"Время неизвестно"}</td><td className="logs-source">{tabs.find(t=>t.id===e.source)?.name || e.source}{e.unit&&<span className="logs-unit faint">{e.unit}</span>}</td><td style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxWidth:"65vw"}}>{e.event?<><strong>{e.event}</strong>{e.severity==="error"?" · Ошибка":e.severity==="warning"?" · Предупреждение":""}<details><summary>Исходная запись</summary>{e.message}</details></>:e.message}</td></tr>)}</tbody>
+    <tbody>{rows.map((e:any,i:number)=><tr key={i}><td style={{whiteSpace:"nowrap"}}>{e.time?new Date(e.time).toLocaleString("ru-RU"):"Время неизвестно"}</td><td className="logs-source">{tabs.find(t=>t.id===e.source)?.name || e.source}{e.protocol&&<span> · {e.protocol==="panel"?"Панель":e.protocol.toUpperCase()}</span>}{e.unit&&<span className="logs-unit faint">{e.unit}</span>}</td><td style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxWidth:"65vw"}}>{e.event?<><strong>{e.event}</strong>{e.result==="failure"?" · Отказ":e.result==="success"?" · Успешно":e.severity==="error"?" · Ошибка":e.severity==="warning"?" · Предупреждение":""}{(e.user||e.address)&&<div>{e.user&&<span>Пользователь: {e.user}</span>}{e.user&&e.address&&" · "}{e.address&&<span>Адрес: {e.address}</span>}</div>}<details><summary>Исходная запись</summary>{e.message}</details></>:e.message}</td></tr>)}</tbody>
    </table></TableWrap></div>}
   </>}
  </div>;

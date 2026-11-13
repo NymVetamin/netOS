@@ -24,6 +24,10 @@ type logEntry struct {
 	Message  string `json:"message"`
 	Event    string `json:"event,omitempty"`
 	Severity string `json:"severity,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	User     string `json:"user,omitempty"`
+	Address  string `json:"address,omitempty"`
+	Result   string `json:"result,omitempty"`
 }
 
 // Query records only: service lifecycle, resolver statistics and replies are not queries.
@@ -94,6 +98,9 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 			if !keep {
 				continue
 			}
+		}
+		if source == "access" && !sshLogFields(&entry) {
+			continue
 		}
 		result = append(result, entry)
 	}
@@ -172,7 +179,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = "all"
 	}
-	if kind != "all" && kind != "dns" && kind != "firewall" && kind != "services" {
+	if kind != "all" && kind != "dns" && kind != "firewall" && kind != "services" && kind != "access" {
 		writeError(w, http.StatusBadRequest, "неизвестный журнал")
 		return
 	}
@@ -183,7 +190,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	entries := []logEntry{}
 	warnings := []string{}
 	now := time.Now()
-	for _, src := range []string{"dns", "firewall", "services"} {
+	for _, src := range []string{"dns", "firewall", "services", "access"} {
 		if kind != "all" && kind != src {
 			continue
 		}
@@ -196,6 +203,8 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			args = append(args, "-k", "--grep=netos ")
 		case "services":
 			args = append(args, serviceJournalMatches()...)
+		case "access":
+			args = append(args, "-u", "ssh.service", "-u", "sshd.service", "--grep="+sshEventPattern)
 		}
 		queries := [][]string{args}
 		if src == "services" {
@@ -204,7 +213,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		for _, args := range queries {
 			raw, err := runner.Run(r.Context(), "journalctl", args...)
 			// journalctl --grep exits 1 without stderr when no entries match.
-			if (src == "firewall" || src == "services") && emptyJournalMatch(raw, err) {
+			if (src == "firewall" || src == "services" || src == "access") && emptyJournalMatch(raw, err) {
 				err = nil
 			}
 			if err != nil {
@@ -214,6 +223,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 				if parseErr != nil {
 					warnings = append(warnings, src+": "+parseErr.Error())
 				}
+				entries = append(entries, rows...)
+			}
+		}
+		if src == "access" {
+			rows, err := s.panelAccessEntries(r.Context())
+			if err != nil {
+				warnings = append(warnings, "Панель: не удалось прочитать аудит: "+err.Error())
+			} else {
 				entries = append(entries, rows...)
 			}
 		}

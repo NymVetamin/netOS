@@ -25,3 +25,9 @@ test('search includes translated event and original detail',()=>{
 test('legacy entries remain visible without invented event',()=>{
  const html=render([{...entry,event:undefined}]);assert.match(html,/process exited &lt;private&gt;/);assert.doesNotMatch(html,/<details>/);
 });
+test('access records show identity and outcome without treating disconnect as successful login',()=>{
+ const html=render([{...entry,source:'access',protocol:'ssh',user:'alice',address:'2001:db8::1',event:'Отказ во входе SSH',result:'failure'}]);
+ for(const text of ['Доступ','SSH','Пользователь: alice','Адрес: 2001:db8::1','· Отказ'])assert.ok(html.includes(text));
+ const closed=render([{...entry,source:'access',protocol:'ssh',event:'Соединение SSH завершено',result:'info',severity:undefined}]);
+ assert.doesNotMatch(closed,/· Успешно|· Отказ/);
+});
