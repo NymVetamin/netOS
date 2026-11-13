@@ -52,6 +52,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 	t.Run("shadowsocks", func(t *testing.T) { testXrayAccessJournal(t, false, true, "shadowsocks") })
 	t.Run("hysteria", func(t *testing.T) { testXrayAccessJournal(t, false, true, "hysteria") })
 	t.Run("reality", func(t *testing.T) { testXrayAccessJournal(t, false, true, "reality") })
+	t.Run("wireguard", func(t *testing.T) { testXrayAccessJournal(t, false, true, "wireguard") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -104,6 +105,16 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		server.Config["method"] = "aes-256-gcm"
 	}
 	server.Peers[0].Credentials["uuid"] = "11111111-1111-1111-1111-111111111111"
+	if protocol == "wireguard" {
+		server.Config["wg_private_key"] = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'s'}, 32))
+		clientKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'c'}, 32))
+		public, err := xrayPublicKey(clientKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.Peers[0].Address = "10.97.0.2"
+		server.Peers[0].Credentials = map[string]string{"private_key": clientKey, "public_key": public}
+	}
 	cfg := config.Default()
 	cfg.TrafficMonitor.Enabled = monitor
 	raw, err := vpnservers.RenderXray(server, cfg)
@@ -115,6 +126,18 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal(err)
 	}
 	root := t.TempDir()
+	profileTarget := echo.Addr().String()
+	if protocol == "wireguard" {
+		// A loopback destination belongs to the client's nested IP stack.
+		// Route a test address through the tunnel, then terminate it locally.
+		profileTarget = net.JoinHostPort("198.18.0.1", strconv.Itoa(echo.Addr().(*net.TCPAddr).Port))
+		for _, raw := range doc["outbounds"].([]any) {
+			outbound := raw.(map[string]any)
+			if outbound["tag"] == "direct" {
+				outbound["settings"].(map[string]any)["redirect"] = echo.Addr().String()
+			}
+		}
+	}
 	// Keep this generated-config test isolated from public interfaces and /run.
 	doc["inbounds"].([]any)[0].(map[string]any)["listen"] = "127.0.0.1"
 	doc["api"].(map[string]any)["listen"] = filepath.Join(root, "stats.sock")
@@ -166,10 +189,10 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	ready := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" {
+		if protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" || protocol == "wireguard" {
 			// An empty TCP probe itself produces an authentication rejection.
 			flags := "-ltn"
-			if protocol == "hysteria" {
+			if protocol == "hysteria" || protocol == "wireguard" {
 				flags = "-lun"
 			}
 			out, err := run.Run(ctx, "ss", "-H", flags, "sport", "=", strconv.Itoa(port))
@@ -195,8 +218,8 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
-		if protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" {
-			probeXrayProfileLogConnection(t, binary, server, echo.Addr().String(), clientPin, valid)
+		if protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" || protocol == "wireguard" {
+			probeXrayProfileLogConnection(t, binary, server, profileTarget, clientPin, valid)
 			continue
 		}
 		if protocol == "trojan" {
@@ -368,7 +391,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" {
+	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" || protocol == "wireguard" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
@@ -401,6 +424,13 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		if protocol == "reality" && strings.Contains(journal, server.Config["private_key"].(string)) {
 			t.Fatal("Reality private key reached journal")
 		}
+		if protocol == "wireguard" {
+			for _, key := range []string{server.Config["wg_private_key"].(string), server.Peers[0].Credentials["private_key"], base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'b'}, 32))} {
+				if strings.Contains(journal, key) {
+					t.Fatal("WireGuard private key reached journal")
+				}
+			}
+		}
 		if protocol == "shadowsocks" || protocol == "hysteria" {
 			for _, password := range []string{"log-password", "qa-" + protocol + "-invalid-secret"} {
 				if strings.Contains(journal, password) {
@@ -418,8 +448,8 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	period := "from=" + url.QueryEscape(from.Format(time.RFC3339Nano)) + "&to=" + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)) + "&object=srv993"
 	p := readAllJournalPages(t, s, "vpn", period)
 	wantEvents := 3
-	if protocol == "hysteria" {
-		wantEvents = 2 // QUIC auth refusal is returned to the client but not logged by Xray.
+	if protocol == "hysteria" || protocol == "wireguard" {
+		wantEvents = 2 // Failed transport authentication is not an Xray access record.
 	}
 	if len(p.Entries) != wantEvents {
 		t.Fatal("missing Xray events", len(p.Entries))
@@ -430,7 +460,11 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality") && e.Result == "success" {
 			user = "log-probe/peer"
 		}
-		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != "127.0.0.1" || e.User != user {
+		address := "127.0.0.1"
+		if protocol == "wireguard" {
+			address = server.Peers[0].Address
+		}
+		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != address || e.User != user {
 			t.Fatal(e)
 		}
 		if e.Result == "failure" {
@@ -438,7 +472,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		}
 	}
 	wantFailures := 1
-	if protocol == "http" || protocol == "hysteria" {
+	if protocol == "http" || protocol == "hysteria" || protocol == "wireguard" {
 		wantFailures = 0
 	} // These authentication refusals have no access event in Xray.
 	if failures != wantFailures {
@@ -473,7 +507,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 			t.Fatal("canonical diagnostic missing or duplicated", status, found)
 		}
 	}
-	t.Logf("generated %s config: two real echo connections, one auth rejection; HTTP additionally GET with private URL; observed rejection events=%d; journald/VPN/General/Services PASS", protocol, failures)
+	t.Logf("generated %s config: two real echo connections, one invalid-credential attempt; HTTP additionally GET with private URL; observed rejection events=%d; journald/VPN/General/Services PASS", protocol, failures)
 }
 
 func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VPNServer, target, pin string, valid bool) {
@@ -484,18 +518,42 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 	if protocol == "shadowsocks" || protocol == "hysteria" {
 		credential, invalid = "password", "qa-"+protocol+"-invalid-secret"
 	}
+	if protocol == "wireguard" {
+		credential, invalid = "private_key", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'b'}, 32))
+	}
 	peer.Credentials = map[string]string{credential: peer.Credentials[credential]}
 	if !valid {
 		peer.Credentials[credential] = invalid
 	}
 	server.Config["public_endpoint"] = net.JoinHostPort("127.0.0.1", strconv.Itoa(server.Port))
-	profile, err := xrayClientProfile(server, peer, pin)
+	var profile xrayProfile
+	var err error
+	if protocol == "wireguard" {
+		public, keyErr := xrayPublicKey(server.Config["wg_private_key"].(string))
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		// Keep the nested WireGuard client in userspace; kernel TUN changes host sysctls.
+		profile.Config = map[string]any{
+			"log":      map[string]any{"loglevel": "warning"},
+			"inbounds": []any{map[string]any{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": map[string]any{"auth": "noauth"}}},
+			"outbounds": []any{map[string]any{"protocol": "wireguard", "settings": map[string]any{
+				"noKernelTun": true, "secretKey": peer.Credentials["private_key"], "address": []string{peer.Address + "/32"},
+				"peers": []any{map[string]any{"publicKey": public, "endpoint": server.Config["public_endpoint"], "allowedIPs": []string{"0.0.0.0/0"}}},
+			}}},
+		}
+	} else {
+		profile, err = xrayClientProfile(server, peer, pin)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	if protocol == "hysteria" || protocol == "reality" {
 		// Client-side evidence distinguishes auth refusal from a transport timeout.
 		profile.Config["log"].(map[string]any)["loglevel"] = "info"
+	}
+	if protocol == "wireguard" {
+		profile.Config["log"].(map[string]any)["loglevel"] = "debug"
 	}
 	reserve, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -574,6 +632,14 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 		data, err := os.ReadFile(filepath.Join(root, "client.log"))
 		if err != nil || !bytes.Contains(data, []byte("auth failed code")) {
 			t.Fatalf("missing client evidence of Hysteria authentication refusal: %v\n%s", err, data)
+		}
+	}
+	if protocol == "wireguard" {
+		data, err := os.ReadFile(filepath.Join(root, "client.log"))
+		initiated := bytes.Contains(data, []byte("Sending handshake initiation"))
+		responded := bytes.Contains(data, []byte("Received handshake response"))
+		if err != nil || !initiated || responded != valid {
+			t.Fatalf("WireGuard handshake evidence: valid=%v, error=%v\n%s", valid, err, data)
 		}
 	}
 }
