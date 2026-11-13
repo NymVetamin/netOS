@@ -31,3 +31,10 @@ test('access records show identity and outcome without treating disconnect as su
  const closed=render([{...entry,source:'access',protocol:'ssh',event:'Соединение SSH завершено',result:'info',severity:undefined}]);
  assert.doesNotMatch(closed,/· Успешно|· Отказ/);
 });
+
+test('VPN records show server and peer and preserve escaped raw event',()=>{
+ const e={...entry,source:'vpn',protocol:'openconnect',server:'srv12',user:'alice',address:'192.0.2.2',event:'Вход в VPN',result:'success'};
+ const html=render([e]);for(const text of ['VPN','OPENCONNECT','Сервер: srv12','Пользователь: alice','Адрес: 192.0.2.2'])assert.ok(html.includes(text));
+ assert.match(render([e],'srv12'),/Вход в VPN/);
+ assert.match(html,/&lt;private&gt;/);
+});

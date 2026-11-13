@@ -28,6 +28,7 @@ type logEntry struct {
 	User     string `json:"user,omitempty"`
 	Address  string `json:"address,omitempty"`
 	Result   string `json:"result,omitempty"`
+	Server   string `json:"server,omitempty"`
 }
 
 // Query records only: service lifecycle, resolver statistics and replies are not queries.
@@ -100,6 +101,9 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 			}
 		}
 		if source == "access" && !sshLogFields(&entry) {
+			continue
+		}
+		if source == "vpn" && !vpnLogFields(&entry) {
 			continue
 		}
 		result = append(result, entry)
@@ -179,7 +183,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = "all"
 	}
-	if kind != "all" && kind != "dns" && kind != "firewall" && kind != "services" && kind != "access" {
+	if kind != "all" && kind != "dns" && kind != "firewall" && kind != "services" && kind != "access" && kind != "vpn" {
 		writeError(w, http.StatusBadRequest, "неизвестный журнал")
 		return
 	}
@@ -190,7 +194,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	entries := []logEntry{}
 	warnings := []string{}
 	now := time.Now()
-	for _, src := range []string{"dns", "firewall", "services", "access"} {
+	for _, src := range []string{"dns", "firewall", "services", "access", "vpn"} {
 		if kind != "all" && kind != src {
 			continue
 		}
@@ -203,6 +207,8 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			args = append(args, "-k", "--grep=netos ")
 		case "services":
 			args = append(args, serviceJournalMatches()...)
+		case "vpn":
+			args = append(args, "-u", "netos-ocserv-srv*.service", "--grep="+ocservEventPattern)
 		case "access":
 			args = append(args, "-u", "ssh.service", "-u", "sshd.service", "--grep="+sshEventPattern)
 		}
@@ -213,7 +219,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		for _, args := range queries {
 			raw, err := runner.Run(r.Context(), "journalctl", args...)
 			// journalctl --grep exits 1 without stderr when no entries match.
-			if (src == "firewall" || src == "services" || src == "access") && emptyJournalMatch(raw, err) {
+			if (src == "firewall" || src == "services" || src == "access" || src == "vpn") && emptyJournalMatch(raw, err) {
 				err = nil
 			}
 			if err != nil {
