@@ -196,6 +196,82 @@ func TestDNSQueryFiltering(t *testing.T) {
 	}
 }
 
+func TestDNSProxyIncomingPrefix(t *testing.T) {
+	query := `2026/11/13 13:37:35.662033 DEBUG in prefix=dnsproxy line_num=5 line=";netos-fixture.invalid.\tIN\t A"`
+	for _, line := range []string{query, strings.TrimPrefix(query, "2026/11/13 13:37:35.662033 ")} {
+		if !isDNSQuery(line) {
+			t.Fatalf("real dnsproxy query lost: %s", line)
+		}
+	}
+	for _, line := range []string{
+		strings.Replace(query, "DEBUG in ", "DEBUG out ", 1),
+		strings.Replace(query, "prefix=dnsproxy ", "prefix=other ", 1),
+		`2026/11/13 13:37:35.662004 DEBUG in prefix=dnsproxy line_num=1 line=";; opcode: QUERY, status: NOERROR, id: 1234"`,
+		`2026/11/13 13:37:35.662027 DEBUG in prefix=dnsproxy line_num=4 line=";; QUESTION SECTION:"`,
+	} {
+		if isDNSQuery(line) {
+			t.Fatalf("non-query accepted: %s", line)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "dns.log")
+	if err := os.WriteFile(path, []byte(query+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readDNSLog(path, time.Now())
+	if err != nil || len(rows) != 1 || rows[0].Time == "" || rows[0].Message != query {
+		t.Fatal(rows, err)
+	}
+	raw, _ := json.Marshal(map[string]string{"MESSAGE": query, "_SYSTEMD_UNIT": "netos-dnsproxy.service", "__REALTIME_TIMESTAMP": "1794577055662033"})
+	rows, err = parseJournalEntries(string(raw), "dns")
+	if err != nil || len(rows) != 1 || rows[0].Message != query {
+		t.Fatal(rows, err)
+	}
+}
+
+func BenchmarkDNSQuerySources(b *testing.B) {
+	for _, n := range []int{30, 3000} {
+		lines := make([]string, n)
+		for i := range lines {
+			lines[i] = `2026/11/13 13:37:35.662033 DEBUG in prefix=dnsproxy line_num=4 line=";; QUESTION SECTION:"`
+			if i%3 == 0 {
+				lines[i] = `2026/11/13 13:37:35.662033 DEBUG in prefix=dnsproxy line_num=5 line=";netos-fixture.invalid.\tIN\t A"`
+			}
+			if i%3 == 1 {
+				lines[i] = `2026/11/13 13:37:35.662033 DEBUG out prefix=dnsproxy line_num=5 line=";netos-fixture.invalid.\tIN\t A"`
+			}
+		}
+		b.Run(fmt.Sprintf("filter/%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				count := 0
+				for _, line := range lines {
+					if isDNSQuery(line) {
+						count++
+					}
+				}
+				if count != n/3 {
+					b.Fatal(count)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("file/%d", n), func(b *testing.B) {
+			path := filepath.Join(b.TempDir(), "dns.log")
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+				b.Fatal(err)
+			}
+			now := time.Now()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				rows, err := readDNSLog(path, now)
+				if err != nil || len(rows) == 0 || len(rows) > 300 {
+					b.Fatal(rows, err)
+				}
+			}
+		})
+	}
+}
+
 func TestSortNewestFirstKeepsUnknownLastAndTiesStable(t *testing.T) {
 	entries := []logEntry{
 		{Time: "", Message: "unknown-1"},

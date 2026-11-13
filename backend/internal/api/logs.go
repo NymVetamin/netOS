@@ -46,7 +46,8 @@ func isDNSQuery(message string) bool {
 		return true
 	}
 	// dnsproxy emits the DNS packet as structured, numbered lines. Keep its incoming question only.
-	if strings.Contains(message, "msg=in ") || strings.Contains(message, "msg=\"in\" ") || strings.Contains(message, " in line_num=") {
+	if strings.Contains(message, "msg=in ") || strings.Contains(message, "msg=\"in\" ") || strings.Contains(message, " in line_num=") ||
+		strings.HasPrefix(message, "DEBUG in prefix=dnsproxy ") || strings.Contains(message, " DEBUG in prefix=dnsproxy ") {
 		m := dnsproxyLine.FindStringSubmatch(message)
 		if len(m) > 1 {
 			line := m[1]
