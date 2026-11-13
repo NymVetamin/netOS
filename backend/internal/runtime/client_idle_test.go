@@ -316,7 +316,7 @@ func TestIdleHistoryStorageCosts(t *testing.T) {
 					if e = h.db.QueryRow("SELECT COALESCE(SUM(length(clients)+32),0),COUNT(*) FROM traffic_idle").Scan(&bytes, &rows); e != nil {
 						t.Fatal(e)
 					}
-					t.Logf("prune=%s idle_budget_bytes=%d rows=%d limited=%t", time.Since(begin), bytes, rows, h.limited)
+					t.Logf("prune=%s idle_budget_bytes=%d rows=%d limited=%t", time.Since(begin), bytes, rows, len(h.limits) > 0)
 					if bytes > idleHistoryBudget {
 						t.Fatal("idle byte budget exceeded")
 					}

@@ -71,7 +71,8 @@ type ClientHistory struct {
 	enabled             bool
 	problem             string
 	dnsProblem          string
-	limited             bool
+	limits              map[historyLimitKey]HistoryLimit
+	pendingLimits       map[historyLimitKey]HistoryLimit
 	dnsCancel           context.CancelFunc
 	lastPrune           time.Time
 	lastPersist         time.Time
@@ -96,6 +97,7 @@ func NewClientHistory(path string, r system.Runner, c *Collector, current func()
  CREATE TABLE IF NOT EXISTS traffic_idle_clients(id TEXT UNIQUE,name TEXT,address TEXT,at INTEGER);
  CREATE TABLE IF NOT EXISTS traffic_idle(at INTEGER,seconds REAL,clients TEXT,n INTEGER);
  CREATE INDEX IF NOT EXISTS traffic_idle_time ON traffic_idle(at);
+ CREATE TABLE IF NOT EXISTS history_limits(kind TEXT,hour INTEGER,first INTEGER,last INTEGER,PRIMARY KEY(kind,hour));
  CREATE TABLE IF NOT EXISTS domains(at INTEGER,client TEXT,domain TEXT,n INTEGER,first INTEGER,last INTEGER);
  CREATE INDEX IF NOT EXISTS domains_time ON domains(at);
  CREATE TABLE IF NOT EXISTS resources(at INTEGER,client TEXT,domain TEXT,source TEXT,n INTEGER,first INTEGER,last INTEGER);
@@ -105,7 +107,12 @@ func NewClientHistory(path string, r system.Runner, c *Collector, current func()
 		return nil, err
 	}
 	_ = os.Chmod(path, 0600)
-	return &ClientHistory{Runner: r, Collector: c, Current: current, db: db, addresses: map[string]ClientCounter{}, baseline: map[string]clientBaseline{}, dns: map[string]*DNSCount{}}, nil
+	h := &ClientHistory{Runner: r, Collector: c, Current: current, db: db, addresses: map[string]ClientCounter{}, baseline: map[string]clientBaseline{}, dns: map[string]*DNSCount{}}
+	if err = h.loadLimits(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return h, nil
 }
 func (h *ClientHistory) Close() error { return h.db.Close() }
 func (h *ClientHistory) Run(ctx context.Context) {
@@ -465,9 +472,13 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 		}
 	}
 
+	if err = writeHistoryLimits(tx, h.pendingLimits); err != nil {
+		return err
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
+	h.pendingLimits = nil
 	if h.trafficCache != nil {
 		for _, d := range deltas {
 			h.trafficCache.add(now.Unix(), d.ClientCounter, d.Seconds)
@@ -507,7 +518,7 @@ func (h *ClientHistory) AddDNS(at time.Time, addr, domain string) {
 	d := h.dns[key]
 	if d == nil {
 		if len(h.dns) >= 4096 {
-			h.limited = true
+			h.noteLimitLocked("dns-buffer", at.Unix(), at.Unix())
 			return
 		}
 		d = &DNSCount{Client: client.ID, Domain: domain, First: at.Unix()}
@@ -533,14 +544,16 @@ type ClientPoint struct {
 	TX float64 `json:"tx_bps"`
 }
 type ClientReport struct {
-	Enabled bool          `json:"enabled"`
-	Problem string        `json:"problem,omitempty"`
-	Limited bool          `json:"limited"`
-	Clients []ClientTotal `json:"clients"`
-	Points  []ClientPoint `json:"points"`
-	Domains []DNSCount    `json:"domains"`
-	From    int64         `json:"from"`
-	To      int64         `json:"to"`
+	Enabled   bool              `json:"enabled"`
+	Problem   string            `json:"problem,omitempty"`
+	Limited   bool              `json:"limited"`
+	Limits    []HistoryLimit    `json:"limits,omitempty"`
+	Available *HistoryAvailable `json:"available,omitempty"`
+	Clients   []ClientTotal     `json:"clients"`
+	Points    []ClientPoint     `json:"points"`
+	Domains   []DNSCount        `json:"domains"`
+	From      int64             `json:"from"`
+	To        int64             `json:"to"`
 }
 
 // ClientReportOptions lets consumers skip unused legacy chart aggregation.
@@ -551,7 +564,7 @@ type ClientReportOptions struct {
 func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected []string, details bool, options ...ClientReportOptions) (ClientReport, error) {
 	includePoints := len(options) == 0 || !options[0].OmitPoints
 	h.mu.Lock()
-	report := ClientReport{Enabled: h.enabled, Problem: h.problem, Limited: h.limited, Clients: []ClientTotal{}, Points: []ClientPoint{}, Domains: []DNSCount{}, From: from.Unix(), To: to.Unix()}
+	report := ClientReport{Enabled: h.enabled, Problem: h.problem, Clients: []ClientTotal{}, Points: []ClientPoint{}, Domains: []DNSCount{}, From: from.Unix(), To: to.Unix()}
 	if h.dnsProblem != "" {
 		report.Problem = strings.TrimSpace(report.Problem + " " + h.dnsProblem)
 	}
@@ -561,6 +574,12 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 	if err != nil {
 		return report, err
 	}
+	report.Available, err = h.availableHistory(ctx)
+	if err != nil {
+		return report, err
+	}
+	report.Limits = h.reportLimits(from.Unix(), to.Unix())
+	report.Limited = len(report.Limits) > 0
 	if len(selected) == 0 {
 		return report, nil
 	}
@@ -646,7 +665,9 @@ func (h *ClientHistory) prune(now time.Time) error {
 		return err
 	}
 	defer tx.Rollback()
-	idlePruned := false
+	quotaLimits := map[historyLimitKey]HistoryLimit{}
+	trafficPruned := false
+	cutoff := now.Add(-7 * 24 * time.Hour).Unix()
 	{
 		if _, err = tx.Exec("DELETE FROM traffic_idle WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
 			return err
@@ -654,16 +675,12 @@ func (h *ClientHistory) prune(now time.Time) error {
 		if _, err = tx.Exec("DELETE FROM traffic_idle_clients WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
 			return err
 		}
-		result, err := tx.Exec(`DELETE FROM traffic_idle WHERE rowid IN (
- SELECT rowid FROM (SELECT rowid,SUM(length(clients)+32) OVER (ORDER BY at DESC,rowid DESC) AS used FROM traffic_idle) WHERE used>?)`, idleHistoryBudget)
+		removed, err := deleteHistoryQuota(tx, "traffic-idle", `DELETE FROM traffic_idle WHERE rowid IN (
+ SELECT rowid FROM (SELECT rowid,SUM(length(clients)+32) OVER (ORDER BY at DESC,rowid DESC) AS used FROM traffic_idle) WHERE used>?)`, quotaLimits, idleHistoryBudget)
 		if err != nil {
 			return err
 		}
-		removed, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		idlePruned = removed > 0
+		trafficPruned = removed
 		for _, table := range []string{"traffic", "domains", "resources"} {
 			if _, err = tx.Exec("DELETE FROM "+table+" WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
 				return err
@@ -672,24 +689,36 @@ func (h *ClientHistory) prune(now time.Time) error {
 			if table != "traffic" {
 				limit = 50000
 			}
-			result, e := tx.Exec("DELETE FROM "+table+" WHERE rowid IN (SELECT rowid FROM "+table+" ORDER BY at DESC LIMIT -1 OFFSET ?)", limit)
+			removed, e := deleteHistoryQuota(tx, table, "DELETE FROM "+table+" WHERE rowid IN (SELECT rowid FROM "+table+" ORDER BY at DESC LIMIT -1 OFFSET ?)", quotaLimits, limit)
 			if e != nil {
 				return e
 			}
-			if n, _ := result.RowsAffected(); n > 0 {
-				if table == "traffic" {
-					h.trafficCache = nil
-				}
-				h.limited = true
-			}
+			trafficPruned = trafficPruned || (removed && table == "traffic")
 		}
+	}
+	if err = writeHistoryLimits(tx, h.pendingLimits); err != nil {
+		return err
+	}
+	if err = writeHistoryLimits(tx, quotaLimits); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM history_limits WHERE last < ?", cutoff); err != nil {
+		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	if idlePruned {
+	h.pendingLimits = nil
+	for key, limit := range quotaLimits {
+		mergeHistoryLimit(h.limits, key, limit)
+	}
+	for key, limit := range h.limits {
+		if limit.To < cutoff {
+			delete(h.limits, key)
+		}
+	}
+	if trafficPruned {
 		h.trafficCache = nil
-		h.limited = true
 	}
 	// Row limits may remove retained samples by rowid, so reload after a capped prune.
 	h.trafficCacheBlocked = false

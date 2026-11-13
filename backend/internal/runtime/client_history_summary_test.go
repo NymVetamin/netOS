@@ -30,7 +30,7 @@ func TestClientReportWithoutPointsPreservesOtherFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.limited = true
+	h.noteLimitLocked("traffic", now.Unix()-100, now.Unix())
 	h.problem = "traffic problem"
 	h.dnsProblem = "dns problem"
 	for _, sqlFallback := range []bool{false, true} {

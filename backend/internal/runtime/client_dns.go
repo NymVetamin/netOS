@@ -88,7 +88,7 @@ func (h *ClientHistory) readResourceJournal(ctx context.Context, pipe io.Reader)
 			h.addXrayResources(xray.flush(now))
 			if xray.limited {
 				h.mu.Lock()
-				h.limited = true
+				h.noteLimitLocked("resource-buffer", now.Unix(), now.Unix())
 				h.mu.Unlock()
 				xray.unsafeUntil = time.Now().Add(xrayDNSWindow + xrayJoinDelay)
 				xray.limited = false
@@ -109,7 +109,8 @@ func (h *ClientHistory) readResourceJournal(ctx context.Context, pipe io.Reader)
 			}
 			if strings.Contains(entry.Message, "Suppressed ") && strings.Contains(entry.Message, "messages") {
 				h.mu.Lock()
-				h.limited = true
+				at := time.Now().Unix()
+				h.noteLimitLocked("journal", at, at)
 				h.mu.Unlock()
 				xray.unsafeUntil = time.Now().Add(xrayDNSWindow + xrayJoinDelay)
 			}

@@ -10,6 +10,7 @@ import { useAccess } from "../permissions";
 
 const periods: [number, string][] = [[-1,"Сейчас"],[5,"5 мин"],[10,"10 мин"],[30,"30 мин"],[60,"1 час"],[120,"2 часа"],[360,"6 часов"],[720,"12 часов"],[1440,"Сутки"],[10080,"7 дней"]];
 const colors = ["#55d395", "#ffbb3c", "#69adff", "#de8fff", "#ff8397", "#71dfdf", "#b6d56b", "#df9c6e"];
+const historyLimitLabels:Record<string,string>={traffic:"Ограничен объём истории трафика","traffic-idle":"Ограничен объём замеров без трафика",domains:"Ограничен объём истории DNS",resources:"Ограничен объём истории обращений Xray","dns-buffer":"Не все DNS-запросы удалось сохранить","resource-buffer":"Не все обращения Xray удалось сохранить",journal:"Системный журнал пропустил часть событий"};
 type Line = { id: string; name: string; color: string; points: { at: number; value: number|null; gap?:number;peak?:number }[] };
 function timeLabel(t: number) { return new Date(t * 1000).toLocaleString([], { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" }); }
 const localTime = (t: number) => { const d = new Date(t); return new Date(t - d.getTimezoneOffset() * 60000).toISOString().slice(0,16); };
@@ -39,6 +40,10 @@ export function TrafficMonitor({config,patch,interfaces}:{config:any;patch:(fn:(
  const frames=hold?.frames||continueTrafficHistory(internet?.points||[],custom?[]:current.batches,(b:any)=>b.at,from,to);
  const recent=frames.map((b:any)=>({at:b.at,clients:(b.values||[]).filter((v:any)=>!v.id.startsWith("if:")).map((v:any)=>({id:v.id,name:v.name,rx:v.rx_bps,tx:v.tx_bps}))}));
  const shownClients=hold?hold.clients:clients;
+ const historyInfo=useMemo(()=>({
+  losses:(shownClients?.limits||[]).map((v:any)=>({kind:v.kind,text:`${historyLimitLabels[v.kind]||"Часть событий не сохранена"}: ${timeLabel(v.from)} — ${timeLabel(v.to)}`})),
+  available:shownClients?.available?`Сохранённые замеры: ${timeLabel(shownClients.available.from)} — ${timeLabel(shownClients.available.to)}`:"",
+ }),[shownClients]);
  const allTotals:any[]=shownClients?.clients||[];
  const active=new Map<string,any>();
  for(const c of allTotals)if(c.rx>0||c.tx>0||c.connections>0||c.queries>0)active.set(c.id,c);
@@ -73,12 +78,13 @@ export function TrafficMonitor({config,patch,interfaces}:{config:any;patch:(fn:(
    {error&&!hold?<Empty>{error}</Empty>:internet?moving?<LiveChart lines={wanLines} at={to} seconds={realtime?180:period*60} paused={!!hold}/>:<TimeChart lines={wanLines} from={from} to={to} height={190} mapFrames={internetLines}/>:<Empty>Загрузка статистики…</Empty>}
   </Card>
   <Card title="Трафик клиентов" subtitle="LAN и VPN · скачивание и отправка" actions={can("dashboard",true)?<Switch checked={enabled} onChange={value=>patch(d=>{d.traffic_monitor={enabled:value}})} label="Собирать историю"/>:undefined}>
-   <p className="faint">{enabled?"Секундная история хранится 7 дней. Настройка сбора действует после применения.":"Сбор клиентов выключен. Накопленная история доступна до истечения срока хранения."}</p>
-   {current.error&&!custom&&<p role="status" className="faint">{current.error}</p>}
-   {clientError&&!hold?<Empty>{clientError}</Empty>:!clients?<Empty>Загрузка истории…</Empty>:<>
-    {clients.problem&&<Notice tone="warn" title={clients.problem}/>}
-    {clients.limited&&<Notice tone="warn" title="Достигнут лимит истории — часть подробностей не сохранена"/>}
-    {totals.length===0?<Empty>{enabled?"За выбранный период нет клиентов с трафиком. После включения сбора дождитесь двух замеров.":"За этот период данных нет"}</Empty>:<>
+   <p className="faint">История хранится до 7 дней. При ограничении объёма часть данных удаляется раньше. Настройка сбора действует после применения.</p>
+   {current.error&&!custom&&!hold&&<p role="status" className="faint">{current.error}</p>}
+   {clientError&&!hold?<Empty>{clientError}</Empty>:!shownClients?<Empty>{hold?"На момент паузы история клиентов ещё не была загружена.":"Загрузка истории…"}</Empty>:<>
+    {shownClients.problem&&<Notice tone="warn" title={shownClients.problem}/>}
+    {shownClients.limited&&<Notice tone="warn" title={historyInfo.losses.length?"История за выбранный период может быть неполной":"История может быть неполной"}>{historyInfo.losses.length?historyInfo.losses.map((v:{kind:string;text:string})=><div key={v.kind}>{v.text}</div>):"Точная причина и период пропусков недоступны."}</Notice>}
+    {historyInfo.available&&<p className="faint">{historyInfo.available}</p>}
+    {totals.length===0?<Empty>За выбранный период нет сохранённых данных о трафике клиентов.{shownClients.enabled===false&&" Сбор клиентов сейчас выключен."}</Empty>:<>
      <div className="monitor-toolbar"><select aria-label="Направление трафика клиентов" value={direction} onChange={e=>setDirection(e.target.value)}><option value="sum">Суммарно</option><option value="down">Скачивание</option><option value="up">Отправка</option></select><button className="btn sm" onClick={()=>setSelected(null)}>Топ-5 за период</button><span className="faint">Выбрано {ids.length} из {totals.length} · максимум 16</span></div>
      <div className="monitor-clients">{totals.map(c=><label key={c.id}><input type="checkbox" checked={ids.includes(c.id)} disabled={!ids.includes(c.id)&&ids.length>=16} onChange={()=>{const next=ids.includes(c.id)?ids.filter(id=>id!==c.id):[...ids,c.id];setSelected(next)}}/><span>{c.name}<small className="faint"> {c.rx||c.tx?<>↓ {formatBytes(c.rx)} · ↑ {formatBytes(c.tx)}</>:c.connections||c.queries?"Есть обращения · нет замера трафика":"Есть трафик · итог ещё собирается"}</small></span></label>)}</div>
      {moving?<LiveChart lines={lines} at={to} seconds={realtime?180:period*60} paused={!!hold}/>:<TimeChart lines={lines} from={from} to={to} height={320} mapFrames={clientLines}/>}

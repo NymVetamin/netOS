@@ -198,7 +198,7 @@ func (h *ClientHistory) addXrayResources(events []xrayResource) {
 		d := h.resources[key]
 		if d == nil {
 			if len(h.resources) >= 4096 {
-				h.limited = true
+				h.noteLimitLocked("resource-buffer", e.at.Unix(), e.at.Unix())
 				continue
 			}
 			d = &DNSCount{Client: e.client, Domain: e.domain, Source: e.source, First: e.at.Unix()}
