@@ -63,19 +63,19 @@ func (r *orderedDNSRunner) Run(_ context.Context, _ string, _ ...string) (string
 func TestLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
 	for _, kind := range []string{"dns", "all"} {
 		t.Run(kind, func(t *testing.T) {
-			s := &Server{StorageRunner: &orderedDNSRunner{}}
-			path := ""
-			if kind == "dns" {
-				path = filepath.Join(t.TempDir(), "dns.log")
-				if err := os.WriteFile(path, []byte("query[A] unknown-time.example from 127.0.0.1\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				run := &accessPageRunner{}
-				for i, name := range []string{"current", "old"} {
-					row, _ := json.Marshal(map[string]string{"__CURSOR": name, "__REALTIME_TIMESTAMP": fmt.Sprint(time.Now().Add(-time.Duration(i+1) * time.Minute).UnixMicro()), "_SYSTEMD_UNIT": "netos-unbound.service", "MESSAGE": "info: 127.0.0.1 " + name + ".example. A IN"})
-					run.rows = append(run.rows, string(row))
-				}
-				s.StorageRunner = run
+			s := &Server{}
+			path := filepath.Join(t.TempDir(), "dns.log")
+			if err := os.WriteFile(path, []byte("query[A] unknown-time.example from 127.0.0.1\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			run := &accessPageRunner{}
+			for i, name := range []string{"current", "old"} {
+				row, _ := json.Marshal(map[string]string{"__CURSOR": name, "__REALTIME_TIMESTAMP": fmt.Sprint(time.Now().Add(-time.Duration(i+1) * time.Minute).UnixMicro()), "_SYSTEMD_UNIT": "netos-unbound.service", "MESSAGE": "info: 127.0.0.1 " + name + ".example. A IN"})
+				run.rows = append(run.rows, string(row))
+			}
+			s.StorageRunner = run
+			if kind == "all" {
+				s.StorageRunner = &allPageRunner{units: *run}
 			}
 			req := httptest.NewRequest("GET", "/api/logs?kind="+kind, nil)
 			req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
@@ -83,7 +83,7 @@ func TestLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
 			if kind == "dns" {
 				s.handleDNSLogPage(w, req, path)
 			} else {
-				s.handleLogs(w, req)
+				s.handleAllLogPage(w, req, path)
 			}
 			var data struct{ Entries []logEntry }
 			if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil || w.Code != 200 {
@@ -112,16 +112,11 @@ func (r *logRunner) Run(_ context.Context, name string, args ...string) (string,
 	if name != "journalctl" {
 		return "", fmt.Errorf("unexpected command")
 	}
-	if strings.Contains(cmd, "--grep=netos ") {
+	if strings.Contains(cmd, "_TRANSPORT=kernel") {
 		return "", fmt.Errorf("kernel unavailable")
 	}
-	if strings.Contains(cmd, "--grep=") {
-		return "", nil
-	}
-	if strings.Contains(cmd, "netos-unbound.service") {
-		return `{"__REALTIME_TIMESTAMP":"3000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 fixture.example. A IN"}`, nil
-	}
-	return `{"__REALTIME_TIMESTAMP":"2000000","_PID":"1","_SYSTEMD_UNIT":"init.scope","UNIT":"netosd.service","MESSAGE_ID":"39f53479d3a045ac8e11786248231fbf","PRIORITY":"6","MESSAGE":"fixture started"}`, nil
+	row, _ := json.Marshal(map[string]string{"__CURSOR": "fixture", "__REALTIME_TIMESTAMP": fmt.Sprint(time.Now().Add(-time.Minute).UnixMicro()), "_PID": "1", "_SYSTEMD_UNIT": "init.scope", "UNIT": "netosd.service", "MESSAGE_ID": "39f53479d3a045ac8e11786248231fbf", "PRIORITY": "6", "MESSAGE": "fixture started"})
+	return string(row), nil
 }
 func (r *logRunner) RunInput(_ context.Context, _ string, _ string, _ ...string) (string, error) {
 	return "", fmt.Errorf("unexpected write")
@@ -145,17 +140,17 @@ func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 6 {
+	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 3 {
 		t.Fatal(w.Body.String(), runner.calls)
 	}
-	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:03Z" {
-		t.Fatal("merged entries are not newest first", data.Entries)
+	if len(data.Entries) != 1 || data.Entries[0].Source != "services" || data.Entries[0].ID != "journal:fixture" {
+		t.Fatal("manager event lost or duplicated", data.Entries)
 	}
 	bad := httptest.NewRequest("GET", "/api/logs?kind=/etc/passwd", nil)
 	bad = bad.WithContext(req.Context())
 	w = httptest.NewRecorder()
 	s.handleLogs(w, bad)
-	if w.Code != 400 || len(runner.calls) != 6 {
+	if w.Code != 400 || len(runner.calls) != 3 {
 		t.Fatal("unvalidated source")
 	}
 }

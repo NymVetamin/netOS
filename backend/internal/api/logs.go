@@ -1,17 +1,10 @@
 package api
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"github.com/netos-router/netos/internal/system"
-	"io"
 	"net"
 	"net/http"
-	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -63,25 +56,6 @@ func isDNSQuery(message string) bool {
 	return false
 }
 
-func parseJournalEntries(raw, source string) ([]logEntry, error) {
-	result := []logEntry{}
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	scanner.Buffer(make([]byte, 4096), 2<<20)
-	for scanner.Scan() {
-		if strings.TrimSpace(scanner.Text()) == "" {
-			continue
-		}
-		var row map[string]json.RawMessage
-		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
-			return result, fmt.Errorf("не удалось разобрать запись журнала")
-		}
-		if entry, keep := journalLogEntry(row, source); keep {
-			result = append(result, entry)
-		}
-	}
-	return result, scanner.Err()
-}
-
 func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, bool) {
 	field := func(k string) string { var v string; _ = json.Unmarshal(row[k], &v); return v }
 	message := field("MESSAGE")
@@ -103,6 +77,9 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		return logEntry{}, false
 	}
 	entry := logEntry{Time: ts, Source: source, Unit: unit, Message: message}
+	if source == "all" {
+		return classifyAllUnitEntry(entry, field)
+	}
 	if source == "services" {
 		var keep bool
 		entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, message)
@@ -150,46 +127,6 @@ func dnsLineTime(line string, now time.Time) string {
 	}
 	return ""
 }
-func readDNSLog(path string, now time.Time) ([]logEntry, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	stat, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !stat.Mode().IsRegular() {
-		return nil, fmt.Errorf("источник DNS не является обычным файлом")
-	}
-	const maxBytes int64 = 256 << 10
-	offset := stat.Size() - maxBytes
-	if offset < 0 {
-		offset = 0
-	}
-	if _, err = f.Seek(offset, io.SeekStart); err != nil {
-		return nil, err
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxBytes))
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(string(data), "\n")
-	if offset > 0 && len(lines) > 0 {
-		lines = lines[1:]
-	}
-	if len(lines) > 300 {
-		lines = lines[len(lines)-300:]
-	}
-	result := []logEntry{}
-	for _, line := range lines {
-		if isDNSQuery(line) {
-			result = append(result, logEntry{Time: dnsLineTime(line, now), Source: "dns", Unit: "dns.log", Message: line})
-		}
-	}
-	return result, nil
-}
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !may(r, "diagnostics", false) {
@@ -216,101 +153,5 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		s.handleJournalLogPage(w, r)
 		return
 	}
-	runner := s.StorageRunner
-	if runner == nil {
-		runner = &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}
-	}
-	entries := []logEntry{}
-	warnings := []string{}
-	now := time.Now()
-	for _, src := range []string{"dns", "firewall", "services", "access", "vpn"} {
-		if kind != "all" && kind != src {
-			continue
-		}
-		base := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,MESSAGE_ID,PRIORITY,IKE_SA_NAME"}
-		args := append([]string{}, base...)
-		switch src {
-		case "dns":
-			args = append(args, "-u", "netos-unbound.service", "-u", "dnsmasq.service", "-u", "netos-dnsmasq.service", "-u", "netos-dnsproxy.service")
-		case "firewall":
-			args = append(args, "-k", "--grep=netos ")
-		case "services":
-			args = append(args, serviceJournalMatches()...)
-		case "vpn":
-			args = append(args, "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service", "--grep="+ocservEventPattern+"|"+ikeEventPattern+"|"+l2tpEventPattern)
-		case "access":
-			args = append(args, "-u", "ssh.service", "-u", "sshd.service", "--grep="+sshEventPattern)
-		}
-		queries := [][]string{args}
-		if src == "services" {
-			queries = append(queries, append(base, "-u", "netosd.service", "--grep=\\[(пред|ошиб)\\]", "PRIORITY=5", "PRIORITY=6", "PRIORITY=7"))
-		}
-		for _, args := range queries {
-			raw, err := runner.Run(r.Context(), "journalctl", args...)
-			// journalctl --grep exits 1 without stderr when no entries match.
-			if (src == "firewall" || src == "services" || src == "access" || src == "vpn") && emptyJournalMatch(raw, err) {
-				err = nil
-			}
-			if err != nil {
-				warnings = append(warnings, src+": не удалось прочитать journal: "+err.Error())
-			} else {
-				rows, parseErr := parseJournalEntries(raw, src)
-				if parseErr != nil {
-					warnings = append(warnings, src+": "+parseErr.Error())
-				}
-				entries = append(entries, rows...)
-			}
-		}
-		if src == "access" {
-			rows, err := s.panelAccessEntries(r.Context())
-			if err != nil {
-				warnings = append(warnings, "Панель: не удалось прочитать аудит: "+err.Error())
-			} else {
-				entries = append(entries, rows...)
-			}
-		}
-		if src == "dns" {
-			rows, err := readDNSLog("/var/log/netos/dns.log", now)
-			if err != nil && !os.IsNotExist(err) {
-				warnings = append(warnings, "Не удалось прочитать dns.log: "+err.Error())
-			} else {
-				entries = append(entries, rows...)
-			}
-		}
-	}
-	sortNewestFirst(entries)
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "warnings": warnings, "captured_at": now.UTC().Format(time.RFC3339), "kind": kind})
-}
-
-// sortNewestFirst ставит свежие записи сверху во всех журналах, как в истории
-// ревизий и журнале действий. Записи без времени уходят в конец в исходном
-// порядке. Время разбирается один раз на запись, а не при каждом сравнении.
-func sortNewestFirst(entries []logEntry) {
-	type keyed struct {
-		at    time.Time
-		known bool
-		entry logEntry
-	}
-	rows := make([]keyed, len(entries))
-	for i, e := range entries {
-		at, _ := time.Parse(time.RFC3339Nano, e.Time)
-		rows[i] = keyed{at: at, known: e.Time != "", entry: e}
-	}
-	slices.SortStableFunc(rows, func(a, b keyed) int {
-		if a.known != b.known {
-			if a.known {
-				return -1
-			}
-			return 1
-		}
-		return b.at.Compare(a.at)
-	})
-	for i := range rows {
-		entries[i] = rows[i].entry
-	}
-}
-
-func emptyJournalMatch(raw string, err error) bool {
-	var status interface{ ExitCode() int }
-	return err != nil && errors.As(err, &status) && status.ExitCode() == 1 && strings.TrimSpace(raw) == "" && strings.HasSuffix(strings.TrimSpace(err.Error()), "exit status 1:")
+	s.handleAllLogPage(w, r, "/var/log/netos/dns.log")
 }

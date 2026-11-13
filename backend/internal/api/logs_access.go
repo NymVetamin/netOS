@@ -1,9 +1,7 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/netos-router/netos/internal/store"
 	"regexp"
 	"strings"
@@ -68,25 +66,6 @@ func sshLogFields(entry *logEntry) bool {
 		}
 	}
 	return true
-}
-
-func (s *Server) panelAccessEntries(ctx context.Context) ([]logEntry, error) {
-	if s.Store == nil {
-		return nil, fmt.Errorf("хранилище аудита недоступно")
-	}
-	rows, err := s.Store.ListAccessAudit(ctx, 300)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]logEntry, 0, len(rows))
-	for _, row := range rows {
-		e, err := panelAccessEntry(row)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, nil
 }
 
 func panelAccessEntry(row store.AuditEntry) (logEntry, error) {

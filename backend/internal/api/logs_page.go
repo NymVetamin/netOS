@@ -17,6 +17,7 @@ const logPageSize = 100
 const logScanSize = 500
 
 type journalLogCursor struct {
+	All    *allLogPosition    `json:"all,omitempty"`
 	DNS    *dnsLogPosition    `json:"dns,omitempty"`
 	Access *accessLogPosition `json:"access,omitempty"`
 	Kind   string             `json:"kind"`
@@ -61,7 +62,14 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		if c.Kind != kind {
 			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
 		}
-		if kind == "access" {
+		if kind != "all" && c.All != nil {
+			return c, fmt.Errorf("неверный курсор журнала; обновите журнал")
+		}
+		if kind == "all" {
+			if c.Anchor != "" || c.Access != nil || c.DNS != nil || c.All == nil || !c.All.valid() {
+				return c, fmt.Errorf("неверный курсор общего журнала; обновите журнал")
+			}
+		} else if kind == "access" {
 			if c.DNS != nil || c.Access == nil || !c.Access.valid(c.Anchor) {
 				return c, fmt.Errorf("неверный курсор доступа; обновите журнал")
 			}
@@ -96,7 +104,9 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	if kind == "dns" {
 		validResult = c.Result == ""
 	}
-	if kind == "services" {
+	if kind == "all" {
+		validResult = validResult || c.Result == "warning" || c.Result == "error" || c.Result == "success" || c.Result == "failure"
+	} else if kind == "services" {
 		validResult = validResult || c.Result == "warning" || c.Result == "error"
 	} else if kind == "vpn" || kind == "access" {
 		validResult = validResult || c.Result == "success" || c.Result == "failure"

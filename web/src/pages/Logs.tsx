@@ -18,14 +18,13 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
  const [snapshot,setSnapshot]=useState<{kind:string;value:any}|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true);
  const [sourceFilters,setSourceFilters]=useState<Record<string,typeof defaultFilters>>({}),[page,setPage]=useState({kind:"",cursor:""});
  const filters=sourceFilters[kind] || defaultFilters;
- const paged=kind==="vpn" || kind==="services" || kind==="firewall" || kind==="access" || kind==="dns";
- const scope=paged?JSON.stringify([kind,filters]):kind;
+ const scope=JSON.stringify([kind,filters]);
  const cursor=page.kind===scope?page.cursor:"";
  const data=snapshot?.kind===scope?snapshot.value:null;
  useEffect(()=>{const change=()=>{setKind(fromHash());setPage({kind:"",cursor:""})};window.addEventListener("hashchange",change);return()=>window.removeEventListener("hashchange",change)},[]);
  useEffect(()=>{let active=true;const controller=new AbortController();setLoading(true);setError("");
   const params:Record<string,string>={};
-  if(paged) {params.result=filters.result;params.object=filters.object;if(cursor)params.cursor=cursor;else {const now=Date.now();params.to=new Date(now).toISOString();params.from=new Date(now-Number(filters.hours)*3600000).toISOString()}}
+  params.result=filters.result;params.object=filters.object;if(cursor)params.cursor=cursor;else {const now=Date.now();params.to=new Date(now).toISOString();params.from=new Date(now-Number(filters.hours)*3600000).toISOString()}
   api.logs(kind,params,controller.signal).then(d=>{if(active)setSnapshot({kind:scope,value:d})}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false;controller.abort()};
  },[kind,scope,cursor,attempt]);
@@ -37,22 +36,22 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
   <div className="row wrap" style={{margin:"0.8rem 0",gap:"0.5rem"}}>
    <input aria-label="Поиск в журнале" placeholder="Поиск в загруженных записях" value={query} onChange={e=>setQuery(e.target.value)}/>
    <button className="btn sm" disabled={loading} onClick={()=>{setPage({kind:scope,cursor:""});setAttempt(n=>n+1)}}>Обновить журнал</button>
-   <button className="btn sm" disabled={loading || !!error || !rows.length} onClick={download}>{paged?"Скачать страницу":"Скачать журнал"}</button>
+   <button className="btn sm" disabled={loading || !!error || !rows.length} onClick={download}>Скачать страницу</button>
   </div>
 
-  {paged&&<form key={kind} className="row wrap" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);setSourceFilters(old=>({...old,[kind]:{hours:String(f.get("hours")),result:String(f.get("result") || ""),object:String(f.get("object")).trim()}}));setPage({kind:scope,cursor:""});setAttempt(n=>n+1)}}>
+  <form key={kind} className="row wrap" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);setSourceFilters(old=>({...old,[kind]:{hours:String(f.get("hours")),result:String(f.get("result") || ""),object:String(f.get("object")).trim()}}));setPage({kind:scope,cursor:""});setAttempt(n=>n+1)}}>
    <label>Период <select name="hours" defaultValue={filters.hours}><option value="24">24 часа</option><option value="168">7 дней</option><option value="744">31 день</option></select></label>
-   {kind!=="firewall"&&kind!=="dns"&&<label>{kind==="services"?"Тип события":"Результат"} <select name="result" defaultValue={filters.result}><option value="">Все</option>{kind==="services"?<><option value="error">Ошибки</option><option value="warning">Предупреждения</option><option value="info">Состояние служб</option></>:<><option value="success">Успешно</option><option value="failure">Отказ</option><option value="info">Прочие события</option></>}</select></label>}
-   <input name="object" aria-label={kind==="services"?"Служба":kind==="firewall"?"Правило или адрес":kind==="dns"?"Домен или адрес":kind==="access"?"Объект доступа":"Объект VPN"} placeholder={kind==="services"?"Имя службы":kind==="firewall"?"Правило, адрес или текст записи":kind==="dns"?"Домен, адрес или текст запроса":kind==="access"?"Пользователь, адрес или протокол":"Сервер, пользователь, адрес или протокол"} maxLength={128} defaultValue={filters.object}/>
+   {kind!=="firewall"&&kind!=="dns"&&<label>{kind==="services"?"Тип события":"Результат"} <select name="result" defaultValue={filters.result}><option value="">Все</option>{(kind==="services"||kind==="all")&&<><option value="error">Ошибки</option><option value="warning">Предупреждения</option></>}{kind==="services"?<option value="info">Состояние служб</option>:<><option value="success">Успешно</option><option value="failure">Отказ</option><option value="info">Прочие события</option></>}</select></label>}
+   <input name="object" aria-label={kind==="all"?"Объект или текст события":kind==="services"?"Служба":kind==="firewall"?"Правило или адрес":kind==="dns"?"Домен или адрес":kind==="access"?"Объект доступа":"Объект VPN"} placeholder={kind==="all"?"Служба, сервер, пользователь, адрес или текст":kind==="services"?"Имя службы":kind==="firewall"?"Правило, адрес или текст записи":kind==="dns"?"Домен, адрес или текст запроса":kind==="access"?"Пользователь, адрес или протокол":"Сервер, пользователь, адрес или протокол"} maxLength={128} defaultValue={filters.object}/>
    <button className="btn sm" type="submit">Применить фильтры</button>
-  </form>}
+  </form>
   {kind==="vpn"&&<p className="hint">События OpenConnect, IKEv2 и L2TP. Установка соединения и аутентификация пользователя — отдельные события. Отсутствие записи не означает отсутствия попытки подключения.</p>}
   {kind==="firewall"&&<p className="hint">Записи правил с включённым логированием. Запись показывает совпадение с правилом, но не подтверждает разрешение или блокировку пакета. Частота записей ограничена.</p>}
   {error&&<Notice tone="danger" title="Не удалось загрузить журнал">{error}{data&&" Показана предыдущая страница."}<button className="btn sm" disabled={loading} onClick={()=>setAttempt(n=>n+1)}>Повторить запрос</button></Notice>}
   {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>
    {data?.warnings?.map((text:string,i:number)=><Notice key={i} tone="warn" title={text}/>)}
    <p className="hint">Показано {rows.length} из {data?.entries?.length || 0} · Снимок: {data?.captured_at ? new Date(data.captured_at).toLocaleString("ru-RU") : "—"}</p>
-   {paged&&<p className="hint">С {new Date(data.from).toLocaleString("ru-RU")} · Просмотрено записей источников: {data.scanned} · До 100 событий на странице, в порядке {kind==="access"||kind==="dns"?"источников":"журнала"}.{data.incomplete?" Часть источников недоступна. Продолжение приостановлено до успешного повтора.":data.next_cursor?" Есть более старые записи.":" Конец выбранного периода в доступном журнале."}</p>}
+   <p className="hint">С {new Date(data.from).toLocaleString("ru-RU")} · Просмотрено записей источников: {data.scanned} · До 100 событий на странице, в порядке {kind==="all"||kind==="access"||kind==="dns"?"источников":"журнала"}.{data.incomplete?" Часть источников недоступна. Продолжение приостановлено до успешного повтора.":data.next_cursor?" Есть более старые записи.":" Конец выбранного периода в доступном журнале."}</p>
    {data.incomplete&&!error&&<button className="btn sm" disabled={loading} onClick={()=>setAttempt(n=>n+1)}>Повторить запрос</button>}
    {data.next_cursor&&<button className="btn sm" disabled={loading || !!error} onClick={()=>setPage({kind:scope,cursor:data.next_cursor})}>{rows.length?"Более старые события":"Продолжить поиск"}</button>}
    {rows.length===0?<Empty>{query?"Совпадений нет":data.incomplete?"Страница загружена не полностью":data.next_cursor?"На этой странице событий по фильтру нет":kind==="dns"?"Запросов DNS пока нет":"Записей пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table className="logs-table">
