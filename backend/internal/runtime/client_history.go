@@ -21,6 +21,10 @@ import (
 
 const HistoryInterval = 30 * time.Second
 
+// Shared idle memberships have a byte budget rather than consuming the
+// positive-traffic row budget. The database's existing 64 MiB ceiling remains.
+const idleHistoryBudget = 16 << 20
+
 type ClientCounter struct {
 	// SampledAt is internal: cached proxy counters retain their observation time.
 	SampledAt time.Time `json:"-"`
@@ -89,6 +93,9 @@ func NewClientHistory(path string, r system.Runner, c *Collector, current func()
  CREATE TABLE IF NOT EXISTS traffic(at INTEGER,id TEXT,name TEXT,address TEXT,rx INTEGER,tx INTEGER,seconds REAL);
  CREATE INDEX IF NOT EXISTS traffic_time ON traffic(at);
  CREATE INDEX IF NOT EXISTS traffic_client_time ON traffic(id,at DESC);
+ CREATE TABLE IF NOT EXISTS traffic_idle_clients(id TEXT UNIQUE,name TEXT,address TEXT,at INTEGER);
+ CREATE TABLE IF NOT EXISTS traffic_idle(at INTEGER,seconds REAL,clients TEXT,n INTEGER);
+ CREATE INDEX IF NOT EXISTS traffic_idle_time ON traffic_idle(at);
  CREATE TABLE IF NOT EXISTS domains(at INTEGER,client TEXT,domain TEXT,n INTEGER,first INTEGER,last INTEGER);
  CREATE INDEX IF NOT EXISTS domains_time ON domains(at);
  CREATE TABLE IF NOT EXISTS resources(at INTEGER,client TEXT,domain TEXT,source TEXT,n INTEGER,first INTEGER,last INTEGER);
@@ -388,8 +395,56 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 		}
 		deltas[v.ID] = d
 	}
+	idle := map[float64][]int64{}
+	idleValues := []delta{}
 	for _, d := range deltas {
+		if d.RX == 0 && d.TX == 0 {
+			// Share observation time/duration across idle clients, retaining exact
+			// samples for rates and gaps without repeating names and indexes.
+			idleValues = append(idleValues, d)
+			continue
+		}
 		if _, err = tx.Exec("INSERT INTO traffic VALUES(?,?,?,?,?,?,?)", now.Unix(), d.ID, d.Name, d.Address, d.RX, d.TX, d.Seconds); err != nil {
+			return err
+		}
+	}
+	// Bound each statement to 1024 parameters, without one query per idle
+	// client or a process-wide identity cache requiring invalidation.
+	for start := 0; start < len(idleValues); start += 256 {
+		end := min(start+256, len(idleValues))
+		args := make([]any, 0, (end-start)*4)
+		for _, d := range idleValues[start:end] {
+			args = append(args, d.ID, d.Name, d.Address, now.Unix())
+		}
+		query := "INSERT INTO traffic_idle_clients(id,name,address,at) VALUES" + strings.TrimSuffix(strings.Repeat("(?,?,?,?),", end-start), ",") +
+			" ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,at=excluded.at RETURNING rowid,id"
+		rows, err := tx.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var rowID int64
+			var id string
+			if err = rows.Scan(&rowID, &id); err != nil {
+				rows.Close()
+				return err
+			}
+			d := deltas[id]
+			idle[d.Seconds] = append(idle[d.Seconds], rowID)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	for seconds, ids := range idle {
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		data, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec("INSERT INTO traffic_idle VALUES(?,?,?,?)", now.Unix(), seconds, string(data), len(ids)); err != nil {
 			return err
 		}
 	}
@@ -591,7 +646,24 @@ func (h *ClientHistory) prune(now time.Time) error {
 		return err
 	}
 	defer tx.Rollback()
+	idlePruned := false
 	{
+		if _, err = tx.Exec("DELETE FROM traffic_idle WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("DELETE FROM traffic_idle_clients WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`DELETE FROM traffic_idle WHERE rowid IN (
+ SELECT rowid FROM (SELECT rowid,SUM(length(clients)+32) OVER (ORDER BY at DESC,rowid DESC) AS used FROM traffic_idle) WHERE used>?)`, idleHistoryBudget)
+		if err != nil {
+			return err
+		}
+		removed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		idlePruned = removed > 0
 		for _, table := range []string{"traffic", "domains", "resources"} {
 			if _, err = tx.Exec("DELETE FROM "+table+" WHERE at < ?", now.Add(-7*24*time.Hour).Unix()); err != nil {
 				return err
@@ -615,6 +687,10 @@ func (h *ClientHistory) prune(now time.Time) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
+	if idlePruned {
+		h.trafficCache = nil
+		h.limited = true
+	}
 	// Row limits may remove retained samples by rowid, so reload after a capped prune.
 	h.trafficCacheBlocked = false
 	if h.trafficCache != nil {
@@ -633,7 +709,19 @@ func (h *ClientHistory) setDNSProblem(s string) {
 
 func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time, selected []string, includePoints bool) (ClientReport, []string, error) {
 	report := ClientReport{Clients: []ClientTotal{}, Points: []ClientPoint{}}
-	rows, err := h.db.QueryContext(ctx, "SELECT t.id,(SELECT name FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),(SELECT address FROM traffic WHERE id=t.id ORDER BY at DESC LIMIT 1),SUM(t.rx),SUM(t.tx) FROM traffic t WHERE t.at>=? AND t.at<=? GROUP BY t.id ORDER BY SUM(t.rx+t.tx) DESC LIMIT 512", from.Unix(), to.Unix())
+	// Equal idle memberships need only one expansion for totals: every member
+	// contributes zero bytes. Keep real observation times for the points below.
+	rows, err := h.db.QueryContext(ctx, `SELECT totals.id,
+ CASE WHEN latest.at IS NULL OR idle.at>latest.at THEN idle.name ELSE latest.name END,
+ CASE WHEN latest.at IS NULL OR idle.at>latest.at THEN idle.address ELSE latest.address END,totals.rx,totals.tx
+ FROM (SELECT t.id,SUM(t.rx) AS rx,SUM(t.tx) AS tx,SUM(t.rx+t.tx) AS volume
+ FROM (SELECT id,rx,tx FROM traffic WHERE at>=? AND at<=?
+ UNION ALL SELECT c.id,0,0 FROM (SELECT DISTINCT clients FROM traffic_idle WHERE at>=? AND at<=?) b,
+ json_each(b.clients) j JOIN traffic_idle_clients c ON c.rowid=j.value) t
+ GROUP BY t.id ORDER BY volume DESC,t.id DESC LIMIT 512) totals
+ LEFT JOIN traffic_idle_clients idle ON idle.id=totals.id
+ LEFT JOIN traffic latest ON latest.rowid=(SELECT rowid FROM traffic WHERE id=totals.id ORDER BY at DESC LIMIT 1)
+ ORDER BY totals.volume DESC,totals.id DESC`, from.Unix(), to.Unix(), from.Unix(), to.Unix())
 	if err != nil {
 		return report, selected, err
 	}
@@ -668,7 +756,7 @@ func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time
 		return report, selected, ctx.Err()
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(selected)), ",")
-	args := []any{from.Unix(), to.Unix()}
+	args := []any{from.Unix(), to.Unix(), from.Unix(), to.Unix()}
 	for _, id := range selected {
 		args = append(args, id)
 	}
@@ -676,7 +764,12 @@ func (h *ClientHistory) reportTrafficSQL(ctx context.Context, from, to time.Time
 	if step < 30 {
 		step = 30
 	}
-	query := fmt.Sprintf("SELECT (at/%d)*%d,id,SUM(rx)*8.0/MAX(SUM(seconds),1),SUM(tx)*8.0/MAX(SUM(seconds),1) FROM traffic WHERE at>=? AND at<=? AND id IN (%s) GROUP BY at/%d,id ORDER BY at", step, step, placeholders, step)
+	query := fmt.Sprintf(`SELECT (at/%[1]d)*%[1]d,id,SUM(rx)*8.0/MAX(SUM(seconds),1),SUM(tx)*8.0/MAX(SUM(seconds),1)
+ FROM (SELECT at,id,rx,tx,seconds FROM traffic WHERE at>=? AND at<=?
+ UNION ALL SELECT b.at,c.id,0,0,b.seconds FROM
+ (SELECT (at/%[1]d)*%[1]d AS at,clients,SUM(seconds) AS seconds FROM traffic_idle WHERE at>=? AND at<=? GROUP BY (at/%[1]d),clients) b,
+ json_each(b.clients) j JOIN traffic_idle_clients c ON c.rowid=j.value)
+ WHERE id IN (%[2]s) GROUP BY at/%[1]d,id ORDER BY at,id`, step, placeholders)
 	rows, err = h.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return report, selected, err

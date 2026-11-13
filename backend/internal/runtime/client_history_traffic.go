@@ -11,8 +11,8 @@ import (
 // Cache only the bounded raw traffic samples, not responses or rounded ranges.
 // Moving window edges and arbitrary periods therefore keep their exact meaning.
 // The SQLite database remains authoritative; failed writes never enter the cache.
-// Retention caps storage at 200k rows every five minutes. Leave bounded room
-// for batches between those prunes instead of rebuilding at each new sample.
+// Bound expanded samples, including compact idle batches. Above this budget
+// use SQL aggregation rather than expanding seven days into resident memory.
 const maxCachedTrafficRows = 262144
 const maxCachedTrafficClients = 4096
 
@@ -67,35 +67,47 @@ func (c *historyTrafficCache) prune(before int64) {
 // Caller holds trafficMu, also held across persist/prune transactions, so a
 // concurrent first read cannot omit or double-count a committed batch.
 func (h *ClientHistory) loadTrafficCache(ctx context.Context) error {
-	var count int
-	if err := h.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM traffic").Scan(&count); err != nil {
+	var count, idle int
+	if err := h.db.QueryRowContext(ctx, "SELECT (SELECT COUNT(*) FROM traffic),(SELECT COALESCE(SUM(n),0) FROM traffic_idle)").Scan(&count, &idle); err != nil {
 		return err
 	}
-	if count > maxCachedTrafficRows {
+	// Predominantly idle history is cheaper to aggregate as shared batches
+	// than to expand on first open. Keep the original cache for active history.
+	if count+idle > maxCachedTrafficRows || idle > count {
 		h.trafficCacheBlocked = true
 		return nil
 	}
-	rows, err := h.db.QueryContext(ctx, "SELECT at,id,name,address,rx,tx,seconds FROM traffic ORDER BY rowid")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
 	cache := &historyTrafficCache{clients: make(map[string]*historyTrafficClient)}
-	for rows.Next() {
-		var at int64
-		var v ClientCounter
-		var seconds float64
-		if err := rows.Scan(&at, &v.ID, &v.Name, &v.Address, &v.RX, &v.TX, &seconds); err != nil {
+	// Preserve the legacy rowid tie order, without sorting a UNION of all
+	// expanded samples. The two bounded scans occur only when building cache.
+	for _, query := range []string{
+		"SELECT at,id,name,address,rx,tx,seconds FROM traffic ORDER BY rowid",
+		"SELECT t.at,c.id,c.name,c.address,0,0,t.seconds FROM traffic_idle t,json_each(t.clients) j JOIN traffic_idle_clients c ON c.rowid=j.value ORDER BY t.rowid",
+	} {
+		rows, err := h.db.QueryContext(ctx, query)
+		if err != nil {
 			return err
 		}
-		cache.add(at, v, seconds)
-		if len(cache.clients) > maxCachedTrafficClients {
-			h.trafficCacheBlocked = true
-			return nil
+		for rows.Next() {
+			var at int64
+			var v ClientCounter
+			var seconds float64
+			if err := rows.Scan(&at, &v.ID, &v.Name, &v.Address, &v.RX, &v.TX, &seconds); err != nil {
+				rows.Close()
+				return err
+			}
+			cache.add(at, v, seconds)
+			if len(cache.clients) > maxCachedTrafficClients {
+				rows.Close()
+				h.trafficCacheBlocked = true
+				return nil
+			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
 	}
 	h.trafficCache = cache
 	return nil
