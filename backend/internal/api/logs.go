@@ -18,10 +18,12 @@ import (
 )
 
 type logEntry struct {
-	Time    string `json:"time"`
-	Source  string `json:"source"`
-	Unit    string `json:"unit"`
-	Message string `json:"message"`
+	Time     string `json:"time"`
+	Source   string `json:"source"`
+	Unit     string `json:"unit"`
+	Message  string `json:"message"`
+	Event    string `json:"event,omitempty"`
+	Severity string `json:"severity,omitempty"`
 }
 
 // Query records only: service lifecycle, resolver statistics and replies are not queries.
@@ -82,11 +84,18 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 		if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
 			ts = time.UnixMicro(us).UTC().Format(time.RFC3339Nano)
 		}
-		query := isDNSQuery(message)
-		if source == "dns" && !query || source == "services" && query {
+		if source == "dns" && !isDNSQuery(message) {
 			continue
 		}
-		result = append(result, logEntry{Time: ts, Source: source, Unit: unit, Message: message})
+		entry := logEntry{Time: ts, Source: source, Unit: unit, Message: message}
+		if source == "services" {
+			var keep bool
+			entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, message)
+			if !keep {
+				continue
+			}
+		}
+		result = append(result, entry)
 	}
 	return result, scanner.Err()
 }
@@ -178,28 +187,35 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		if kind != "all" && kind != src {
 			continue
 		}
-		args := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER"}
+		base := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,MESSAGE_ID,PRIORITY"}
+		args := append([]string{}, base...)
 		switch src {
 		case "dns":
 			args = append(args, "-u", "netos-unbound.service", "-u", "dnsmasq.service", "-u", "netos-dnsmasq.service", "-u", "netos-dnsproxy.service")
 		case "firewall":
 			args = append(args, "-k", "--grep=netos ")
 		case "services":
-			args = append(args, "-u", "netos*.service")
+			args = append(args, serviceJournalMatches()...)
 		}
-		raw, err := runner.Run(r.Context(), "journalctl", args...)
-		// journalctl --grep exits 1 without stderr when no entries match.
-		if src == "firewall" && emptyJournalMatch(raw, err) {
-			err = nil
+		queries := [][]string{args}
+		if src == "services" {
+			queries = append(queries, append(base, "-u", "netosd.service", "--grep=\\[(пред|ошиб)\\]", "PRIORITY=5", "PRIORITY=6", "PRIORITY=7"))
 		}
-		if err != nil {
-			warnings = append(warnings, src+": не удалось прочитать journal: "+err.Error())
-		} else {
-			rows, parseErr := parseJournalEntries(raw, src)
-			if parseErr != nil {
-				warnings = append(warnings, src+": "+parseErr.Error())
+		for _, args := range queries {
+			raw, err := runner.Run(r.Context(), "journalctl", args...)
+			// journalctl --grep exits 1 without stderr when no entries match.
+			if (src == "firewall" || src == "services") && emptyJournalMatch(raw, err) {
+				err = nil
 			}
-			entries = append(entries, rows...)
+			if err != nil {
+				warnings = append(warnings, src+": не удалось прочитать journal: "+err.Error())
+			} else {
+				rows, parseErr := parseJournalEntries(raw, src)
+				if parseErr != nil {
+					warnings = append(warnings, src+": "+parseErr.Error())
+				}
+				entries = append(entries, rows...)
+			}
 		}
 		if src == "dns" {
 			rows, err := readDNSLog("/var/log/netos/dns.log", now)

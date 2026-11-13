@@ -95,13 +95,16 @@ func (r *logRunner) Run(_ context.Context, name string, args ...string) (string,
 	if name != "journalctl" {
 		return "", fmt.Errorf("unexpected command")
 	}
-	if strings.Contains(cmd, "--grep") {
+	if strings.Contains(cmd, "--grep=netos ") {
 		return "", fmt.Errorf("kernel unavailable")
+	}
+	if strings.Contains(cmd, "--grep=") {
+		return "", nil
 	}
 	if strings.Contains(cmd, "netos-unbound.service") {
 		return `{"__REALTIME_TIMESTAMP":"3000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 fixture.example. A IN"}`, nil
 	}
-	return `{"__REALTIME_TIMESTAMP":"2000000","_SYSTEMD_UNIT":"netosd.service","MESSAGE":"fixture started"}`, nil
+	return `{"__REALTIME_TIMESTAMP":"2000000","_PID":"1","_SYSTEMD_UNIT":"init.scope","UNIT":"netosd.service","MESSAGE_ID":"39f53479d3a045ac8e11786248231fbf","PRIORITY":"6","MESSAGE":"fixture started"}`, nil
 }
 func (r *logRunner) RunInput(_ context.Context, _ string, _ string, _ ...string) (string, error) {
 	return "", fmt.Errorf("unexpected write")
@@ -125,7 +128,7 @@ func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 3 {
+	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 4 {
 		t.Fatal(w.Body.String(), runner.calls)
 	}
 	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:03Z" {
@@ -135,7 +138,7 @@ func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
 	bad = bad.WithContext(req.Context())
 	w = httptest.NewRecorder()
 	s.handleLogs(w, bad)
-	if w.Code != 400 || len(runner.calls) != 3 {
+	if w.Code != 400 || len(runner.calls) != 4 {
 		t.Fatal("unvalidated source")
 	}
 }
@@ -175,7 +178,7 @@ func TestDNSQueryFiltering(t *testing.T) {
 			t.Errorf("service/reply misclassified: %s", message)
 		}
 	}
-	raw := `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: start of service (unbound 1.26.1)."}` + "\n" + `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 example.org. A IN"}`
+	raw := `{"_PID":"1","UNIT":"netos-unbound.service","PRIORITY":"6","MESSAGE_ID":"39f53479d3a045ac8e11786248231fbf","MESSAGE":"Started netos-unbound.service."}` + "\n" + `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 example.org. A IN"}`
 	for _, source := range []string{"dns", "services"} {
 		rows, err := parseJournalEntries(raw, source)
 		if err != nil || len(rows) != 1 || rows[0].Source != source {
