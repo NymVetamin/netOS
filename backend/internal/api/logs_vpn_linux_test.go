@@ -25,7 +25,11 @@ func TestIntegrationVPNLogs(t *testing.T) {
 	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second}}
 	for i := 0; i < 3; i++ {
 		start := time.Now()
-		d := readAllJournalPages(t, s, "vpn")
+		filter := "object=srv998"
+		if from := os.Getenv("NETOS_LOGS_FIXTURE_FROM"); from != "" {
+			filter += "&from=" + url.QueryEscape(from)
+		}
+		d := readAllJournalPages(t, s, "vpn", filter)
 		login, disconnect := false, false
 		for _, e := range d.Entries {
 			if e.Server != "srv998" || e.User != "integration" {
@@ -41,6 +45,35 @@ func TestIntegrationVPNLogs(t *testing.T) {
 			t.Fatalf("real VPN events missing: login=%v disconnect=%v", login, disconnect)
 		}
 		t.Logf("real journal handler: %s, %d events", time.Since(start), len(d.Entries))
+	}
+}
+
+// Requires an interactive OpenConnect attempt that exhausts all three plain
+// password retries, followed by the normal successful connection fixture.
+// A non-interactive client quitting at the second prompt is not this scenario.
+// NETOS_LOGS_FIXTURE_FROM supplies that fixture's RFC3339 start time, excluding
+// unrelated historical load fixtures without increasing the page budget.
+func TestIntegrationOcservFinalRefusal(t *testing.T) {
+	if os.Getenv("NETOS_LOGS_OCSERV_REFUSAL_FIXTURE") != "1" {
+		t.Skip("requires real final OpenConnect authentication refusal")
+	}
+	from := os.Getenv("NETOS_LOGS_FIXTURE_FROM")
+	if _, err := time.Parse(time.RFC3339Nano, from); err != nil {
+		t.Fatal("NETOS_LOGS_FIXTURE_FROM must be the real fixture start time", err)
+	}
+	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}}
+	d := readAllJournalPages(t, s, "vpn", "object=srv998&result=failure&from="+url.QueryEscape(from))
+	found := false
+	for _, e := range d.Entries {
+		if e.Server == "srv998" && e.Protocol == "openconnect" && e.User == "integration" && e.Address == "192.0.2.2" {
+			if e.Result != "failure" || e.Event != "Отказ во входе VPN" {
+				t.Fatalf("final refusal misclassified: %+v", e)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("real final refusal with user/address/server missing")
 	}
 }
 
