@@ -48,6 +48,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 	t.Run("http", func(t *testing.T) { testXrayAccessJournal(t, false, true, "http") })
 	t.Run("trojan", func(t *testing.T) { testXrayAccessJournal(t, false, true, "trojan") })
 	t.Run("vmess", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vmess") })
+	t.Run("shadowsocks", func(t *testing.T) { testXrayAccessJournal(t, false, true, "shadowsocks") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -84,6 +85,9 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	}()
 	server := config.VPNServer{ID: "log-probe", Index: 993, Type: "xray", Enabled: true, Port: port, DefaultChannel: "direct", Config: map[string]any{"protocol": "socks"}, Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Credentials: map[string]string{"username": "log-user", "password": "log-password"}}}}
 	server.Config["protocol"] = protocol
+	if protocol == "shadowsocks" {
+		server.Config["method"] = "aes-256-gcm"
+	}
 	server.Peers[0].Credentials["uuid"] = "11111111-1111-1111-1111-111111111111"
 	cfg := config.Default()
 	cfg.TrafficMonitor.Enabled = monitor
@@ -143,6 +147,19 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	ready := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if protocol == "shadowsocks" {
+			// An empty TCP probe itself produces an authentication rejection.
+			out, err := run.Run(ctx, "ss", "-H", "-ltn", "sport", "=", strconv.Itoa(port))
+			if err != nil {
+				t.Fatal(out, err)
+			}
+			if strings.TrimSpace(out) != "" {
+				ready = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
 		c, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
 		if err == nil {
 			c.Close()
@@ -155,8 +172,8 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
-		if protocol == "vmess" {
-			probeVMessLogConnection(t, binary, server, echo.Addr().String(), valid)
+		if protocol == "vmess" || protocol == "shadowsocks" {
+			probeXrayProfileLogConnection(t, binary, server, echo.Addr().String(), valid)
 			continue
 		}
 		if protocol == "trojan" {
@@ -328,7 +345,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" {
+	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
@@ -358,6 +375,13 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 				}
 			}
 		}
+		if protocol == "shadowsocks" {
+			for _, password := range []string{"log-password", "qa-shadowsocks-invalid-secret"} {
+				if strings.Contains(journal, password) {
+					t.Fatal("Shadowsocks credential reached journal")
+				}
+			}
+		}
 	}
 	st, err := store.Open(filepath.Join(root, "read.db"))
 	if err != nil {
@@ -373,7 +397,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	failures := 0
 	for _, e := range p.Entries {
 		user := ""
-		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess") && e.Result == "success" {
+		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks") && e.Result == "success" {
 			user = "log-probe/peer"
 		}
 		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != "127.0.0.1" || e.User != user {
@@ -422,12 +446,17 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	t.Logf("generated %s config: two real echo connections, one auth rejection; HTTP additionally GET with private URL; observed rejection events=%d; journald/VPN/General/Services PASS", protocol, failures)
 }
 
-func probeVMessLogConnection(t *testing.T, binary string, server config.VPNServer, target string, valid bool) {
+func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VPNServer, target string, valid bool) {
 	t.Helper()
 	peer := server.Peers[0]
-	peer.Credentials = map[string]string{"uuid": peer.Credentials["uuid"]}
+	protocol := server.Config["protocol"].(string)
+	credential, invalid := "uuid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	if protocol == "shadowsocks" {
+		credential, invalid = "password", "qa-shadowsocks-invalid-secret"
+	}
+	peer.Credentials = map[string]string{credential: peer.Credentials[credential]}
 	if !valid {
-		peer.Credentials["uuid"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		peer.Credentials[credential] = invalid
 	}
 	server.Config["public_endpoint"] = net.JoinHostPort("127.0.0.1", strconv.Itoa(server.Port))
 	profile, err := xrayClientProfile(server, peer, "")
@@ -475,7 +504,7 @@ func probeVMessLogConnection(t *testing.T, binary string, server config.VPNServe
 		time.Sleep(25 * time.Millisecond)
 	}
 	if !ready {
-		t.Fatal("VMess client not listening")
+		t.Fatal(protocol, "client not listening")
 	}
 	dialer, err := proxy.SOCKS5("tcp", address, nil, &net.Dialer{Timeout: 2 * time.Second})
 	if err != nil {
@@ -495,9 +524,9 @@ func probeVMessLogConnection(t *testing.T, binary string, server config.VPNServe
 	answer := make([]byte, 5)
 	n, readErr := io.ReadFull(conn, answer)
 	if valid && (readErr != nil || string(answer) != "probe") {
-		t.Fatal("VMess echo", readErr)
+		t.Fatal(protocol, "echo", readErr)
 	}
 	if !valid && bytes.Contains(answer[:n], []byte("probe")) {
-		t.Fatal("invalid VMess UUID accepted")
+		t.Fatal(protocol, "invalid credential accepted")
 	}
 }
