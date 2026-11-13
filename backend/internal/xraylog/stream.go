@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ const LossPrefix = "netos-xray-log-v1 Suppressed "
 
 var credentialLabel = regexp.MustCompile(`(?i)\b(?:password|passwd|uuid|private.?key|preshared.?key|preSharedKey)(?:\s+|[:=])`)
 var acceptedRecord = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?from (?:tcp:|udp:)?(?:\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+ accepted (?:tcp|udp):\S+ \[[^\[\]\r\n]+\](?: email: \S+)?$`)
+var httpAcceptedRecord = regexp.MustCompile(`^((?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?from \S+ accepted )((?:https?://|//)\S+)( \[[^\[\]\r\n]+\](?: email: \S+)?)$`)
 var rejectedHeader = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?from (?:tcp:|udp:)?(?:\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+ rejected `)
 var dnsRecord = regexp.MustCompile(`(?:got answer:|cache HIT:|cache OPTIMISTE:)\s+\S+\s+->\s+\[[0-9a-fA-F:.,\s]*\]\s*$`)
 var diagnosticLevel = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?\[(Warning|Error)\] `)
@@ -49,6 +51,15 @@ func SafeError(err error) error {
 // Sanitize also protects diagnostics, which may repeat an authentication error.
 // Unknown rejection formats cannot be trusted to omit credentials.
 func Sanitize(s string) string {
+	// HTTP access logs contain the request URL, including credentials and query
+	// tokens. Retain only its origin; a CONNECT target uses an empty scheme.
+	if m := httpAcceptedRecord.FindStringSubmatch(s); m != nil {
+		target := "http:[скрыто]"
+		if u, err := url.Parse(m[2]); err == nil && u.Host != "" && u.Opaque == "" {
+			target = (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
+		}
+		return m[1] + target + m[3]
+	}
 	// These fields are public connection/resource metadata, not diagnostics.
 	// A host named "password" must not disappear from traffic history.
 	if acceptedRecord.MatchString(s) {

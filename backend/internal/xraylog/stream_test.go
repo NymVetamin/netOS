@@ -58,6 +58,59 @@ func TestStreamFinalLoss(t *testing.T) {
 	}
 }
 
+func TestSanitizeHTTPAccessURL(t *testing.T) {
+	for _, target := range []string{
+		"http://user:SECRET@example.org/private?token=SECRET#SECRET",
+		"https://example.org/private?token=SECRET",
+		"//user:SECRET@example.org:443",
+	} {
+		input := "from 192.0.2.2:1234 accepted " + target + " [xray-in -> direct]"
+		got := Sanitize(input)
+		if strings.Contains(got, "SECRET") || strings.Contains(got, "/private") || !strings.Contains(got, "example.org") || !strings.Contains(got, " accepted ") {
+			t.Fatal("unsafe or missing HTTP event", got)
+		}
+		if Sanitize(got) != got {
+			t.Fatal("HTTP sanitization not idempotent")
+		}
+	}
+}
+
+func TestSanitizeHTTPOriginsAndMalformed(t *testing.T) {
+	for _, tc := range []struct{ target, want string }{
+		{"//[2001:db8::1]:443", "//[2001:db8::1]:443"},
+		{"http://[fe80::1%25eth0]/private", "http://[fe80::1%25eth0]"},
+		{"http://password:80/public", "http://password:80"},
+		{"https://%75ser:%53ECRET@example.org/path?q=secret", "https://example.org"},
+		{"http://example.org/%zz?token=SECRET", "http:[скрыто]"},
+	} {
+		prefix, suffix := "from [fe80::2%eth0]:1234 accepted ", " [in -> direct] email: server/peer"
+		got := Sanitize(prefix + tc.target + suffix)
+		if got != prefix+tc.want+suffix || Sanitize(got) != got {
+			t.Fatal(got)
+		}
+	}
+}
+
+func BenchmarkHTTPStream(b *testing.B) {
+	for _, n := range []int{30, 3000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			data := []byte(strings.Repeat("from 192.0.2.1:1234 accepted http://user:SECRET@example.test/private?token=SECRET [xray-in -> direct]\n", n))
+			b.ReportAllocs()
+			b.SetBytes(int64(len(data)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				w := newStream(io.Discard, func() {})
+				if _, err := w.Write(data); err != nil {
+					b.Fatal(err)
+				}
+				if err := w.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestStreamDiagnosticPriority(t *testing.T) {
 	var out bytes.Buffer
 	w := newStream(&out, func() { t.Fatal("unexpected sink failure") })

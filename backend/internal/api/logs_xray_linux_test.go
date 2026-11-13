@@ -3,13 +3,17 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,6 +42,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 		t.Run(strconv.FormatBool(enabled), func(t *testing.T) { testXrayAccessJournal(t, enabled, true, "socks") })
 	}
 	t.Run("vless", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vless") })
+	t.Run("http", func(t *testing.T) { testXrayAccessJournal(t, false, true, "http") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -145,6 +150,51 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
+		if protocol == "http" {
+			c, err := net.DialTimeout("tcp", address, 2*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.SetDeadline(time.Now().Add(2 * time.Second))
+			password := "log-password"
+			if !valid {
+				password = "wrong"
+			}
+			target := echo.Addr().String()
+			request := "CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\nProxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("log-user:"+password)) + "\r\n\r\n"
+			if _, err = io.WriteString(c, request); err != nil {
+				c.Close()
+				t.Fatal(err)
+			}
+			reader := bufio.NewReader(c)
+			response, err := http.ReadResponse(reader, &http.Request{Method: "CONNECT"})
+			if err != nil {
+				c.Close()
+				t.Fatal(err)
+			}
+			if !valid {
+				c.Close()
+				if response.StatusCode != http.StatusProxyAuthRequired {
+					t.Fatal("wrong password response", response.StatusCode)
+				}
+				continue
+			}
+			if response.StatusCode != http.StatusOK {
+				c.Close()
+				t.Fatal(response.StatusCode)
+			}
+			if _, err = io.WriteString(c, "probe"); err != nil {
+				c.Close()
+				t.Fatal(err)
+			}
+			answer := make([]byte, 5)
+			_, err = io.ReadFull(reader, answer)
+			c.Close()
+			if err != nil || string(answer) != "probe" {
+				t.Fatal("HTTP CONNECT echo", err)
+			}
+			continue
+		}
 		if protocol == "vless" {
 			c, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", address, clientTLS)
 			if err != nil {
@@ -207,19 +257,52 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 			t.Fatal("echo", err)
 		}
 	}
+	if protocol == "http" {
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "probe") }))
+		defer target.Close()
+		c, err := net.DialTimeout("tcp", address, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetDeadline(time.Now().Add(2 * time.Second))
+		u := strings.Replace(target.URL, "http://", "http://qa-url:qa-url-secret@", 1) + "/qa-private-path?token=qa-query-secret"
+		request := "GET " + u + " HTTP/1.1\r\nHost: " + strings.TrimPrefix(target.URL, "http://") + "\r\nProxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("log-user:log-password")) + "\r\nConnection: close\r\n\r\n"
+		if _, err = io.WriteString(c, request); err != nil {
+			c.Close()
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "GET"})
+		if err != nil {
+			c.Close()
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		c.Close()
+		if err != nil || response.StatusCode != 200 || string(body) != "probe" {
+			t.Fatal("HTTP absolute URL probe", response.StatusCode, err)
+		}
+	}
 	if out, err := run.Run(ctx, "systemctl", "stop", unit); err != nil {
 		t.Fatal(out, err)
 	}
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" {
+	if protocol == "vless" || protocol == "http" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(journal, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") || !strings.Contains(journal, "invalid request user id: [скрыто]") {
+		if protocol == "vless" && (strings.Contains(journal, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") || !strings.Contains(journal, "invalid request user id: [скрыто]")) {
 			t.Fatal("raw journal credential redaction failed")
+		}
+		if protocol == "http" {
+			for _, secret := range []string{"qa-url", "qa-private-path", "qa-query-secret", "log-password"} {
+				if strings.Contains(journal, secret) {
+					t.Fatal("HTTP secret reached raw journal", secret)
+				}
+			}
 		}
 	}
 	st, err := store.Open(filepath.Join(root, "read.db"))
@@ -246,11 +329,15 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 			failures++
 		}
 	}
-	if failures != 1 {
+	wantFailures := 1
+	if protocol == "http" {
+		wantFailures = 0
+	} // HTTP 407 has no access event in Xray.
+	if failures != wantFailures {
 		t.Fatal(failures)
 	}
 	all, code := allPageRequest(t, s, filepath.Join(root, "dns.log"), period+"&result=failure")
-	if code != 200 || len(all.Entries) != 1 || all.Entries[0].Source != "vpn" {
+	if code != 200 || len(all.Entries) != wantFailures || (wantFailures > 0 && all.Entries[0].Source != "vpn") {
 		t.Fatal(code, all)
 	}
 	services := readAllJournalPages(t, s, "services", period)
@@ -278,5 +365,5 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 			t.Fatal("canonical diagnostic missing or duplicated", status, found)
 		}
 	}
-	t.Logf("generated %s config: two real echo connections, one auth rejection; journald/VPN/General/Services PASS", protocol)
+	t.Logf("generated %s config: two real echo connections, one auth rejection; HTTP additionally GET with private URL; observed rejection events=%d; journald/VPN/General/Services PASS", protocol, failures)
 }

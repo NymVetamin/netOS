@@ -23,6 +23,18 @@ func TestXraySanitizedRejectRetainsEvent(t *testing.T) {
 
 type xrayPageRunner struct{ pagedVPNRunner }
 
+func TestXrayHTTPAccessRecords(t *testing.T) {
+	for _, target := range []string{"//example.org:443", "http://example.org/path?token=SECRET", "https://user:SECRET@example.org/private"} {
+		e := logEntry{Message: "from 192.0.2.2:1234 accepted " + target + " [xray-in -> direct]"}
+		if !xrayLogFields(&e, "netos-xray-srv12.service") || e.Result != "success" || e.Address != "192.0.2.2" || e.User != "" {
+			t.Fatalf("HTTP access lost: %+v", e)
+		}
+		if strings.Contains(e.Message, "SECRET") || strings.Contains(e.Message, "/private") {
+			t.Fatal("HTTP URL secret exposed", e.Message)
+		}
+	}
+}
+
 func TestXrayLossNotice(t *testing.T) {
 	for _, message := range []string{
 		"netos-xray-log-v1 Suppressed 0 messages (oversized=0, resources=0)",
@@ -124,6 +136,8 @@ func BenchmarkXrayLogPage(b *testing.B) {
 
 func TestXrayEventsSourceIdentityAndRedaction(t *testing.T) {
 	for _, tc := range []struct{ message, user, address, result string }{
+		{"from 192.0.2.1:1234 accepted http://user:private-credential@example.org/private?token=private-credential [xray-in >> direct]", "", "192.0.2.1", "success"},
+		{"from 192.0.2.1:1234 accepted //example.org:443 [xray-in >> direct]", "", "192.0.2.1", "success"},
 		{"2026/11/13 16:01:57.644141 from 127.0.0.1:55712 accepted tcp:127.0.0.1:53103 [xray-in >> direct] email: server/peer", "server/peer", "127.0.0.1", "success"},
 		{"from tcp:192.0.2.1:1234 accepted tcp:example.test:443 [xray-in >> direct]", "", "192.0.2.1", "success"},
 		{"from udp:[2001:db8::1]:1234 accepted udp:example.test:53 [xray-in >> direct] email: server/peer", "server/peer", "2001:db8::1", "success"},
@@ -151,6 +165,31 @@ func TestXrayEventsSourceIdentityAndRedaction(t *testing.T) {
 		if _, keep := journalLogEntry(row, "vpn"); keep {
 			t.Fatal("untrusted identifier")
 		}
+	}
+}
+
+func BenchmarkHTTPXrayLogPage(b *testing.B) {
+	for _, n := range []int{30, 30000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			run := &xrayPageRunner{}
+			for i := 0; i < n; i++ {
+				run.rows = append(run.rows, xrayPageRow(i, "from 192.0.2.1:1234 accepted http://user:SECRET@example.test/private?token=SECRET [xray-in >> direct]"))
+			}
+			s := &Server{StorageRunner: run}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				w := httptest.NewRecorder()
+				s.handleJournalLogPage(w, httptest.NewRequest("GET", "/?kind=vpn", nil))
+				if w.Code != 200 || strings.Contains(w.Body.String(), "SECRET") || !strings.Contains(w.Body.String(), "http://example.test") {
+					b.Fatal("HTTP page/redaction failed")
+				}
+			}
+			b.StopTimer()
+			if run.calls != b.N {
+				b.Fatal("extra source commands", run.calls, b.N)
+			}
+		})
 	}
 }
 

@@ -120,7 +120,7 @@ func BenchmarkServicePage(b *testing.B) {
 func TestServiceCursorRejectsPreviousSourceSet(t *testing.T) {
 	now := time.Now().UTC()
 	for _, kind := range []string{"services", "all", "vpn"} {
-		old, _ := json.Marshal(journalLogCursor{Schema: 2, Kind: kind, Anchor: "c0", From: now.Add(-time.Hour), To: now})
+		old, _ := json.Marshal(journalLogCursor{Schema: 3, Kind: kind, Anchor: "c0", From: now.Add(-time.Hour), To: now})
 		request := httptest.NewRequest("GET", "/?kind="+kind+"&cursor="+base64.RawURLEncoding.EncodeToString(old), nil)
 		if _, err := journalPageRequest(request, now); err == nil || !strings.Contains(err.Error(), "состав событий") {
 			t.Fatalf("old snapshot not rejected for source change: %s %v", kind, err)

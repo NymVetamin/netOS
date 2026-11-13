@@ -11,7 +11,7 @@ import (
 
 var xrayLogUnit = regexp.MustCompile(`^netos-xray-srv([0-9]+)\.service$`)
 var xrayLogEnvelope = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)? )?from (\S+) (accepted|rejected) (.*)$`)
-var xrayAcceptedDetail = regexp.MustCompile(`^(?:tcp|udp):\S+ \[[^\[\]\r\n]+\](?: email: (\S+))?$`)
+var xrayAcceptedDetail = regexp.MustCompile(`^(?:(?:tcp|udp):\S+|(?:https?://|//)\S+|http:\[скрыто\]) \[[^\[\]\r\n]+\](?: email: (\S+))?$`)
 
 // Caller supplies a trusted _SYSTEMD_UNIT, never SYSLOG_IDENTIFIER.
 // Acceptance is a proxy request, not proof that its destination was reached.
@@ -49,6 +49,10 @@ func xrayLogFields(e *logEntry, unit string) bool {
 		}
 		user = detail[1]
 		e.Event, e.Result = "Принято соединение Xray", "success"
+		if !strings.HasPrefix(m[3], "tcp:") && !strings.HasPrefix(m[3], "udp:") {
+			// Historical HTTP records may predate producer-side URL redaction.
+			e.Message = xraylog.Sanitize(e.Message)
+		}
 	} else {
 		e.Event, e.Result = "Отказ в соединении Xray", "failure"
 		// Rejected VLESS requests can include the presented authentication UUID.
