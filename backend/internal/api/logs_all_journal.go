@@ -139,7 +139,7 @@ func classifyAllUnitEntry(entry logEntry, field func(string) string) (logEntry, 
 	}
 	if keep {
 		entry.Source = "vpn"
-		ocservEventIdentity(&entry, field)
+		vpnUnitEventIdentity(&entry, field)
 		return entry, true
 	}
 	if field("_PID") == "1" && field("UNIT") != "" {

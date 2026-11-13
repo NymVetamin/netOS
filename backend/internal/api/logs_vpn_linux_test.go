@@ -85,6 +85,33 @@ func TestIntegrationOcservIdentityGeneral(t *testing.T) {
 	if os.Getenv("NETOS_LOGS_OCSERV_REFUSAL_FIXTURE") != "1" {
 		t.Skip("requires real OpenConnect fixture")
 	}
+	checkNativeVPNIdentityGeneral(t, "integration-ocserv", "srv998")
+}
+
+func TestIntegrationL2TPIdentityGeneral(t *testing.T) {
+	if os.Getenv("NETOS_LOGS_L2TP_IDENTITY_FIXTURE") != "1" {
+		t.Skip("requires real two-user L2TP fixture with CHAP refusal")
+	}
+	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}}
+	page := readAllJournalPages(t, s, "vpn", "object="+url.QueryEscape("qa-l2tp (srv996)")+"&from="+url.QueryEscape(os.Getenv("NETOS_LOGS_FIXTURE_FROM")))
+	first, second, refused, connection := false, false, false, false
+	for _, entry := range page.Entries {
+		if entry.Server != "qa-l2tp (srv996)" || entry.Protocol != "l2tp" {
+			t.Fatal("lost L2TP identity", entry)
+		}
+		first = first || entry.User == "qa-l2tp" && entry.Result == "success"
+		second = second || entry.User == "qa-l2tp2" && entry.Result == "success"
+		refused = refused || entry.User == "qa-l2tp" && entry.Result == "failure"
+		connection = connection || entry.Event == "Установлено соединение L2TP до аутентификации" && entry.Address != ""
+	}
+	if !first || !second || !refused || !connection {
+		t.Fatal("missing actual L2TP events", first, second, refused, connection)
+	}
+	checkNativeVPNIdentityGeneral(t, "qa-l2tp", "srv996")
+}
+
+func checkNativeVPNIdentityGeneral(t *testing.T, id, index string) {
+	t.Helper()
 	from := os.Getenv("NETOS_LOGS_FIXTURE_FROM")
 	if _, err := time.Parse(time.RFC3339Nano, from); err != nil {
 		t.Fatal(err)
@@ -96,11 +123,11 @@ func TestIntegrationOcservIdentityGeneral(t *testing.T) {
 	}
 	defer st.Close()
 	s := &Server{Store: st, StorageRunner: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}}
-	query := "object=integration-ocserv&from=" + url.QueryEscape(from)
+	query := "object=" + url.QueryEscape(id+" ("+index+")") + "&from=" + url.QueryEscape(from)
 	vpn := readAllJournalPages(t, s, "vpn", query)
 	expected := map[string]logEntry{}
 	for _, entry := range vpn.Entries {
-		if entry.Server != "integration-ocserv (srv998)" {
+		if entry.Server != id+" ("+index+")" {
 			t.Fatal("wrong historical identity", entry)
 		}
 		expected[entry.ID] = entry
@@ -126,7 +153,7 @@ func TestIntegrationOcservIdentityGeneral(t *testing.T) {
 			if len(seen) != len(expected) {
 				t.Fatal("missing events", len(seen), len(expected))
 			}
-			t.Logf("canonical native OpenConnect identity: %d events", len(seen))
+			t.Logf("canonical native %s identity: %d events", id, len(seen))
 			return
 		}
 		if page.Next == cursor {
@@ -153,7 +180,7 @@ func TestIntegrationVPNTunnelProtocols(t *testing.T) {
 				ikeRefused = ikeRefused || e.User == "integration" && e.Result == "failure"
 				ikeAddress = ikeAddress || e.Address == "192.0.2.2" && e.Result == "success"
 			}
-			if e.Protocol == "l2tp" && e.Server == "srv996" {
+			if e.Protocol == "l2tp" && e.Server == "qa-l2tp (srv996)" {
 				l2tpFirst = l2tpFirst || e.User == "qa-l2tp" && e.Result == "success"
 				l2tpSecond = l2tpSecond || e.User == "qa-l2tp2" && e.Result == "success"
 				l2tpAddress = l2tpAddress || e.Address == "192.0.2.14" && e.Result == "info"

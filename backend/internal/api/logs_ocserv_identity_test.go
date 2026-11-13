@@ -78,9 +78,10 @@ func TestOcservHistoricalIdentity(t *testing.T) {
 		if !ok || !allOK || vpn != all || vpn.Server != want || vpn.Protocol != "openconnect" || vpn.User != "alice" || vpn.Result != "success" {
 			t.Fatalf("id=%v vpn=%+v all=%+v", id, vpn, all)
 		}
-		// Metadata on another protocol must not be mistaken for OpenConnect.
-		row["_SYSTEMD_UNIT"] = json.RawMessage(`"netos-vpn-l2tp-srv12.service"`)
-		row["MESSAGE"] = json.RawMessage(`"Peer alice authenticated with CHAP"`)
+		// The shared IKE daemon cannot identify a server with unit metadata.
+		row["_SYSTEMD_UNIT"] = json.RawMessage(`"netos-strongswan.service"`)
+		row["MESSAGE"] = json.RawMessage(`"RADIUS authentication of 'alice' successful"`)
+		row["IKE_SA_NAME"] = json.RawMessage(`"netos-srv12"`)
 		other, keep := journalLogEntry(row, "vpn")
 		if !keep || other.Server != "srv12" {
 			t.Fatal("metadata crossed protocol boundary", other)

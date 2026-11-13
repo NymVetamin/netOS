@@ -91,6 +91,10 @@ exit 0
 }
 
 func renderL2TPUnit(server config.VPNServer, conf string) string {
+	metadata := ""
+	if config.SafeObjectID(server.ID) {
+		metadata = "LogExtraFields=NETOS_VPN_SERVER_ID=" + server.ID + "\n"
+	}
 	preStart := ""
 	if server.UsesL2TPIPsec() {
 		preStart = "ExecStartPre=/bin/sh " + conf + ".ipsec-guard\n"
@@ -101,14 +105,14 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+%sType=simple
 %sExecStart=/usr/sbin/xl2tpd -D -c %s -p /run/netos-l2tp-srv%d.pid -C /run/netos-l2tp-srv%d.ctl
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, server.Name, preStart, conf, server.Index, server.Index)
+`, server.Name, metadata, preStart, conf, server.Index, server.Index)
 }
 
 func l2tpChapBlock(server config.VPNServer) string {

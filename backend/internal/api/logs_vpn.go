@@ -9,8 +9,8 @@ import (
 )
 
 // Historical identity comes from the event, never today's reused srv index.
-func ocservEventIdentity(e *logEntry, field func(string) string) {
-	if e.Protocol != "openconnect" || field("_SYSTEMD_UNIT") != e.Unit {
+func vpnUnitEventIdentity(e *logEntry, field func(string) string) {
+	if (e.Protocol != "openconnect" && e.Protocol != "l2tp") || field("_SYSTEMD_UNIT") != e.Unit {
 		return
 	}
 	if id := field("NETOS_VPN_SERVER_ID"); config.SafeObjectID(id) {
