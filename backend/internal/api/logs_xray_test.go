@@ -67,6 +67,9 @@ func (r *xrayPageRunner) Run(ctx context.Context, name string, args ...string) (
 	if !strings.Contains(strings.Join(args, " "), "netos-xray-srv*.service") {
 		return "", fmt.Errorf("Xray source missing")
 	}
+	if !strings.Contains(strings.Join(args, " "), "NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL") {
+		return "", fmt.Errorf("Xray identity fields missing")
+	}
 	return r.pagedVPNRunner.Run(ctx, name, args...)
 }
 func xrayPageRow(i int, message string) string {

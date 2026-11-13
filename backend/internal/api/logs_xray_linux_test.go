@@ -176,6 +176,8 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		// Private mounts provide the real command paths without installing either
 		// executable or replacing files belonging to the host.
 		args = append(args, "--property=TemporaryFileSystem=/usr/local/bin:ro",
+			"--property=LogExtraFields=NETOS_XRAY_SERVER_ID="+server.ID,
+			"--property=LogExtraFields=NETOS_XRAY_PROTOCOL="+protocol,
 			"--property=BindReadOnlyPaths="+binary+":/usr/local/bin/xray "+os.Getenv("NETOS_XRAY_LOG_NETOS")+":/usr/local/bin/netos",
 			"--property=SyslogIdentifier=netos-xray",
 			"--property=ExecStartPre="+os.Getenv("NETOS_XRAY_LOG_NETOS")+" internal-xray-run check "+path,
@@ -455,6 +457,10 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("missing Xray events", len(p.Entries))
 	}
 	failures := 0
+	wantProtocol, wantServer := "xray", "srv993"
+	if worker {
+		wantProtocol, wantServer = "xray/"+protocol, server.ID+" (srv993)"
+	}
 	for _, e := range p.Entries {
 		user := ""
 		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality") && e.Result == "success" {
@@ -464,7 +470,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		if protocol == "wireguard" {
 			address = server.Peers[0].Address
 		}
-		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != address || e.User != user {
+		if e.Protocol != wantProtocol || e.Server != wantServer || e.Address != address || e.User != user {
 			t.Fatal(e)
 		}
 		if e.Result == "failure" {
@@ -496,6 +502,16 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("real Xray diagnostic lost from Services")
 	}
 	if worker {
+		metadataPeriod := strings.Replace(period, "object=srv993", "object="+url.QueryEscape(wantProtocol), 1)
+		identified, code := allPageRequest(t, s, filepath.Join(root, "dns.log"), metadataPeriod)
+		if code != 200 || len(identified.Entries) != wantEvents {
+			t.Fatal("General metadata projection/filter lost events", code, identified)
+		}
+		for _, e := range identified.Entries {
+			if e.Source != "vpn" || e.Server != wantServer || e.Protocol != wantProtocol {
+				t.Fatal("General identity differs from VPN", e)
+			}
+		}
 		general, status := allPageRequest(t, s, filepath.Join(root, "dns.log"), period+"&result=warning")
 		found := 0
 		for _, e := range general.Entries {
@@ -630,6 +646,13 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 	}
 	if !valid && protocol == "hysteria" {
 		data, err := os.ReadFile(filepath.Join(root, "client.log"))
+		// The transport closes the SOCKS stream before its asynchronous logger
+		// necessarily writes the rejection. Wait for this attempt's evidence;
+		// never retry the connection or accept an unconfirmed timeout as refusal.
+		for deadline := time.Now().Add(time.Second); err == nil && !bytes.Contains(data, []byte("auth failed code")) && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+			data, err = os.ReadFile(filepath.Join(root, "client.log"))
+		}
 		if err != nil || !bytes.Contains(data, []byte("auth failed code")) {
 			t.Fatalf("missing client evidence of Hysteria authentication refusal: %v\n%s", err, data)
 		}

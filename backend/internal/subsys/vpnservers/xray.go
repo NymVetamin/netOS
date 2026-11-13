@@ -323,6 +323,14 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 }
 
 func renderXrayUnit(server config.VPNServer, conf string) string {
+	protocol, _ := server.Config["protocol"].(string)
+	if protocol == "" {
+		protocol = "reality"
+	}
+	metadata := ""
+	if xraylog.ValidIdentity(server.ID, protocol) {
+		metadata = "LogExtraFields=NETOS_XRAY_SERVER_ID=" + server.ID + " NETOS_XRAY_PROTOCOL=" + protocol + "\n"
+	}
 	return `[Unit]
 Description=netOS: Xray server ` + server.Name + `
 After=network-online.target
@@ -335,7 +343,7 @@ RuntimeDirectoryMode=0700
 UMask=0077
 SyslogIdentifier=netos-xray
 SyslogLevelPrefix=yes
-ExecStartPre=/usr/local/bin/netos internal-xray-run check ` + conf + `
+` + metadata + `ExecStartPre=/usr/local/bin/netos internal-xray-run check ` + conf + `
 ExecStart=/usr/local/bin/netos internal-xray-run run ` + conf + `
 Restart=always
 RestartSec=5

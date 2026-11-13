@@ -215,6 +215,30 @@ func TestXrayUnitSanitizesCheckAndRun(t *testing.T) {
 	}
 }
 
+func TestXrayUnitIdentitySurvivesRename(t *testing.T) {
+	_, server := xrayServerConfig()
+	server.ID = "stable-server"
+	server.Config = map[string]any{"protocol": "socks"}
+	before := renderXrayUnit(server, "/tmp/config.json")
+	if !strings.Contains(before, "LogExtraFields=NETOS_XRAY_SERVER_ID=stable-server NETOS_XRAY_PROTOCOL=socks\n") {
+		t.Fatal("missing immutable event identity")
+	}
+	oldName := server.Name
+	server.Name = "Renamed server"
+	after := renderXrayUnit(server, "/tmp/config.json")
+	if strings.Replace(before, "Description=netOS: Xray server "+oldName, "Description=netOS: Xray server "+server.Name, 1) != after {
+		t.Fatal("rename changed runtime directives")
+	}
+	server.Config = nil
+	if !strings.Contains(renderXrayUnit(server, "/tmp/config.json"), "NETOS_XRAY_PROTOCOL=reality\n") {
+		t.Fatal("default protocol lost")
+	}
+	server.ID = "bad\nExecStart=/bad"
+	if strings.Contains(renderXrayUnit(server, "/tmp/config.json"), "LogExtraFields=") {
+		t.Fatal("unsafe identity emitted")
+	}
+}
+
 func TestXrayMonitorTogglePlansRestart(t *testing.T) {
 	old, server := xrayServerConfig()
 	old.VPNServers = []config.VPNServer{server}

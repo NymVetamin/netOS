@@ -60,7 +60,14 @@ func isDNSQuery(message string) bool {
 }
 
 func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, bool) {
-	field := func(k string) string { var v string; _ = json.Unmarshal(row[k], &v); return v }
+	field := func(k string) string {
+		if len(row[k]) == 0 {
+			return ""
+		}
+		var v string
+		_ = json.Unmarshal(row[k], &v)
+		return v
+	}
 	message := field("MESSAGE")
 	if message == "" {
 		return logEntry{}, false
@@ -111,6 +118,7 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		}
 		keep := xrayLogFields(&entry, field("_SYSTEMD_UNIT"))
 		if keep {
+			xrayEventIdentity(&entry, field)
 			return entry, true
 		}
 		if entry.Unit == "netos-strongswan.service" {

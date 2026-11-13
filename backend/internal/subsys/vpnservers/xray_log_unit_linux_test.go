@@ -4,6 +4,7 @@ package vpnservers
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -27,6 +28,7 @@ func TestIntegrationXrayGeneratedLogUnit(t *testing.T) {
 		t.Fatal("root required")
 	}
 	ctx := context.Background()
+	started := time.Now().UTC().Format(time.RFC3339Nano)
 	run := &system.Exec{Timeout: 15 * time.Second, MaxOutputBytes: 1 << 20}
 	const unit = "netos-xray-srv994.service"
 	const unitPath = "/run/systemd/system/" + unit
@@ -182,6 +184,21 @@ func TestIntegrationXrayGeneratedLogUnit(t *testing.T) {
 		t.Fatal("stats socket missing", err)
 	}
 	pid := command("show", unit, "-p", "MainPID", "--value")
+	server.Name = "Renamed without disconnect"
+	if err := os.WriteFile(unitPath, []byte(renderXrayUnit(server, conf)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	command("daemon-reload")
+	checkEcho()
+	if command("show", unit, "-p", "MainPID", "--value") != pid {
+		t.Fatal("metadata rename restarted service")
+	}
+	// Reusing an index must not relabel the old records with the new ID.
+	server.ID = "replacement-test"
+	if err := os.WriteFile(unitPath, []byte(renderXrayUnit(server, conf)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	command("daemon-reload")
 	command("restart", unit)
 	checkEcho()
 	if got := command("show", unit, "-p", "MainPID", "--value"); got == pid || got == "0" {
@@ -204,6 +221,35 @@ func TestIntegrationXrayGeneratedLogUnit(t *testing.T) {
 	command("start", unit)
 	checkEcho()
 	command("stop", unit)
+	raw, err := run.Run(ctx, "journalctl", "--sync")
+	if err != nil {
+		t.Fatal(raw, err)
+	}
+	raw, err = run.Run(ctx, "journalctl", "-u", unit, "--since="+started, "--no-pager", "-o", "json", "-n", "200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		var row map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatal(err)
+		}
+		var message, id, protocol string
+		json.Unmarshal(row["MESSAGE"], &message)
+		if !strings.Contains(message, " accepted tcp:") {
+			continue
+		}
+		json.Unmarshal(row["NETOS_XRAY_SERVER_ID"], &id)
+		json.Unmarshal(row["NETOS_XRAY_PROTOCOL"], &protocol)
+		if protocol != "socks" || (id != "unit-test" && id != "replacement-test") {
+			t.Fatalf("missing native identity: %q %q", id, protocol)
+		}
+		identities[id]++
+	}
+	if identities["unit-test"] < 2 || identities["replacement-test"] < 2 {
+		t.Fatal("historical identity/repeat lost", identities)
+	}
 	if result := command("show", unit, "-p", "Result", "--value"); result != "success" {
 		t.Fatal("normal stop reported as failure", result)
 	}

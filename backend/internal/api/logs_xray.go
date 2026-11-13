@@ -13,6 +13,16 @@ var xrayLogUnit = regexp.MustCompile(`^netos-xray-srv([0-9]+)\.service$`)
 var xrayLogEnvelope = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)? )?from (\S+) (accepted|rejected) (.*)$`)
 var xrayAcceptedDetail = regexp.MustCompile(`^(?:(?:tcp|udp):\S+|(?:https?://|//)\S+|http:\[скрыто\]) \[[^\[\]\r\n]+\](?: email: (\S+))?$`)
 
+// Called only after recognizing an event from a trusted Xray service. Read
+// identity from the record, never from today's potentially reused srv index.
+func xrayEventIdentity(e *logEntry, field func(string) string) {
+	id, protocol := field("NETOS_XRAY_SERVER_ID"), field("NETOS_XRAY_PROTOCOL")
+	if xraylog.ValidIdentity(id, protocol) {
+		e.Server = id + " (" + e.Server + ")"
+		e.Protocol = "xray/" + protocol
+	}
+}
+
 // Caller supplies a trusted _SYSTEMD_UNIT, never SYSLOG_IDENTIFIER.
 // Acceptance is a proxy request, not proof that its destination was reached.
 func xrayLogFields(e *logEntry, unit string) bool {
