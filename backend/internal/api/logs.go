@@ -203,7 +203,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "неизвестный журнал")
 		return
 	}
-	if kind == "vpn" || kind == "services" {
+	if kind == "vpn" || kind == "services" || kind == "firewall" {
 		s.handleJournalLogPage(w, r)
 		return
 	}

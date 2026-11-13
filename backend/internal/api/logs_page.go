@@ -81,7 +81,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	validResult := c.Result == "" || c.Result == "info"
 	if kind == "services" {
 		validResult = validResult || c.Result == "warning" || c.Result == "error"
-	} else {
+	} else if kind == "vpn" {
 		validResult = validResult || c.Result == "success" || c.Result == "failure"
 	}
 	if !validResult {
@@ -111,6 +111,8 @@ func (s *Server) handleJournalLogPage(w http.ResponseWriter, r *http.Request) {
 	fields := "__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT"
 	if c.Kind == "services" {
 		fields += ",_PID,UNIT,MESSAGE_ID,PRIORITY"
+	} else if c.Kind == "firewall" {
+		fields += ",SYSLOG_IDENTIFIER"
 	} else {
 		fields += ",IKE_SA_NAME"
 	}
@@ -120,6 +122,10 @@ func (s *Server) handleJournalLogPage(w http.ResponseWriter, r *http.Request) {
 		title = "служб"
 		args = append(args, serviceJournalMatches()...)
 		args = append(args, "+", "_SYSTEMD_UNIT=netosd.service")
+	} else if c.Kind == "firewall" {
+		title = "Firewall"
+		// Unlike -k this includes all available boots in the selected period.
+		args = append(args, "_TRANSPORT=kernel")
 	} else {
 		args = append(args, "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service")
 	}
@@ -204,12 +210,21 @@ func readJournalLogPage(raw string, c journalLogCursor) (journalLogPage, bool, e
 		result := e.Result
 		if c.Kind == "services" {
 			result = e.Severity
+		} else if c.Kind == "firewall" {
+			// LOG precedes the verdict and cannot establish accept/drop.
+			result = "info"
 		}
 		if !keep || (c.Result != "" && result != c.Result) {
 			continue
 		}
-		if c.Object != "" && !strings.Contains(strings.ToLower(e.Server+" "+e.Protocol+" "+e.User+" "+e.Address+" "+e.Unit), c.Object) {
-			continue
+		if c.Object != "" {
+			object := e.Message
+			if c.Kind != "firewall" {
+				object = e.Server + " " + e.Protocol + " " + e.User + " " + e.Address + " " + e.Unit
+			}
+			if !strings.Contains(strings.ToLower(object), c.Object) {
+				continue
+			}
 		}
 		p.Entries = append(p.Entries, e)
 	}

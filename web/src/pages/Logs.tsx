@@ -18,7 +18,7 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
  const [snapshot,setSnapshot]=useState<{kind:string;value:any}|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true);
  const [sourceFilters,setSourceFilters]=useState<Record<string,typeof defaultFilters>>({}),[page,setPage]=useState({kind:"",cursor:""});
  const filters=sourceFilters[kind] || defaultFilters;
- const paged=kind==="vpn" || kind==="services";
+ const paged=kind==="vpn" || kind==="services" || kind==="firewall";
  const scope=paged?JSON.stringify([kind,filters]):kind;
  const cursor=page.kind===scope?page.cursor:"";
  const data=snapshot?.kind===scope?snapshot.value:null;
@@ -40,13 +40,14 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
    <button className="btn sm" disabled={loading || !!error || !rows.length} onClick={download}>{paged?"Скачать страницу":"Скачать журнал"}</button>
   </div>
 
-  {paged&&<form key={kind} className="row wrap" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);setSourceFilters(old=>({...old,[kind]:{hours:String(f.get("hours")),result:String(f.get("result")),object:String(f.get("object")).trim()}}));setPage({kind:scope,cursor:""});setAttempt(n=>n+1)}}>
+  {paged&&<form key={kind} className="row wrap" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);setSourceFilters(old=>({...old,[kind]:{hours:String(f.get("hours")),result:String(f.get("result") || ""),object:String(f.get("object")).trim()}}));setPage({kind:scope,cursor:""});setAttempt(n=>n+1)}}>
    <label>Период <select name="hours" defaultValue={filters.hours}><option value="24">24 часа</option><option value="168">7 дней</option><option value="744">31 день</option></select></label>
-   <label>{kind==="services"?"Тип события":"Результат"} <select name="result" defaultValue={filters.result}><option value="">Все</option>{kind==="services"?<><option value="error">Ошибки</option><option value="warning">Предупреждения</option><option value="info">Состояние служб</option></>:<><option value="success">Успешно</option><option value="failure">Отказ</option><option value="info">Прочие события</option></>}</select></label>
-   <input name="object" aria-label={kind==="services"?"Служба":"Объект VPN"} placeholder={kind==="services"?"Имя службы":"Сервер, пользователь, адрес или протокол"} maxLength={128} defaultValue={filters.object}/>
+   {kind!=="firewall"&&<label>{kind==="services"?"Тип события":"Результат"} <select name="result" defaultValue={filters.result}><option value="">Все</option>{kind==="services"?<><option value="error">Ошибки</option><option value="warning">Предупреждения</option><option value="info">Состояние служб</option></>:<><option value="success">Успешно</option><option value="failure">Отказ</option><option value="info">Прочие события</option></>}</select></label>}
+   <input name="object" aria-label={kind==="services"?"Служба":kind==="firewall"?"Правило или адрес":"Объект VPN"} placeholder={kind==="services"?"Имя службы":kind==="firewall"?"Правило, адрес или текст записи":"Сервер, пользователь, адрес или протокол"} maxLength={128} defaultValue={filters.object}/>
    <button className="btn sm" type="submit">Применить фильтры</button>
   </form>}
   {kind==="vpn"&&<p className="hint">События OpenConnect, IKEv2 и L2TP. Установка соединения и аутентификация пользователя — отдельные события. Отсутствие записи не означает отсутствия попытки подключения.</p>}
+  {kind==="firewall"&&<p className="hint">Записи правил с включённым логированием. Запись показывает совпадение с правилом, но не подтверждает разрешение или блокировку пакета. Частота записей ограничена.</p>}
   {error&&<Notice tone="danger" title="Не удалось загрузить журнал">{error}{data&&" Показана предыдущая страница."}<button className="btn sm" disabled={loading} onClick={()=>setAttempt(n=>n+1)}>Повторить запрос</button></Notice>}
   {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>
    {data?.warnings?.map((text:string,i:number)=><Notice key={i} tone="warn" title={text}/>)}
