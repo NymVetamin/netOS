@@ -25,7 +25,7 @@ func TestIntegrationVPNLogs(t *testing.T) {
 	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second}}
 	for i := 0; i < 3; i++ {
 		start := time.Now()
-		d := readAllVPNPages(t, s)
+		d := readAllJournalPages(t, s, "vpn")
 		login, disconnect := false, false
 		for _, e := range d.Entries {
 			if e.Server != "srv998" || e.User != "integration" {
@@ -52,7 +52,7 @@ func TestIntegrationVPNTunnelProtocols(t *testing.T) {
 	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second}}
 	for repeat := 0; repeat < 3; repeat++ {
 		start := time.Now()
-		d := readAllVPNPages(t, s)
+		d := readAllJournalPages(t, s, "vpn")
 		ikeSuccess, ikeRefused, ikeAddress, l2tpFirst, l2tpSecond, l2tpAddress, l2tpRefused := false, false, false, false, false, false, false
 		for _, e := range d.Entries {
 			if e.Protocol == "ikev2" && e.Server == "srv997" {
@@ -105,7 +105,7 @@ func TestIntegrationVPNLogNoise(t *testing.T) {
 			s := &Server{StorageRunner: run}
 			for i := 0; i < 3; i++ {
 				start := time.Now()
-				d := readAllVPNPages(t, s)
+				d := readAllJournalPages(t, s, "vpn")
 				found := false
 				for _, e := range d.Entries {
 					if e.Unit == unit && e.User == "noise-fixture" && e.Result == "success" {
@@ -121,13 +121,13 @@ func TestIntegrationVPNLogNoise(t *testing.T) {
 	}
 }
 
-func readAllVPNPages(t *testing.T, s *Server, filter ...string) vpnLogPage {
+func readAllJournalPages(t *testing.T, s *Server, kind string, filter ...string) journalLogPage {
 	t.Helper()
-	all := vpnLogPage{}
+	all := journalLogPage{}
 	cursor := ""
 	seen := map[string]bool{}
 	for page := 0; page < 200; page++ {
-		query := "/api/logs?kind=vpn&cursor=" + url.QueryEscape(cursor)
+		query := "/api/logs?kind=" + url.QueryEscape(kind) + "&cursor=" + url.QueryEscape(cursor)
 		if len(filter) > 0 {
 			query += "&" + filter[0]
 		}
@@ -136,7 +136,7 @@ func readAllVPNPages(t *testing.T, s *Server, filter ...string) vpnLogPage {
 		w := httptest.NewRecorder()
 		start := time.Now()
 		s.handleLogs(w, r)
-		var d vpnLogPage
+		var d journalLogPage
 		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || w.Code != 200 || len(d.Warnings) != 0 {
 			t.Fatal(w.Body.String(), err)
 		}
@@ -183,7 +183,7 @@ func TestIntegrationVPNPageFiltersAndMissingAnchor(t *testing.T) {
 		t.Skip("requires real IKEv2 refusal fixture")
 	}
 	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}}
-	d := readAllVPNPages(t, s, "result=failure&object=integration")
+	d := readAllJournalPages(t, s, "vpn", "result=failure&object=integration")
 	if len(d.Entries) == 0 {
 		t.Fatal("real refusal missing")
 	}
@@ -196,7 +196,7 @@ func TestIntegrationVPNPageFiltersAndMissingAnchor(t *testing.T) {
 	r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
 	w := httptest.NewRecorder()
 	s.handleLogs(w, r)
-	var first vpnLogPage
+	var first journalLogPage
 	if err := json.Unmarshal(w.Body.Bytes(), &first); err != nil || w.Code != 200 || first.Next == "" {
 		t.Fatal("requires paginated real journal", w.Body.String(), err)
 	}
@@ -219,7 +219,7 @@ func TestIntegrationVPNPageEquivalentLegacy(t *testing.T) {
 	run := &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}
 	s := &Server{StorageRunner: run}
 	start := time.Now()
-	all := readAllVPNPages(t, s)
+	all := readAllJournalPages(t, s, "vpn")
 	pagedTime := time.Since(start)
 	start = time.Now()
 	raw, err := run.Run(context.Background(), "journalctl", "--no-pager", "--quiet", "-o", "json", "-n", "300", "--since="+journalPageTime(all.From), "--until="+journalPageTime(all.CapturedAt), "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service", "--grep="+ocservEventPattern+"|"+ikeEventPattern+"|"+l2tpEventPattern)

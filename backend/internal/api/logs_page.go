@@ -16,7 +16,8 @@ import (
 const logPageSize = 100
 const logScanSize = 500
 
-type vpnLogCursor struct {
+type journalLogCursor struct {
+	Kind   string    `json:"kind"`
 	Anchor string    `json:"anchor"`
 	From   time.Time `json:"from"`
 	To     time.Time `json:"to"`
@@ -24,7 +25,7 @@ type vpnLogCursor struct {
 	Object string    `json:"object"`
 }
 
-type vpnLogPage struct {
+type journalLogPage struct {
 	Kind       string     `json:"kind"`
 	Entries    []logEntry `json:"entries"`
 	Warnings   []string   `json:"warnings"`
@@ -34,17 +35,28 @@ type vpnLogPage struct {
 	Scanned    int        `json:"scanned"`
 }
 
-func vpnPageRequest(r *http.Request, now time.Time) (vpnLogCursor, error) {
+func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error) {
 	q := r.URL.Query()
-	c := vpnLogCursor{From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
+	kind := q.Get("kind")
+	if kind == "" {
+		kind = "vpn"
+	}
+	c := journalLogCursor{Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
 	if token := q.Get("cursor"); token != "" {
 		if len(token) > 8192 {
 			return c, fmt.Errorf("курсор журнала слишком длинный")
 		}
 		data, err := base64.RawURLEncoding.DecodeString(token)
-		c = vpnLogCursor{}
+		c = journalLogCursor{}
 		if err != nil || json.Unmarshal(data, &c) != nil || c.Anchor == "" || len(c.Anchor) > 4096 || strings.ContainsAny(c.Anchor, "\r\n\x00") {
 			return c, fmt.Errorf("неверный курсор журнала; обновите журнал")
+		}
+		// Tokens issued before source-specific pages belong exclusively to VPN.
+		if c.Kind == "" {
+			c.Kind = "vpn"
+		}
+		if c.Kind != kind {
+			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
 		}
 		// A continuation belongs to its original filters and time interval.
 		if c.Result != q.Get("result") || c.Object != strings.ToLower(strings.TrimSpace(q.Get("object"))) {
@@ -66,7 +78,13 @@ func vpnPageRequest(r *http.Request, now time.Time) (vpnLogCursor, error) {
 	if c.From.IsZero() || !c.From.Before(c.To) || c.To.Sub(c.From) > 31*24*time.Hour || c.To.After(now.Add(time.Minute)) {
 		return c, fmt.Errorf("выберите период до 31 дня, не позднее текущего времени")
 	}
-	if c.Result != "" && c.Result != "success" && c.Result != "failure" && c.Result != "info" {
+	validResult := c.Result == "" || c.Result == "info"
+	if kind == "services" {
+		validResult = validResult || c.Result == "warning" || c.Result == "error"
+	} else {
+		validResult = validResult || c.Result == "success" || c.Result == "failure"
+	}
+	if !validResult {
 		return c, fmt.Errorf("неизвестный результат события")
 	}
 	if len(c.Object) > 128 {
@@ -79,8 +97,8 @@ func journalPageTime(t time.Time) string {
 	return "@" + strconv.FormatInt(t.Unix(), 10) + "." + fmt.Sprintf("%06d", t.Nanosecond()/1000)
 }
 
-func (s *Server) handleVPNLogPage(w http.ResponseWriter, r *http.Request) {
-	c, err := vpnPageRequest(r, time.Now().UTC().Truncate(time.Microsecond))
+func (s *Server) handleJournalLogPage(w http.ResponseWriter, r *http.Request) {
+	c, err := journalPageRequest(r, time.Now().UTC().Truncate(time.Microsecond))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "%s", err.Error())
 		return
@@ -90,7 +108,21 @@ func (s *Server) handleVPNLogPage(w http.ResponseWriter, r *http.Request) {
 		runner = &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}
 	}
 	limit := logScanSize + 1
-	args := []string{"--no-pager", "--quiet", "-o", "json", "--reverse", "--until=" + journalPageTime(c.To), "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,IKE_SA_NAME", "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service"}
+	fields := "__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT"
+	if c.Kind == "services" {
+		fields += ",_PID,UNIT,MESSAGE_ID,PRIORITY"
+	} else {
+		fields += ",IKE_SA_NAME"
+	}
+	args := []string{"--no-pager", "--quiet", "-o", "json", "--reverse", "--until=" + journalPageTime(c.To), "--output-fields=" + fields}
+	title := "VPN"
+	if c.Kind == "services" {
+		title = "служб"
+		args = append(args, serviceJournalMatches()...)
+		args = append(args, "+", "_SYSTEMD_UNIT=netosd.service")
+	} else {
+		args = append(args, "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service")
+	}
 	if c.Anchor != "" {
 		args = append(args, "--cursor="+c.Anchor)
 		limit++
@@ -100,10 +132,10 @@ func (s *Server) handleVPNLogPage(w http.ResponseWriter, r *http.Request) {
 	args = append(args, "-n", strconv.Itoa(limit))
 	raw, err := runner.Run(r.Context(), "journalctl", args...)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "Не удалось прочитать журнал VPN: %s", err.Error())
+		writeError(w, http.StatusBadGateway, "Не удалось прочитать журнал %s: %s", title, err.Error())
 		return
 	}
-	p, stale, err := readVPNLogPage(raw, c)
+	p, stale, err := readJournalLogPage(raw, c)
 	if stale {
 		writeError(w, http.StatusConflict, "Запись продолжения больше недоступна; обновите журнал")
 		return
@@ -115,8 +147,11 @@ func (s *Server) handleVPNLogPage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
-func readVPNLogPage(raw string, c vpnLogCursor) (vpnLogPage, bool, error) {
-	p := vpnLogPage{Kind: "vpn", Entries: []logEntry{}, Warnings: []string{}, CapturedAt: c.To, From: c.From}
+func readJournalLogPage(raw string, c journalLogCursor) (journalLogPage, bool, error) {
+	if c.Kind == "" {
+		c.Kind = "vpn"
+	}
+	p := journalLogPage{Kind: c.Kind, Entries: []logEntry{}, Warnings: []string{}, CapturedAt: c.To, From: c.From}
 	scan := bufio.NewScanner(strings.NewReader(raw))
 	scan.Buffer(make([]byte, 4096), 2<<20)
 	anchorSeen := c.Anchor == ""
@@ -164,9 +199,13 @@ func readVPNLogPage(raw string, c vpnLogCursor) (vpnLogPage, bool, error) {
 		if us > to {
 			continue
 		}
-		e, keep := journalLogEntry(row, "vpn")
+		e, keep := journalLogEntry(row, c.Kind)
 		e.ID = id
-		if !keep || (c.Result != "" && e.Result != c.Result) {
+		result := e.Result
+		if c.Kind == "services" {
+			result = e.Severity
+		}
+		if !keep || (c.Result != "" && result != c.Result) {
 			continue
 		}
 		if c.Object != "" && !strings.Contains(strings.ToLower(e.Server+" "+e.Protocol+" "+e.User+" "+e.Address+" "+e.Unit), c.Object) {
