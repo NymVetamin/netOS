@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { Empty, Notice, TableWrap } from "../ui";
 const tabs = [{id:"all",name:"Общий"},{id:"dns",name:"DNS"},{id:"firewall",name:"Firewall"},{id:"services",name:"Службы"},{id:"access",name:"Доступ"},{id:"vpn",name:"VPN"}];
 const defaultFilters={hours:"24",result:"",object:""};
@@ -25,7 +25,7 @@ export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
  useEffect(()=>{let active=true;const controller=new AbortController();setLoading(true);setError("");
   const params:Record<string,string>={};
   params.result=filters.result;params.object=filters.object;if(cursor)params.cursor=cursor;else {const now=Date.now();params.to=new Date(now).toISOString();params.from=new Date(now-Number(filters.hours)*3600000).toISOString()}
-  api.logs(kind,params,controller.signal).then(d=>{if(active)setSnapshot({kind:scope,value:d})}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});
+  api.logs(kind,params,controller.signal).then(d=>{if(active)setSnapshot({kind:scope,value:d})}).catch(e=>{if(active)setError(e instanceof ApiError && e.status===0 ? "Нет связи с роутером. Не удалось прочитать журнал." : e.message)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false;controller.abort()};
  },[kind,scope,cursor,attempt]);
  const needle=query.toLocaleLowerCase();
