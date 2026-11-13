@@ -129,6 +129,7 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		if !keep {
 			return logEntry{}, false
 		}
+		ocservEventIdentity(&entry, field)
 	}
 	return entry, true
 }

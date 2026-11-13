@@ -4,7 +4,19 @@ import (
 	"net"
 	"regexp"
 	"strings"
+
+	"github.com/netos-router/netos/internal/config"
 )
+
+// Historical identity comes from the event, never today's reused srv index.
+func ocservEventIdentity(e *logEntry, field func(string) string) {
+	if e.Protocol != "openconnect" || field("_SYSTEMD_UNIT") != e.Unit {
+		return
+	}
+	if id := field("NETOS_VPN_SERVER_ID"); config.SafeObjectID(id) {
+		e.Server = id + " (" + e.Server + ")"
+	}
+}
 
 // Filter before journalctl's limit: routine daemon output must not evict events.
 const ocservEventPattern = `user logged in|user disconnected|failed authentication|failed cookie authentication attempt`

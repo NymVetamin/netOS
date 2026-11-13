@@ -46,7 +46,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	if kind == "" {
 		kind = "vpn"
 	}
-	c := journalLogCursor{Schema: 5, Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
+	c := journalLogCursor{Schema: 6, Kind: kind, From: now.Add(-24 * time.Hour), To: now, Result: q.Get("result"), Object: strings.ToLower(strings.TrimSpace(q.Get("object")))}
 	if token := q.Get("cursor"); token != "" {
 		if len(token) > 8192 {
 			return c, fmt.Errorf("курсор журнала слишком длинный")
@@ -63,7 +63,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		if c.Kind != kind {
 			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
 		}
-		if (kind == "vpn" || kind == "all" || kind == "services") && c.Schema != 5 {
+		if (kind == "vpn" || kind == "all" || kind == "services") && c.Schema != 6 {
 			return c, fmt.Errorf("состав событий журнала изменился; обновите журнал")
 		}
 		if kind != "all" && c.All != nil {
@@ -148,7 +148,7 @@ func (s *Server) handleJournalLogPage(w http.ResponseWriter, r *http.Request) {
 	} else if c.Kind == "firewall" {
 		fields += ",SYSLOG_IDENTIFIER"
 	} else {
-		fields += ",IKE_SA_NAME,NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL"
+		fields += ",IKE_SA_NAME,NETOS_VPN_SERVER_ID,NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL"
 	}
 	args := []string{"--no-pager", "--quiet", "-o", "json", "--reverse", "--until=" + journalPageTime(c.To), "--output-fields=" + fields}
 	title := "VPN"

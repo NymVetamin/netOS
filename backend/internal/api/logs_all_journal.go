@@ -66,7 +66,7 @@ func readAllJournalBatch(ctx context.Context, runner system.Runner, c journalLog
 	if pos.Anchor != "" {
 		limit++
 	}
-	args := append(base, "--reverse", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_TRANSPORT,_PID,UNIT,MESSAGE_ID,PRIORITY,IKE_SA_NAME,NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL", "-n", strconv.Itoa(limit))
+	args := append(base, "--reverse", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_TRANSPORT,_PID,UNIT,MESSAGE_ID,PRIORITY,IKE_SA_NAME,NETOS_VPN_SERVER_ID,NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL", "-n", strconv.Itoa(limit))
 	if anchor == "" {
 		args = append(args, "--since="+journalPageTime(c.From))
 	} else {
@@ -139,6 +139,7 @@ func classifyAllUnitEntry(entry logEntry, field func(string) string) (logEntry, 
 	}
 	if keep {
 		entry.Source = "vpn"
+		ocservEventIdentity(&entry, field)
 		return entry, true
 	}
 	if field("_PID") == "1" && field("UNIT") != "" {

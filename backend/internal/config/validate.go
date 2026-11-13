@@ -185,7 +185,7 @@ func (c *Config) validateHumanText(r *ValidationResult) {
 // sometimes file/unit names.
 func (c *Config) validateObjectIDs(r *ValidationResult) {
 	check := func(path, value string) {
-		if value != "" && !safeObjectID(value) {
+		if value != "" && !SafeObjectID(value) {
 			r.errf(path, "идентификатор может содержать только буквы, цифры, точку, дефис и подчёркивание")
 		}
 	}
@@ -3096,7 +3096,9 @@ func validDNSName(value string) bool {
 	return true
 }
 
-func safeObjectID(value string) bool {
+// SafeObjectID validates the bounded ASCII identifier used by config objects.
+// It is also safe as an unquoted systemd journal metadata value.
+func SafeObjectID(value string) bool {
 	if value == "" || value == "." || value == ".." || len(value) > 64 {
 		return false
 	}

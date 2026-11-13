@@ -46,7 +46,7 @@ func TestIntegrationAllLogPages(t *testing.T) {
 	expected := map[string]map[string]logEntry{}
 	coverage := map[string]int{}
 	for _, query := range queries {
-		args := []string{"--no-pager", "--quiet", "-o", "json", "--since=" + journalPageTime(from), "--until=" + journalPageTime(to), "-n", "100000", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_TRANSPORT,_PID,UNIT,MESSAGE_ID,PRIORITY,IKE_SA_NAME,NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL"}
+		args := []string{"--no-pager", "--quiet", "-o", "json", "--since=" + journalPageTime(from), "--until=" + journalPageTime(to), "-n", "100000", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_TRANSPORT,_PID,UNIT,MESSAGE_ID,PRIORITY,IKE_SA_NAME,NETOS_VPN_SERVER_ID,NETOS_XRAY_SERVER_ID,NETOS_XRAY_PROTOCOL"}
 		raw, err := baseline.Run(context.Background(), "journalctl", append(args, query.args...)...)
 		if err != nil && !emptyJournalMatch(raw, err) {
 			t.Fatal(err)

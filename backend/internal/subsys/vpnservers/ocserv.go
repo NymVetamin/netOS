@@ -157,13 +157,17 @@ func renderOcservConnect(server config.VPNServer, cfg *config.Config, stateDirs 
 }
 
 func renderOcservUnit(server config.VPNServer, conf string) string {
+	metadata := ""
+	if config.SafeObjectID(server.ID) {
+		metadata = "LogExtraFields=NETOS_VPN_SERVER_ID=" + server.ID + "\n"
+	}
 	return `[Unit]
 Description=netOS: OpenConnect server ` + server.Name + `
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+` + metadata + `Type=simple
 RuntimeDirectory=netos-ocserv-srv` + fmt.Sprint(server.Index) + `
 RuntimeDirectoryMode=0755
 ExecStart=/usr/sbin/ocserv --foreground --config ` + conf + `

@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -32,7 +34,7 @@ func TestIntegrationVPNLogs(t *testing.T) {
 		d := readAllJournalPages(t, s, "vpn", filter)
 		login, disconnect := false, false
 		for _, e := range d.Entries {
-			if e.Server != "srv998" || e.User != "integration" {
+			if e.Server != "integration-ocserv (srv998)" || e.User != "integration" {
 				continue
 			}
 			if e.Protocol != "openconnect" || e.Address == "" {
@@ -65,7 +67,7 @@ func TestIntegrationOcservFinalRefusal(t *testing.T) {
 	d := readAllJournalPages(t, s, "vpn", "object=srv998&result=failure&from="+url.QueryEscape(from))
 	found := false
 	for _, e := range d.Entries {
-		if e.Server == "srv998" && e.Protocol == "openconnect" && e.User == "integration" && e.Address == "192.0.2.2" {
+		if e.Server == "integration-ocserv (srv998)" && e.Protocol == "openconnect" && e.User == "integration" && e.Address == "192.0.2.2" {
 			if e.Result != "failure" || e.Event != "Отказ во входе VPN" {
 				t.Fatalf("final refusal misclassified: %+v", e)
 			}
@@ -75,6 +77,64 @@ func TestIntegrationOcservFinalRefusal(t *testing.T) {
 	if !found {
 		t.Fatal("real final refusal with user/address/server missing")
 	}
+}
+
+// The real generated unit must expose the same historical identity through
+// both readers, including filtering by that identity before the page limit.
+func TestIntegrationOcservIdentityGeneral(t *testing.T) {
+	if os.Getenv("NETOS_LOGS_OCSERV_REFUSAL_FIXTURE") != "1" {
+		t.Skip("requires real OpenConnect fixture")
+	}
+	from := os.Getenv("NETOS_LOGS_FIXTURE_FROM")
+	if _, err := time.Parse(time.RFC3339Nano, from); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{Store: st, StorageRunner: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}}
+	query := "object=integration-ocserv&from=" + url.QueryEscape(from)
+	vpn := readAllJournalPages(t, s, "vpn", query)
+	expected := map[string]logEntry{}
+	for _, entry := range vpn.Entries {
+		if entry.Server != "integration-ocserv (srv998)" {
+			t.Fatal("wrong historical identity", entry)
+		}
+		expected[entry.ID] = entry
+	}
+	if len(expected) == 0 {
+		t.Fatal("empty native fixture")
+	}
+	cursor := ""
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		page, code := allPageRequest(t, s, filepath.Join(dir, "dns.log"), query+"&cursor="+url.QueryEscape(cursor))
+		if code != 200 || page.Incomplete || len(page.Warnings) > 0 {
+			t.Fatal(code, page)
+		}
+		for _, entry := range page.Entries {
+			entry.ID = strings.TrimPrefix(entry.ID, "journal:")
+			if seen[entry.ID] || expected[entry.ID] != entry {
+				t.Fatal("duplicate or changed event", entry)
+			}
+			seen[entry.ID] = true
+		}
+		if page.Next == "" {
+			if len(seen) != len(expected) {
+				t.Fatal("missing events", len(seen), len(expected))
+			}
+			t.Logf("canonical native OpenConnect identity: %d events", len(seen))
+			return
+		}
+		if page.Next == cursor {
+			t.Fatal("cursor stalled")
+		}
+		cursor = page.Next
+	}
+	t.Fatal("page budget exhausted")
 }
 
 // Requires the real IKEv2 success/refusal and two-client L2TP fixture runs.
