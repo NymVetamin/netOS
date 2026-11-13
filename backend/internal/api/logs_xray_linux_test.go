@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
@@ -49,6 +50,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 	t.Run("trojan", func(t *testing.T) { testXrayAccessJournal(t, false, true, "trojan") })
 	t.Run("vmess", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vmess") })
 	t.Run("shadowsocks", func(t *testing.T) { testXrayAccessJournal(t, false, true, "shadowsocks") })
+	t.Run("hysteria", func(t *testing.T) { testXrayAccessJournal(t, false, true, "hysteria") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -104,19 +106,23 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	doc["inbounds"].([]any)[0].(map[string]any)["listen"] = "127.0.0.1"
 	doc["api"].(map[string]any)["listen"] = filepath.Join(root, "stats.sock")
 	var clientTLS *tls.Config
-	if protocol == "vless" || protocol == "trojan" {
+	var clientPin string
+	if protocol == "vless" || protocol == "trojan" || protocol == "hysteria" {
 		cert, key, _, err := tlsutil.EnsureSelfSignedForNames(root, "localhost", "127.0.0.1")
 		if err != nil {
 			t.Fatal(err)
 		}
-		pem, err := os.ReadFile(cert)
+		certPEM, err := os.ReadFile(cert)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
+		if !pool.AppendCertsFromPEM(certPEM) {
 			t.Fatal("invalid test certificate")
 		}
+		block, _ := pem.Decode(certPEM)
+		digest := sha256.Sum256(block.Bytes)
+		clientPin = hex.EncodeToString(digest[:])
 		clientTLS = &tls.Config{RootCAs: pool, ServerName: "localhost", MinVersion: tls.VersionTLS12}
 		in := doc["inbounds"].([]any)[0].(map[string]any)
 		settings := in["streamSettings"].(map[string]any)["tlsSettings"].(map[string]any)
@@ -147,9 +153,13 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	ready := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if protocol == "shadowsocks" {
+		if protocol == "shadowsocks" || protocol == "hysteria" {
 			// An empty TCP probe itself produces an authentication rejection.
-			out, err := run.Run(ctx, "ss", "-H", "-ltn", "sport", "=", strconv.Itoa(port))
+			flags := "-ltn"
+			if protocol == "hysteria" {
+				flags = "-lun"
+			}
+			out, err := run.Run(ctx, "ss", "-H", flags, "sport", "=", strconv.Itoa(port))
 			if err != nil {
 				t.Fatal(out, err)
 			}
@@ -172,8 +182,8 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
-		if protocol == "vmess" || protocol == "shadowsocks" {
-			probeXrayProfileLogConnection(t, binary, server, echo.Addr().String(), valid)
+		if protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" {
+			probeXrayProfileLogConnection(t, binary, server, echo.Addr().String(), clientPin, valid)
 			continue
 		}
 		if protocol == "trojan" {
@@ -345,7 +355,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" {
+	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
@@ -375,10 +385,10 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 				}
 			}
 		}
-		if protocol == "shadowsocks" {
-			for _, password := range []string{"log-password", "qa-shadowsocks-invalid-secret"} {
+		if protocol == "shadowsocks" || protocol == "hysteria" {
+			for _, password := range []string{"log-password", "qa-" + protocol + "-invalid-secret"} {
 				if strings.Contains(journal, password) {
-					t.Fatal("Shadowsocks credential reached journal")
+					t.Fatal(protocol, "credential reached journal")
 				}
 			}
 		}
@@ -391,13 +401,17 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	s := &Server{Store: st, StorageRunner: run}
 	period := "from=" + url.QueryEscape(from.Format(time.RFC3339Nano)) + "&to=" + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)) + "&object=srv993"
 	p := readAllJournalPages(t, s, "vpn", period)
-	if len(p.Entries) != 3 {
+	wantEvents := 3
+	if protocol == "hysteria" {
+		wantEvents = 2 // QUIC auth refusal is returned to the client but not logged by Xray.
+	}
+	if len(p.Entries) != wantEvents {
 		t.Fatal("missing Xray events", len(p.Entries))
 	}
 	failures := 0
 	for _, e := range p.Entries {
 		user := ""
-		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks") && e.Result == "success" {
+		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria") && e.Result == "success" {
 			user = "log-probe/peer"
 		}
 		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != "127.0.0.1" || e.User != user {
@@ -408,9 +422,9 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		}
 	}
 	wantFailures := 1
-	if protocol == "http" {
+	if protocol == "http" || protocol == "hysteria" {
 		wantFailures = 0
-	} // HTTP 407 has no access event in Xray.
+	} // These authentication refusals have no access event in Xray.
 	if failures != wantFailures {
 		t.Fatal(failures)
 	}
@@ -446,22 +460,26 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	t.Logf("generated %s config: two real echo connections, one auth rejection; HTTP additionally GET with private URL; observed rejection events=%d; journald/VPN/General/Services PASS", protocol, failures)
 }
 
-func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VPNServer, target string, valid bool) {
+func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VPNServer, target, pin string, valid bool) {
 	t.Helper()
 	peer := server.Peers[0]
 	protocol := server.Config["protocol"].(string)
 	credential, invalid := "uuid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	if protocol == "shadowsocks" {
-		credential, invalid = "password", "qa-shadowsocks-invalid-secret"
+	if protocol == "shadowsocks" || protocol == "hysteria" {
+		credential, invalid = "password", "qa-"+protocol+"-invalid-secret"
 	}
 	peer.Credentials = map[string]string{credential: peer.Credentials[credential]}
 	if !valid {
 		peer.Credentials[credential] = invalid
 	}
 	server.Config["public_endpoint"] = net.JoinHostPort("127.0.0.1", strconv.Itoa(server.Port))
-	profile, err := xrayClientProfile(server, peer, "")
+	profile, err := xrayClientProfile(server, peer, pin)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if protocol == "hysteria" {
+		// Client-side evidence distinguishes auth refusal from a transport timeout.
+		profile.Config["log"].(map[string]any)["loglevel"] = "info"
 	}
 	reserve, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -528,5 +546,11 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 	}
 	if !valid && bytes.Contains(answer[:n], []byte("probe")) {
 		t.Fatal(protocol, "invalid credential accepted")
+	}
+	if !valid && protocol == "hysteria" {
+		data, err := os.ReadFile(filepath.Join(root, "client.log"))
+		if err != nil || !bytes.Contains(data, []byte("auth failed code")) {
+			t.Fatalf("missing client evidence of Hysteria authentication refusal: %v\n%s", err, data)
+		}
 	}
 }
