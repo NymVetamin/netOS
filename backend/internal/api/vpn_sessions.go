@@ -30,14 +30,17 @@ type vpnStatusCache struct {
 func (s *Server) monitorVPNClients(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	var handshakes vpnHandshakeObserver
 	for {
 		cycleStarted := time.Now()
 		if s.Engine != nil {
-			servers := s.Engine.Current().VPNServers
+			cfg := s.Engine.Current()
+			servers := cfg.VPNServers
+			samples := make([]vpnHandshakeSample, len(servers))
 			keep := map[string]bool{}
 			var wg sync.WaitGroup
 			slots := make(chan struct{}, 4)
-			for _, server := range servers {
+			for i, server := range servers {
 				keep[server.ID] = true
 				select {
 				case slots <- struct{}{}:
@@ -45,13 +48,19 @@ func (s *Server) monitorVPNClients(ctx context.Context) {
 					return
 				}
 				wg.Add(1)
-				go func(server config.VPNServer) {
+				go func(i int, server config.VPNServer) {
 					defer wg.Done()
 					defer func() { <-slots }()
-					s.vpnClientSnapshot(ctx, server, cycleStarted)
-				}(server)
+					rows, _ := s.vpnClientSnapshot(ctx, server, cycleStarted)
+					if server.Type == "wireguard" {
+						samples[i] = vpnHandshakeSample{server: server, rows: rows}
+					}
+				}(i, server)
 			}
 			wg.Wait()
+			if ctx.Err() == nil && s.Engine.Current() == cfg {
+				s.logVPNHandshakes(handshakes.observe(samples, time.Now()))
+			}
 			s.vpnStatusMu.Lock()
 			for id := range s.vpnStatus {
 				if !keep[id] {

@@ -112,7 +112,12 @@ func TestIntegrationSharedWireGuardStatus(t *testing.T) {
 				}
 			}
 			check(false) // Interface UP without a handshake is not an established tunnel.
-			run("ping", "-n", "-c", "2", "-W", "5", "-I", link, subnet+".2")
+			ping := func() { run("ping", "-n", "-c", "2", "-W", "5", "-I", link, subnet+".2") }
+			if os.Getenv("NETOS_WG_LOG_JOURNAL") == "1" {
+				checkNativeHandshakeJournal(t, s, cfg.VPNServers[0], rpub, ping)
+			} else {
+				ping()
+			}
 			check(true)
 			check(true)
 			s.ChannelHealth = downProbe(true)

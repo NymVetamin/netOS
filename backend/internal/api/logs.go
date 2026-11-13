@@ -11,18 +11,19 @@ import (
 )
 
 type logEntry struct {
-	ID       string `json:"id,omitempty"`
-	Time     string `json:"time"`
-	Source   string `json:"source"`
-	Unit     string `json:"unit"`
-	Message  string `json:"message"`
-	Event    string `json:"event,omitempty"`
-	Severity string `json:"severity,omitempty"`
-	Protocol string `json:"protocol,omitempty"`
-	User     string `json:"user,omitempty"`
-	Address  string `json:"address,omitempty"`
-	Result   string `json:"result,omitempty"`
-	Server   string `json:"server,omitempty"`
+	ID            string `json:"id,omitempty"`
+	Time          string `json:"time"`
+	Source        string `json:"source"`
+	Unit          string `json:"unit"`
+	Message       string `json:"message"`
+	Event         string `json:"event,omitempty"`
+	Severity      string `json:"severity,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+	User          string `json:"user,omitempty"`
+	Address       string `json:"address,omitempty"`
+	Result        string `json:"result,omitempty"`
+	Server        string `json:"server,omitempty"`
+	HandshakeTime string `json:"handshake_time,omitempty"`
 }
 
 // Query records only: service lifecycle, resolver statistics and replies are not queries.
@@ -81,7 +82,7 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		return classifyAllUnitEntry(entry, field)
 	}
 	if source == "services" {
-		if panelJournalFields(&entry) || xrayLogFields(&entry, field("_SYSTEMD_UNIT")) {
+		if panelJournalFields(&entry) || xrayLogFields(&entry, field("_SYSTEMD_UNIT")) || vpnHandshakeLogFields(&entry, field("_SYSTEMD_UNIT")) {
 			return logEntry{}, false
 		}
 		var keep bool
@@ -100,6 +101,9 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		}
 	}
 	if source == "vpn" {
+		if vpnHandshakeLogFields(&entry, field("_SYSTEMD_UNIT")) {
+			return entry, true
+		}
 		keep := xrayLogFields(&entry, field("_SYSTEMD_UNIT"))
 		if keep {
 			return entry, true
