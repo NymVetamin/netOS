@@ -6,7 +6,32 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestDNSLogSnapshotExcludesRotation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dns.log")
+	os.WriteFile(path, []byte("original\n"), 0600)
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() { done <- rotateDNSLog(path, 1, func() error { close(entered); <-release; return nil }) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("rotation did not start")
+	}
+	called := false
+	err := ReadDNSLogSnapshot(func() error { called = true; return nil })
+	close(release)
+	if got := <-done; got != nil {
+		t.Fatal(got)
+	}
+	if !errors.Is(err, ErrDNSLogRotating) || called {
+		t.Fatal("read saw intermediate rotation", err, called)
+	}
+	if err := ReadDNSLogSnapshot(func() error { return nil }); err != nil {
+		t.Fatal("lock not released", err)
+	}
+}
 
 func TestDNSLogCopyTruncate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dns.log")

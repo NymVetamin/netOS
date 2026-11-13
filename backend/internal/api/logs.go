@@ -208,6 +208,10 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		s.handleAccessLogPage(w, r)
 		return
 	}
+	if kind == "dns" {
+		s.handleDNSLogPage(w, r, "/var/log/netos/dns.log")
+		return
+	}
 	if kind == "vpn" || kind == "services" || kind == "firewall" {
 		s.handleJournalLogPage(w, r)
 		return

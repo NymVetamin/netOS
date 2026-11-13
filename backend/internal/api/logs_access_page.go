@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,55 +29,6 @@ func (p accessLogPosition) valid(anchor string) bool {
 		(p.JournalDone || (p.Lower != "" && (anchor != "" || p.Upper != ""))) && (p.ID > 0 || anchor != "" || p.JournalDone)
 }
 
-type accessCandidate struct {
-	id      string
-	at      int64
-	journal map[string]json.RawMessage
-	audit   *store.AuditEntry
-}
-
-// Decode a bounded raw batch, retaining noise until the two-source merge has
-// consumed it. Filtering before this merge would lose its ordering frontier.
-func accessJournalBatch(raw, anchor string, skipAnchor bool) ([]accessCandidate, bool, error) {
-	scan := bufio.NewScanner(strings.NewReader(raw))
-	scan.Buffer(make([]byte, 4096), 2<<20)
-	rows := make([]accessCandidate, 0, logScanSize+1)
-	checked := anchor == ""
-	for scan.Scan() {
-		if strings.TrimSpace(scan.Text()) == "" {
-			continue
-		}
-		var row map[string]json.RawMessage
-		if err := json.Unmarshal(scan.Bytes(), &row); err != nil {
-			return nil, false, fmt.Errorf("не удалось разобрать запись SSH")
-		}
-		var id, stamp string
-		_ = json.Unmarshal(row["__CURSOR"], &id)
-		_ = json.Unmarshal(row["__REALTIME_TIMESTAMP"], &stamp)
-		at, err := strconv.ParseInt(stamp, 10, 64)
-		if err != nil || id == "" || len(id) > 1800 || strings.ContainsAny(id, "\r\n\x00") {
-			return nil, false, fmt.Errorf("источник SSH не вернул время или курсор")
-		}
-		if !checked {
-			if id != anchor {
-				return nil, true, nil
-			}
-			checked = true
-			if skipAnchor {
-				continue
-			}
-		}
-		rows = append(rows, accessCandidate{id: id, at: at, journal: row})
-		if len(rows) > logScanSize+1 {
-			return nil, false, fmt.Errorf("источник SSH превысил размер страницы")
-		}
-	}
-	if err := scan.Err(); err != nil {
-		return nil, false, err
-	}
-	return rows, !checked, nil
-}
-
 func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 	c, err := journalPageRequest(r, time.Now().UTC().Truncate(time.Microsecond))
 	if err != nil {
@@ -90,7 +40,7 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 		pos = *c.Access
 	}
 	p := journalLogPage{Kind: "access", Entries: []logEntry{}, Warnings: []string{}, From: c.From, CapturedAt: c.To}
-	var journal, audit []accessCandidate
+	var journal, audit []logCandidate
 	if !pos.AuditDone {
 		var rows []store.AuditEntry
 		if s.Store == nil {
@@ -106,9 +56,9 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 			p.Incomplete = true
 			p.Warnings = append(p.Warnings, "Панель: не удалось прочитать аудит: "+err.Error())
 		} else {
-			audit = make([]accessCandidate, len(rows))
+			audit = make([]logCandidate, len(rows))
 			for i := range rows {
-				audit[i] = accessCandidate{at: rows[i].At.UnixMicro(), audit: &rows[i]}
+				audit[i] = logCandidate{at: rows[i].At.UnixMicro(), audit: &rows[i]}
 			}
 		}
 	}
@@ -122,9 +72,9 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 			// in the interval, rather than scanning the archive beyond it or
 			// stopping on an arbitrary old timestamp after a clock adjustment.
 			raw, readErr := runner.Run(r.Context(), "journalctl", "--no-pager", "--quiet", "-o", "json", "-u", "ssh.service", "-u", "sshd.service", "--since="+journalPageTime(c.From), "--until="+journalPageTime(c.To), "--output-fields=__CURSOR,__REALTIME_TIMESTAMP", "-n", "+1")
-			var first []accessCandidate
+			var first []logCandidate
 			if readErr == nil {
-				first, _, readErr = accessJournalBatch(raw, "", false)
+				first, _, readErr = journalCandidateBatch(raw, "", false, "SSH")
 				if len(first) > 1 {
 					readErr = fmt.Errorf("источник SSH вернул несколько границ периода")
 				}
@@ -156,7 +106,7 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 			raw, readErr := runner.Run(r.Context(), "journalctl", args...)
 			stale := false
 			if readErr == nil {
-				journal, stale, readErr = accessJournalBatch(raw, anchor, c.Anchor != "")
+				journal, stale, readErr = journalCandidateBatch(raw, anchor, c.Anchor != "", "SSH")
 			}
 			if stale {
 				writeError(w, 409, "Запись продолжения SSH удалена; обновите журнал")
@@ -177,11 +127,11 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, p)
 }
 
-func mergeAccessPage(p *journalLogPage, c *journalLogCursor, pos *accessLogPosition, journal, audit []accessCandidate) bool {
+func mergeAccessPage(p *journalLogPage, c *journalLogCursor, pos *accessLogPosition, journal, audit []logCandidate) bool {
 	i, j := 0, 0
 	from, to := c.From.UnixMicro(), c.To.UnixMicro()
 	for p.Scanned < logScanSize && len(p.Entries) < logPageSize && (i < len(journal) || j < len(audit)) {
-		var row accessCandidate
+		var row logCandidate
 		if i < len(journal) && (j == len(audit) || journal[i].at >= audit[j].at) {
 			row = journal[i]
 			i++

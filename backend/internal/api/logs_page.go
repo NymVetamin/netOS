@@ -17,6 +17,7 @@ const logPageSize = 100
 const logScanSize = 500
 
 type journalLogCursor struct {
+	DNS    *dnsLogPosition    `json:"dns,omitempty"`
 	Access *accessLogPosition `json:"access,omitempty"`
 	Kind   string             `json:"kind"`
 	Anchor string             `json:"anchor"`
@@ -61,10 +62,14 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
 		}
 		if kind == "access" {
-			if c.Access == nil || !c.Access.valid(c.Anchor) {
+			if c.DNS != nil || c.Access == nil || !c.Access.valid(c.Anchor) {
 				return c, fmt.Errorf("неверный курсор доступа; обновите журнал")
 			}
-		} else if c.Anchor == "" || c.Access != nil {
+		} else if kind == "dns" {
+			if c.Access != nil || c.DNS == nil || !c.DNS.valid(c.Anchor) {
+				return c, fmt.Errorf("неверный курсор DNS; обновите журнал")
+			}
+		} else if c.Anchor == "" || c.Access != nil || c.DNS != nil {
 			return c, fmt.Errorf("неверный курсор журнала; обновите журнал")
 		}
 		// A continuation belongs to its original filters and time interval.
@@ -88,6 +93,9 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		return c, fmt.Errorf("выберите период до 31 дня, не позднее текущего времени")
 	}
 	validResult := c.Result == "" || c.Result == "info"
+	if kind == "dns" {
+		validResult = c.Result == ""
+	}
 	if kind == "services" {
 		validResult = validResult || c.Result == "warning" || c.Result == "error"
 	} else if kind == "vpn" || kind == "access" {

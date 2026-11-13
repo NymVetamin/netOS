@@ -6,12 +6,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
 
 const dnsLogLimit = 4 << 20
+
+var dnsLogMu sync.RWMutex
+var ErrDNSLogRotating = errors.New("выполняется ротация DNS-журнала; повторите запрос")
+
+// ReadDNSLogSnapshot protects bounded file reads from intermediate rotation
+// states. It never waits for Apply or rotation, and must not run OS commands.
+func ReadDNSLogSnapshot(read func() error) error {
+	if !dnsLogMu.TryRLock() {
+		return ErrDNSLogRotating
+	}
+	defer dnsLogMu.RUnlock()
+	return read()
+}
 
 // RotateDNSLog is called under the apply lock, so the writer cannot change
 // between choosing the rotation method and reopening the file.
@@ -28,6 +42,8 @@ func RotateDNSLog(ctx context.Context, cfg *config.Config, runner system.Runner)
 }
 
 func rotateDNSLog(path string, limit int64, reopen func() error) error {
+	dnsLogMu.Lock()
+	defer dnsLogMu.Unlock()
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

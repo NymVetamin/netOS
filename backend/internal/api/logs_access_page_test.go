@@ -211,7 +211,7 @@ func TestAccessCursorBoundaries(t *testing.T) {
 func TestAccessJournalInclusiveAndStaleAnchors(t *testing.T) {
 	raw := accessPageRow("j0", "noise") + "\n" + accessPageRow("j1", "noise")
 	for _, skip := range []bool{false, true} {
-		rows, stale, err := accessJournalBatch(raw, "j0", skip)
+		rows, stale, err := journalCandidateBatch(raw, "j0", skip, "SSH")
 		expected := 2
 		if skip {
 			expected = 1
@@ -221,22 +221,22 @@ func TestAccessJournalInclusiveAndStaleAnchors(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{"", accessPageRow("j1", "noise")} {
-		if _, stale, err := accessJournalBatch(raw, "j0", false); err != nil || !stale {
+		if _, stale, err := journalCandidateBatch(raw, "j0", false, "SSH"); err != nil || !stale {
 			t.Fatal("unconsumed snapshot anchor vanished", stale, err)
 		}
 	}
-	if _, _, err := accessJournalBatch(`{"MESSAGE":"noise"}`, "", false); err == nil {
+	if _, _, err := journalCandidateBatch(`{"MESSAGE":"noise"}`, "", false, "SSH"); err == nil {
 		t.Fatal("missing metadata ignored")
 	}
 }
 
 func TestAccessMergeStopsAtIntervalFence(t *testing.T) {
 	now := time.Now().UTC()
-	rows := make([]accessCandidate, 501)
+	rows := make([]logCandidate, 501)
 	for i := range rows {
 		var data map[string]json.RawMessage
 		_ = json.Unmarshal([]byte(accessPageRow(fmt.Sprint("j", i), "Accepted publickey for alice from 192.0.2.1 port 42 ssh2")), &data)
-		rows[i] = accessCandidate{id: fmt.Sprint("j", i), at: now.Add(-time.Minute).UnixMicro(), journal: data}
+		rows[i] = logCandidate{id: fmt.Sprint("j", i), at: now.Add(-time.Minute).UnixMicro(), journal: data}
 	}
 	// An old timestamp inside the interval's source boundaries is not EOF.
 	rows[1].at = now.Add(-48 * time.Hour).UnixMicro()
@@ -259,7 +259,7 @@ func TestAccessMergeMatchesReferenceAcrossClockChanges(t *testing.T) {
 		rng := rand.New(rand.NewSource(seed))
 		base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 		c := journalLogCursor{Kind: "access", From: base, To: base.Add(time.Hour), Result: "failure", Object: "alice"}
-		streams := [2][]accessCandidate{}
+		streams := [2][]logCandidate{}
 		matches := map[string]bool{}
 		for source := 0; source < 2; source++ {
 			n := rng.Intn(1200)
@@ -270,7 +270,7 @@ func TestAccessMergeMatchesReferenceAcrossClockChanges(t *testing.T) {
 					user = "bob"
 				}
 				success := rng.Intn(2) == 0
-				row := accessCandidate{at: at.UnixMicro()}
+				row := logCandidate{at: at.UnixMicro()}
 				var id string
 				keep := true
 				if source == 0 {

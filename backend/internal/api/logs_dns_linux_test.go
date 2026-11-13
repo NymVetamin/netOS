@@ -54,6 +54,10 @@ func TestIntegrationDNSProxyRecordedLogs(t *testing.T) {
 			if err != nil || len(journal) != 1 || journal[0].Message != rows[0].Message {
 				t.Fatal(journal, err)
 			}
+			page, status := dnsPageRequest(t, &Server{StorageRunner: &accessPageRunner{}}, path, "")
+			if status != 200 || page.Incomplete || len(page.Entries) != 1 || page.Entries[0].Message != rows[0].Message {
+				t.Fatal("paged reader lost real query", status, page)
+			}
 			t.Logf("one incoming query retained from %d real lines; replies and lifecycle excluded", strings.Count(fixture.Log, "\n"))
 		})
 	}

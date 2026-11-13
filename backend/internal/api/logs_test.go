@@ -64,10 +64,27 @@ func TestLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
 	for _, kind := range []string{"dns", "all"} {
 		t.Run(kind, func(t *testing.T) {
 			s := &Server{StorageRunner: &orderedDNSRunner{}}
+			path := ""
+			if kind == "dns" {
+				path = filepath.Join(t.TempDir(), "dns.log")
+				if err := os.WriteFile(path, []byte("query[A] unknown-time.example from 127.0.0.1\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				run := &accessPageRunner{}
+				for i, name := range []string{"current", "old"} {
+					row, _ := json.Marshal(map[string]string{"__CURSOR": name, "__REALTIME_TIMESTAMP": fmt.Sprint(time.Now().Add(-time.Duration(i+1) * time.Minute).UnixMicro()), "_SYSTEMD_UNIT": "netos-unbound.service", "MESSAGE": "info: 127.0.0.1 " + name + ".example. A IN"})
+					run.rows = append(run.rows, string(row))
+				}
+				s.StorageRunner = run
+			}
 			req := httptest.NewRequest("GET", "/api/logs?kind="+kind, nil)
 			req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
 			w := httptest.NewRecorder()
-			s.handleLogs(w, req)
+			if kind == "dns" {
+				s.handleDNSLogPage(w, req, path)
+			} else {
+				s.handleLogs(w, req)
+			}
 			var data struct{ Entries []logEntry }
 			if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil || w.Code != 200 {
 				t.Fatalf("response: %d %v", w.Code, err)
