@@ -93,7 +93,7 @@ func TestEarlyLoginAuditConcurrentBudgetAndWindow(t *testing.T) {
 	var wg sync.WaitGroup
 	for n := 0; n < 1000; n++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); s.logEarlyLogin("request", "", "192.0.2.1") }()
+		go func() { defer wg.Done(); s.logPanelLogin("request", "", "192.0.2.1") }()
 	}
 	wg.Wait()
 	if len(logger.lines) != earlyLoginLimit+1 {
@@ -153,7 +153,7 @@ func TestPanelJournalRejectsUntrustedAndMalformedRecords(t *testing.T) {
 	}
 	logger := &lifecycleLogger{}
 	s := &Server{Logger: logger}
-	s.logEarlyLogin("busy", "alice\n\"injected", "192.0.2.1")
+	s.logPanelLogin("busy", "alice\n\"injected", "192.0.2.1")
 	if strings.Contains(logger.lines[0], "\n") {
 		t.Fatal("log injection")
 	}

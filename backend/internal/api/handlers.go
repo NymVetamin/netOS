@@ -351,7 +351,7 @@ const maxLoginBodyBytes = 8 << 10
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if wait, blocked := s.loginBlocked(ip); blocked {
-		s.logEarlyLogin("blocked", "", ip)
+		s.logPanelLogin("blocked", "", ip)
 		writeError(w, http.StatusTooManyRequests,
 			"слишком много неудачных попыток, повторите через %d секунд", int(wait.Seconds()))
 		return
@@ -363,13 +363,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
 	var req loginRequest
 	if err := readJSON(r, &req); err != nil {
-		s.logEarlyLogin("request", "", ip)
+		s.logPanelLogin("request", "", ip)
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
 	if len(req.Username) == 0 || len(req.Username) > 64 || len(req.Password) == 0 || len(req.Password) > maxPasswordBytes {
 		s.recordLoginFailure(ip)
-		s.logEarlyLogin("credentials", req.Username, ip)
+		s.logPanelLogin("credentials", req.Username, ip)
 		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
 		return
 	}
@@ -381,7 +381,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	case s.loginSlots <- struct{}{}:
 		defer func() { <-s.loginSlots }()
 	default:
-		s.logEarlyLogin("busy", req.Username, ip)
+		s.logPanelLogin("busy", req.Username, ip)
 		writeError(w, http.StatusTooManyRequests, "сервер занят проверкой учётных данных, повторите попытку")
 		return
 	}
@@ -400,10 +400,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if !valid {
 		s.recordLoginFailure(ip)
-		_ = s.Store.Audit(store.AuditEntry{
+		if err := s.Store.Audit(store.AuditEntry{
 			User: req.Username, Action: "login", SourceIP: ip, Success: false,
 			Detail: "неверные учётные данные",
-		})
+		}); err != nil {
+			s.logPanelLogin("audit-failure", req.Username, ip)
+		}
 		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
 		return
 	}
@@ -423,9 +425,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	evicted, err := s.Store.CreateSession(token, user.Username, ip, sessionTTL)
 	if err != nil {
 		if store.IsStorageFull(err) {
+			s.logPanelLogin("session-full", user.Username, ip)
 			writeError(w, http.StatusInsufficientStorage, "недостаточно места на диске для сохранения сессии; освободите место и повторите вход")
 			return
 		}
+		s.logPanelLogin("session", user.Username, ip)
 		writeError(w, http.StatusInternalServerError, "не удалось сохранить сессию")
 		return
 	}
@@ -452,7 +456,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// держать его на диске открытым текстом больше незачем. Обязательной
 	// смены пароля нет, поэтому уборка привязана ко входу, а не к ней.
 	_ = os.Remove(initialCredentialsPath)
-	_ = s.Store.Audit(store.AuditEntry{User: user.Username, Action: "login", SourceIP: ip, Success: true})
+	if err := s.Store.Audit(store.AuditEntry{User: user.Username, Action: "login", SourceIP: ip, Success: true}); err != nil {
+		s.logPanelLogin("audit-success", user.Username, ip)
+	}
 
 	writeJSON(w, http.StatusOK, loginResponse{
 		ShowHints:   user.ShowHints,

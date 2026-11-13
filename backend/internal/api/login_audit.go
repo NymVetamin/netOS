@@ -10,7 +10,8 @@ import (
 const earlyLoginLimit = 20
 const panelLoginMarker = "netos-panel-access-v1 "
 
-// Fast unauthenticated failures must not turn into an unbounded disk writer.
+// Early failures and fallback after storage errors share a bounded journal
+// budget. Neither path may turn requests into an unbounded disk writer.
 // One process-wide window needs no source map, cleanup timer or background job.
 type earlyLoginAudit struct {
 	mu    sync.Mutex
@@ -41,7 +42,7 @@ type panelLoginRecord struct {
 	Until   string `json:"until,omitempty"`
 }
 
-func (s *Server) logEarlyLogin(reason, user, address string) {
+func (s *Server) logPanelLogin(reason, user, address string) {
 	if s.Logger == nil {
 		return
 	}
@@ -58,7 +59,7 @@ func (s *Server) logEarlyLogin(reason, user, address string) {
 	record := panelLoginRecord{Reason: reason, User: user, Address: address}
 	if notice {
 		// This concerns all sources, not the peer that exhausted the budget.
-		record = panelLoginRecord{Reason: "limited", Until: until.UTC().Format(time.RFC3339Nano)}
+		record = panelLoginRecord{Reason: "journal-limited", Until: until.UTC().Format(time.RFC3339Nano)}
 	}
 	raw, _ := json.Marshal(record) // strings only; never includes a body or password
 	s.Logger.Infof("%s%s", panelLoginMarker, raw)
@@ -93,21 +94,39 @@ func panelJournalFields(entry *logEntry) bool {
 		event = "Вход в панель временно ограничен после неудачных попыток"
 	case "busy":
 		event = "Вход в панель отклонён: проверка паролей занята"
-	case "limited":
+	case "session":
+		event = "Вход в панель не выполнен: не удалось сохранить сессию"
+	case "session-full":
+		event = "Вход в панель не выполнен: недостаточно места для сохранения сессии"
+	case "audit-success":
+		event = "Вход в панель выполнен; запись в основной аудит не удалась"
+	case "audit-failure":
+		event = "Отказ во входе в панель; запись в основной аудит не удалась"
+	case "limited", "journal-limited":
 		if _, err := time.Parse(time.RFC3339Nano, record.Until); err != nil || record.User != "" || record.Address != "" {
 			return false
 		}
 		event = "Достигнут лимит подробных записей ранних отказов входа; остальные до " + record.Until + " не сохраняются"
+		if record.Reason == "journal-limited" {
+			event = "Достигнут лимит записей входа через системный журнал; остальные до " + record.Until + " не сохраняются. Основной аудит имеет отдельное хранение"
+		}
 	default:
 		return false
 	}
-	if record.Reason != "limited" && record.Until != "" {
+	isNotice := record.Reason == "limited" || record.Reason == "journal-limited"
+	if !isNotice && record.Until != "" {
 		return false
 	}
 	entry.Event, entry.Protocol, entry.Result = event, "panel", "failure"
 	entry.User, entry.Address = record.User, record.Address
-	if record.Reason == "limited" {
+	if isNotice {
 		entry.Result, entry.Severity = "info", "warning"
+	}
+	if record.Reason == "audit-success" {
+		entry.Result = "success"
+	}
+	if strings.HasPrefix(record.Reason, "audit-") || strings.HasPrefix(record.Reason, "session") {
+		entry.Severity = "warning"
 	}
 	return true
 }
