@@ -254,9 +254,28 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal(code, all)
 	}
 	services := readAllJournalPages(t, s, "services", period)
+	warning := false
 	for _, e := range services.Entries {
 		if strings.Contains(e.Message, " accepted ") || strings.Contains(e.Message, " rejected ") {
 			t.Fatal("access in services")
+		}
+		if strings.Contains(e.Message, "[Warning] core: Xray") && e.Severity == "warning" {
+			warning = true
+		}
+	}
+	if worker && !warning {
+		t.Fatal("real Xray diagnostic lost from Services")
+	}
+	if worker {
+		general, status := allPageRequest(t, s, filepath.Join(root, "dns.log"), period+"&result=warning")
+		found := 0
+		for _, e := range general.Entries {
+			if strings.Contains(e.Message, "[Warning] core: Xray") && e.Source == "services" {
+				found++
+			}
+		}
+		if status != 200 || found != 1 {
+			t.Fatal("canonical diagnostic missing or duplicated", status, found)
 		}
 	}
 	t.Logf("generated %s config: two real echo connections, one auth rejection; journald/VPN/General/Services PASS", protocol)

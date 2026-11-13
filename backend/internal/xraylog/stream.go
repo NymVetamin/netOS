@@ -18,6 +18,7 @@ var credentialLabel = regexp.MustCompile(`(?i)\b(?:password|passwd|uuid|private.
 var acceptedRecord = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?from (?:tcp:|udp:)?(?:\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+ accepted (?:tcp|udp):\S+ \[[^\[\]\r\n]+\](?: email: \S+)?$`)
 var rejectedHeader = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?from (?:tcp:|udp:)?(?:\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+ rejected `)
 var dnsRecord = regexp.MustCompile(`(?:got answer:|cache HIT:|cache OPTIMISTE:)\s+\S+\s+->\s+\[[0-9a-fA-F:.,\s]*\]\s*$`)
+var diagnosticLevel = regexp.MustCompile(`^(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9:.]+ )?\[(Warning|Error)\] `)
 
 type sanitizedError struct{ cause error }
 
@@ -58,7 +59,11 @@ func Sanitize(s string) string {
 	}
 	// The known SOCKS diagnostic names the credential field but prints no value.
 	if credentialLabel.MatchString(strings.ReplaceAll(s, "proxy/socks: invalid username or password", "")) {
-		return "[Warning] Xray: подробности диагностики скрыты: возможны учётные данные"
+		level := "Warning"
+		if header := diagnosticLevel.FindStringSubmatch(s); header != nil && header[1] == "Error" {
+			level = "Error"
+		}
+		return "[" + level + "] Xray: подробности диагностики скрыты: возможны учётные данные"
 	}
 	if i := strings.Index(s, "invalid request user id:"); i >= 0 {
 		return s[:i] + "invalid request user id: [скрыто]"
@@ -98,6 +103,15 @@ func newStream(out io.Writer, cancel func()) *stream {
 func (s *stream) emit(text string) {
 	if s.err != nil {
 		return
+	}
+	// journald otherwise stores both console streams at info priority. Only
+	// the native diagnostic header is a level, not a label inside a message.
+	if level := diagnosticLevel.FindStringSubmatch(text); level != nil {
+		prefix := "<4>"
+		if level[1] == "Error" {
+			prefix = "<3>"
+		}
+		text = prefix + text
 	}
 	n, err := io.WriteString(s.out, text+"\n")
 	if err == nil && n != len(text)+1 {

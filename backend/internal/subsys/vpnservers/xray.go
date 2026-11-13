@@ -334,6 +334,7 @@ RuntimeDirectory=netos-xray-srv` + fmt.Sprint(server.Index) + `
 RuntimeDirectoryMode=0700
 UMask=0077
 SyslogIdentifier=netos-xray
+SyslogLevelPrefix=yes
 ExecStartPre=/usr/local/bin/netos internal-xray-run check ` + conf + `
 ExecStart=/usr/local/bin/netos internal-xray-run run ` + conf + `
 Restart=always

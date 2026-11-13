@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -54,6 +55,55 @@ func TestStreamFinalLoss(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "4 messages (oversized=0, resources=0)") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestStreamDiagnosticPriority(t *testing.T) {
+	var out bytes.Buffer
+	w := newStream(&out, func() { t.Fatal("unexpected sink failure") })
+	input := "2026/11/13 17:00:00.123 [Warning] core: started\n[Error] bind failed\nfrom 192.0.2.1:55 accepted tcp:password:443 [in >> direct] email: srv/uuid\nordinary text [Error] remains info\n"
+	_, _ = w.Write([]byte(input))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want := "<4>2026/11/13 17:00:00.123 [Warning] core: started\n<3>[Error] bind failed\nfrom 192.0.2.1:55 accepted tcp:password:443 [in >> direct] email: srv/uuid\nordinary text [Error] remains info\n"
+	if out.String() != want {
+		t.Fatalf("diagnostic priority lost: %q", out.String())
+	}
+	var redacted bytes.Buffer
+	w = newStream(&redacted, func() {})
+	_, _ = w.Write([]byte("[Error] invalid UUID SECRET\n"))
+	_ = w.Close()
+	if !strings.HasPrefix(redacted.String(), "<3>[Error]") || strings.Contains(redacted.String(), "SECRET") {
+		t.Fatal("redaction changed severity or leaked secret", redacted.String())
+	}
+}
+
+func BenchmarkDiagnosticStream(b *testing.B) {
+	for _, n := range []int{30, 3000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			var input strings.Builder
+			for i := 0; i < n; i++ {
+				if i%20 == 0 {
+					input.WriteString("2026/11/13 17:00:00.123 [Warning] core: diagnostic\n")
+				} else {
+					input.WriteString("from 192.0.2.1:55 accepted tcp:192.0.2.2:443 [in >> direct]\n")
+				}
+			}
+			data := []byte(input.String())
+			b.ReportAllocs()
+			b.SetBytes(int64(len(data)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				w := newStream(io.Discard, func() {})
+				if _, err := w.Write(data); err != nil {
+					b.Fatal(err)
+				}
+				if err := w.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
