@@ -51,6 +51,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 	t.Run("vmess", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vmess") })
 	t.Run("shadowsocks", func(t *testing.T) { testXrayAccessJournal(t, false, true, "shadowsocks") })
 	t.Run("hysteria", func(t *testing.T) { testXrayAccessJournal(t, false, true, "hysteria") })
+	t.Run("reality", func(t *testing.T) { testXrayAccessJournal(t, false, true, "reality") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -87,6 +88,18 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	}()
 	server := config.VPNServer{ID: "log-probe", Index: 993, Type: "xray", Enabled: true, Port: port, DefaultChannel: "direct", Config: map[string]any{"protocol": "socks"}, Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Credentials: map[string]string{"username": "log-user", "password": "log-password"}}}}
 	server.Config["protocol"] = protocol
+	if protocol == "reality" {
+		fixture := profileTestServer(protocol)
+		for _, key := range []string{"private_key", "server_names", "short_ids", "flow"} {
+			server.Config[key] = fixture.Config[key]
+		}
+		camouflage := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "camouflage") }))
+		camouflage.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+		camouflage.EnableHTTP2 = true
+		camouflage.StartTLS()
+		defer camouflage.Close()
+		server.Config["destination"] = camouflage.Listener.Addr().String()
+	}
 	if protocol == "shadowsocks" {
 		server.Config["method"] = "aes-256-gcm"
 	}
@@ -153,7 +166,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	ready := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if protocol == "shadowsocks" || protocol == "hysteria" {
+		if protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" {
 			// An empty TCP probe itself produces an authentication rejection.
 			flags := "-ltn"
 			if protocol == "hysteria" {
@@ -182,7 +195,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
-		if protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" {
+		if protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" {
 			probeXrayProfileLogConnection(t, binary, server, echo.Addr().String(), clientPin, valid)
 			continue
 		}
@@ -355,7 +368,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" {
+	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
@@ -378,12 +391,15 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 				}
 			}
 		}
-		if protocol == "vmess" {
+		if protocol == "vmess" || protocol == "reality" {
 			for _, uuid := range []string{server.Peers[0].Credentials["uuid"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"} {
 				if strings.Contains(journal, uuid) {
-					t.Fatal("VMess credential reached journal")
+					t.Fatal(protocol, "credential reached journal")
 				}
 			}
+		}
+		if protocol == "reality" && strings.Contains(journal, server.Config["private_key"].(string)) {
+			t.Fatal("Reality private key reached journal")
 		}
 		if protocol == "shadowsocks" || protocol == "hysteria" {
 			for _, password := range []string{"log-password", "qa-" + protocol + "-invalid-secret"} {
@@ -411,7 +427,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	failures := 0
 	for _, e := range p.Entries {
 		user := ""
-		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria") && e.Result == "success" {
+		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess" || protocol == "shadowsocks" || protocol == "hysteria" || protocol == "reality") && e.Result == "success" {
 			user = "log-probe/peer"
 		}
 		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != "127.0.0.1" || e.User != user {
@@ -477,7 +493,7 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 	if err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "hysteria" {
+	if protocol == "hysteria" || protocol == "reality" {
 		// Client-side evidence distinguishes auth refusal from a transport timeout.
 		profile.Config["log"].(map[string]any)["loglevel"] = "info"
 	}
@@ -502,7 +518,13 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 		t.Fatal(err)
 	}
 	defer log.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	lifetime, readTimeout := 10*time.Second, 2*time.Second
+	if protocol == "reality" {
+		// Reality can wait five seconds for its asynchronous target-record probe
+		// even after the listening socket is ready. Do not retry/discard events.
+		lifetime, readTimeout = 15*time.Second, 7*time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), lifetime)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "run", "-config", path)
 	cmd.Stdout, cmd.Stderr = log, log
@@ -535,14 +557,15 @@ func probeXrayProfileLogConnection(t *testing.T, binary string, server config.VP
 		t.Fatal("client SOCKS connection", err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(readTimeout))
 	if _, err = conn.Write([]byte("probe")); err != nil {
 		t.Fatal(err)
 	}
 	answer := make([]byte, 5)
 	n, readErr := io.ReadFull(conn, answer)
 	if valid && (readErr != nil || string(answer) != "probe") {
-		t.Fatal(protocol, "echo", readErr)
+		data, _ := os.ReadFile(filepath.Join(root, "client.log"))
+		t.Fatalf("%s echo: %v\n%s", protocol, readErr, data)
 	}
 	if !valid && bytes.Contains(answer[:n], []byte("probe")) {
 		t.Fatal(protocol, "invalid credential accepted")
