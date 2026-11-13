@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/netos-router/netos/internal/xraylog"
 )
 
 var xrayLogUnit = regexp.MustCompile(`^netos-xray-srv([0-9]+)\.service$`)
@@ -17,6 +19,12 @@ func xrayLogFields(e *logEntry, unit string) bool {
 	u := xrayLogUnit.FindStringSubmatch(unit)
 	if u == nil {
 		return false
+	}
+	if loss, ok := xraylog.ParseLoss(e.Message); ok {
+		e.Unit, e.Protocol, e.Server = unit, "xray", "srv"+u[1]
+		e.Event = "Часть записей Xray не сохранена: " + strconv.FormatUint(loss.Count, 10)
+		e.Result, e.Severity = "warning", "warning"
+		return true
 	}
 	m := xrayLogEnvelope.FindStringSubmatch(e.Message)
 	if m == nil {

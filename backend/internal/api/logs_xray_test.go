@@ -10,9 +10,46 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/netos-router/netos/internal/xraylog"
 )
 
+func TestXraySanitizedRejectRetainsEvent(t *testing.T) {
+	e := logEntry{Message: xraylog.Sanitize("from 192.0.2.3:1234 rejected proxy/example: invalid password: SECRET")}
+	if !xrayLogFields(&e, "netos-xray-srv12.service") || e.Result != "failure" || e.Address != "192.0.2.3" || strings.Contains(e.Message, "SECRET") {
+		t.Fatal("sanitization lost rejection envelope", e)
+	}
+}
+
 type xrayPageRunner struct{ pagedVPNRunner }
+
+func TestXrayLossNotice(t *testing.T) {
+	for _, message := range []string{
+		"netos-xray-log-v1 Suppressed 0 messages (oversized=0, resources=0)",
+		"netos-xray-log-v1 Suppressed 1 messages (oversized=2, resources=1)",
+		"netos-xray-log-v1 Suppressed 2 messages (oversized=0, resources=3)",
+		"netos-xray-log-v1 Suppressed 18446744073709551616 messages (oversized=0, resources=0)",
+		"netos-xray-log-v1 Suppressed 5 messages (oversized=0, resources=0) injected",
+	} {
+		e := logEntry{Message: message}
+		if xrayLogFields(&e, "netos-xray-srv12.service") {
+			t.Fatal("invalid loss accepted", message)
+		}
+	}
+	e := logEntry{Message: "netos-xray-log-v1 Suppressed 35 messages (oversized=2, resources=35)"}
+	if !xrayLogFields(&e, "netos-xray-srv12.service") || e.Result != "warning" || e.Severity != "warning" || e.Server != "srv12" {
+		t.Fatal(e)
+	}
+	run := &xrayPageRunner{}
+	run.rows = []string{xrayPageRow(0, e.Message)}
+	s := &Server{StorageRunner: run}
+	w := httptest.NewRecorder()
+	s.handleJournalLogPage(w, httptest.NewRequest("GET", "/?kind=vpn&result=warning", nil))
+	var page journalLogPage
+	if json.Unmarshal(w.Body.Bytes(), &page) != nil || w.Code != 200 || len(page.Entries) != 1 || page.Entries[0].Result != "warning" {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
 
 func (r *xrayPageRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
 	if !strings.Contains(strings.Join(args, " "), "netos-xray-srv*.service") {

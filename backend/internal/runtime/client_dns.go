@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/netos-router/netos/internal/xraylog"
 )
 
 var monitorDNSMasq = regexp.MustCompile(`\bquery\[[^\]]+\]\s+(\S+)\s+from\s+(\S+)`)
@@ -33,7 +35,7 @@ func (h *ClientHistory) watchDNS(ctx context.Context) {
 	for ctx.Err() == nil {
 		// Match the executable, then validate the unit below: unit globs expand only
 		// when journalctl starts and would miss newly added Xray servers.
-		cmd := exec.CommandContext(ctx, "journalctl", "--follow", "--lines=0", "--output=json", "--output-fields=MESSAGE,__REALTIME_TIMESTAMP,_SYSTEMD_UNIT,_SYSTEMD_INVOCATION_ID,_PID", "_SYSTEMD_UNIT=netos-dnsmasq.service", "+", "_SYSTEMD_UNIT=netos-unbound.service", "+", "_COMM=xray")
+		cmd := exec.CommandContext(ctx, "journalctl", "--follow", "--lines=0", "--output=json", "--output-fields=MESSAGE,__REALTIME_TIMESTAMP,_SYSTEMD_UNIT,_SYSTEMD_INVOCATION_ID,_PID", "_SYSTEMD_UNIT=netos-dnsmasq.service", "+", "_SYSTEMD_UNIT=netos-unbound.service", "+", "_COMM=xray", "+", "SYSLOG_IDENTIFIER=netos-xray")
 		pipe, err := cmd.StdoutPipe()
 		if err == nil {
 			err = cmd.Start()
@@ -107,7 +109,15 @@ func (h *ClientHistory) readResourceJournal(ctx context.Context, pipe io.Reader)
 			if json.Unmarshal(line, &entry) != nil {
 				continue
 			}
-			if strings.Contains(entry.Message, "Suppressed ") && strings.Contains(entry.Message, "messages") {
+			// Identifier matches are only a subscription hint, never authority.
+			if entry.Unit != "netos-dnsmasq.service" && entry.Unit != "netos-unbound.service" && !xray.units[entry.Unit] {
+				continue
+			}
+			resourceLoss := strings.Contains(entry.Message, "Suppressed ") && strings.Contains(entry.Message, "messages")
+			if loss, ok := xraylog.ParseLoss(entry.Message); ok {
+				resourceLoss = loss.Resources > 0
+			}
+			if resourceLoss {
 				h.mu.Lock()
 				at := time.Now().Unix()
 				h.noteLimitLocked("journal", at, at)

@@ -114,6 +114,9 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		validResult = validResult || c.Result == "warning" || c.Result == "error"
 	} else if kind == "vpn" || kind == "access" {
 		validResult = validResult || c.Result == "success" || c.Result == "failure"
+		if kind == "vpn" {
+			validResult = validResult || c.Result == "warning"
+		}
 	}
 	if !validResult {
 		return c, fmt.Errorf("неизвестный результат события")

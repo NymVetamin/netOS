@@ -196,9 +196,22 @@ func TestXrayResourceLoggingSwitch(t *testing.T) {
 			if log["dnsLog"] != true || log["access"] != "" {
 				t.Fatal(log)
 			}
-		} else if log["access"] != "none" || log["dnsLog"] == true {
+		} else if log["access"] != "" || log["dnsLog"] == true {
 			t.Fatal(log)
 		}
+	}
+}
+
+func TestXrayUnitSanitizesCheckAndRun(t *testing.T) {
+	_, server := xrayServerConfig()
+	unit := renderXrayUnit(server, "/var/lib/netos/generated/xray.json")
+	for _, want := range []string{"SyslogIdentifier=netos-xray", "ExecStartPre=/usr/local/bin/netos internal-xray-run check ", "ExecStart=/usr/local/bin/netos internal-xray-run run ", "RuntimeDirectory=netos-xray-srv", "Restart=always"} {
+		if !strings.Contains(unit, want) {
+			t.Fatal("missing unit contract", want)
+		}
+	}
+	if strings.Contains(unit, "ExecStart=/usr/local/bin/xray") {
+		t.Fatal("raw output bypass")
 	}
 }
 

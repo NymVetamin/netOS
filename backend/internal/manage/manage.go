@@ -172,6 +172,8 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 	}
 
 	switch args[0] {
+	case "internal-xray-run":
+		return m.runXrayLog(ctx, args[1:])
 	case "internal-panel-activate":
 		if len(args) != 3 {
 			return fmt.Errorf("внутренняя команда panel-activate требует target и previous revision")

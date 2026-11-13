@@ -14,6 +14,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/system"
 	"github.com/netos-router/netos/internal/tlsutil"
+	"github.com/netos-router/netos/internal/xraylog"
 )
 
 func xrayUnitName(server config.VPNServer) string {
@@ -281,10 +282,9 @@ func renderXrayWithTLS(server config.VPNServer, cfg *config.Config, certPath, ke
 	default:
 		return nil, fmt.Errorf("неподдерживаемый серверный протокол Xray %q", protocol)
 	}
-	logConfig := map[string]any{"loglevel": "warning", "access": "none"}
+	logConfig := map[string]any{"loglevel": "warning", "access": ""}
 	if cfg.TrafficMonitor.Enabled {
-		// Console access and DNS events are consumed through the bounded system journal.
-		logConfig["access"] = ""
+		// DNS enrichment remains optional; connection events do not depend on it.
 		logConfig["dnsLog"] = true
 	}
 	doc := map[string]any{
@@ -333,8 +333,9 @@ Type=simple
 RuntimeDirectory=netos-xray-srv` + fmt.Sprint(server.Index) + `
 RuntimeDirectoryMode=0700
 UMask=0077
-ExecStartPre=/usr/local/bin/xray run -test -config ` + conf + `
-ExecStart=/usr/local/bin/xray run -config ` + conf + `
+SyslogIdentifier=netos-xray
+ExecStartPre=/usr/local/bin/netos internal-xray-run check ` + conf + `
+ExecStart=/usr/local/bin/netos internal-xray-run run ` + conf + `
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
@@ -414,7 +415,7 @@ func (s *Subsystem) applyXray(ctx context.Context, cfg *config.Config, server co
 	}
 	defer os.Remove(candidate)
 	if _, err := s.Runner.Run(ctx, "/usr/local/bin/xray", "run", "-test", "-config", candidate); err != nil {
-		return false, fmt.Errorf("проверка конфигурации Xray: %w", err)
+		return false, fmt.Errorf("проверка конфигурации Xray: %w", xraylog.SafeError(err))
 	}
 	unit := []byte(renderXrayUnit(server, confPath))
 	changed := system.FileChanged(confPath, conf) || system.FileChanged(unitPath, unit)
