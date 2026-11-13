@@ -81,14 +81,23 @@ func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, b
 		return classifyAllUnitEntry(entry, field)
 	}
 	if source == "services" {
+		if panelJournalFields(&entry) {
+			return logEntry{}, false
+		}
 		var keep bool
 		entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, message)
 		if !keep {
 			return logEntry{}, false
 		}
 	}
-	if source == "access" && !sshLogFields(&entry) {
-		return logEntry{}, false
+	if source == "access" {
+		if entry.Unit == "netosd.service" {
+			if field("_SYSTEMD_UNIT") != "netosd.service" || !panelJournalFields(&entry) {
+				return logEntry{}, false
+			}
+		} else if !sshLogFields(&entry) {
+			return logEntry{}, false
+		}
 	}
 	if source == "vpn" {
 		keep := false

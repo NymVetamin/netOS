@@ -210,7 +210,7 @@ func mergeAllLogPage(p *journalLogPage, c *journalLogCursor, pos *allLogPosition
 		if result == "" {
 			result = "info"
 		}
-		if c.Result != "" && result != c.Result {
+		if c.Result != "" && result != c.Result && entry.Severity != c.Result {
 			continue
 		}
 		if c.Object != "" && !strings.Contains(strings.ToLower(entry.User+" "+entry.Address+" "+entry.Protocol+" "+entry.Server+" "+entry.Unit+" "+entry.Message), c.Object) {

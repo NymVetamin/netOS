@@ -351,6 +351,7 @@ const maxLoginBodyBytes = 8 << 10
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if wait, blocked := s.loginBlocked(ip); blocked {
+		s.logEarlyLogin("blocked", "", ip)
 		writeError(w, http.StatusTooManyRequests,
 			"слишком много неудачных попыток, повторите через %d секунд", int(wait.Seconds()))
 		return
@@ -362,11 +363,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
 	var req loginRequest
 	if err := readJSON(r, &req); err != nil {
+		s.logEarlyLogin("request", "", ip)
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
 	if len(req.Username) == 0 || len(req.Username) > 64 || len(req.Password) == 0 || len(req.Password) > maxPasswordBytes {
 		s.recordLoginFailure(ip)
+		s.logEarlyLogin("credentials", req.Username, ip)
 		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
 		return
 	}
@@ -378,6 +381,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	case s.loginSlots <- struct{}{}:
 		defer func() { <-s.loginSlots }()
 	default:
+		s.logEarlyLogin("busy", req.Username, ip)
 		writeError(w, http.StatusTooManyRequests, "сервер занят проверкой учётных данных, повторите попытку")
 		return
 	}

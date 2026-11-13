@@ -195,7 +195,7 @@ func TestAccessPagePartialRetryAndPrunedAnchor(t *testing.T) {
 }
 func TestAccessCursorBoundaries(t *testing.T) {
 	now := time.Now().UTC()
-	c := journalLogCursor{Kind: "access", From: now.Add(-time.Hour), To: now, Access: &accessLogPosition{MaxID: 350, ID: 250, Upper: "j0", Lower: "j99"}}
+	c := journalLogCursor{Kind: "access", From: now.Add(-time.Hour), To: now, Access: &accessLogPosition{Version: 1, MaxID: 350, ID: 250, Upper: "j0", Lower: "j99"}}
 	data, _ := json.Marshal(c)
 	token := base64.RawURLEncoding.EncodeToString(data)
 	for _, query := range []string{"kind=vpn", "kind=services", "kind=access&from=" + url.QueryEscape(now.Add(-2*time.Hour).Format(time.RFC3339Nano))} {
@@ -205,6 +205,12 @@ func TestAccessCursorBoundaries(t *testing.T) {
 	}
 	if _, err := journalPageRequest(httptest.NewRequest("GET", "/?kind=access&cursor="+token, nil), now); err != nil {
 		t.Fatal(err)
+	}
+	c.Access.Version = 0
+	data, _ = json.Marshal(c)
+	token = base64.RawURLEncoding.EncodeToString(data)
+	if _, err := journalPageRequest(httptest.NewRequest("GET", "/?kind=access&cursor="+token, nil), now); err == nil {
+		t.Fatal("SSH-only cursor reused after expanding journal sources")
 	}
 }
 
@@ -241,13 +247,13 @@ func TestAccessMergeStopsAtIntervalFence(t *testing.T) {
 	// An old timestamp inside the interval's source boundaries is not EOF.
 	rows[1].at = now.Add(-48 * time.Hour).UnixMicro()
 	c := journalLogCursor{Kind: "access", From: now.Add(-time.Hour), To: now}
-	pos := accessLogPosition{AuditDone: true, Upper: "j0", Lower: "j2"}
+	pos := accessLogPosition{Version: 1, AuditDone: true, Upper: "j0", Lower: "j2"}
 	p := journalLogPage{}
 	if mergeAccessPage(&p, &c, &pos, rows, nil) || p.Next != "" || p.Scanned != 3 || len(p.Entries) != 2 {
 		t.Fatal(p, pos)
 	}
 	// Losing the lower fence must request refresh, not silently claim EOF.
-	pos = accessLogPosition{AuditDone: true, Upper: "j0", Lower: "removed"}
+	pos = accessLogPosition{Version: 1, AuditDone: true, Upper: "j0", Lower: "removed"}
 	p = journalLogPage{}
 	if !mergeAccessPage(&p, &c, &pos, rows[:3], nil) {
 		t.Fatal("missing lower fence accepted")
@@ -311,7 +317,7 @@ func TestAccessMergeMatchesReferenceAcrossClockChanges(t *testing.T) {
 				expected = append(expected, id)
 			}
 		}
-		pos := accessLogPosition{MaxID: int64(len(streams[1]))}
+		pos := accessLogPosition{Version: 1, MaxID: int64(len(streams[1]))}
 		if len(streams[0]) > 0 {
 			pos.Upper = "j0"
 			pos.Lower = streams[0][len(streams[0])-1].id

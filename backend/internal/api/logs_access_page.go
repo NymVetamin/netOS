@@ -15,6 +15,7 @@ import (
 )
 
 type accessLogPosition struct {
+	Version     int    `json:"version"`
 	MaxID       int64  `json:"max_id"`
 	ID          int64  `json:"id"`
 	AuditDone   bool   `json:"audit_done,omitempty"`
@@ -24,7 +25,7 @@ type accessLogPosition struct {
 }
 
 func (p accessLogPosition) valid(anchor string) bool {
-	return p.MaxID >= 0 && p.ID >= 0 && p.ID <= p.MaxID && len(anchor)+len(p.Upper)+len(p.Lower) <= 4096 && !strings.ContainsAny(p.Upper+p.Lower, "\r\n\x00") &&
+	return p.Version == 1 && p.MaxID >= 0 && p.ID >= 0 && p.ID <= p.MaxID && len(anchor)+len(p.Upper)+len(p.Lower) <= 4096 && !strings.ContainsAny(p.Upper+p.Lower, "\r\n\x00") &&
 		!(anchor != "" && p.Upper != "") && !(p.AuditDone && p.JournalDone) &&
 		(p.JournalDone || (p.Lower != "" && (anchor != "" || p.Upper != ""))) && (p.ID > 0 || anchor != "" || p.JournalDone)
 }
@@ -35,7 +36,9 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "%s", err)
 		return
 	}
-	pos := accessLogPosition{MaxID: -1}
+	// Earlier cursors froze an SSH-only lower boundary. Reusing it after
+	// adding netosd could silently omit older panel events in the interval.
+	pos := accessLogPosition{Version: 1, MaxID: -1}
 	if c.Access != nil {
 		pos = *c.Access
 	}
@@ -71,17 +74,17 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 			// A cursor cannot be combined with --since. Freeze the first record
 			// in the interval, rather than scanning the archive beyond it or
 			// stopping on an arbitrary old timestamp after a clock adjustment.
-			raw, readErr := runner.Run(r.Context(), "journalctl", "--no-pager", "--quiet", "-o", "json", "-u", "ssh.service", "-u", "sshd.service", "--since="+journalPageTime(c.From), "--until="+journalPageTime(c.To), "--output-fields=__CURSOR,__REALTIME_TIMESTAMP", "-n", "+1")
+			raw, readErr := runner.Run(r.Context(), "journalctl", "--no-pager", "--quiet", "-o", "json", "-u", "ssh.service", "-u", "sshd.service", "-u", "netosd.service", "--since="+journalPageTime(c.From), "--until="+journalPageTime(c.To), "--output-fields=__CURSOR,__REALTIME_TIMESTAMP", "-n", "+1")
 			var first []logCandidate
 			if readErr == nil {
-				first, _, readErr = journalCandidateBatch(raw, "", false, "SSH")
+				first, _, readErr = journalCandidateBatch(raw, "", false, "доступа")
 				if len(first) > 1 {
-					readErr = fmt.Errorf("источник SSH вернул несколько границ периода")
+					readErr = fmt.Errorf("источник доступа вернул несколько границ периода")
 				}
 			}
 			if readErr != nil {
 				p.Incomplete = true
-				p.Warnings = append(p.Warnings, "SSH: не удалось определить границу периода: "+readErr.Error())
+				p.Warnings = append(p.Warnings, "Журнал доступа: не удалось определить границу периода: "+readErr.Error())
 			} else if len(first) == 0 {
 				pos.JournalDone = true
 			} else {
@@ -97,7 +100,7 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 			if c.Anchor != "" {
 				limit++
 			}
-			args := []string{"--no-pager", "--quiet", "-o", "json", "--reverse", "-u", "ssh.service", "-u", "sshd.service", "--until=" + journalPageTime(c.To), "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER", "-n", strconv.Itoa(limit)}
+			args := []string{"--no-pager", "--quiet", "-o", "json", "--reverse", "-u", "ssh.service", "-u", "sshd.service", "-u", "netosd.service", "--until=" + journalPageTime(c.To), "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER", "-n", strconv.Itoa(limit)}
 			if anchor != "" {
 				args = append(args, "--cursor="+anchor)
 			} else {
@@ -106,22 +109,22 @@ func (s *Server) handleAccessLogPage(w http.ResponseWriter, r *http.Request) {
 			raw, readErr := runner.Run(r.Context(), "journalctl", args...)
 			stale := false
 			if readErr == nil {
-				journal, stale, readErr = journalCandidateBatch(raw, anchor, c.Anchor != "", "SSH")
+				journal, stale, readErr = journalCandidateBatch(raw, anchor, c.Anchor != "", "доступа")
 			}
 			if stale {
-				writeError(w, 409, "Запись продолжения SSH удалена; обновите журнал")
+				writeError(w, 409, "Запись продолжения доступа удалена; обновите журнал")
 				return
 			}
 			if readErr != nil {
 				p.Incomplete = true
-				p.Warnings = append(p.Warnings, "SSH: не удалось прочитать журнал: "+readErr.Error())
+				p.Warnings = append(p.Warnings, "Журнал доступа: не удалось прочитать журнал: "+readErr.Error())
 			} else if anchor == "" && len(journal) > 0 {
 				pos.Upper = journal[0].id
 			}
 		}
 	}
 	if mergeAccessPage(&p, &c, &pos, journal, audit) {
-		writeError(w, 409, "Нижняя граница журнала SSH удалена; обновите журнал")
+		writeError(w, 409, "Нижняя граница журнала доступа удалена; обновите журнал")
 		return
 	}
 	writeJSON(w, 200, p)

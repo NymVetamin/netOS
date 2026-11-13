@@ -94,6 +94,7 @@ type Server struct {
 	loginMu    sync.Mutex
 	loginFails map[string]*failCounter
 	loginSlots chan struct{}
+	loginAudit earlyLoginAudit
 
 	networkConflictStatus networkConflictCache
 	vpnStatusMu           sync.Mutex
