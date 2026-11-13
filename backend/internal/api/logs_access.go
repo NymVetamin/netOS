@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/netos-router/netos/internal/store"
 	"regexp"
 	"strings"
 	"time"
@@ -79,19 +80,27 @@ func (s *Server) panelAccessEntries(ctx context.Context) ([]logEntry, error) {
 	}
 	out := make([]logEntry, 0, len(rows))
 	for _, row := range rows {
-		raw, err := json.Marshal(row)
+		e, err := panelAccessEntry(row)
 		if err != nil {
 			return nil, err
-		}
-		e := logEntry{Time: row.At.UTC().Format(time.RFC3339Nano), Source: "access", Protocol: "panel", Unit: "netosd.service", User: row.User, Address: row.SourceIP, Message: string(raw), Result: "success", Event: "Вход в панель"}
-		if !row.Success {
-			e.Result = "failure"
-			e.Event = "Отказ во входе в панель"
-		}
-		if row.Action == "logout" {
-			e.Event = "Выход из панели"
 		}
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+func panelAccessEntry(row store.AuditEntry) (logEntry, error) {
+	raw, err := json.Marshal(row)
+	if err != nil {
+		return logEntry{}, err
+	}
+	e := logEntry{Time: row.At.UTC().Format(time.RFC3339Nano), Source: "access", Protocol: "panel", Unit: "netosd.service", User: row.User, Address: row.SourceIP, Message: string(raw), Result: "success", Event: "Вход в панель"}
+	if !row.Success {
+		e.Result = "failure"
+		e.Event = "Отказ во входе в панель"
+	}
+	if row.Action == "logout" {
+		e.Event = "Выход из панели"
+	}
+	return e, nil
 }

@@ -54,17 +54,25 @@ func TestAccessSourcesFailIndependently(t *testing.T) {
 	read := func() struct {
 		Entries  []logEntry
 		Warnings []string
-	} { req := httptest.NewRequest("GET", "/api/logs?kind=access", nil); req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin")); w := httptest.NewRecorder(); s.handleLogs(w, req); var result struct {
-		Entries  []logEntry
-		Warnings []string
-	}; if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 {
-		t.Fatal(err, w.Code)
-	}; return result }
+	} {
+		req := httptest.NewRequest("GET", "/api/logs?kind=access", nil)
+		req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
+		w := httptest.NewRecorder()
+		s.handleLogs(w, req)
+		var result struct {
+			Entries  []logEntry
+			Warnings []string
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 {
+			t.Fatal(err, w.Code)
+		}
+		return result
+	}
 	r := read()
 	if len(r.Entries) != 1 || r.Entries[0].Protocol != "panel" || len(r.Warnings) != 1 {
 		t.Fatal(r)
 	}
-	s.StorageRunner = accessLogRunner{raw: `{"_SYSTEMD_UNIT":"ssh.service","MESSAGE":"Accepted publickey for alice from 192.0.2.1 port 42 ssh2"}`}
+	s.StorageRunner = accessLogRunner{raw: accessPageRow("fixture", "Accepted publickey for alice from 192.0.2.1 port 42 ssh2")}
 	if err := s.Store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +83,7 @@ func TestAccessSourcesFailIndependently(t *testing.T) {
 }
 
 func BenchmarkAccessLogHandler(b *testing.B) {
-	for _, n := range []int{30, 300} {
+	for _, n := range []int{30, 3000} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			st, err := store.Open(filepath.Join(b.TempDir(), "audit.db"))
 			if err != nil {
@@ -87,8 +95,11 @@ func BenchmarkAccessLogHandler(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			raw := strings.Repeat(`{"__REALTIME_TIMESTAMP":"1794554000000000","_SYSTEMD_UNIT":"ssh.service","MESSAGE":"Accepted publickey for alice from 192.0.2.1 port 42 ssh2"}`+"\n", n)
-			s := &Server{Store: st, StorageRunner: accessLogRunner{raw: raw}}
+			run := &accessPageRunner{}
+			for i := 0; i < n; i++ {
+				run.rows = append(run.rows, accessPageRow(fmt.Sprint("j", i), "Accepted publickey for alice from 192.0.2.1 port 42 ssh2"))
+			}
+			s := &Server{Store: st, StorageRunner: run}
 			req := httptest.NewRequest("GET", "/api/logs?kind=access", nil)
 			req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
 			b.ReportAllocs()
@@ -96,7 +107,7 @@ func BenchmarkAccessLogHandler(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				w := httptest.NewRecorder()
 				s.handleLogs(w, req)
-				if w.Code != 200 {
+				if w.Code != 200 || strings.Contains(w.Body.String(), `"incomplete":true`) {
 					b.Fatal(w.Code)
 				}
 			}

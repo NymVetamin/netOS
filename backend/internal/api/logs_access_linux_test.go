@@ -3,6 +3,7 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"github.com/netos-router/netos/internal/system"
@@ -32,17 +33,48 @@ func TestIntegrationAccessLogs(t *testing.T) {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
-	req := httptest.NewRequest("GET", "/api/logs?kind=access", nil)
-	req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
-	w := httptest.NewRecorder()
-	s.handleLogs(w, req)
-	var data struct {
-		Entries  []logEntry
-		Warnings []string
+	data := readAllJournalPages(t, s, "access")
+	// Compare every SSH cursor with an independent, time-bounded journal read.
+	// This larger output allowance belongs only to the integration test.
+	reference := &system.Exec{Timeout: 30 * time.Second, MaxOutputBytes: 64 << 20}
+	raw, err := reference.Run(context.Background(), "journalctl", "--no-pager", "--quiet", "-o", "json", "-u", "ssh.service", "-u", "sshd.service", "--since="+journalPageTime(data.From), "--until="+journalPageTime(data.CapturedAt), "-n", "100000", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil || w.Code != 200 || len(data.Warnings) > 0 {
-		t.Fatal(err, w.Code, data.Warnings)
+	expected := map[string]bool{}
+	scan := bufio.NewScanner(strings.NewReader(raw))
+	scan.Buffer(make([]byte, 4096), 2<<20)
+	count := 0
+	for scan.Scan() {
+		count++
+		var row map[string]json.RawMessage
+		if err := json.Unmarshal(scan.Bytes(), &row); err != nil {
+			t.Fatal(err)
+		}
+		if _, keep := journalLogEntry(row, "access"); keep {
+			var id string
+			if err := json.Unmarshal(row["__CURSOR"], &id); err != nil {
+				t.Fatal(err)
+			}
+			expected["journal:"+id] = true
+		}
 	}
+	if scan.Err() != nil || count >= 100000 {
+		t.Fatal("reference incomplete", count, scan.Err())
+	}
+	for _, e := range data.Entries {
+		if e.Protocol != "ssh" {
+			continue
+		}
+		if !expected[e.ID] {
+			t.Fatal("unexpected SSH cursor", e.ID)
+		}
+		delete(expected, e.ID)
+	}
+	if len(expected) != 0 {
+		t.Fatal("missing SSH cursors", len(expected))
+	}
+	t.Logf("all SSH cursors match independent journal read: raw=%d events=%d", count, len(data.Entries))
 	found := map[string]bool{}
 	for _, e := range data.Entries {
 		if e.Protocol == "panel" && e.User == "admin" {

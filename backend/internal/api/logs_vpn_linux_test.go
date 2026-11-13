@@ -126,7 +126,12 @@ func readAllJournalPages(t *testing.T, s *Server, kind string, filter ...string)
 	all := journalLogPage{}
 	cursor := ""
 	seen := map[string]bool{}
-	for page := 0; page < 200; page++ {
+	pageBudget := 200
+	if kind == "access" {
+		// Public SSH endpoints can retain tens of thousands of genuine attempts.
+		pageBudget = 2000
+	}
+	for page := 0; page < pageBudget; page++ {
 		query := "/api/logs?kind=" + url.QueryEscape(kind) + "&cursor=" + url.QueryEscape(cursor)
 		if len(filter) > 0 {
 			query += "&" + filter[0]

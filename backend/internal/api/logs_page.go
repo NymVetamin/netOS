@@ -17,15 +17,17 @@ const logPageSize = 100
 const logScanSize = 500
 
 type journalLogCursor struct {
-	Kind   string    `json:"kind"`
-	Anchor string    `json:"anchor"`
-	From   time.Time `json:"from"`
-	To     time.Time `json:"to"`
-	Result string    `json:"result"`
-	Object string    `json:"object"`
+	Access *accessLogPosition `json:"access,omitempty"`
+	Kind   string             `json:"kind"`
+	Anchor string             `json:"anchor"`
+	From   time.Time          `json:"from"`
+	To     time.Time          `json:"to"`
+	Result string             `json:"result"`
+	Object string             `json:"object"`
 }
 
 type journalLogPage struct {
+	Incomplete bool       `json:"incomplete,omitempty"`
 	Kind       string     `json:"kind"`
 	Entries    []logEntry `json:"entries"`
 	Warnings   []string   `json:"warnings"`
@@ -48,7 +50,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		}
 		data, err := base64.RawURLEncoding.DecodeString(token)
 		c = journalLogCursor{}
-		if err != nil || json.Unmarshal(data, &c) != nil || c.Anchor == "" || len(c.Anchor) > 4096 || strings.ContainsAny(c.Anchor, "\r\n\x00") {
+		if err != nil || json.Unmarshal(data, &c) != nil || len(c.Anchor) > 4096 || strings.ContainsAny(c.Anchor, "\r\n\x00") {
 			return c, fmt.Errorf("неверный курсор журнала; обновите журнал")
 		}
 		// Tokens issued before source-specific pages belong exclusively to VPN.
@@ -57,6 +59,13 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 		}
 		if c.Kind != kind {
 			return c, fmt.Errorf("источник курсора изменился; обновите журнал")
+		}
+		if kind == "access" {
+			if c.Access == nil || !c.Access.valid(c.Anchor) {
+				return c, fmt.Errorf("неверный курсор доступа; обновите журнал")
+			}
+		} else if c.Anchor == "" || c.Access != nil {
+			return c, fmt.Errorf("неверный курсор журнала; обновите журнал")
 		}
 		// A continuation belongs to its original filters and time interval.
 		if c.Result != q.Get("result") || c.Object != strings.ToLower(strings.TrimSpace(q.Get("object"))) {
@@ -69,7 +78,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	}{{"from", &c.From}, {"to", &c.To}} {
 		if value := q.Get(item.key); value != "" {
 			t, err := time.Parse(time.RFC3339Nano, value)
-			if err != nil || (c.Anchor != "" && !t.Equal(*item.target)) {
+			if err != nil || (q.Get("cursor") != "" && !t.Equal(*item.target)) {
 				return c, fmt.Errorf("неверный период журнала")
 			}
 			*item.target = t
@@ -81,7 +90,7 @@ func journalPageRequest(r *http.Request, now time.Time) (journalLogCursor, error
 	validResult := c.Result == "" || c.Result == "info"
 	if kind == "services" {
 		validResult = validResult || c.Result == "warning" || c.Result == "error"
-	} else if kind == "vpn" {
+	} else if kind == "vpn" || kind == "access" {
 		validResult = validResult || c.Result == "success" || c.Result == "failure"
 	}
 	if !validResult {
