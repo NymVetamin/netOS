@@ -461,7 +461,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
-		_ = s.Store.DeleteSession(cookie.Value)
+		if err := s.Store.LogoutSession(r.Context(), cookie.Value, clientIP(r)); err != nil {
+			writeError(w, http.StatusInternalServerError, "не удалось завершить сессию и записать выход; повторите попытку")
+			return
+		}
 		s.csrfMu.Lock()
 		delete(s.csrfTokens, cookie.Value)
 		s.csrfMu.Unlock()

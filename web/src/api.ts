@@ -237,11 +237,8 @@ export const api = {
   },
 
   async logout() {
-    try {
-      await request("POST", "/api/logout");
-    } finally {
-      csrfToken = null;
-    }
+    await request("POST", "/api/logout");
+    csrfToken = null;
   },
 
   async session() {

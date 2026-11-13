@@ -293,6 +293,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const discardInProgress = useRef(false);
   const [theme, setTheme] = useState<string>(
     () => localStorage.getItem("netos-theme") || "auto",
@@ -583,9 +585,18 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           </span>
           <button
             className="btn ghost sm"
+            disabled={loggingOut}
             onClick={async () => {
-              await api.logout();
-              onLogout();
+              setLoggingOut(true);
+              setLogoutError("");
+              try {
+                await api.logout();
+                onLogout();
+              } catch (err) {
+                setLogoutError(err instanceof ApiError ? err.message : "Нет связи с роутером. Повторите выход.");
+              } finally {
+                setLoggingOut(false);
+              }
             }}
           >
             Выйти
@@ -595,6 +606,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
 
       <main className="main" ref={mainRef}>
         <div className="page">
+          {logoutError && <Notice tone="danger" title={logoutError} />}
           <HintSaveError />
           {canAccess(session, page) && !canAccess(session, page, true) && (
             <Notice tone="info" title="Режим просмотра">

@@ -18,6 +18,26 @@ function client(fetch) {
   return exports.api;
 }
 
+test("failed logout retains CSRF for retry; successful logout clears it", async () => {
+  const calls = [];
+  let failed = false;
+  const api = client(async (path, options) => {
+    if (path === "/api/login") return response(200, { csrf_token: "valid" });
+    calls.push({ path, headers: options.headers });
+    if (!failed) { failed = true; return response(500, { error: "logout not committed" }); }
+    return response(200, { ok: true });
+  });
+  await api.login("admin", "fixture");
+  await assert.rejects(api.logout(), { status: 500 });
+  assert.equal(api.hasToken(), true);
+  await api.logout();
+  assert.equal(api.hasToken(), false);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(c => c.path === "/api/logout"));
+  assert.deepEqual(calls[0].headers, calls[1].headers);
+  assert.ok(Object.values(calls[1].headers).includes("valid"));
+});
+
 test("authenticated 401 ends the session once and clears its token", async () => {
   const api = client(async (path) => path === "/api/login"
     ? response(200, { csrf_token: "old" }) : response(401, { error: "requires login" }));
