@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -46,6 +47,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 	t.Run("vless", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vless") })
 	t.Run("http", func(t *testing.T) { testXrayAccessJournal(t, false, true, "http") })
 	t.Run("trojan", func(t *testing.T) { testXrayAccessJournal(t, false, true, "trojan") })
+	t.Run("vmess", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vmess") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -153,6 +155,10 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
+		if protocol == "vmess" {
+			probeVMessLogConnection(t, binary, server, echo.Addr().String(), valid)
+			continue
+		}
 		if protocol == "trojan" {
 			c, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", address, clientTLS)
 			if err != nil {
@@ -322,7 +328,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" || protocol == "http" || protocol == "trojan" {
+	if protocol == "vless" || protocol == "http" || protocol == "trojan" || protocol == "vmess" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
@@ -345,6 +351,13 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 				}
 			}
 		}
+		if protocol == "vmess" {
+			for _, uuid := range []string{server.Peers[0].Credentials["uuid"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"} {
+				if strings.Contains(journal, uuid) {
+					t.Fatal("VMess credential reached journal")
+				}
+			}
+		}
 	}
 	st, err := store.Open(filepath.Join(root, "read.db"))
 	if err != nil {
@@ -360,7 +373,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	failures := 0
 	for _, e := range p.Entries {
 		user := ""
-		if (protocol == "vless" || protocol == "trojan") && e.Result == "success" {
+		if (protocol == "vless" || protocol == "trojan" || protocol == "vmess") && e.Result == "success" {
 			user = "log-probe/peer"
 		}
 		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != "127.0.0.1" || e.User != user {
@@ -407,4 +420,84 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		}
 	}
 	t.Logf("generated %s config: two real echo connections, one auth rejection; HTTP additionally GET with private URL; observed rejection events=%d; journald/VPN/General/Services PASS", protocol, failures)
+}
+
+func probeVMessLogConnection(t *testing.T, binary string, server config.VPNServer, target string, valid bool) {
+	t.Helper()
+	peer := server.Peers[0]
+	peer.Credentials = map[string]string{"uuid": peer.Credentials["uuid"]}
+	if !valid {
+		peer.Credentials["uuid"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	}
+	server.Config["public_endpoint"] = net.JoinHostPort("127.0.0.1", strconv.Itoa(server.Port))
+	profile, err := xrayClientProfile(server, peer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserve, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := reserve.Addr().(*net.TCPAddr).Port
+	reserve.Close()
+	profile.Config["inbounds"].([]any)[0].(map[string]any)["port"] = port
+	data, err := json.Marshal(profile.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "client.json")
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.Create(filepath.Join(root, "client.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "run", "-config", path)
+	cmd.Stdout, cmd.Stderr = log, log
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	ready := false
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			ready = true
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("VMess client not listening")
+	}
+	dialer, err := proxy.SOCKS5("tcp", address, nil, &net.Dialer{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialCtx, dialCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer dialCancel()
+	conn, err := dialer.(proxy.ContextDialer).DialContext(dialCtx, "tcp", target)
+	if err != nil {
+		t.Fatal("client SOCKS connection", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err = conn.Write([]byte("probe")); err != nil {
+		t.Fatal(err)
+	}
+	answer := make([]byte, 5)
+	n, readErr := io.ReadFull(conn, answer)
+	if valid && (readErr != nil || string(answer) != "probe") {
+		t.Fatal("VMess echo", readErr)
+	}
+	if !valid && bytes.Contains(answer[:n], []byte("probe")) {
+		t.Fatal("invalid VMess UUID accepted")
+	}
 }
