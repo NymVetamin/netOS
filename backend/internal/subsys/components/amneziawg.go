@@ -194,7 +194,7 @@ func (s *Subsystem) readAmneziaRecord() []string {
 // Include interrupted installations and residual configs: neither is absent,
 // and both must be excluded from new ownership and remain eligible for purge.
 func (s *Subsystem) installedPackageNames(ctx context.Context) (map[string]bool, error) {
-	out, err := s.Runner.Run(ctx, "dpkg-query", "-W", "-f=${Package}\t${Status}\n")
+	out, err := s.Runner.Run(ctx, "dpkg-query", "-W", "-f=${binary:Package}\t${Status}\n")
 	if err != nil {
 		return nil, err
 	}
@@ -227,9 +227,37 @@ func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, recorded []strin
 			return err
 		}
 	}
+	// dpkg events and binary:Package qualify Multi-Arch names. apt's simulation
+	// omits the native architecture, even when another architecture coexists.
+	// Resolve that alias once per cleanup; never strip a foreign qualifier.
+	native := ""
+	for name := range installed {
+		if strings.Contains(name, ":") {
+			out, err := s.Runner.Run(ctx, "dpkg", "--print-architecture")
+			if err != nil {
+				return err
+			}
+			native = strings.TrimSpace(out)
+			if native == "" || strings.ContainsAny(native, " \t\r\n:/") {
+				return fmt.Errorf("не удалось определить архитектуру пакетов для очистки AmneziaWG")
+			}
+			break
+		}
+	}
+	resolve := func(name string) string {
+		if installed[name] {
+			return name
+		}
+		if native != "" && !strings.Contains(name, ":") && installed[name+":"+native] {
+			return name + ":" + native
+		}
+		return ""
+	}
 	left := map[string]bool{}
 	for _, name := range recorded {
-		if installed[name] && !keep[name] {
+		name = resolve(name)
+		base, _, _ := strings.Cut(name, ":")
+		if name != "" && !keep[name] && !keep[base] {
 			left[name] = true
 		}
 	}
@@ -243,8 +271,12 @@ func (s *Subsystem) removeAmneziaLeftovers(ctx context.Context, recorded []strin
 	var purge []string
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) > 1 && fields[0] == "Remv" && left[fields[1]] {
-			purge = append(purge, fields[1])
+		if len(fields) > 1 && fields[0] == "Remv" {
+			name := resolve(fields[1])
+			if left[name] {
+				purge = append(purge, name)
+				delete(left, name)
+			}
 		}
 	}
 	if len(purge) == 0 {
