@@ -6,9 +6,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -43,6 +45,7 @@ func TestIntegrationXraySanitizedJournal(t *testing.T) {
 	}
 	t.Run("vless", func(t *testing.T) { testXrayAccessJournal(t, false, true, "vless") })
 	t.Run("http", func(t *testing.T) { testXrayAccessJournal(t, false, true, "http") })
+	t.Run("trojan", func(t *testing.T) { testXrayAccessJournal(t, false, true, "trojan") })
 }
 
 func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) {
@@ -95,7 +98,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	doc["inbounds"].([]any)[0].(map[string]any)["listen"] = "127.0.0.1"
 	doc["api"].(map[string]any)["listen"] = filepath.Join(root, "stats.sock")
 	var clientTLS *tls.Config
-	if protocol == "vless" {
+	if protocol == "vless" || protocol == "trojan" {
 		cert, key, _, err := tlsutil.EnsureSelfSignedForNames(root, "localhost", "127.0.0.1")
 		if err != nil {
 			t.Fatal(err)
@@ -150,6 +153,36 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 		t.Fatal("Xray not listening")
 	}
 	for _, valid := range []bool{true, false, true} {
+		if protocol == "trojan" {
+			c, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", address, clientTLS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.SetDeadline(time.Now().Add(2 * time.Second))
+			password := "log-password"
+			if !valid {
+				password = "qa-trojan-invalid-secret"
+			}
+			digest := sha256.Sum224([]byte(password))
+			targetPort := echo.Addr().(*net.TCPAddr).Port
+			packet := []byte(hex.EncodeToString(digest[:]) + "\r\n")
+			packet = append(packet, 1, 1, 127, 0, 0, 1, byte(targetPort>>8), byte(targetPort), '\r', '\n')
+			packet = append(packet, []byte("probe")...)
+			if _, err = c.Write(packet); err != nil {
+				c.Close()
+				t.Fatal(err)
+			}
+			answer := make([]byte, 5)
+			n, readErr := io.ReadFull(c, answer)
+			c.Close()
+			if valid && (readErr != nil || string(answer) != "probe") {
+				t.Fatal("Trojan echo", readErr)
+			}
+			if !valid && bytes.Contains(answer[:n], []byte("probe")) {
+				t.Fatal("wrong Trojan password accepted")
+			}
+			continue
+		}
 		if protocol == "http" {
 			c, err := net.DialTimeout("tcp", address, 2*time.Second)
 			if err != nil {
@@ -289,7 +322,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	if _, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
 		t.Fatal(err)
 	}
-	if protocol == "vless" || protocol == "http" {
+	if protocol == "vless" || protocol == "http" || protocol == "trojan" {
 		journal, err := run.Run(ctx, "journalctl", "-u", unit, "--since=@"+strconv.FormatInt(from.Unix(), 10), "--no-pager", "-o", "cat")
 		if err != nil {
 			t.Fatal(err)
@@ -301,6 +334,14 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 			for _, secret := range []string{"qa-url", "qa-private-path", "qa-query-secret", "log-password"} {
 				if strings.Contains(journal, secret) {
 					t.Fatal("HTTP secret reached raw journal", secret)
+				}
+			}
+		}
+		if protocol == "trojan" {
+			for _, password := range []string{"log-password", "qa-trojan-invalid-secret"} {
+				digest := sha256.Sum224([]byte(password))
+				if strings.Contains(journal, password) || strings.Contains(journal, hex.EncodeToString(digest[:])) {
+					t.Fatal("Trojan credential reached journal")
 				}
 			}
 		}
@@ -319,7 +360,7 @@ func testXrayAccessJournal(t *testing.T, monitor, worker bool, protocol string) 
 	failures := 0
 	for _, e := range p.Entries {
 		user := ""
-		if protocol == "vless" && e.Result == "success" {
+		if (protocol == "vless" || protocol == "trojan") && e.Result == "success" {
 			user = "log-probe/peer"
 		}
 		if e.Protocol != "xray" || e.Server != "srv993" || e.Address != "127.0.0.1" || e.User != user {
