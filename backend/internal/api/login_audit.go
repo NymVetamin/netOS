@@ -9,6 +9,7 @@ import (
 
 const earlyLoginLimit = 20
 const panelLoginMarker = "netos-panel-access-v1 "
+const loginCheckFailure = "не удалось прочитать учётную запись или права доступа"
 
 // Early failures and fallback after storage errors share a bounded journal
 // budget. Neither path may turn requests into an unbounded disk writer.
@@ -102,6 +103,8 @@ func panelJournalFields(entry *logEntry) bool {
 		event = "Вход в панель выполнен; запись в основной аудит не удалась"
 	case "audit-failure":
 		event = "Отказ во входе в панель; запись в основной аудит не удалась"
+	case "audit-check-failure":
+		event = "Вход в панель не выполнен: " + loginCheckFailure + "; запись в основной аудит не удалась"
 	case "limited", "journal-limited":
 		if _, err := time.Parse(time.RFC3339Nano, record.Until); err != nil || record.User != "" || record.Address != "" {
 			return false

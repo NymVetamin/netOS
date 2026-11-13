@@ -387,12 +387,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := s.Store.UserByName(req.Username)
+	checkFailure := err != nil && !errors.Is(err, store.ErrNotFound)
 	// Проверку хэша выполняем даже для несуществующего пользователя, иначе по
 	// времени ответа можно выяснить, какие имена существуют.
 	valid := false
 	if err == nil {
 		valid = VerifyPassword(req.Password, user.PasswordHash)
 		access, accessErr := s.Store.PanelAccess(req.Username)
+		checkFailure = accessErr != nil
 		valid = valid && accessErr == nil && access.Enabled
 	} else {
 		_ = VerifyPassword(req.Password, "$argon2id$v=19$m=65536,t=2,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
@@ -400,11 +402,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if !valid {
 		s.recordLoginFailure(ip)
+		detail, fallback := "неверные учётные данные", "audit-failure"
+		if checkFailure {
+			detail, fallback = loginCheckFailure, "audit-check-failure"
+		}
 		if err := s.Store.Audit(store.AuditEntry{
 			User: req.Username, Action: "login", SourceIP: ip, Success: false,
-			Detail: "неверные учётные данные",
+			Detail: detail,
 		}); err != nil {
-			s.logPanelLogin("audit-failure", req.Username, ip)
+			s.logPanelLogin(fallback, req.Username, ip)
 		}
 		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
 		return

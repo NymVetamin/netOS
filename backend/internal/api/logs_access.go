@@ -81,5 +81,9 @@ func panelAccessEntry(row store.AuditEntry) (logEntry, error) {
 	if row.Action == "logout" {
 		e.Event = "Выход из панели"
 	}
+	if row.Action == "login" && !row.Success && row.Detail == loginCheckFailure {
+		e.Event = "Вход в панель не выполнен: " + loginCheckFailure
+		e.Severity = "warning"
+	}
 	return e, nil
 }

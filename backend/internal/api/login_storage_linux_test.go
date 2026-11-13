@@ -114,7 +114,7 @@ func TestIntegrationPanelStorageJournal(t *testing.T) {
 		run.Run(ctx, "systemctl", "stop", "netosd.service")
 		run.Run(ctx, "systemctl", "reset-failed", "netosd.service")
 	})
-	if out, err := run.Run(ctx, "systemd-run", "--unit=netosd.service", "--wait", "--collect", "--property=StandardOutput=journal", "--property=StandardError=journal", "--setenv=NETOS_STORAGE_JOURNAL_CHILD=1", binary, "-test.run=^TestLoginStorageFailureFallbackAndRetry$", "-test.v"); err != nil {
+	if out, err := run.Run(ctx, "systemd-run", "--unit=netosd.service", "--wait", "--collect", "--property=StandardOutput=journal", "--property=StandardError=journal", "--setenv=NETOS_STORAGE_JOURNAL_CHILD=1", binary, "-test.run=^(TestLoginStorageFailureFallbackAndRetry|TestLoginReadFailureReasonAndRetry)$", "-test.v"); err != nil {
 		t.Fatal(out, err)
 	}
 	if out, err := run.Run(ctx, "journalctl", "--sync"); err != nil {
@@ -128,7 +128,7 @@ func TestIntegrationPanelStorageJournal(t *testing.T) {
 	defer st.Close()
 	s := &Server{Store: st, StorageRunner: run}
 	page := readAllJournalPages(t, s, "access", period+"&object=panel")
-	if len(page.Entries) != 3 {
+	if len(page.Entries) != 5 {
 		t.Fatal("missing fallback", len(page.Entries))
 	}
 	success := 0
@@ -144,7 +144,7 @@ func TestIntegrationPanelStorageJournal(t *testing.T) {
 		t.Fatal(success)
 	}
 	all, code := allPageRequest(t, s, filepath.Join(t.TempDir(), "dns.log"), period+"&object="+url.QueryEscape(panelLoginMarker)+"&result=warning")
-	if code != 200 || len(all.Entries) != 3 {
+	if code != 200 || len(all.Entries) != 5 {
 		t.Fatal(code, len(all.Entries))
 	}
 	services := readAllJournalPages(t, s, "services", period)
