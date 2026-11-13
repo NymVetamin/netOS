@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,18 +24,8 @@ func TestIntegrationVPNLogs(t *testing.T) {
 	}
 	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second}}
 	for i := 0; i < 3; i++ {
-		r := httptest.NewRequest("GET", "/api/logs?kind=vpn", nil)
-		r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
-		w := httptest.NewRecorder()
 		start := time.Now()
-		s.handleLogs(w, r)
-		var d struct {
-			Entries  []logEntry
-			Warnings []string
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || w.Code != 200 || len(d.Warnings) != 0 {
-			t.Fatal(w.Body.String(), err)
-		}
+		d := readAllVPNPages(t, s)
 		login, disconnect := false, false
 		for _, e := range d.Entries {
 			if e.Server != "srv998" || e.User != "integration" {
@@ -60,18 +51,8 @@ func TestIntegrationVPNTunnelProtocols(t *testing.T) {
 	}
 	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second}}
 	for repeat := 0; repeat < 3; repeat++ {
-		r := httptest.NewRequest("GET", "/api/logs?kind=vpn", nil)
-		r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
-		w := httptest.NewRecorder()
 		start := time.Now()
-		s.handleLogs(w, r)
-		var d struct {
-			Entries  []logEntry
-			Warnings []string
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || w.Code != 200 || len(d.Warnings) != 0 {
-			t.Fatal(w.Body.String(), err)
-		}
+		d := readAllVPNPages(t, s)
 		ikeSuccess, ikeRefused, ikeAddress, l2tpFirst, l2tpSecond, l2tpAddress, l2tpRefused := false, false, false, false, false, false, false
 		for _, e := range d.Entries {
 			if e.Protocol == "ikev2" && e.Server == "srv997" {
@@ -123,18 +104,8 @@ func TestIntegrationVPNLogNoise(t *testing.T) {
 			}
 			s := &Server{StorageRunner: run}
 			for i := 0; i < 3; i++ {
-				r := httptest.NewRequest("GET", "/api/logs?kind=vpn", nil)
-				r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
-				w := httptest.NewRecorder()
 				start := time.Now()
-				s.handleLogs(w, r)
-				var d struct {
-					Entries  []logEntry
-					Warnings []string
-				}
-				if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || w.Code != 200 || len(d.Warnings) != 0 {
-					t.Fatal(w.Body.String(), err)
-				}
+				d := readAllVPNPages(t, s)
 				found := false
 				for _, e := range d.Entries {
 					if e.Unit == unit && e.User == "noise-fixture" && e.Result == "success" {
@@ -148,4 +119,133 @@ func TestIntegrationVPNLogNoise(t *testing.T) {
 			}
 		})
 	}
+}
+
+func readAllVPNPages(t *testing.T, s *Server, filter ...string) vpnLogPage {
+	t.Helper()
+	all := vpnLogPage{}
+	cursor := ""
+	seen := map[string]bool{}
+	for page := 0; page < 200; page++ {
+		query := "/api/logs?kind=vpn&cursor=" + url.QueryEscape(cursor)
+		if len(filter) > 0 {
+			query += "&" + filter[0]
+		}
+		r := httptest.NewRequest("GET", query, nil)
+		r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
+		w := httptest.NewRecorder()
+		start := time.Now()
+		s.handleLogs(w, r)
+		var d vpnLogPage
+		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || w.Code != 200 || len(d.Warnings) != 0 {
+			t.Fatal(w.Body.String(), err)
+		}
+		if len(d.Entries) > logPageSize || d.Scanned > logScanSize {
+			t.Fatal("unbounded page")
+		}
+		if page == 0 {
+			all.CapturedAt = d.CapturedAt
+			all.From = d.From
+		} else if !all.CapturedAt.Equal(d.CapturedAt) || !all.From.Equal(d.From) {
+			t.Fatal("snapshot boundary changed")
+		}
+		for _, e := range d.Entries {
+			if seen[e.ID] {
+				t.Fatal("duplicate record", e.ID)
+			}
+			seen[e.ID] = true
+		}
+		all.Entries = append(all.Entries, d.Entries...)
+		t.Logf("page=%d scanned=%d events=%d time=%s", page, d.Scanned, len(d.Entries), time.Since(start))
+		if d.Next == "" {
+			return all
+		}
+		if d.Next == cursor {
+			t.Fatal("cursor did not advance")
+		}
+		cursor = d.Next
+	}
+	t.Fatal("page budget exhausted")
+	return all
+}
+
+type emptyJournalRunner struct {
+	*system.Exec
+	directory string
+}
+
+func (e emptyJournalRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	return e.Exec.Run(ctx, name, append(args, "--directory="+e.directory)...)
+}
+
+func TestIntegrationVPNPageFiltersAndMissingAnchor(t *testing.T) {
+	if os.Getenv("NETOS_LOGS_TUNNEL_FIXTURE") != "1" {
+		t.Skip("requires real IKEv2 refusal fixture")
+	}
+	s := &Server{StorageRunner: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}}
+	d := readAllVPNPages(t, s, "result=failure&object=integration")
+	if len(d.Entries) == 0 {
+		t.Fatal("real refusal missing")
+	}
+	for _, e := range d.Entries {
+		if e.Result != "failure" || e.User != "integration" {
+			t.Fatal("filter not applied", e)
+		}
+	}
+	r := httptest.NewRequest("GET", "/api/logs?kind=vpn", nil)
+	r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
+	w := httptest.NewRecorder()
+	s.handleLogs(w, r)
+	var first vpnLogPage
+	if err := json.Unmarshal(w.Body.Bytes(), &first); err != nil || w.Code != 200 || first.Next == "" {
+		t.Fatal("requires paginated real journal", w.Body.String(), err)
+	}
+	// A real empty journal directory models a source whose anchor was removed;
+	// never vacuum the test host's shared journal to manufacture this condition.
+	s.StorageRunner = emptyJournalRunner{Exec: &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}, directory: t.TempDir()}
+	r = httptest.NewRequest("GET", "/api/logs?kind=vpn&cursor="+url.QueryEscape(first.Next), nil)
+	r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))
+	w = httptest.NewRecorder()
+	s.handleLogs(w, r)
+	if w.Code != 409 {
+		t.Fatal("missing anchor silently accepted", w.Code, w.Body.String())
+	}
+}
+
+func TestIntegrationVPNPageEquivalentLegacy(t *testing.T) {
+	if os.Getenv("NETOS_LOGS_TUNNEL_FIXTURE") != "1" {
+		t.Skip("requires real VPN journal fixture")
+	}
+	run := &system.Exec{Timeout: 5 * time.Second, MaxOutputBytes: 4 << 20}
+	s := &Server{StorageRunner: run}
+	start := time.Now()
+	all := readAllVPNPages(t, s)
+	pagedTime := time.Since(start)
+	start = time.Now()
+	raw, err := run.Run(context.Background(), "journalctl", "--no-pager", "--quiet", "-o", "json", "-n", "300", "--since="+journalPageTime(all.From), "--until="+journalPageTime(all.CapturedAt), "-u", "netos-ocserv-srv*.service", "-u", "netos-strongswan.service", "-u", "netos-vpn-l2tp-srv*.service", "--grep="+ocservEventPattern+"|"+ikeEventPattern+"|"+l2tpEventPattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := parseJournalEntries(raw, "vpn")
+	if err != nil || len(old) >= 300 {
+		t.Fatal("comparison requires fewer than legacy limit", len(old), err)
+	}
+	legacyTime := time.Since(start)
+	counts := map[string]int{}
+	for _, e := range old {
+		e.ID = ""
+		b, _ := json.Marshal(e)
+		counts[string(b)]++
+	}
+	for _, e := range all.Entries {
+		e.ID = ""
+		b, _ := json.Marshal(e)
+		counts[string(b)]--
+	}
+	for _, n := range counts {
+		if n != 0 {
+			t.Fatal("old and paginated event multisets differ")
+		}
+	}
+	t.Logf("same snapshot events=%d legacy command+parse=%s full paginated API=%s", len(old), legacyTime, pagedTime)
 }

@@ -54,10 +54,10 @@ func TestVPNLogsReadAndRetry(t *testing.T) {
 		return w
 	}
 	w := read()
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "не удалось прочитать journal") {
+	if w.Code != 502 || !strings.Contains(w.Body.String(), "Не удалось прочитать журнал VPN") {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	s.StorageRunner = accessLogRunner{raw: `{"_SYSTEMD_UNIT":"netos-ocserv-srv12.service","MESSAGE":"main[alice]:192.0.2.2:42 user logged in"}`}
+	s.StorageRunner = accessLogRunner{raw: vpnPageRow(0, "main[alice]:192.0.2.2:42 user logged in")}
 	for i := 0; i < 2; i++ {
 		w = read()
 		var d struct {
@@ -73,7 +73,11 @@ func TestVPNLogsReadAndRetry(t *testing.T) {
 func BenchmarkVPNLogHandler(b *testing.B) {
 	for _, n := range []int{30, 300} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			raw := strings.Repeat(`{"__REALTIME_TIMESTAMP":"1794554000000000","_SYSTEMD_UNIT":"netos-ocserv-srv12.service","MESSAGE":"main[alice]:192.0.2.2:42 user logged in"}`+"\n", n)
+			var lines []string
+			for i := 0; i < n; i++ {
+				lines = append(lines, vpnPageRow(i, "main[alice]:192.0.2.2:42 user logged in"))
+			}
+			raw := strings.Join(lines, "\n")
 			s := &Server{StorageRunner: accessLogRunner{raw: raw}}
 			r := httptest.NewRequest("GET", "/api/logs?kind=vpn", nil)
 			r = r.WithContext(context.WithValue(r.Context(), ctxRole, "admin"))

@@ -61,12 +61,13 @@ func BenchmarkVPNMixedLogHandler(b *testing.B) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			var raw strings.Builder
 			for i := 0; i < n; i++ {
-				row := map[string]string{"__REALTIME_TIMESTAMP": "1794554000000000", "_SYSTEMD_UNIT": "netos-vpn-l2tp-srv7.service", "MESSAGE": "Peer alice authenticated with CHAP"}
+				row := map[string]string{"__REALTIME_TIMESTAMP": vpnPageFixtureTime, "_SYSTEMD_UNIT": "netos-vpn-l2tp-srv7.service", "MESSAGE": "Peer alice authenticated with CHAP"}
 				if i%2 == 0 {
 					row["_SYSTEMD_UNIT"] = "netos-strongswan.service"
 					row["IKE_SA_NAME"] = "netos-srv7"
 					row["MESSAGE"] = "RADIUS authentication of 'alice' successful"
 				}
+				row["__CURSOR"] = fmt.Sprint("c", i)
 				data, _ := json.Marshal(row)
 				raw.Write(data)
 				raw.WriteByte('\n')

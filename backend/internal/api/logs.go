@@ -18,6 +18,7 @@ import (
 )
 
 type logEntry struct {
+	ID       string `json:"id,omitempty"`
 	Time     string `json:"time"`
 	Source   string `json:"source"`
 	Unit     string `json:"unit"`
@@ -73,51 +74,58 @@ func parseJournalEntries(raw, source string) ([]logEntry, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
 			return result, fmt.Errorf("не удалось разобрать запись журнала")
 		}
-		field := func(k string) string { var v string; _ = json.Unmarshal(row[k], &v); return v }
-		message := field("MESSAGE")
-		if message == "" {
-			continue
+		if entry, keep := journalLogEntry(row, source); keep {
+			result = append(result, entry)
 		}
-		if source == "firewall" && !strings.Contains(message, "netos ") {
-			continue
-		}
-		unit := field("_SYSTEMD_UNIT")
-		if unit == "" {
-			unit = field("SYSLOG_IDENTIFIER")
-		}
-		ts := ""
-		if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
-			ts = time.UnixMicro(us).UTC().Format(time.RFC3339Nano)
-		}
-		if source == "dns" && !isDNSQuery(message) {
-			continue
-		}
-		entry := logEntry{Time: ts, Source: source, Unit: unit, Message: message}
-		if source == "services" {
-			var keep bool
-			entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, message)
-			if !keep {
-				continue
-			}
-		}
-		if source == "access" && !sshLogFields(&entry) {
-			continue
-		}
-		if source == "vpn" {
-			keep := false
-			if entry.Unit == "netos-strongswan.service" {
-				keep = ikeLogFields(&entry, field)
-			} else {
-				keep = vpnLogFields(&entry) || l2tpLogFields(&entry)
-			}
-			if !keep {
-				continue
-			}
-		}
-		result = append(result, entry)
 	}
 	return result, scanner.Err()
 }
+
+func journalLogEntry(row map[string]json.RawMessage, source string) (logEntry, bool) {
+	field := func(k string) string { var v string; _ = json.Unmarshal(row[k], &v); return v }
+	message := field("MESSAGE")
+	if message == "" {
+		return logEntry{}, false
+	}
+	if source == "firewall" && !strings.Contains(message, "netos ") {
+		return logEntry{}, false
+	}
+	unit := field("_SYSTEMD_UNIT")
+	if unit == "" {
+		unit = field("SYSLOG_IDENTIFIER")
+	}
+	ts := ""
+	if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
+		ts = time.UnixMicro(us).UTC().Format(time.RFC3339Nano)
+	}
+	if source == "dns" && !isDNSQuery(message) {
+		return logEntry{}, false
+	}
+	entry := logEntry{Time: ts, Source: source, Unit: unit, Message: message}
+	if source == "services" {
+		var keep bool
+		entry.Unit, entry.Event, entry.Severity, keep = serviceLogFields(field, message)
+		if !keep {
+			return logEntry{}, false
+		}
+	}
+	if source == "access" && !sshLogFields(&entry) {
+		return logEntry{}, false
+	}
+	if source == "vpn" {
+		keep := false
+		if entry.Unit == "netos-strongswan.service" {
+			keep = ikeLogFields(&entry, field)
+		} else {
+			keep = vpnLogFields(&entry) || l2tpLogFields(&entry)
+		}
+		if !keep {
+			return logEntry{}, false
+		}
+	}
+	return entry, true
+}
+
 func dnsLineTime(line string, now time.Time) string {
 	for _, layout := range []string{"2006/01/02 15:04:05.000000", "2006/01/02 15:04:05", "2006-01-02 15:04:05", "Jan _2 15:04:05"} {
 		if len(line) < len(layout) {
@@ -193,6 +201,10 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if kind != "all" && kind != "dns" && kind != "firewall" && kind != "services" && kind != "access" && kind != "vpn" {
 		writeError(w, http.StatusBadRequest, "неизвестный журнал")
+		return
+	}
+	if kind == "vpn" {
+		s.handleVPNLogPage(w, r)
 		return
 	}
 	runner := s.StorageRunner

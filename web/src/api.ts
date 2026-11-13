@@ -289,7 +289,8 @@ export const api = {
     ),
 
   portModes: (name: string) => request<any>("GET", `/api/interfaces/${encodeURIComponent(name)}/modes`),
-  logs: (kind: string) => request<any>("GET", `/api/logs?kind=${encodeURIComponent(kind)}`),
+  logs: (kind: string, filters: Record<string,string> = {}, signal?: AbortSignal) =>
+    request<any>("GET", `/api/logs?${new URLSearchParams({ ...filters, kind })}`, undefined, undefined, signal),
   firewallPreview: (config: any) => request<any>("POST", "/api/firewall/preview", config),
   firewallLive: () => request<any>("GET", "/api/firewall/live"),
 
