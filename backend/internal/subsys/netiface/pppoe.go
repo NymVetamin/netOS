@@ -254,7 +254,10 @@ func (s *WAN) waitPPPoE(ctx context.Context, w config.WAN) error {
 	iface := PPPoEInterface(w.ID)
 	deadline := time.Now().Add(timeout)
 	for {
-		if addrs, err := addressesOf(ctx, s.Runner, iface); err == nil && len(addrs) > 0 {
+		// pppd sets the address before bringing the link up (ipcp_up: sifaddr,
+		// ip-pre-up, sifup). A default route added in between fails with
+		// "Device for nexthop is not up", so "up" is part of readiness.
+		if out, err := s.Runner.Run(ctx, "ip", "-4", "-o", "addr", "show", "dev", iface, "up"); err == nil && strings.Contains(out, " inet ") {
 			return nil
 		}
 		if time.Now().After(deadline) {

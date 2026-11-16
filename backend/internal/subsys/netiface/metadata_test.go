@@ -195,6 +195,18 @@ func TestWaitPPPoESuccessTimeoutAndCancellation(t *testing.T) {
 	if err := success.waitPPPoE(context.Background(), w); err != nil {
 		t.Fatal(err)
 	}
+	// pppd assigns the address before the link is UP; `ip addr show ... up`
+	// prints nothing then, and the session is not ready yet.
+	addressOnly := NewWAN(netifaceRunnerFunc(func(_ context.Context, _ string, args ...string) (string, error) {
+		if args[len(args)-1] == "up" {
+			return "", nil
+		}
+		return "9: ppp-wan1 inet 10.0.0.2 peer 10.0.0.1/32 scope global ppp-wan1\n", nil
+	}))
+	addressOnly.PPPoETimeout, addressOnly.PPPoePoll = 5*time.Millisecond, time.Millisecond
+	if err := addressOnly.waitPPPoE(context.Background(), w); err == nil {
+		t.Fatal("PPP interface with an address but not UP accepted as ready")
+	}
 	failing := NewWAN(netifaceRunnerFunc(func(_ context.Context, _ string, _ ...string) (string, error) {
 		return "", errors.New("missing")
 	}))
@@ -326,7 +338,7 @@ func TestWANHealthAcceptsCompleteDHCPPPPoEAndL2TPStates(t *testing.T) {
 	t.Run("pppoe", func(t *testing.T) {
 		newFakeNet(t, "wan0")
 		runner := healthyWANRunner(map[string]string{
-			"ip -4 -o addr show dev ppp-ppp": "9: ppp-ppp inet 10.0.0.2 peer 10.0.0.1/32 scope global ppp-ppp\n",
+			"ip -4 -o addr show dev ppp-ppp up": "9: ppp-ppp inet 10.0.0.2 peer 10.0.0.1/32 scope global ppp-ppp\n",
 			"ip -4 route show default":       "default dev ppp-ppp metric 200\n",
 		})
 		s := NewWAN(runner)
@@ -343,7 +355,7 @@ func TestWANHealthAcceptsCompleteDHCPPPPoEAndL2TPStates(t *testing.T) {
 		newFakeNet(t, "wan0")
 		runner := healthyWANRunner(map[string]string{
 			"ip -4 -o addr show dev wan0":     "2: wan0 inet 192.0.2.2/24 scope global wan0\n",
-			"ip -4 -o addr show dev ppp-l2tp": "10: ppp-l2tp inet 10.1.0.2 peer 10.1.0.1/32 scope global ppp-l2tp\n",
+			"ip -4 -o addr show dev ppp-l2tp up": "10: ppp-l2tp inet 10.1.0.2 peer 10.1.0.1/32 scope global ppp-l2tp\n",
 			"ip -4 route show default":        "default via 192.0.2.1 dev wan0 proto netos metric 310\ndefault dev ppp-l2tp metric 300\n",
 			"ip -4 route show 203.0.113.7/32": "203.0.113.7 via 192.0.2.1 dev wan0 proto 201\n",
 		})
@@ -367,7 +379,7 @@ func TestWANHealthRejectsMissingOwnedLNSRoute(t *testing.T) {
 	newFakeNet(t, "wan0")
 	runner := healthyWANRunner(map[string]string{
 		"ip -4 -o addr show dev wan0":     "2: wan0 inet 192.0.2.2/24 scope global wan0\n",
-		"ip -4 -o addr show dev ppp-l2tp": "10: ppp-l2tp inet 10.1.0.2 peer 10.1.0.1/32 scope global ppp-l2tp\n",
+		"ip -4 -o addr show dev ppp-l2tp up": "10: ppp-l2tp inet 10.1.0.2 peer 10.1.0.1/32 scope global ppp-l2tp\n",
 		"ip -4 route show default":        "default dev ppp-l2tp metric 300\n",
 	})
 	s := NewWAN(runner)

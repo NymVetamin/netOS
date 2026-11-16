@@ -87,7 +87,7 @@ type delayedPPPRunner struct {
 }
 
 func (r *delayedPPPRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
-	if name == "ip" && strings.Join(args, " ") == "-4 -o addr show dev ppp-wan-test" {
+	if name == "ip" && strings.Join(args, " ") == "-4 -o addr show dev ppp-wan-test up" {
 		r.polls++
 		if r.readyAfter > 0 && r.polls >= r.readyAfter {
 			return "9: ppp-wan-test inet 203.0.113.18 peer 203.0.113.17/32 scope global\n", nil
