@@ -152,6 +152,20 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 	s.AppArmorDir = filepath.Join(root, "apparmor")
 	s.AppArmorProfiles = filepath.Join(root, "profiles")
 	units := []string{"netos-vpn-l2tp-ch993.service", "netos-l2tp-ipsec-ch993.service"}
+	started := time.Now().Format("2006-01-02 15:04:05")
+	// A failed apply in CI says only that PPP did not come up; the reason is in
+	// the client units and the remote daemons. Last lines of each, bounded.
+	diagnose := func(step string, err error) {
+		t.Helper()
+		tail := func(b []byte) string {
+			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+			return strings.Join(lines[max(0, len(lines)-80):], "\n")
+		}
+		journal, _ := exec.Command("journalctl", "-u", units[0], "-u", units[1], "--since", started, "-o", "short-precise", "--no-pager").CombinedOutput()
+		server, _ := os.ReadFile(filepath.Join(root, "server.log"))
+		xfrm, _ := exec.Command("ip", "xfrm", "policy").CombinedOutput()
+		t.Fatalf("%s: %v\n--- client units:\n%s\n--- remote server:\n%s\n--- xfrm policy:\n%s", step, err, tail(journal), tail(server), tail(xfrm))
+	}
 	for _, unit := range units {
 		path := filepath.Join("/etc/systemd/system", unit)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -214,7 +228,7 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 	ping() // rollback must restore the previous connection before retry
 	ch.Config["preshared_key"] = "test-ipsec-secret"
 	if err := apply(); err != nil {
-		t.Fatal("retry", err)
+		diagnose("retry", err)
 	}
 	ping()
 	// Keep PPP running while IPsec is gone; plaintext must be dropped locally.
@@ -277,7 +291,7 @@ s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.sendto(b'plaintext',('192.0.
 		t.Fatal("IPsec daemon crash did not recover automatically")
 	}
 	if err := s.Health(context.Background(), cfg); err != nil {
-		t.Fatal("health after daemon crash", err)
+		diagnose("health after daemon crash", err)
 	}
 	// Explicitly switching to plaintext must remove client guards and daemon.
 	remote("iptables", "-t", "mangle", "-F", vpnservers.L2TPIPsecGuardChain)
@@ -285,7 +299,7 @@ s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.sendto(b'plaintext',('192.0.
 	serverProcess.Wait()
 	ch.Config["ipsec"] = false
 	if err := apply(); err != nil {
-		t.Fatal("plain transition", err)
+		diagnose("plain transition", err)
 	}
 	ping()
 	serverProcess = start("env", "STRONGSWAN_CONF="+daemon, "/usr/sbin/charon-systemd")
