@@ -20,17 +20,24 @@ const Owner = "netOS traffic monitor v1"
 
 type Subsystem struct{ Runner system.Runner }
 
-// Clear removes only the table carrying our ownership marker.
+// Clear removes only the table carrying our ownership marker. Presence is read
+// from the table list, not from an error text: uninstall streams stderr to
+// its log, so a missing table reached it as a bare "exit status 1" and aborted
+// the uninstall before the firewall was restored.
 func Clear(ctx context.Context, run func(context.Context, string, ...string) (string, error)) error {
-	raw, err := run(ctx, "nft", "list", "table", "inet", Table)
+	tables, err := run(ctx, "nft", "list", "tables", "inet")
 	if err != nil {
-		if missingTable(err) {
+		if errors.Is(err, exec.ErrNotFound) {
 			return nil
 		}
 		return err
 	}
-	if raw == "" {
+	if !listsTable(tables) {
 		return nil
+	}
+	raw, err := run(ctx, "nft", "list", "table", "inet", Table)
+	if err != nil {
+		return err
 	}
 	if !strings.Contains(raw, Owner) {
 		return fmt.Errorf("таблица %s не принадлежит netOS", Table)
@@ -185,6 +192,15 @@ func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {
 		return fmt.Errorf("счётчики монитора недоступны")
 	}
 	return nil
+}
+
+func listsTable(tables string) bool {
+	for _, line := range strings.Split(tables, "\n") {
+		if f := strings.Fields(line); len(f) == 3 && f[0] == "table" && f[1] == "inet" && f[2] == Table {
+			return true
+		}
+	}
+	return false
 }
 
 func missingTable(err error) bool {
