@@ -114,7 +114,6 @@ func TestReadOnlyRoutesAndKeypairHandlers(t *testing.T) {
 		{"/api/maintenance/status", http.StatusOK},
 		{"/api/backups", http.StatusServiceUnavailable},
 		{"/api/revisions?limit=5", http.StatusOK},
-		{"/api/audit?limit=5", http.StatusOK},
 		{"/api/render", http.StatusOK},
 		{"/api/render/iptables", http.StatusOK},
 		{"/api/render/not-real", http.StatusNotFound},

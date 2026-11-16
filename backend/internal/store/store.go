@@ -35,6 +35,8 @@ var ErrNotFound = errors.New("не найдено")
 
 type Store struct {
 	db *sql.DB
+	// OnAudit receives every recorded audit entry; set once before use.
+	OnAudit func(AuditEntry)
 }
 
 // Revision — одна версия конфигурации.
@@ -650,9 +652,13 @@ func (s *Store) PruneSessions() ([]string, error) {
 // ---------------------------------------------------------------------------
 
 func (s *Store) Audit(e AuditEntry) error {
+	e.At = time.Now()
 	_, err := s.db.Exec(
 		`INSERT INTO audit (at, user, action, target, detail, source_ip, success) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().Unix(), e.User, e.Action, e.Target, e.Detail, e.SourceIP, boolToInt(e.Success))
+		e.At.Unix(), e.User, e.Action, e.Target, e.Detail, e.SourceIP, boolToInt(e.Success))
+	if err == nil && s.OnAudit != nil {
+		s.OnAudit(e)
+	}
 	return err
 }
 

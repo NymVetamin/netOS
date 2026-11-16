@@ -99,7 +99,7 @@ func limitedEndpoint(r *http.Request) bool {
 		return !write && may(r, "diagnostics", false)
 	case "/api/diagnostics/probe":
 		return may(r, "diagnostics", true)
-	case "/api/revisions", "/api/audit":
+	case "/api/revisions":
 		return !write && may(r, "history", false)
 	case "/api/maintenance/status", "/api/maintenance/releases":
 		return !write && may(r, "system", false)

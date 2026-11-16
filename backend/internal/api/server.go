@@ -278,7 +278,6 @@ func (s *Server) Routes() http.Handler {
 	auth("GET /api/diagnostics/jobs/{id}", s.handleDiagnosticJob)
 	auth("DELETE /api/diagnostics/jobs/{id}", s.handleDiagnosticStop)
 	auth("GET /api/diagnostics/jobs/{id}/capture", s.handleDiagnosticCapture)
-	auth("GET /api/audit", s.handleAudit)
 	auth("GET /api/render", s.handleRenderList)
 	auth("GET /api/render/{kind}", s.handleRender)
 
@@ -524,6 +523,10 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 
 	go s.pruneLoop(ctx)
 	go s.monitorVPNClients(ctx)
+	s.refillAudit()
+	if s.Store != nil {
+		s.Store.OnAudit = s.addAudit
+	}
 	go s.followJournal(ctx)
 	go s.tailDNSLog(ctx)
 	go eventlog.WatchLinks(ctx, s.Events, s.watchedLink)

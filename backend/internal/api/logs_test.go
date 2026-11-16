@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/netos-router/netos/internal/eventlog"
+	"github.com/netos-router/netos/internal/store"
 )
 
 func logRequest(s *Server, query string, admin bool, ctx context.Context) (int, eventlog.Page) {
@@ -122,5 +125,37 @@ func TestDNSFileLinesFeedLog(t *testing.T) {
 	}
 	if s.queryLog() {
 		t.Fatal("query log without configuration")
+	}
+}
+
+func TestAuditEntriesBecomeEvents(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "netos.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.Audit(store.AuditEntry{User: "admin", Action: "login", SourceIP: "192.0.2.5", Success: true})
+	_ = st.Audit(store.AuditEntry{User: "admin", Action: "apply", Target: "7", Detail: "dnsmasq не запустился", Success: false})
+	s := &Server{Store: st, Events: eventlog.New()}
+	s.refillAudit()
+	st.OnAudit = s.addAudit
+	_ = st.Audit(store.AuditEntry{User: "admin", Action: "login", SourceIP: "198.51.100.9", Success: false, Detail: "неверные учётные данные"})
+	_ = st.Audit(store.AuditEntry{User: "system", Action: "restore", Target: "backup.tar", Success: true})
+	_ = st.Audit(store.AuditEntry{User: "system", Action: "rollback", Target: "8", Detail: "timeout: ", Success: true})
+	got := func(topic string) []string {
+		p, _, _ := s.Events.Since(topic, "", 0)
+		out := []string{}
+		for i := len(p.Events) - 1; i >= 0; i-- {
+			out = append(out, p.Events[i].Level+" "+p.Events[i].Source+": "+p.Events[i].Message)
+		}
+		return out
+	}
+	access := strings.Join(got(eventlog.Access), "\n")
+	system := strings.Join(got(eventlog.System), "\n")
+	if access != "info панель: вход admin с 192.0.2.5\nwarning панель: неудачный вход admin с 198.51.100.9" {
+		t.Fatal(access)
+	}
+	if system != "error admin: применение конфигурации, ревизия 7 — не удалось: dnsmasq не запустился\ninfo system: восстановление из копии: backup.tar\nwarning system: откат конфигурации, ревизия 8 — применение не подтверждено вовремя" {
+		t.Fatal(system)
 	}
 }

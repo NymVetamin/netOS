@@ -95,7 +95,6 @@ export const CARD_ICONS: Record<string, IconName> = {
   "Как это применяется": "info",
   "Динамический DNS": "at-sign",
   "Ревизии": "layers",
-  "Журнал действий": "list",
   "Наборы адресов": "list",
   "Зоны и политики": "shield",
   "Правила": "list",

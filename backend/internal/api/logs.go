@@ -11,6 +11,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/eventlog"
 	"github.com/netos-router/netos/internal/runtime"
+	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -224,4 +225,95 @@ func (s *Server) watchedLink(name string) bool {
 		}
 	}
 	return false
+}
+
+var auditActions = map[string]string{
+	"apply":           "применение конфигурации",
+	"confirm":         "подтверждение применения",
+	"rollback":        "откат конфигурации",
+	"restore":         "восстановление из копии",
+	"update":          "обновление netOS",
+	"backup-delete":   "удаление резервной копии",
+	"client-wake":     "включение устройства по сети",
+	"panel-restart":   "перезапуск netOS",
+	"password_change": "смена пароля",
+}
+
+var rollbackReasons = map[string]string{
+	"timeout": "применение не подтверждено вовремя",
+	"health":  "не прошла проверка после применения",
+	"manual":  "по команде администратора",
+}
+
+// auditEvent turns an audit entry (the persistent record of panel and CLI
+// actions) into a log event: logins go to Access, the rest to System.
+func auditEvent(e store.AuditEntry) (topic, level, source, msg string) {
+	source = e.User
+	if source == "" {
+		source = "система"
+	}
+	from := ""
+	if e.SourceIP != "" {
+		from = " с " + e.SourceIP
+	}
+	if e.Action == "login" {
+		if e.Success {
+			return eventlog.Access, eventlog.Info, "панель", "вход " + e.User + from
+		}
+		return eventlog.Access, eventlog.Warning, "панель", "неудачный вход " + e.User + from
+	}
+	msg = auditActions[e.Action]
+	if msg == "" {
+		msg = e.Action
+	}
+	if e.Target != "" {
+		if e.Action == "apply" || e.Action == "confirm" || e.Action == "rollback" {
+			msg += ", ревизия " + e.Target
+		} else {
+			msg += ": " + e.Target
+		}
+	}
+	level = eventlog.Info
+	if e.Action == "rollback" {
+		// main records "reason: details" for every rollback of the engine.
+		reason, details, _ := strings.Cut(e.Detail, ": ")
+		if text := rollbackReasons[reason]; text != "" {
+			reason = text
+		}
+		if details = strings.TrimSpace(details); details != "" {
+			reason += ": " + details
+		}
+		if reason != "" {
+			msg += " — " + reason
+		}
+		return eventlog.System, eventlog.Warning, source, msg
+	}
+	if !e.Success {
+		level = eventlog.Error
+		msg += " — не удалось"
+		if e.Detail != "" {
+			msg += ": " + e.Detail
+		}
+	}
+	return eventlog.System, level, source, msg + from
+}
+
+func (s *Server) addAudit(e store.AuditEntry) {
+	topic, level, source, msg := auditEvent(e)
+	s.Events.Add(e.At, topic, level, source, msg)
+}
+
+// refillAudit shows the newest audit entries after a restart; they are kept
+// in SQLite anyway, so System and panel logins survive restarts. One query.
+func (s *Server) refillAudit() {
+	if s.Store == nil {
+		return
+	}
+	entries, err := s.Store.ListAudit(eventlog.Size)
+	if err != nil {
+		return
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		s.addAudit(entries[i])
+	}
 }

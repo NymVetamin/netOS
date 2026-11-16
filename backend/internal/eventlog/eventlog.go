@@ -4,6 +4,7 @@
 package eventlog
 
 import (
+	"cmp"
 	"slices"
 	"strconv"
 	"sync"
@@ -127,23 +128,28 @@ func (l *Log) Since(topic, epoch string, after uint64) (Page, <-chan struct{}, b
 	}
 	p := Page{Epoch: l.epoch, Latest: l.seq, Reset: after == 0, Events: []Event{}}
 	for _, t := range Topics {
-		if topic != "all" && t != topic {
-			continue
+		if (topic == "all" || t == topic) && l.rings[t].dropped > after {
+			// The client missed rotated events: it gets the whole list anew.
+			p.Reset, after = true, 0
 		}
-		r := l.rings[t]
-		if r.dropped > after {
-			p.Reset = true
-		}
-		p.Events = r.newer(after, p.Events)
 	}
-	if topic == "all" {
-		// Every ring is already newest-first; the union needs one ordering.
+	for _, t := range Topics {
+		if topic == "all" || t == topic {
+			p.Events = l.rings[t].newer(after, p.Events)
+		}
+	}
+	if p.Reset {
+		// A full list is ordered by event time: refills from journald and
+		// the audit table run concurrently, so insertion order is not time.
 		slices.SortFunc(p.Events, func(a, b Event) int {
-			if a.Seq > b.Seq {
-				return -1
+			if c := cmp.Compare(b.Time, a.Time); c != 0 {
+				return c
 			}
-			return 1
+			return cmp.Compare(b.Seq, a.Seq)
 		})
+	} else if topic == "all" {
+		// New events of every ring are newest-first; the union needs one order.
+		slices.SortFunc(p.Events, func(a, b Event) int { return cmp.Compare(b.Seq, a.Seq) })
 	}
 	if len(p.Events) > Size {
 		p.Events, p.Reset = p.Events[:Size], true

@@ -110,3 +110,28 @@ func TestNotifier(t *testing.T) {
 		t.Fatal(p.Events)
 	}
 }
+
+// A client behind rotation gets the whole current list, not only the events
+// after its position; a full list is in event time order across topics.
+func TestResetReturnsWholeListInTimeOrder(t *testing.T) {
+	l := New()
+	l.Add(time.Unix(300, 0), System, Info, "admin", "later, added first")
+	l.Add(time.Unix(100, 0), Access, Info, "SSH", "earliest")
+	l.Add(time.Unix(200, 0), Services, Info, "u", "middle")
+	p, _, _ := l.Since("all", "", 0)
+	if p.Events[0].Message != "later, added first" || p.Events[2].Message != "earliest" {
+		t.Fatal(p.Events)
+	}
+	for i := 0; i < Size; i++ {
+		l.Add(time.Unix(400, 0), Access, Info, "SSH", "flood")
+	}
+	// Position 1 precedes the rotated-out SSH event 2: whole list, reset.
+	q, _, _ := l.Since(Access, p.Epoch, 1)
+	if !q.Reset || len(q.Events) != Size {
+		t.Fatal(q.Reset, len(q.Events))
+	}
+	// Position 3 lost nothing: only the new events, no reset.
+	if q, _, _ = l.Since(Access, p.Epoch, p.Latest); q.Reset || len(q.Events) != Size {
+		t.Fatal(q.Reset, len(q.Events))
+	}
+}

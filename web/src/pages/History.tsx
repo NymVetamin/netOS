@@ -5,12 +5,12 @@ import { api, formatTime } from "../api";
 import { Badge, Card, Empty, Notice, Spinner, TableWrap } from "../ui";
 import { Icon } from "../icons";
 
-// История ревизий и журнал аудита. Главная ценность — возможность вернуться к
-// заведомо рабочей конфигурации, когда что-то пошло не так.
+// История ревизий. Главная ценность — возможность вернуться к заведомо рабочей
+// конфигурации, когда что-то пошло не так. Действия администраторов показывает
+// журнал «Система» в разделе «Диагностика».
 export function HistoryPage({ onRestored }: { onRestored: () => void }) {
   const session = useContext(PermissionContext);
   const [revisions, setRevisions] = useState<any[]>([]);
-  const [audit, setAudit] = useState<any[]>([]);
   const [busy, setBusy] = useState(0);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -20,9 +20,8 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
     setLoading(true);
     setLoadError("");
     try {
-      const [r, a] = await Promise.all([api.revisions(), api.audit(60)]);
+      const r = await api.revisions();
       setRevisions(r.revisions || []);
-      setAudit(a.entries || []);
     } catch (cause) {
       setLoadError(cause instanceof Error ? cause.message : "Не удалось загрузить историю");
     } finally {
@@ -38,7 +37,7 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
     <>
       <div className="page-head">
         <h1><Icon name="history" />История</h1>
-        <p>Ревизии конфигурации и журнал действий</p>
+        <p>Ревизии конфигурации</p>
       </div>
 
       {error && <Notice tone="danger" title="Не удалось загрузить ревизию">{error}</Notice>}
@@ -111,42 +110,6 @@ export function HistoryPage({ onRestored }: { onRestored: () => void }) {
         </div>
       </Card>
 
-      <Card title="Журнал действий" tight>
-        {loadError ? null : audit.length === 0 ? (
-          <Empty>Записей нет</Empty>
-        ) : (
-          <TableWrap>
-            <table>
-              <thead>
-                <tr>
-                  <th>Время</th>
-                  <th>Пользователь</th>
-                  <th>Действие</th>
-                  <th>Объект</th>
-                  <th>Подробности</th>
-                  <th>Источник</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((e) => (
-                  <tr key={e.id}>
-                    <td className="faint">{formatTime(e.at)}</td>
-                    <td>{e.user || "—"}</td>
-                    <td>
-                      <Badge tone={e.success ? "neutral" : "danger"}>
-                        {actionLabel(e.action)}
-                      </Badge>
-                    </td>
-                    <td className="mono faint">{e.target || "—"}</td>
-                    <td className="dim">{e.detail || "—"}</td>
-                    <td className="mono faint">{e.source_ip || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
-        )}
-      </Card>
       </>}
     </>
   );
@@ -164,22 +127,5 @@ function stateBadge(state: string) {
       return <Badge tone="neutral">заменена</Badge>;
     default:
       return <Badge tone="neutral">{state}</Badge>;
-  }
-}
-
-function actionLabel(action: string): string {
-  switch (action) {
-    case "login":
-      return "вход";
-    case "apply":
-      return "применение";
-    case "confirm":
-      return "подтверждение";
-    case "rollback":
-      return "откат";
-    case "password_change":
-      return "смена пароля";
-    default:
-      return action;
   }
 }

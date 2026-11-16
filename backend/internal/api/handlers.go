@@ -301,7 +301,7 @@ func viewerAllowed(r *http.Request) bool {
 	}
 	switch r.URL.Path {
 	case "/api/session", "/api/config", "/api/catalog", "/api/status", "/api/ddns/status", "/api/vpn-endpoint", "/api/statistics", "/api/maintenance/status", "/api/clients",
-		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes", "/api/audit",
+		"/api/interfaces", "/api/leases", "/api/arp", "/api/routes",
 		"/api/revisions":
 		return true
 	default:
@@ -1854,16 +1854,6 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"routes": routes, "rules": rules, "parsed": parsed,
 	})
-}
-
-func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, err := s.Store.ListAudit(limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "%v", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
 // handleRender показывает, во что превращается конфигурация. Администратору

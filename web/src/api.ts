@@ -400,7 +400,6 @@ export const api = {
   diagnosticProbe: (kind: "ping" | "traceroute", host: string) =>
     request<{ output: string; success: boolean; error?: string }>("POST", "/api/diagnostics/probe", { kind, host }),
   blocklistStatus: () => request<{ sources: Record<string, { source: string; error?: string }> }>("GET", "/api/dns/blocklists/status"),
-  audit: (limit = 100) => request<{ entries: any[] }>("GET", `/api/audit?limit=${limit}`),
   revisions: (limit = 50) => request<{ revisions: any[] }>("GET", `/api/revisions?limit=${limit}`),
   async restoreRevision(id: number) {
     if (draftVersion === null) throw new ApiError(409, "Сначала обновите конфигурацию");
