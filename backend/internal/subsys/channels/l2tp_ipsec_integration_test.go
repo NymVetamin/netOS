@@ -159,7 +159,7 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 		t.Helper()
 		tail := func(b []byte) string {
 			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-			return strings.Join(lines[max(0, len(lines)-80):], "\n")
+			return strings.Join(lines[max(0, len(lines)-200):], "\n")
 		}
 		journal, _ := exec.Command("journalctl", "-u", units[0], "-u", units[1], "--since", started, "-o", "short-precise", "--no-pager").CombinedOutput()
 		server, _ := os.ReadFile(filepath.Join(root, "server.log"))
@@ -353,7 +353,7 @@ s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.sendto(b'plaintext',('192.0.
 		remote(append([]string{"iptables", "-t", "mangle"}, strings.Fields(rule)...)...)
 	}
 	if err := apply(); err != nil {
-		t.Fatal("secure transition", err)
+		diagnose("secure transition", err)
 	}
 	ping()
 	cfg.Channels = cfg.Channels[:len(cfg.Channels)-1]
