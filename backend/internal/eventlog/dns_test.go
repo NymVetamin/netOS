@@ -96,3 +96,28 @@ func TestRefillPerGroupUpToHead(t *testing.T) {
 		t.Fatal(ssh.Events, svc.Events)
 	}
 }
+
+// A unit that failed seconds before netosd started is history all the same:
+// the refill must not run a reason lookup per failure.
+func TestRefillNeverLooksUpReasons(t *testing.T) {
+	failed := fmt.Sprintf(`{"__CURSOR":"f","__REALTIME_TIMESTAMP":"%d","_PID":"1","MESSAGE_ID":"%s","UNIT":"netos-x.service","UNIT_RESULT":"exit-code","INVOCATION_ID":"0123456789abcdef0123456789abcdef"}`, time.Now().Add(-10*time.Second).UnixMicro(), msgFailed)
+	lookups := 0
+	l := New()
+	j := &Journal{Log: l, Reason: func(context.Context, string) string { lookups++; return "why" }}
+	j.Run = func(_ context.Context, args ...string) ([]byte, error) {
+		if joined := strings.Join(args, " "); args[len(args)-1] == "--lines=1" || strings.Contains(joined, "_PID=1") {
+			return []byte(failed + "\n"), nil
+		}
+		return nil, fmt.Errorf("No entries")
+	}
+	j.refill(context.Background())
+	if got := messages(l, Services); lookups != 0 || len(got) != 1 || got[0] != "error netos-x: сбой: процесс завершился с ошибкой" {
+		t.Fatal(lookups, got)
+	}
+	// A fresh failure arriving live does get its reason (another unit: a
+	// repeated failure of the same one reads as the restart limit).
+	j.Handle(context.Background(), []byte(strings.Replace(failed, "netos-x", "netos-y", 1)), time.Now())
+	if lookups != 1 {
+		t.Fatal(lookups)
+	}
+}

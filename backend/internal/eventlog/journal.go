@@ -172,9 +172,10 @@ func (j *Journal) refill(ctx context.Context) {
 	}
 	// Each group is already in journal order; a stable sort keeps it.
 	sort.SliceStable(rows, func(a, b int) bool { return rows[a].at < rows[b].at })
-	now := time.Now()
+	// The zero time marks history: no reason lookups, or a unit that kept
+	// failing before the start would cost a command per failure.
 	for _, r := range rows {
-		j.Handle(ctx, r.raw, now)
+		j.Handle(ctx, r.raw, time.Time{})
 	}
 	j.cursor = head["__CURSOR"]
 }
@@ -224,7 +225,8 @@ func parseRecord(raw []byte) (journalRecord, error) {
 }
 
 // Handle classifies one journal JSON line; now decides whether a failure is
-// fresh enough to look up its reason (never during the start-up refill).
+// fresh enough to look up its reason. The zero now is the start-up refill,
+// which never looks reasons up.
 func (j *Journal) Handle(ctx context.Context, raw []byte, now time.Time) {
 	rec, err := parseRecord(raw)
 	if err != nil {
@@ -317,7 +319,7 @@ func (j *Journal) unit(ctx context.Context, rec journalRecord, at, now time.Time
 		if st.exit != "" {
 			msg += " (" + st.exit + ")"
 		}
-		if j.Reason != nil && rec["INVOCATION_ID"] != "" && now.Sub(at) < time.Minute {
+		if j.Reason != nil && rec["INVOCATION_ID"] != "" && !now.IsZero() && now.Sub(at) < time.Minute {
 			if reason := j.Reason(ctx, rec["INVOCATION_ID"]); reason != "" {
 				msg += ": " + reason
 			}
