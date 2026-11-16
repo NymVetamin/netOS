@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -37,8 +39,28 @@ func (l *lifecycleLogger) String() string {
 	return strings.Join(l.lines, "\n")
 }
 
+// freeTCPPort returns a port the test binds again later. A port handed out for
+// ":0" is ephemeral: until the test binds it again, any outgoing connection on
+// the machine may take it as its source port, and the bind fails with
+// "address already in use" (seen in CI with parallel packages). Ports below
+// the ephemeral range are never chosen for outgoing connections.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
+	if raw, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range"); err == nil {
+		if f := strings.Fields(string(raw)); len(f) == 2 {
+			if low, err := strconv.Atoi(f[0]); err == nil && low > 1025 {
+				span := low - 1024
+				start := rand.IntN(span)
+				for i := 0; i < span; i++ {
+					port := 1024 + (start+i)%span
+					if ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port)); err == nil {
+						_ = ln.Close()
+						return port
+					}
+				}
+			}
+		}
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
