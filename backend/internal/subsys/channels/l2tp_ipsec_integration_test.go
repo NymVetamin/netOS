@@ -197,8 +197,11 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 	}
 	ping := func() {
 		t.Helper()
-		run("ip", "route", "replace", "10.253.94.1/32", "dev", channels.InterfaceName(ch))
-		run("ping", "-c", "1", "-W", "3", "10.253.94.1")
+		for _, args := range [][]string{{"ip", "route", "replace", "10.253.94.1/32", "dev", channels.InterfaceName(ch)}, {"ping", "-c", "1", "-W", "3", "10.253.94.1"}} {
+			if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+				diagnose("connectivity", fmt.Errorf("%v: %v %s", args, err, out))
+			}
+		}
 	}
 	if err := apply(); err != nil {
 		diagnose("initial", err)

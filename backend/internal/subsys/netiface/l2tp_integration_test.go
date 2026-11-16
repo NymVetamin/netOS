@@ -179,7 +179,8 @@ func startLNS(t *testing.T) {
 	options := dir + "/lns.ppp"
 	// Концентратор требует аутентификации — иначе тест не проверял бы, что
 	// клиент вообще умеет представляться логином и паролем.
-	body := "require-pap\nnoipv6\nlcp-echo-interval 10\nlcp-echo-failure 5\nms-dns " + l2tpServerAddr + "\n"
+	// debug: LCP frames with magic numbers, for EXIT_LOOPBACK seen in CI.
+	body := "debug\nrequire-pap\nnoipv6\nlcp-echo-interval 10\nlcp-echo-failure 5\nms-dns " + l2tpServerAddr + "\n"
 	if err := os.WriteFile(options, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +200,7 @@ func startLNS(t *testing.T) {
 
 	cmd := exec.Command("ip", "netns", "exec", l2tpNetns, "xl2tpd",
 		"-D", "-c", conf, "-p", "/run/l2tptest-lns.pid", "-C", "/run/l2tptest-lns.ctl")
+	started := time.Now().Format("2006-01-02 15:04:05")
 	sink := &strings.Builder{}
 	cmd.Stdout, cmd.Stderr = sink, sink
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -211,6 +213,8 @@ func startLNS(t *testing.T) {
 		_ = exec.Command("pkill", "-f", options).Run()
 		if t.Failed() {
 			t.Logf("журнал концентратора:\n%s", sink.String())
+			ppp, _ := exec.Command("journalctl", "_COMM=pppd", "--since", started, "-o", "short-precise", "--no-pager").CombinedOutput()
+			t.Logf("журнал pppd:\n%s", ppp)
 		}
 	})
 	time.Sleep(time.Second)
