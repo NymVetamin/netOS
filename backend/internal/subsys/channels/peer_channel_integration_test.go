@@ -170,6 +170,16 @@ http.server.HTTPServer(('198.51.100.2',18080),Handler).serve_forever()`)
 		t.Fatal(err)
 	}
 	defer func() { service.Process.Kill(); service.Wait() }()
+	// The first request must not race the interpreter's start: in CI it came
+	// back "Connection refused" from the internet namespace itself.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if strings.Contains(remote("internet", "ss", "-Hltn", "sport = :18080"), "18080") && strings.Contains(remote("internet", "ss", "-Hlun", "sport = :18081"), "18081") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("test HTTP service did not start listening")
+		}
+	}
 	// netOS knows no endpoint until each remote initiates.
 	if endpoints := run("wg", "show", "wg-srv1", "endpoints"); !strings.Contains(endpoints, "(none)") {
 		t.Fatal(endpoints)
