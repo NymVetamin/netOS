@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/eventlog"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/system"
@@ -114,7 +115,7 @@ func (s *Server) queryLog() bool {
 
 // followJournal is started once with the server.
 func (s *Server) followJournal(ctx context.Context) {
-	j := &eventlog.Journal{Log: s.Events, Reason: s.unitReason, DNS: s.queryLog, VPNServer: s.vpnServerName}
+	j := &eventlog.Journal{Log: s.Events, LAN: s.lan, Reason: s.unitReason, DNS: s.queryLog, VPNServer: s.vpnServerName}
 	j.Follow(ctx)
 }
 
@@ -155,6 +156,52 @@ func (s *Server) addDNSLines(now time.Time, lines []string) {
 		}
 		if client, text, ok := eventlog.DNSQuery(line); ok {
 			s.Events.Add(now, eventlog.DNS, eventlog.Info, client, text)
+		} else if s.lan != nil {
+			// While the query log is on, dnsmasq writes its DHCP lines here too.
+			s.lan.DHCP(now, line)
 		}
+	}
+}
+
+// lanNames resolves MAC addresses and hostapd interfaces against the applied
+// configuration. Called per Wi-Fi/DHCP event: O(clients) or O(radios).
+func (s *Server) lanNames() *eventlog.Names {
+	current := func() *config.Config {
+		if s.Engine == nil {
+			return nil
+		}
+		return s.Engine.Current()
+	}
+	return &eventlog.Names{
+		Client: func(mac string) string {
+			if cfg := current(); cfg != nil {
+				for _, c := range cfg.Clients {
+					if strings.EqualFold(c.MAC, mac) {
+						return c.Name
+					}
+				}
+			}
+			return ""
+		},
+		SSID: func(iface string) string {
+			cfg := current()
+			if cfg == nil {
+				return ""
+			}
+			for _, radio := range cfg.WiFi {
+				index := 0
+				if iface != radio.Device {
+					n, err := strconv.Atoi(strings.TrimPrefix(iface, radio.Device+"-n"))
+					if err != nil || !strings.HasPrefix(iface, radio.Device+"-n") {
+						continue
+					}
+					index = n - 1
+				}
+				if index >= 0 && index < len(radio.SSIDs) {
+					return radio.SSIDs[index].SSID
+				}
+			}
+			return ""
+		},
 	}
 }

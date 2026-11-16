@@ -39,7 +39,11 @@ var journalGroups = [][]string{
 	{"_SYSTEMD_UNIT=" + unboundUnit},
 	// VPN daemons: only authentication refusals are taken from them.
 	{"SYSLOG_IDENTIFIER=ocserv", "SYSLOG_IDENTIFIER=charon-systemd", "SYSLOG_IDENTIFIER=pppd"},
+	{"SYSLOG_IDENTIFIER=hostapd"},
+	{"_SYSTEMD_UNIT=" + dhcpUnits[0], "_SYSTEMD_UNIT=" + dhcpUnits[1], "_SYSTEMD_UNIT=" + dhcpUnits[2]},
 }
+
+var dhcpUnits = [...]string{"netos-dnsmasq.service", "netos-isc-dhcp.service", "netos-kea-dhcp4.service"}
 
 func journalMatches() []string {
 	var out []string
@@ -61,6 +65,8 @@ type Journal struct {
 	Reason func(ctx context.Context, invocation string) string
 	// DNS reports whether DNS queries are shown (the query log is enabled).
 	DNS func() bool
+	// LAN receives hostapd and DHCP server lines; optional.
+	LAN *LAN
 	// VPNServer names a VPN server by type and index; optional.
 	VPNServer func(typ string, index int) string
 	// Run executes journalctl and returns its output; tests replace it.
@@ -227,6 +233,10 @@ func (j *Journal) Handle(ctx context.Context, raw []byte, now time.Time) {
 		if rule, msg, ok := FirewallEvent(rec["MESSAGE"]); ok {
 			j.Log.Add(at, Firewall, Info, rule, msg)
 		}
+	case j.LAN != nil && rec["SYSLOG_IDENTIFIER"] == "hostapd":
+		j.LAN.WiFi(at, rec["MESSAGE"])
+	case j.LAN != nil && (rec["_SYSTEMD_UNIT"] == dhcpUnits[0] || rec["_SYSTEMD_UNIT"] == dhcpUnits[1] || rec["_SYSTEMD_UNIT"] == dhcpUnits[2]):
+		j.LAN.DHCP(at, rec["MESSAGE"])
 	case rec["_SYSTEMD_UNIT"] == unboundUnit:
 		if j.DNS != nil && j.DNS() {
 			if client, msg, ok := DNSQuery(rec["MESSAGE"]); ok {

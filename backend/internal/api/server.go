@@ -102,6 +102,7 @@ type Server struct {
 	vpnStatusMu           sync.Mutex
 	vpnStatus             map[string]*vpnStatusCache
 	vpnPresence           vpnPresence
+	lan                   *eventlog.LAN
 	dashboardMetrics      dashboardMetrics
 	dashboardServices     dashboardServiceCache
 	realtime              realtimeMonitor
@@ -152,6 +153,7 @@ func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, lo
 		draftVersion:      1,
 		Events:            eventlog.New(),
 	}
+	s.lan = &eventlog.LAN{Log: s.Events, Names: s.lanNames()}
 	if engine != nil {
 		previousRollback := engine.OnRollback
 		engine.OnRollback = func(info apply.RollbackInfo) {
