@@ -131,6 +131,25 @@ func TestFirewallAndSSHEvents(t *testing.T) {
 	}
 }
 
+// The user name is sent by an unauthenticated client and may hold spaces; the
+// address sshd itself appended must be the one shown.
+func TestSSHInvalidUserCannotForgeAddress(t *testing.T) {
+	for line, want := range map[string]string{
+		"Invalid user root from 10.0.0.5 from 203.0.113.9 port 40022":        "неудачный вход root from 10.0.0.5 с 203.0.113.9: нет такого пользователя",
+		"Invalid user a from 10.0.0.5 port 1 from 203.0.113.9 port 40022":    "неудачный вход a from 10.0.0.5 port 1 с 203.0.113.9: нет такого пользователя",
+		"Invalid user bob from 2001:db8::7 port 4444":                        "неудачный вход bob с 2001:db8::7: нет такого пользователя",
+		"Invalid user bob from 198.51.100.8":                                 "неудачный вход bob с 198.51.100.8: нет такого пользователя",
+		"Invalid user  from 198.51.100.8 port 4444":                          "",
+		"Invalid user bob from":                                              "",
+		"Failed password for invalid user root from 10.0.0.5 from 203.0.113": "",
+	} {
+		level, got, ok := SSHEvent(line)
+		if got != want || ok != (want != "") || (ok && level != Warning) {
+			t.Fatalf("%q: %q %v %q", line, got, ok, level)
+		}
+	}
+}
+
 func TestReadSkipsOverlongRecord(t *testing.T) {
 	l := New()
 	j := &Journal{Log: l}

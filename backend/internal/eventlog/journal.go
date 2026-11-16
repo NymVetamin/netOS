@@ -412,8 +412,18 @@ func SSHEvent(message string) (level, text string, ok bool) {
 			method = f[1]
 		}
 		return Info, "вход " + f[3] + " с " + f[5] + " (" + method + ")", true
-	case len(f) >= 5 && f[0] == "Invalid" && f[1] == "user" && f[3] == "from":
-		return Warning, "неудачный вход " + f[2] + " с " + f[4] + ": нет такого пользователя", true
+	case len(f) >= 2 && f[0] == "Invalid" && f[1] == "user":
+		// The name is whatever the client sent, spaces included ("root from
+		// 10.0.0.5"); sshd appends "from <address> port <n>" itself, so the
+		// address follows the last "from", never the first.
+		at := len(f) - 1
+		for at > 2 && f[at] != "from" {
+			at--
+		}
+		if at <= 2 || at+1 >= len(f) {
+			return "", "", false
+		}
+		return Warning, "неудачный вход " + strings.Join(f[2:at], " ") + " с " + f[at+1] + ": нет такого пользователя", true
 	case len(f) >= 4 && f[0] == "Failed" && f[2] == "for" && f[3] == "invalid":
 		return "", "", false
 	case len(f) >= 6 && f[0] == "Failed" && f[2] == "for" && f[4] == "from":
