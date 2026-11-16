@@ -116,7 +116,7 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 	write(chap, "test server test-password *\n")
 	run("mount", "--bind", chap, "/etc/ppp/chap-secrets")
 	ppp := filepath.Join(root, "server.ppp")
-	write(ppp, "lcp-echo-interval 1\nlcp-echo-failure 3\nrequire-mschap-v2\nname server\nnodefaultroute\nnoipv6\nmtu 1400\nmru 1400\n")
+	write(ppp, "debug\nlcp-echo-interval 1\nlcp-echo-failure 3\nrequire-mschap-v2\nname server\nnodefaultroute\nnoipv6\nmtu 1400\nmru 1400\n")
 	l2conf := filepath.Join(root, "server-l2tp.conf")
 	write(l2conf, fmt.Sprintf("[global]\nport = 1701\nlisten-addr = 192.0.2.2\naccess control = no\n[lns default]\nip range = 10.253.94.2-10.253.94.20\nlocal ip = 10.253.94.1\nrequire authentication = yes\nname = server\npppoptfile = %s\n", ppp))
 	start("xl2tpd", "-D", "-c", l2conf, "-p", filepath.Join(root, "server.pid"), "-C", filepath.Join(root, "server.ctl"))
@@ -164,7 +164,9 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 		journal, _ := exec.Command("journalctl", "-u", units[0], "-u", units[1], "--since", started, "-o", "short-precise", "--no-pager").CombinedOutput()
 		server, _ := os.ReadFile(filepath.Join(root, "server.log"))
 		xfrm, _ := exec.Command("ip", "xfrm", "policy").CombinedOutput()
-		t.Fatalf("%s: %v\n--- client units:\n%s\n--- remote server:\n%s\n--- xfrm policy:\n%s", step, err, tail(journal), tail(server), tail(xfrm))
+		// Both pppd (client unit and test server) log LCP with magic numbers.
+		ppp, _ := exec.Command("journalctl", "_COMM=pppd", "--since", started, "-o", "short-precise", "--no-pager").CombinedOutput()
+		t.Fatalf("%s: %v\n--- client units:\n%s\n--- remote server:\n%s\n--- xfrm policy:\n%s\n--- pppd:\n%s", step, err, tail(journal), tail(server), tail(xfrm), tail(ppp))
 	}
 	for _, unit := range units {
 		path := filepath.Join("/etc/systemd/system", unit)
@@ -199,8 +201,7 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 		run("ping", "-c", "1", "-W", "3", "10.253.94.1")
 	}
 	if err := apply(); err != nil {
-		log, _ := os.ReadFile(filepath.Join(root, "server.log"))
-		t.Fatalf("initial: %v server=%s", err, log)
+		diagnose("initial", err)
 	}
 	ipsecFile := filepath.Join(root, "state", "netos-l2tp-ipsec-ch993.conf")
 	info, err := os.Stat(ipsecFile)
