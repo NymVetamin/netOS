@@ -241,10 +241,19 @@ func startServer(t *testing.T) {
 	options := t.TempDir() + "/pppoe-server-options"
 	// Концентратор требует PAP — иначе тест не проверял бы, что клиент вообще
 	// умеет представляться логином и паролем.
-	content := "require-pap\nlcp-echo-interval 10\nlcp-echo-failure 3\nnoipv6\n"
+	// debug: LCP frames with magic numbers; a session dropped right after
+	// coming up was seen in CI (as EXIT_LOOPBACK in the L2TP tests).
+	content := "debug\nrequire-pap\nlcp-echo-interval 10\nlcp-echo-failure 3\nnoipv6\n"
 	if err := os.WriteFile(options, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now().Format("2006-01-02 15:04:05")
+	t.Cleanup(func() {
+		if t.Failed() {
+			ppp, _ := exec.Command("journalctl", "_COMM=pppd", "--since", started, "-o", "short-precise", "--no-pager").CombinedOutput()
+			t.Logf("журнал pppd:\n%s", ppp)
+		}
+	})
 	cmd := exec.Command("ip", "netns", "exec", testNetns, "pppoe-server",
 		"-I", testServerIface,
 		"-L", testServerAddr,
