@@ -7,8 +7,10 @@ import (
 
 var vpnTypeNames = map[string]string{"ocserv": "OpenConnect", "ikev2": "IKEv2", "l2tp": "L2TP"}
 
-// Formats are taken from the daemons' real journals (ocserv, charon-systemd
-// with eap-radius, pppd under xl2tpd) recorded during QA on 13.11.2026.
+// Formats checked live on Debian 13 (16.11.2026): ocserv 1.3.0, charon-systemd
+// with eap-radius and FreeRADIUS, pppd under xl2tpd 1.3.18. ocserv reports a
+// refusal only once the client has used up its password attempts; a client
+// that gives up after one wrong password leaves no line to show.
 var (
 	ocservUnit    = regexp.MustCompile(`^netos-ocserv-srv([0-9]+)\.service$`)
 	ocservRefused = regexp.MustCompile(`^worker(?:\[[^\]]*\])?:\s*(\S+) (?:[a-zA-Z0-9_-]+\.c:[0-9]+: )?failed authentication for '([^']*)'$`)
