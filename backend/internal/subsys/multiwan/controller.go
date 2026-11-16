@@ -46,6 +46,8 @@ type Controller struct {
 	StatePath string
 	Logger    Logger
 	Probe     func(context.Context, config.WAN, string) bool
+	// Notify reports an uplink becoming unavailable or available again; optional.
+	Notify func(up bool, name, detail string)
 
 	mu             sync.Mutex
 	probeMu        sync.RWMutex
@@ -56,6 +58,12 @@ type Controller struct {
 	pausedUntil    time.Time
 	balanceDirty   bool
 	pppRoutesDirty bool
+}
+
+func (c *Controller) notify(up bool, name, detail string) {
+	if c.Notify != nil {
+		c.Notify(up, name, detail)
+	}
 }
 
 // ProbeDown reports the last completed health decision for an uplink.
@@ -492,6 +500,7 @@ func (c *Controller) record(ctx context.Context, wan config.WAN, iface string, s
 			state.Down = false
 			_ = c.save()
 			c.Logger.Infof("Multi-WAN: аплинк %s восстановлен", wan.Name)
+			c.notify(true, wan.Name, "")
 			return true
 		}
 		return false
@@ -504,6 +513,7 @@ func (c *Controller) record(ctx context.Context, wan config.WAN, iface string, s
 	if !suppress {
 		state.Down = true
 		c.Logger.Warnf("Multi-WAN: аплинк %s недоступен", wan.Name)
+		c.notify(false, wan.Name, "")
 		return true
 	}
 	line, err := c.defaultRoute(ctx, iface)
@@ -540,6 +550,7 @@ func (c *Controller) record(ctx context.Context, wan config.WAN, iface string, s
 		return false
 	}
 	c.Logger.Warnf("Multi-WAN: аплинк %s недоступен, выбран резервный", wan.Name)
+	c.notify(false, wan.Name, "трафик переведён на резервный аплинк")
 	return true
 }
 

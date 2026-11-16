@@ -21,6 +21,7 @@ import (
 	"github.com/netos-router/netos/internal/bootstrap"
 	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/eventlog"
 	"github.com/netos-router/netos/internal/manage"
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/runtime"
@@ -279,6 +280,11 @@ func main() {
 		printSummary(cfg)
 		return
 	}
+	// Created before the monitors start: they report state changes into it,
+	// and the panel shows it.
+	events := eventlog.New()
+	multiWAN.Notify = events.Notifier("аплинк")
+	channelMonitor.Notify = events.Notifier("канал")
 	go multiWAN.Run(ctx, engine.Current)
 	go channelMonitor.Run(ctx, engine.Current)
 	go ddnsController.Run(ctx, engine.Current)
@@ -320,6 +326,7 @@ func main() {
 		}
 	}()
 	panel := api.New(st, engine, collector, logger)
+	panel.UseEvents(events)
 	panel.Certificates = certificateManager
 	panel.PKI = clientPKI
 	go func() {

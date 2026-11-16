@@ -138,6 +138,7 @@ func (s *Subsystem) record(ctx context.Context, cfg *config.Config, ch config.Ch
 			}
 			state.Down = false
 			s.infof("Канал %s восстановлен", ch.Name)
+			s.notify(true, ch.Name, "")
 		}
 		return
 	}
@@ -152,6 +153,7 @@ func (s *Subsystem) record(ctx context.Context, cfg *config.Config, ch config.Ch
 	}
 	state.Down = true
 	s.warnf("Канал %s недоступен, режим отказа: %s", ch.Name, ch.FailMode)
+	s.notify(false, ch.Name, "режим отказа: "+ch.FailMode)
 }
 
 func (s *Subsystem) failChannel(ctx context.Context, cfg *config.Config, ch config.Channel) error {
@@ -254,6 +256,12 @@ func (s *Subsystem) probe(ctx context.Context, ch config.Channel, iface string) 
 		}
 	}
 	return false
+}
+
+func (s *Subsystem) notify(up bool, name, detail string) {
+	if s.Notify != nil {
+		s.Notify(up, name, detail)
+	}
 }
 
 func (s *Subsystem) infof(format string, args ...any) {

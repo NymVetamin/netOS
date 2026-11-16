@@ -150,3 +150,19 @@ func (l *Log) Since(topic, epoch string, after uint64) (Page, <-chan struct{}, b
 	}
 	return p, l.changed, true
 }
+
+// Notifier returns a callback for uplink and channel monitors: kind names the
+// object ("аплинк", "канал"), name is its configured name.
+func (l *Log) Notifier(kind string) func(up bool, name, detail string) {
+	return func(up bool, name, detail string) {
+		if up {
+			l.Add(time.Now(), Internet, Info, name, kind+" снова доступен")
+			return
+		}
+		msg := kind + " недоступен"
+		if detail != "" {
+			msg += ": " + detail
+		}
+		l.Add(time.Now(), Internet, Warning, name, msg)
+	}
+}

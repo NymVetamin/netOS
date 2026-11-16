@@ -99,3 +99,14 @@ func BenchmarkSinceAllFull(b *testing.B) {
 		l.Since("all", "", 0)
 	}
 }
+
+func TestNotifier(t *testing.T) {
+	l := New()
+	n := l.Notifier("аплинк")
+	n(false, "ISP1", "трафик переведён на резервный аплинк")
+	n(true, "ISP1", "")
+	p, _, _ := l.Since(Internet, "", 0)
+	if len(p.Events) != 2 || p.Events[1].Level != Warning || p.Events[1].Message != "аплинк недоступен: трафик переведён на резервный аплинк" || p.Events[0].Message != "аплинк снова доступен" || p.Events[0].Source != "ISP1" {
+		t.Fatal(p.Events)
+	}
+}

@@ -526,6 +526,7 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 	go s.monitorVPNClients(ctx)
 	go s.followJournal(ctx)
 	go s.tailDNSLog(ctx)
+	go eventlog.WatchLinks(ctx, s.Events, s.watchedLink)
 	if acmeManager != nil {
 		go s.monitorACMECertificate(ctx, acmeManager, cfg.System.Panel.TLS.Domain, fingerprint)
 	}

@@ -208,6 +208,8 @@ func (s *Subsystem) restoreRemovedChannels(snapshots []removedChannelSnapshot) e
 }
 
 type Subsystem struct {
+	// Notify reports a channel becoming unavailable or available again; optional.
+	Notify           func(up bool, name, detail string)
 	Runner           system.Runner
 	StateDir         string
 	RTTablesPath     string

@@ -205,3 +205,23 @@ func (s *Server) lanNames() *eventlog.Names {
 		},
 	}
 }
+
+// UseEvents shares an event log created before the panel, so monitors started
+// earlier report into the same log. Call before Start.
+func (s *Server) UseEvents(l *eventlog.Log) {
+	s.Events, s.lan.Log = l, l
+}
+
+// watchedLink limits cable events to physical ports of the configuration:
+// tunnels, bridges and veths change state as a consequence, not a cause.
+func (s *Server) watchedLink(name string) bool {
+	if s.Engine == nil || s.Engine.Current() == nil {
+		return false
+	}
+	for _, i := range s.Engine.Current().Interfaces {
+		if i.Name == name && (i.Type == "physical" || i.Type == "") {
+			return true
+		}
+	}
+	return false
+}

@@ -42,6 +42,13 @@ func TestFailoverCanProbeRemoteTargetAfterDefaultWithdrawal(t *testing.T) {
 		{ID: "backup", Interface: "b", Index: 3, Enabled: true},
 	}
 	c := New(r, t.TempDir(), testLogger{})
+	var notes []string
+	c.Notify = func(up bool, name, detail string) {
+		if up {
+			detail = "up"
+		}
+		notes = append(notes, name+" "+detail)
+	}
 	ctx := context.Background()
 	if err := c.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -62,6 +69,9 @@ func TestFailoverCanProbeRemoteTargetAfterDefaultWithdrawal(t *testing.T) {
 	c.tick(ctx, cfg)
 	if state.Down || r.main["wan0"] == "" {
 		t.Fatal("healthy remote target could not restore the primary route")
+	}
+	if strings.Join(notes, "|") != cfg.WANs[0].Name+" трафик переведён на резервный аплинк|"+cfg.WANs[0].Name+" up" {
+		t.Fatalf("uplink state changes not reported: %q", notes)
 	}
 	r.main["wan0"] = "default via 192.0.2.254 dev wan0 metric 45000"
 	state.Next = time.Time{}
