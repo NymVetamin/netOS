@@ -20,6 +20,7 @@ import (
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/eventlog"
 	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/components"
@@ -59,6 +60,8 @@ type Server struct {
 	ClientHistory *runtime.ClientHistory
 	Maintenance   *Maintenance
 	Logger        Logger
+	// Events — журналы панели: события в памяти, по 1000 на раздел.
+	Events *eventlog.Log
 	// Components может быть nil: панель обязана работать и без опроса машины,
 	// тогда каталог отдаётся без состояний.
 	Components       ComponentProbe
@@ -146,6 +149,7 @@ func New(st *store.Store, engine *apply.Engine, collector *runtime.Collector, lo
 		loginFails:        map[string]*failCounter{},
 		loginSlots:        make(chan struct{}, maxConcurrentLogins),
 		draftVersion:      1,
+		Events:            eventlog.New(),
 	}
 	if engine != nil {
 		previousRollback := engine.OnRollback
@@ -517,6 +521,7 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 
 	go s.pruneLoop(ctx)
 	go s.monitorVPNClients(ctx)
+	go s.followJournal(ctx)
 	if acmeManager != nil {
 		go s.monitorACMECertificate(ctx, acmeManager, cfg.System.Panel.TLS.Domain, fingerprint)
 	}

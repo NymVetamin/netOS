@@ -5,209 +5,107 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/netos-router/netos/internal/eventlog"
 )
 
-func TestLogTimestampAndBoundedFile(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.FixedZone("fixture", 3*3600))
-	if got := dnsLineTime("Dec 31 23:59:59 dnsmasq query", now); got != "2025-12-31T20:59:59Z" {
-		t.Fatal(got)
+func logRequest(s *Server, query string, admin bool, ctx context.Context) (int, eventlog.Page) {
+	req := httptest.NewRequest("GET", "/api/logs?"+query, nil)
+	if admin {
+		ctx = context.WithValue(ctx, ctxRole, "admin")
 	}
-	if got := dnsLineTime("2026/01/01 10:00:00.123456 query", now); got != "2026-01-01T07:00:00.123456Z" {
-		t.Fatal(got)
-	}
-	if dnsLineTime("unknown timestamp", now) != "" {
-		t.Fatal("invented timestamp")
-	}
-	path := filepath.Join(t.TempDir(), "dns.log")
-	if err := os.WriteFile(path, []byte(strings.Repeat("x", 300000)+"\n"+strings.Repeat("Jan  1 11:00:00 dnsmasq[1]: query[A] fixture.example from 192.0.2.1\n", 500)), 0600); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := readDNSLog(path, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) > 300 || len(rows) == 0 || strings.Contains(rows[0].Message, "xxxx") {
-		t.Fatal("unbounded or partial record returned")
-	}
-}
-func TestJournalParsingAndInvalidData(t *testing.T) {
-	raw := `{"__REALTIME_TIMESTAMP":"1000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 fixture.example. A IN"}`
-	rows, err := parseJournalEntries(raw, "dns")
-	if err != nil || len(rows) != 1 || rows[0].Source != "dns" || rows[0].Time != "1970-01-01T00:00:01Z" {
-		t.Fatal(rows, err)
-	}
-	rows, err = parseJournalEntries(raw, "firewall")
-	if err != nil || len(rows) != 0 {
-		t.Fatal(rows, err)
-	}
-	if _, err = parseJournalEntries("not-json", "dns"); err == nil {
-		t.Fatal("bad journal ignored")
-	}
-}
-
-type logRunner struct{ calls []string }
-
-type orderedDNSRunner struct{ logRunner }
-
-func (r *orderedDNSRunner) Run(_ context.Context, _ string, _ ...string) (string, error) {
-	return `{"__REALTIME_TIMESTAMP":"1792486481000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 127.0.0.1 old.example. A IN"}` + "\n" +
-		`{"_SYSTEMD_UNIT":"netos-dnsmasq.service","MESSAGE":"query[A] unknown-time.example from 127.0.0.1"}` + "\n" +
-		`{"__REALTIME_TIMESTAMP":"1792760305000000","_SYSTEMD_UNIT":"netos-dnsmasq.service","MESSAGE":"query[A] current.example from 127.0.0.1"}`, nil
-}
-
-func TestLogsShowCurrentResolverBeforeOldProvider(t *testing.T) {
-	for _, kind := range []string{"dns", "all"} {
-		t.Run(kind, func(t *testing.T) {
-			s := &Server{StorageRunner: &orderedDNSRunner{}}
-			req := httptest.NewRequest("GET", "/api/logs?kind="+kind, nil)
-			req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
-			w := httptest.NewRecorder()
-			s.handleLogs(w, req)
-			var data struct{ Entries []logEntry }
-			if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil || w.Code != 200 {
-				t.Fatalf("response: %d %v", w.Code, err)
-			}
-			var rows []logEntry
-			for _, e := range data.Entries {
-				if strings.Contains(e.Message, ".example") {
-					rows = append(rows, e)
-				}
-			}
-			if len(rows) != 3 {
-				t.Fatalf("lost or duplicated records: %+v", rows)
-			}
-			// Все журналы показывают свежие записи сверху, записи без времени — в конце.
-			if !strings.Contains(rows[0].Message, "current.example") || !strings.Contains(rows[1].Message, "old.example") || rows[2].Time != "" {
-				t.Fatalf("unexpected %s order: %+v", kind, rows)
-			}
-		})
-	}
-}
-
-func (r *logRunner) Run(_ context.Context, name string, args ...string) (string, error) {
-	cmd := name + " " + strings.Join(args, " ")
-	r.calls = append(r.calls, cmd)
-	if name != "journalctl" {
-		return "", fmt.Errorf("unexpected command")
-	}
-	if strings.Contains(cmd, "--grep") {
-		return "", fmt.Errorf("kernel unavailable")
-	}
-	if strings.Contains(cmd, "netos-unbound.service") {
-		return `{"__REALTIME_TIMESTAMP":"3000000","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 fixture.example. A IN"}`, nil
-	}
-	return `{"__REALTIME_TIMESTAMP":"2000000","_SYSTEMD_UNIT":"netosd.service","MESSAGE":"fixture started"}`, nil
-}
-func (r *logRunner) RunInput(_ context.Context, _ string, _ string, _ ...string) (string, error) {
-	return "", fmt.Errorf("unexpected write")
-}
-func TestLogsAuthorizationSourcesAndPartialErrors(t *testing.T) {
-	runner := &logRunner{}
-	s := &Server{StorageRunner: runner}
-	req := httptest.NewRequest("GET", "/api/logs?kind=all", nil)
+	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	s.handleLogs(w, req)
-	if w.Code != 403 || len(runner.calls) != 0 {
-		t.Fatal("unauthorized log read")
+	var p eventlog.Page
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	return w.Code, p
+}
+
+func TestLogsAuthorizationAndTopics(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	s.Events.Add(time.Now(), eventlog.Services, eventlog.Info, "netos-dnsmasq", "запущена")
+	if code, _ := logRequest(s, "topic=all", false, context.Background()); code != 403 {
+		t.Fatal("unauthorized log read", code)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), ctxRole, "admin"))
-	w = httptest.NewRecorder()
-	s.handleLogs(w, req)
-	var data struct {
-		Entries  []logEntry
-		Warnings []string
+	if code, _ := logRequest(s, "topic=/etc/passwd", true, context.Background()); code != 400 {
+		t.Fatal("unknown topic", code)
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
-		t.Fatal(err)
+	if code, _ := logRequest(s, "after=x", true, context.Background()); code != 400 {
+		t.Fatal("bad sequence", code)
 	}
-	if w.Code != 200 || len(data.Entries) == 0 || !strings.Contains(strings.Join(data.Warnings, " "), "kernel unavailable") || len(runner.calls) != 3 {
-		t.Fatal(w.Body.String(), runner.calls)
-	}
-	if len(data.Entries) >= 2 && data.Entries[0].Time != "1970-01-01T00:00:03Z" {
-		t.Fatal("merged entries are not newest first", data.Entries)
-	}
-	bad := httptest.NewRequest("GET", "/api/logs?kind=/etc/passwd", nil)
-	bad = bad.WithContext(req.Context())
-	w = httptest.NewRecorder()
-	s.handleLogs(w, bad)
-	if w.Code != 400 || len(runner.calls) != 3 {
-		t.Fatal("unvalidated source")
+	code, p := logRequest(s, "", true, context.Background())
+	if code != 200 || !p.Reset || len(p.Events) != 1 || p.Events[0].Topic != eventlog.Services {
+		t.Fatal(code, p)
 	}
 }
 
-type journalNoMatch struct{}
-
-func (journalNoMatch) Error() string { return "exit status 1" }
-func (journalNoMatch) ExitCode() int { return 1 }
-func TestEmptyFirewallJournalIsNotReadFailure(t *testing.T) {
-	if !emptyJournalMatch("", fmt.Errorf("journalctl: %w: ", journalNoMatch{})) {
-		t.Fatal("empty match treated as failure")
+func TestLogsLongPollWakesOnlyForItsTopic(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "вход")
+	_, first := logRequest(s, "topic=access", true, context.Background())
+	done := make(chan eventlog.Page, 1)
+	go func() {
+		_, p := logRequest(s, fmt.Sprintf("topic=access&epoch=%s&after=%d", first.Epoch, first.Latest), true, context.Background())
+		done <- p
+	}()
+	time.Sleep(50 * time.Millisecond)
+	s.Events.Add(time.Now(), eventlog.Firewall, eventlog.Info, "r", "other topic")
+	select {
+	case p := <-done:
+		t.Fatal("woken by another topic", p)
+	case <-time.After(100 * time.Millisecond):
 	}
-	if emptyJournalMatch("", fmt.Errorf("journalctl: %w: permission denied", journalNoMatch{})) {
-		t.Fatal("read error masked")
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Warning, "SSH", "неудачный вход")
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Warning, "SSH", "неудачный вход 2")
+	select {
+	case p := <-done:
+		// The burst arrives as one batch, newest first, without a reset.
+		if p.Reset || len(p.Events) != 2 || p.Events[0].Message != "неудачный вход 2" {
+			t.Fatal(p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("long poll not woken")
 	}
 }
 
-func TestDNSQueryFiltering(t *testing.T) {
-	for _, message := range []string{
-		"dnsmasq[1]: query[A] example.org from 192.0.2.10",
-		"[1791969615] unbound[1:0] info: 192.0.2.10 example.org. AAAA IN",
-		"unbound[1:0] query: 2001:db8::1 example.org. TYPE65 IN",
-		`time=2026-10-16T00:00:00Z level=DEBUG msg=in prefix=proxy line_num=7 line=";example.org.\tIN\t A"`,
-		"[debug] in: ;example.org. IN A",
-	} {
-		if !isDNSQuery(message) {
-			t.Errorf("query lost: %s", message)
-		}
-	}
-	for _, message := range []string{
-		"Started netos-unbound.service", "info: start of service (unbound 1.26.1).", "info: service stopped (unbound 1.26.1).",
-		"dnsmasq[1]: read /etc/hosts - 4 names", "dnsmasq[1]: reply example.org is 192.0.2.2",
-		"info: 192.0.2.10 example.org. A IN NOERROR 0.01 1 100", "info: not-an-ip example.org A IN",
-		`level=DEBUG msg=out line_num=7 line=";example.org.\tIN\t A"`, "query logging enabled",
-	} {
-		if isDNSQuery(message) {
-			t.Errorf("service/reply misclassified: %s", message)
-		}
-	}
-	raw := `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: start of service (unbound 1.26.1)."}` + "\n" + `{"_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.0.2.1 example.org. A IN"}`
-	for _, source := range []string{"dns", "services"} {
-		rows, err := parseJournalEntries(raw, source)
-		if err != nil || len(rows) != 1 || rows[0].Source != source {
-			t.Fatal(source, rows, err)
-		}
-		if (source == "dns") != isDNSQuery(rows[0].Message) {
-			t.Fatal(source, rows)
-		}
-	}
-	path := filepath.Join(t.TempDir(), "dns.log")
-	os.WriteFile(path, []byte("started dnsmasq\nquery[A] example.org from 192.0.2.1\nreply example.org is 192.0.2.2\n"), 0600)
-	rows, err := readDNSLog(path, time.Now())
-	if err != nil || len(rows) != 1 {
-		t.Fatal(rows, err)
+func TestLogsLongPollStopsWithClient(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	_, first := logRequest(s, "", true, context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		logRequest(s, fmt.Sprintf("epoch=%s&after=%d", first.Epoch, first.Latest), true, ctx)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("waiter outlived the request")
 	}
 }
 
-func TestSortNewestFirstKeepsUnknownLastAndTiesStable(t *testing.T) {
-	entries := []logEntry{
-		{Time: "", Message: "unknown-1"},
-		{Time: "2026-11-12T10:00:01Z", Message: "older"},
-		{Time: "2026-11-12T10:00:01.5Z", Message: "newer"},
-		{Time: "2026-11-12T10:00:01.5Z", Message: "newer-tie"},
-		{Time: "", Message: "unknown-2"},
+type reasonRunner struct{ args []string }
+
+func (r *reasonRunner) Run(_ context.Context, _ string, args ...string) (string, error) {
+	r.args = args
+	return "dnsmasq: failed to create listening socket: Address in use\n", nil
+}
+func (r *reasonRunner) RunInput(context.Context, string, string, ...string) (string, error) {
+	return "", fmt.Errorf("unexpected")
+}
+
+func TestUnitReasonValidatesInvocation(t *testing.T) {
+	r := &reasonRunner{}
+	s := &Server{StorageRunner: r}
+	if s.unitReason(context.Background(), "x; rm -rf /") != "" || r.args != nil {
+		t.Fatal("unvalidated invocation")
 	}
-	sortNewestFirst(entries)
-	var got []string
-	for _, e := range entries {
-		got = append(got, e.Message)
+	got := s.unitReason(context.Background(), "0123456789abcdef0123456789abcdef")
+	if got != "dnsmasq: failed to create listening socket: Address in use" || r.args[len(r.args)-1] != "_SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef" {
+		t.Fatal(got, r.args)
 	}
-	if want := "newer newer-tie older unknown-1 unknown-2"; strings.Join(got, " ") != want {
-		t.Fatalf("got %v, want %s", got, want)
-	}
-	sortNewestFirst(nil)
 }

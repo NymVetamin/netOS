@@ -1,43 +1,66 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, type LogEvent } from "../api";
 import { Empty, Notice, TableWrap } from "../ui";
-const tabs = [{id:"all",name:"Общий"},{id:"dns",name:"DNS"},{id:"firewall",name:"Firewall"},{id:"services",name:"Службы"}];
-const fromHash=()=>{const kind=new URLSearchParams(window.location.hash.split("?")[1] || "").get("log");return tabs.some(t=>t.id===kind)?kind!:"all"};
-export function Logs({ dnsLogging }: { dnsLogging: boolean }) {
- const [open,setOpen]=useState(false);
- return <details className="logs-section" onToggle={e=>setOpen(e.currentTarget.open)}>
-  <summary>Журналы</summary>
-  {open && <LogEntries dnsLogging={dnsLogging} />}
- </details>;
-}
-export function LogEntries({ dnsLogging }: { dnsLogging: boolean }) {
- const [selectedKind,setKind]=useState(fromHash),[attempt,setAttempt]=useState(0),[query,setQuery]=useState("");
- const kind=selectedKind==="dns" && !dnsLogging ? "all" : selectedKind;
- useEffect(()=>{if(!dnsLogging && selectedKind==="dns")setKind("all")},[dnsLogging,selectedKind]);
- const [snapshot,setSnapshot]=useState<{kind:string;value:any}|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true);
- const data=snapshot?.kind===kind?snapshot.value:null;
- useEffect(()=>{const change=()=>setKind(fromHash());window.addEventListener("hashchange",change);return()=>window.removeEventListener("hashchange",change)},[]);
- useEffect(()=>{let active=true;setLoading(true);setError("");
-  api.logs(kind).then(d=>{if(active)setSnapshot({kind,value:d})}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});
-  return()=>{active=false};
- },[kind,attempt]);
- const rows=(data?.entries || []).filter((e:any)=>`${e.time} ${e.source} ${e.unit} ${e.message}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
- function download(){const text=rows.map((e:any)=>`${e.time || "Время неизвестно"}\t${e.source}\t${e.unit}\t${e.message}`).join("\n");const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`netos-${kind}.log`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
- return <div className="logs-content" aria-busy={loading}>
-  <div role="tablist" aria-label="Источники журнала" className="row wrap navigation-subtabs">{tabs.filter(t=>t.id!=="dns" || dnsLogging).map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?tab=logs&log=${t.id}`}}>{t.name}</button>)}</div>
-  <div className="row wrap" style={{margin:"0.8rem 0",gap:"0.5rem"}}>
-   <input aria-label="Поиск в журнале" placeholder="Поиск в загруженных записях" value={query} onChange={e=>setQuery(e.target.value)}/>
-   <button className="btn sm" disabled={loading} onClick={()=>setAttempt(n=>n+1)}>Обновить журнал</button>
-   <button className="btn sm" disabled={loading || !!error || !rows.length} onClick={download}>Скачать журнал</button>
-  </div>
 
-  {error&&<Notice tone="danger" title="Не удалось загрузить журнал">{error}{data&&" Показан предыдущий снимок журнала."}</Notice>}
-  {!data?(loading?<Empty>Загрузка журнала…</Empty>:null):<>
-   {data?.warnings?.map((text:string,i:number)=><Notice key={i} tone="warn" title={text}/>)}
-   <p className="hint">Показано {rows.length} из {data?.entries?.length || 0} · Снимок: {data?.captured_at ? new Date(data.captured_at).toLocaleString("ru-RU") : "—"}</p>
-   {rows.length===0?<Empty>{query?"Совпадений нет":kind==="dns"?"Запросов DNS пока нет":"Записей пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table className="logs-table">
-    <thead><tr><th>Время</th><th>Источник</th><th>Сообщение</th></tr></thead>
-    <tbody>{rows.map((e:any,i:number)=><tr key={i}><td style={{whiteSpace:"nowrap"}}>{e.time?new Date(e.time).toLocaleString("ru-RU"):"Время неизвестно"}</td><td className="logs-source">{tabs.find(t=>t.id===e.source)?.name || e.source}{e.unit&&<span className="logs-unit faint">{e.unit}</span>}</td><td style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxWidth:"65vw"}}>{e.message}</td></tr>)}</tbody>
+// Разделы совпадают с eventlog.Topics; «Общий» — все разделы вместе.
+const tabs = [
+ {id:"all",name:"Общий"},{id:"services",name:"Службы"},{id:"access",name:"Доступ"},{id:"firewall",name:"Firewall"},
+];
+const LIMIT=1000;
+const fromHash=()=>{const kind=new URLSearchParams(window.location.hash.split("?")[1] || "").get("log");return tabs.some(t=>t.id===kind)?kind!:"all"};
+// Новые события приходят первыми; reset означает, что клиент отстал (ротация,
+// перезапуск netosd) и список заменяется целиком.
+export function mergeLog(old:LogEvent[]|null,p:{reset:boolean;events:LogEvent[]}){
+ if(p.reset)return p.events;
+ if(!p.events.length)return old||[];
+ return [...p.events,...(old||[])].slice(0,LIMIT);
+}
+const levelBadge:{[k:string]:[string,string]}={warning:["warn","внимание"],error:["danger","ошибка"]};
+
+// Живой журнал: долгий опрос, как у графика трафика. Сервер отвечает сразу,
+// когда есть новые события, иначе ждёт до 25 с. Скрытая вкладка браузера не
+// опрашивает; при возврате журнал продолжается с последнего номера.
+function useLiveLog(topic:string){
+ const [events,setEvents]=useState<LogEvent[]|null>(null),[error,setError]=useState("");
+ useEffect(()=>{
+  setEvents(null);setError("");
+  let cancelled=false,busy=false,after=0,epoch="";let retry:ReturnType<typeof setTimeout>;const controller=new AbortController();
+  const load=async()=>{
+   if(cancelled||busy||document.hidden)return;busy=true;
+   try{while(!cancelled&&!document.hidden){
+    const p=await api.logs(topic,after,epoch,controller.signal);if(cancelled)return;
+    setError("");
+    setEvents(old=>mergeLog(old,p));
+    after=p.latest;epoch=p.epoch;
+   }}catch(e:any){if(!cancelled){setError(e?.message||"Нет связи с роутером");retry=setTimeout(load,2000)}}finally{busy=false}
+  };
+  void load();document.addEventListener("visibilitychange",load);
+  return()=>{cancelled=true;controller.abort();clearTimeout(retry);document.removeEventListener("visibilitychange",load)};
+ },[topic]);
+ return {events,error};
+}
+
+export function LogEntries(_:{ dnsLogging: boolean }) {
+ const [kind,setKind]=useState(fromHash),[query,setQuery]=useState("");
+ useEffect(()=>{const change=()=>setKind(fromHash());window.addEventListener("hashchange",change);return()=>window.removeEventListener("hashchange",change)},[]);
+ const {events,error}=useLiveLog(kind);
+ const name=(id:string)=>tabs.find(t=>t.id===id)?.name||id;
+ const needle=query.toLocaleLowerCase();
+ const rows=(events||[]).filter(e=>!needle||`${e.source} ${e.message}`.toLocaleLowerCase().includes(needle));
+ const time=(ms:number)=>new Date(ms).toLocaleString("ru-RU");
+ function download(){const text=rows.map(e=>`${new Date(e.time).toISOString()}\t${name(e.topic)}\t${e.level}\t${e.source}\t${e.message}`).join("\n");const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`netos-${kind}.log`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+ return <div className="logs-content" aria-busy={events===null}>
+  <div role="tablist" aria-label="Источники журнала" className="row wrap navigation-subtabs">{tabs.map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?tab=logs&log=${t.id}`}}>{t.name}</button>)}</div>
+  <div className="row wrap" style={{margin:"0.8rem 0",gap:"0.5rem"}}>
+   <input aria-label="Поиск в журнале" placeholder="Поиск" value={query} onChange={e=>setQuery(e.target.value)}/>
+   <button className="btn sm" disabled={!rows.length} onClick={download}>Скачать журнал</button>
+  </div>
+  {error&&<Notice tone="warn" title="Нет связи с роутером, переподключение…">{error}</Notice>}
+  {events===null?(!error&&<Empty>Загрузка журнала…</Empty>):<>
+   <p className="hint">{query?`Найдено ${rows.length} из ${events.length}`:`Последние ${events.length} событий`} · обновляется сразу, хранится до {LIMIT} событий на раздел</p>
+   {rows.length===0?<Empty>{query?"Совпадений нет":"Событий пока нет"}</Empty>:<div style={{maxHeight:"32rem",overflow:"auto"}}><TableWrap><table className="logs-table">
+    <thead><tr><th>Время</th><th>Источник</th><th>Событие</th></tr></thead>
+    <tbody>{rows.map(e=>{const badge=levelBadge[e.level];return <tr key={e.seq}><td style={{whiteSpace:"nowrap"}}>{time(e.time)}</td><td className="logs-source">{kind==="all"&&<span>{name(e.topic)}</span>}<span className={kind==="all"?"logs-unit faint":""}>{e.source}</span></td><td style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxWidth:"65vw"}}>{badge&&<span className={`badge ${badge[0]}`} style={{marginRight:8}}>{badge[1]}</span>}{e.message}</td></tr>})}</tbody>
    </table></TableWrap></div>}
   </>}
  </div>;

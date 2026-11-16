@@ -195,6 +195,9 @@ async function request<T>(
   return data as T;
 }
 
+export type LogEvent = { seq: number; time: number; topic: string; level: "info" | "warning" | "error"; source: string; message: string };
+export type LogPage = { epoch: string; latest: number; reset: boolean; events: LogEvent[] };
+
 export const api = {
   connections: (query: string, signal?: AbortSignal) => request<{rows:ConnectionRow[];total:number;scanned:number;unparsed:number;page:number;updated:string}>("GET", `/api/diagnostics/connections?${query}`, undefined, undefined, signal),
   async diagnosticCapture(id: string): Promise<Blob> {
@@ -289,7 +292,7 @@ export const api = {
     ),
 
   portModes: (name: string) => request<any>("GET", `/api/interfaces/${encodeURIComponent(name)}/modes`),
-  logs: (kind: string) => request<any>("GET", `/api/logs?kind=${encodeURIComponent(kind)}`),
+  logs: (topic: string, after: number, epoch: string, signal?: AbortSignal) => request<LogPage>("GET", `/api/logs?topic=${encodeURIComponent(topic)}&after=${after}&epoch=${encodeURIComponent(epoch)}`, undefined, undefined, signal),
   firewallPreview: (config: any) => request<any>("POST", "/api/firewall/preview", config),
   firewallLive: () => request<any>("GET", "/api/firewall/live"),
 

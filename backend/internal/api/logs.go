@@ -1,248 +1,110 @@
 package api
 
 import (
-	"bufio"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"github.com/netos-router/netos/internal/system"
-	"io"
-	"net"
+	"context"
 	"net/http"
-	"os"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/netos-router/netos/internal/eventlog"
+	"github.com/netos-router/netos/internal/system"
 )
 
-type logEntry struct {
-	Time    string `json:"time"`
-	Source  string `json:"source"`
-	Unit    string `json:"unit"`
-	Message string `json:"message"`
-}
+// logWait bounds one long poll; logBatch collects a burst into one response,
+// so a busy topic costs a viewer at most a few requests per second.
+const (
+	logWait  = 25 * time.Second
+	logBatch = 250 * time.Millisecond
+)
 
-// Query records only: service lifecycle, resolver statistics and replies are not queries.
-var dnsmasqQuery = regexp.MustCompile(`\bquery\[[^\]]+\]\s+\S+\s+from\s+\S+`)
-var unboundQuery = regexp.MustCompile(`(?:info:|query:)\s+(\S+)\s+\S+\s+[A-Z0-9]+\s+(?:IN|CH|HS|CLASS[0-9]+)\s*$`)
-var dnsproxyQuestion = regexp.MustCompile(`^;[^;\s]+\s+(?:IN|CH|HS|CLASS[0-9]+)\s+[A-Z0-9]+\s*$`)
-var dnsproxyLine = regexp.MustCompile(`\bline=("(?:\\.|[^"\\])*"|\S+)`)
-
-func isDNSQuery(message string) bool {
-	if dnsmasqQuery.MatchString(message) {
-		return true
-	}
-	if m := unboundQuery.FindStringSubmatch(message); len(m) > 1 && net.ParseIP(m[1]) != nil {
-		return true
-	}
-	// dnsproxy emits the DNS packet as structured, numbered lines. Keep its incoming question only.
-	if strings.Contains(message, "msg=in ") || strings.Contains(message, "msg=\"in\" ") || strings.Contains(message, " in line_num=") {
-		m := dnsproxyLine.FindStringSubmatch(message)
-		if len(m) > 1 {
-			line := m[1]
-			if strings.HasPrefix(line, "\"") {
-				line, _ = strconv.Unquote(line)
-			}
-			return dnsproxyQuestion.MatchString(line)
-		}
-	}
-	if i := strings.Index(message, "in: "); i >= 0 {
-		return dnsproxyQuestion.MatchString(strings.TrimSpace(message[i+4:]))
-	}
-	return false
-}
-
-func parseJournalEntries(raw, source string) ([]logEntry, error) {
-	result := []logEntry{}
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	scanner.Buffer(make([]byte, 4096), 2<<20)
-	for scanner.Scan() {
-		if strings.TrimSpace(scanner.Text()) == "" {
-			continue
-		}
-		var row map[string]json.RawMessage
-		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
-			return result, fmt.Errorf("не удалось разобрать запись журнала")
-		}
-		field := func(k string) string { var v string; _ = json.Unmarshal(row[k], &v); return v }
-		message := field("MESSAGE")
-		if message == "" {
-			continue
-		}
-		if source == "firewall" && !strings.Contains(message, "netos ") {
-			continue
-		}
-		unit := field("_SYSTEMD_UNIT")
-		if unit == "" {
-			unit = field("SYSLOG_IDENTIFIER")
-		}
-		ts := ""
-		if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
-			ts = time.UnixMicro(us).UTC().Format(time.RFC3339Nano)
-		}
-		query := isDNSQuery(message)
-		if source == "dns" && !query || source == "services" && query {
-			continue
-		}
-		result = append(result, logEntry{Time: ts, Source: source, Unit: unit, Message: message})
-	}
-	return result, scanner.Err()
-}
-func dnsLineTime(line string, now time.Time) string {
-	for _, layout := range []string{"2006/01/02 15:04:05.000000", "2006/01/02 15:04:05", "2006-01-02 15:04:05", "Jan _2 15:04:05"} {
-		if len(line) < len(layout) {
-			continue
-		}
-		if t, err := time.ParseInLocation(layout, line[:len(layout)], now.Location()); err == nil {
-			if t.Year() == 0 {
-				t = t.AddDate(now.Year(), 0, 0)
-				if t.After(now.Add(24 * time.Hour)) {
-					t = t.AddDate(-1, 0, 0)
-				}
-			}
-			return t.UTC().Format(time.RFC3339Nano)
-		}
-	}
-	fields := strings.Fields(line)
-	if len(fields) > 0 {
-		if t, err := time.Parse(time.RFC3339Nano, fields[0]); err == nil {
-			return t.UTC().Format(time.RFC3339Nano)
-		}
-	}
-	return ""
-}
-func readDNSLog(path string, now time.Time) ([]logEntry, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	stat, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !stat.Mode().IsRegular() {
-		return nil, fmt.Errorf("источник DNS не является обычным файлом")
-	}
-	const maxBytes int64 = 256 << 10
-	offset := stat.Size() - maxBytes
-	if offset < 0 {
-		offset = 0
-	}
-	if _, err = f.Seek(offset, io.SeekStart); err != nil {
-		return nil, err
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxBytes))
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(string(data), "\n")
-	if offset > 0 && len(lines) > 0 {
-		lines = lines[1:]
-	}
-	if len(lines) > 300 {
-		lines = lines[len(lines)-300:]
-	}
-	result := []logEntry{}
-	for _, line := range lines {
-		if isDNSQuery(line) {
-			result = append(result, logEntry{Time: dnsLineTime(line, now), Source: "dns", Unit: "dns.log", Message: line})
-		}
-	}
-	return result, nil
-}
+// handleLogs returns the newest events (after=0) or waits for events newer
+// than after, the same long-poll scheme as the realtime traffic chart.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !may(r, "diagnostics", false) {
 		writeError(w, http.StatusForbidden, "журналы доступны только администратору")
 		return
 	}
-	kind := r.URL.Query().Get("kind")
-	if kind == "" {
-		kind = "all"
+	q := r.URL.Query()
+	topic := q.Get("topic")
+	if topic == "" {
+		topic = "all"
 	}
-	if kind != "all" && kind != "dns" && kind != "firewall" && kind != "services" {
+	var after uint64
+	if raw := q.Get("after"); raw != "" {
+		var err error
+		if after, err = strconv.ParseUint(raw, 10, 64); err != nil {
+			writeError(w, http.StatusBadRequest, "некорректный номер события")
+			return
+		}
+	}
+	epoch := q.Get("epoch")
+	page, changed, ok := s.Events.Since(topic, epoch, after)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "неизвестный журнал")
 		return
 	}
+	if len(page.Events) == 0 && !page.Reset {
+		wait := time.NewTimer(logWait)
+		defer wait.Stop()
+		for len(page.Events) == 0 && !page.Reset {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-wait.C:
+				writeJSON(w, http.StatusOK, page)
+				return
+			case <-changed:
+			}
+			// Events of other topics also wake the waiter; keep waiting for ours.
+			page, changed, _ = s.Events.Since(topic, epoch, after)
+		}
+		batch := time.NewTimer(logBatch)
+		defer batch.Stop()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-batch.C:
+		}
+		page, _, _ = s.Events.Since(topic, epoch, after)
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+// unitReason returns the last line a failed unit invocation logged, so a
+// crash shows why it happened. Called only for fresh failures. No priority
+// filter: daemons commonly print errors to stderr, which journald stores as
+// info. systemd's own messages carry INVOCATION_ID, not the trusted
+// _SYSTEMD_INVOCATION_ID, and are not matched.
+func (s *Server) unitReason(ctx context.Context, invocation string) string {
+	if len(invocation) != 32 || strings.Trim(invocation, "0123456789abcdef") != "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	runner := s.StorageRunner
 	if runner == nil {
-		runner = &system.Exec{Timeout: 5 * time.Second}
+		runner = &system.Exec{Timeout: 2 * time.Second}
 	}
-	entries := []logEntry{}
-	warnings := []string{}
-	now := time.Now()
-	for _, src := range []string{"dns", "firewall", "services"} {
-		if kind != "all" && kind != src {
-			continue
-		}
-		args := []string{"--no-pager", "--quiet", "-o", "json", "-n", "300", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER"}
-		switch src {
-		case "dns":
-			args = append(args, "-u", "netos-unbound.service", "-u", "dnsmasq.service", "-u", "netos-dnsmasq.service", "-u", "netos-dnsproxy.service")
-		case "firewall":
-			args = append(args, "-k", "--grep=netos ")
-		case "services":
-			args = append(args, "-u", "netos*.service")
-		}
-		raw, err := runner.Run(r.Context(), "journalctl", args...)
-		// journalctl --grep exits 1 without stderr when no entries match.
-		if src == "firewall" && emptyJournalMatch(raw, err) {
-			err = nil
-		}
-		if err != nil {
-			warnings = append(warnings, src+": не удалось прочитать journal: "+err.Error())
-		} else {
-			rows, parseErr := parseJournalEntries(raw, src)
-			if parseErr != nil {
-				warnings = append(warnings, src+": "+parseErr.Error())
-			}
-			entries = append(entries, rows...)
-		}
-		if src == "dns" {
-			rows, err := readDNSLog("/var/log/netos/dns.log", now)
-			if err != nil && !os.IsNotExist(err) {
-				warnings = append(warnings, "Не удалось прочитать dns.log: "+err.Error())
-			} else {
-				entries = append(entries, rows...)
-			}
-		}
+	out, err := runner.Run(ctx, "journalctl", "--no-pager", "--quiet", "-o", "cat", "-n", "1", "_SYSTEMD_INVOCATION_ID="+invocation)
+	if err != nil {
+		return ""
 	}
-	sortNewestFirst(entries)
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "warnings": warnings, "captured_at": now.UTC().Format(time.RFC3339), "kind": kind})
+	out = strings.TrimSpace(out)
+	if len(out) > 300 {
+		cut := 300
+		for cut > 0 && !utf8.RuneStart(out[cut]) {
+			cut--
+		}
+		out = out[:cut] + "…"
+	}
+	return out
 }
 
-// sortNewestFirst ставит свежие записи сверху во всех журналах, как в истории
-// ревизий и журнале действий. Записи без времени уходят в конец в исходном
-// порядке. Время разбирается один раз на запись, а не при каждом сравнении.
-func sortNewestFirst(entries []logEntry) {
-	type keyed struct {
-		at    time.Time
-		known bool
-		entry logEntry
-	}
-	rows := make([]keyed, len(entries))
-	for i, e := range entries {
-		at, _ := time.Parse(time.RFC3339Nano, e.Time)
-		rows[i] = keyed{at: at, known: e.Time != "", entry: e}
-	}
-	slices.SortStableFunc(rows, func(a, b keyed) int {
-		if a.known != b.known {
-			if a.known {
-				return -1
-			}
-			return 1
-		}
-		return b.at.Compare(a.at)
-	})
-	for i := range rows {
-		entries[i] = rows[i].entry
-	}
-}
-
-func emptyJournalMatch(raw string, err error) bool {
-	var status interface{ ExitCode() int }
-	return err != nil && errors.As(err, &status) && status.ExitCode() == 1 && strings.TrimSpace(raw) == "" && strings.HasSuffix(strings.TrimSpace(err.Error()), "exit status 1:")
+// followJournal is started once with the server.
+func (s *Server) followJournal(ctx context.Context) {
+	j := &eventlog.Journal{Log: s.Events, Reason: s.unitReason}
+	j.Follow(ctx)
 }
