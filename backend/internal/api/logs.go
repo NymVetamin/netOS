@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/netos-router/netos/internal/eventlog"
+	"github.com/netos-router/netos/internal/runtime"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -103,8 +104,57 @@ func (s *Server) unitReason(ctx context.Context, invocation string) string {
 	return out
 }
 
+func (s *Server) queryLog() bool {
+	if s.Engine == nil {
+		return false
+	}
+	cfg := s.Engine.Current()
+	return cfg != nil && cfg.DNS.QueryLog
+}
+
 // followJournal is started once with the server.
 func (s *Server) followJournal(ctx context.Context) {
-	j := &eventlog.Journal{Log: s.Events, Reason: s.unitReason}
+	j := &eventlog.Journal{Log: s.Events, Reason: s.unitReason, DNS: s.queryLog}
 	j.Follow(ctx)
+}
+
+const dnsLogPath = "/var/log/netos/dns.log"
+
+// tailDNSLog is the only reader of the resolver query file (dnsmasq,
+// dnsproxy): it feeds the DNS topic and client history. It reads appended
+// bytes every 2 s, only while the query log is enabled.
+func (s *Server) tailDNSLog(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var tail runtime.DNSFileTail
+	defer tail.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if !s.queryLog() {
+			tail.Close()
+			continue
+		}
+		lines, err := tail.Read(dnsLogPath)
+		if err != nil {
+			continue
+		}
+		s.addDNSLines(time.Now(), lines)
+	}
+}
+
+func (s *Server) addDNSLines(now time.Time, lines []string) {
+	for _, line := range lines {
+		if s.ClientHistory != nil {
+			if addr, domain := runtime.ParseDNSQuery(line); addr != "" {
+				s.ClientHistory.AddDNS(now, addr, domain)
+			}
+		}
+		if client, text, ok := eventlog.DNSQuery(line); ok {
+			s.Events.Add(now, eventlog.DNS, eventlog.Info, client, text)
+		}
+	}
 }

@@ -46,6 +46,7 @@ async def main():
   await page.goto('https://netos-ui.test/#diagnostics?tab=logs&log=all')
   await expect(rows).to_have_count(3)
   await expect(rows.first).to_contain_text('drop-ssh')
+  await expect(page.locator('.logs-content').get_by_role('tab',name='DNS',exact=True)).to_be_visible()
   await expect(page.get_by_text('запущена'+XSS,exact=True)).to_be_visible()
   await expect(page.locator('.logs-content').get_by_text('Обновить журнал')).to_have_count(0)
   # A new event appears on top without any button.

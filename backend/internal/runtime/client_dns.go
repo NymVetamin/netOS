@@ -27,9 +27,9 @@ func ParseDNSQuery(line string) (address, domain string) {
 }
 
 // A single journal subscription receives new resolver events. It never scans
-// historical journals. The existing optional dnsmasq file is tailed by offset.
+// historical journals. The optional query file is read by the panel's single
+// DNSFileTail, which also feeds AddDNS.
 func (h *ClientHistory) watchDNS(ctx context.Context) {
-	go h.tailDNSFile(ctx)
 	for ctx.Err() == nil {
 		// Match the executable, then validate the unit below: unit globs expand only
 		// when journalctl starts and would miss newly added Xray servers.
@@ -134,22 +134,22 @@ func (h *ClientHistory) readResourceJournal(ctx context.Context, pipe io.Reader)
 	}
 }
 
-// dnsFileTail drains a renamed inode before switching to the new file. Only
+// DNSFileTail drains a renamed inode before switching to the new file. Only
 // the first attachment skips history; a rotated file must be read from byte 0.
-type dnsFileTail struct {
+type DNSFileTail struct {
 	file    *os.File
 	offset  int64
 	pending string
 }
 
-func (t *dnsFileTail) close() {
+func (t *DNSFileTail) Close() {
 	if t.file != nil {
 		_ = t.file.Close()
 	}
-	*t = dnsFileTail{}
+	*t = DNSFileTail{}
 }
 
-func (t *dnsFileTail) read(path string) ([]string, error) {
+func (t *DNSFileTail) Read(path string) ([]string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -196,33 +196,4 @@ func (t *dnsFileTail) read(path string) ([]string, error) {
 		t.pending = ""
 	}
 	return parts[:len(parts)-1], nil
-}
-
-func (h *ClientHistory) tailDNSFile(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	var tail dnsFileTail
-	defer tail.close()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		cfg := h.Current()
-		if cfg == nil || !cfg.DNS.QueryLog {
-			tail.close()
-			continue
-		}
-		lines, err := tail.read("/var/log/netos/dns.log")
-		if err != nil {
-			continue
-		}
-		for _, line := range lines {
-			addr, domain := ParseDNSQuery(line)
-			if addr != "" {
-				h.AddDNS(time.Now(), addr, domain)
-			}
-		}
-	}
 }

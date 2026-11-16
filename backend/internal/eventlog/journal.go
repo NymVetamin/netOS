@@ -2,11 +2,14 @@ package eventlog
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,15 +24,30 @@ const (
 	msgFailed    = "d9b373ed55a64feb8242e02dbe79a49c"
 )
 
-const journalFields = "__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,MESSAGE_ID,_PID,_TRANSPORT,SYSLOG_IDENTIFIER,UNIT,JOB_TYPE,JOB_RESULT,UNIT_RESULT,EXIT_CODE,EXIT_STATUS,INVOCATION_ID"
+const journalFields = "__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,MESSAGE_ID,_PID,_TRANSPORT,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,UNIT,JOB_TYPE,JOB_RESULT,UNIT_RESULT,EXIT_CODE,EXIT_STATUS,INVOCATION_ID"
 
-// journalMatches selects only what some topic shows; journald filters by its
-// indexes, so unrelated daemon output never reaches netosd.
-var journalMatches = []string{
-	"_PID=1", "MESSAGE_ID=" + msgStarted, "MESSAGE_ID=" + msgJobFailed, "MESSAGE_ID=" + msgStopped, "MESSAGE_ID=" + msgExit, "MESSAGE_ID=" + msgFailed,
-	"+", "_TRANSPORT=kernel",
-	"+", "SYSLOG_IDENTIFIER=sshd",
-	"+", "SYSLOG_IDENTIFIER=sshd-session",
+const unboundUnit = "netos-unbound.service"
+
+// journalGroups select only what some topic shows; journald filters by its
+// indexes, so unrelated daemon output never reaches netosd. Each group is one
+// OR-branch of the live filter and is refilled separately on start, so a
+// chatty source (DNS queries, a LOG rule) cannot push the others out.
+var journalGroups = [][]string{
+	{"_PID=1", "MESSAGE_ID=" + msgStarted, "MESSAGE_ID=" + msgJobFailed, "MESSAGE_ID=" + msgStopped, "MESSAGE_ID=" + msgExit, "MESSAGE_ID=" + msgFailed},
+	{"_TRANSPORT=kernel"},
+	{"SYSLOG_IDENTIFIER=sshd", "SYSLOG_IDENTIFIER=sshd-session"},
+	{"_SYSTEMD_UNIT=" + unboundUnit},
+}
+
+func journalMatches() []string {
+	var out []string
+	for i, g := range journalGroups {
+		if i > 0 {
+			out = append(out, "+")
+		}
+		out = append(out, g...)
+	}
+	return out
 }
 
 const maxJournalLine = 64 << 10
@@ -39,6 +57,10 @@ type Journal struct {
 	Log *Log
 	// Reason returns the last line a failed unit invocation logged; optional.
 	Reason func(ctx context.Context, invocation string) string
+	// DNS reports whether DNS queries are shown (the query log is enabled).
+	DNS func() bool
+	// Run executes journalctl and returns its output; tests replace it.
+	Run    func(ctx context.Context, args ...string) ([]byte, error)
 	units  map[string]*unitState
 	cursor string
 }
@@ -48,18 +70,22 @@ type unitState struct {
 	exit               string
 }
 
-// Follow runs one journalctl process for the daemon's lifetime. The first run
-// refills the log from recent history; a restarted process continues after
-// the last cursor, so nothing is shown twice.
+// Follow runs one journalctl process for the daemon's lifetime. On start each
+// group is refilled from recent history up to the current end of the journal,
+// and the live process continues exactly after it; a restarted process
+// continues after the last cursor, so nothing is shown twice or skipped.
 func (j *Journal) Follow(ctx context.Context) {
 	for ctx.Err() == nil {
+		if j.cursor == "" {
+			j.refill(ctx)
+		}
 		args := []string{"--follow", "--output=json", "--output-fields=" + journalFields}
 		if j.cursor == "" {
-			args = append(args, "--lines="+strconv.Itoa(3*Size))
+			args = append(args, "--lines=0")
 		} else {
 			args = append(args, "--lines=all", "--after-cursor="+j.cursor)
 		}
-		cmd := exec.CommandContext(ctx, "journalctl", append(args, journalMatches...)...)
+		cmd := exec.CommandContext(ctx, "journalctl", append(args, journalMatches()...)...)
 		pipe, err := cmd.StdoutPipe()
 		if err == nil {
 			err = cmd.Start()
@@ -75,6 +101,65 @@ func (j *Journal) Follow(ctx context.Context) {
 		case <-time.After(10 * time.Second):
 		}
 	}
+}
+
+func (j *Journal) run(ctx context.Context, args ...string) ([]byte, error) {
+	if j.Run != nil {
+		return j.Run(ctx, args...)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "journalctl", append([]string{"--no-pager", "--quiet"}, args...)...).Output()
+}
+
+// refill loads the newest Size records of every group, up to the journal's
+// current last entry, and handles them in time order. Runs once per daemon
+// start: 2 + len(journalGroups) commands.
+func (j *Journal) refill(ctx context.Context) {
+	out, err := j.run(ctx, "--output=json", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP", "--lines=1")
+	if err != nil {
+		return
+	}
+	head, err := parseRecord(bytes.TrimSpace(out))
+	if err != nil {
+		return
+	}
+	us, err := strconv.ParseInt(head["__REALTIME_TIMESTAMP"], 10, 64)
+	if err != nil {
+		return
+	}
+	until := "--until=@" + strconv.FormatInt(us/1e6, 10) + "." + fmt.Sprintf("%06d", us%1e6)
+	type row struct {
+		at  int64
+		raw []byte
+	}
+	var rows []row
+	for _, g := range journalGroups {
+		out, err := j.run(ctx, append([]string{"--output=json", "--output-fields=" + journalFields, "--lines=" + strconv.Itoa(Size), until}, g...)...)
+		if err != nil {
+			continue // an empty group is reported as an error by old journalctl
+		}
+		for _, line := range bytes.Split(out, []byte{'\n'}) {
+			if len(line) == 0 || len(line) > maxJournalLine {
+				continue
+			}
+			var ts struct {
+				T string `json:"__REALTIME_TIMESTAMP"`
+			}
+			if json.Unmarshal(line, &ts) != nil {
+				continue
+			}
+			at, _ := strconv.ParseInt(ts.T, 10, 64)
+			rows = append(rows, row{at, line})
+		}
+	}
+	// Each group is already in journal order; a stable sort keeps it.
+	sort.SliceStable(rows, func(a, b int) bool { return rows[a].at < rows[b].at })
+	now := time.Now()
+	for _, r := range rows {
+		j.Handle(ctx, r.raw, now)
+	}
+	j.cursor = head["__CURSOR"]
 }
 
 func (j *Journal) read(ctx context.Context, r io.Reader) {
@@ -137,6 +222,12 @@ func (j *Journal) Handle(ctx context.Context, raw []byte, now time.Time) {
 	case rec["_TRANSPORT"] == "kernel":
 		if rule, msg, ok := FirewallEvent(rec["MESSAGE"]); ok {
 			j.Log.Add(at, Firewall, Info, rule, msg)
+		}
+	case rec["_SYSTEMD_UNIT"] == unboundUnit:
+		if j.DNS != nil && j.DNS() {
+			if client, msg, ok := DNSQuery(rec["MESSAGE"]); ok {
+				j.Log.Add(at, DNS, Info, client, msg)
+			}
 		}
 	case strings.HasPrefix(rec["SYSLOG_IDENTIFIER"], "sshd"):
 		if level, msg, ok := SSHEvent(rec["MESSAGE"]); ok {

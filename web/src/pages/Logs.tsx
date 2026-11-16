@@ -4,7 +4,7 @@ import { Empty, Notice, TableWrap } from "../ui";
 
 // Разделы совпадают с eventlog.Topics; «Общий» — все разделы вместе.
 const tabs = [
- {id:"all",name:"Общий"},{id:"services",name:"Службы"},{id:"access",name:"Доступ"},{id:"firewall",name:"Firewall"},
+ {id:"all",name:"Общий"},{id:"services",name:"Службы"},{id:"access",name:"Доступ"},{id:"firewall",name:"Firewall"},{id:"dns",name:"DNS"},
 ];
 const LIMIT=1000;
 const fromHash=()=>{const kind=new URLSearchParams(window.location.hash.split("?")[1] || "").get("log");return tabs.some(t=>t.id===kind)?kind!:"all"};
@@ -40,8 +40,11 @@ function useLiveLog(topic:string){
  return {events,error};
 }
 
-export function LogEntries(_:{ dnsLogging: boolean }) {
- const [kind,setKind]=useState(fromHash),[query,setQuery]=useState("");
+export function LogEntries({ dnsLogging }:{ dnsLogging: boolean }) {
+ const [selected,setKind]=useState(fromHash),[query,setQuery]=useState("");
+ // Вкладка DNS есть, только пока включён журнал запросов.
+ const kind=selected==="dns"&&!dnsLogging?"all":selected;
+ const visible=tabs.filter(t=>t.id!=="dns"||dnsLogging);
  useEffect(()=>{const change=()=>setKind(fromHash());window.addEventListener("hashchange",change);return()=>window.removeEventListener("hashchange",change)},[]);
  const {events,error}=useLiveLog(kind);
  const name=(id:string)=>tabs.find(t=>t.id===id)?.name||id;
@@ -50,7 +53,7 @@ export function LogEntries(_:{ dnsLogging: boolean }) {
  const time=(ms:number)=>new Date(ms).toLocaleString("ru-RU");
  function download(){const text=rows.map(e=>`${new Date(e.time).toISOString()}\t${name(e.topic)}\t${e.level}\t${e.source}\t${e.message}`).join("\n");const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`netos-${kind}.log`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  return <div className="logs-content" aria-busy={events===null}>
-  <div role="tablist" aria-label="Источники журнала" className="row wrap navigation-subtabs">{tabs.map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?tab=logs&log=${t.id}`}}>{t.name}</button>)}</div>
+  <div role="tablist" aria-label="Источники журнала" className="row wrap navigation-subtabs">{visible.map(t=><button type="button" role="tab" aria-selected={kind===t.id} key={t.id} className={`btn sm ${kind===t.id?"primary":""}`} onClick={()=>{setQuery("");window.location.hash=`diagnostics?tab=logs&log=${t.id}`}}>{t.name}</button>)}</div>
   <div className="row wrap" style={{margin:"0.8rem 0",gap:"0.5rem"}}>
    <input aria-label="Поиск в журнале" placeholder="Поиск" value={query} onChange={e=>setQuery(e.target.value)}/>
    <button className="btn sm" disabled={!rows.length} onClick={download}>Скачать журнал</button>

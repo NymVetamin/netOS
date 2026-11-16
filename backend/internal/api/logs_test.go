@@ -109,3 +109,18 @@ func TestUnitReasonValidatesInvocation(t *testing.T) {
 		t.Fatal(got, r.args)
 	}
 }
+
+func TestDNSFileLinesFeedLog(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	s.addDNSLines(time.Now(), []string{
+		"Nov 16 10:00:00 dnsmasq[1]: query[A] example.com from 192.168.1.5",
+		"Nov 16 10:00:00 dnsmasq[1]: reply example.com is 192.0.2.1",
+	})
+	p, _, _ := s.Events.Since(eventlog.DNS, "", 0)
+	if len(p.Events) != 1 || p.Events[0].Source != "192.168.1.5" || p.Events[0].Message != "example.com (A)" {
+		t.Fatal(p.Events)
+	}
+	if s.queryLog() {
+		t.Fatal("query log without configuration")
+	}
+}
