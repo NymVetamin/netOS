@@ -124,6 +124,12 @@ func (l *LAN) WiFi(at time.Time, line string) {
 
 // DHCP handles one line of dnsmasq, ISC dhcpd or Kea.
 func (l *LAN) DHCP(at time.Time, line string) {
+	// Every pattern below needs one of these words. dnsmasq writes its DNS
+	// traffic to the same stream (dns.log, or journald while the traffic
+	// monitor is on), several lines per query: they stop here.
+	if !strings.Contains(line, "DHCP") && !strings.Contains(line, "ALLOC_ENGINE") {
+		return
+	}
 	kind, iface, ip, addr, host := "", "", "", "", ""
 	if m := dnsmasqDHCP.FindStringSubmatch(line); m != nil {
 		kind, iface, ip, addr, host = m[1], m[2], m[3], m[4], m[5]

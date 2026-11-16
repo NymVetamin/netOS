@@ -32,6 +32,13 @@ const unboundUnit = "netos-unbound.service"
 // indexes, so unrelated daemon output never reaches netosd. Each group is one
 // OR-branch of the live filter and is refilled separately on start, so a
 // chatty source (DNS queries, a LOG rule) cannot push the others out.
+//
+// One unit is not filtered that finely: while the traffic monitor is on and
+// the query log is off, dnsmasq prints its DNS traffic to journald under the
+// DHCP unit, with no field telling the two apart. Those lines are dropped by
+// LAN.DHCP at a substring check (journald's rate limit bounds their number),
+// but they do fill the unit's newest Size records, so DHCP history is not
+// refilled after a restart in that mode — as with dns.log.
 var journalGroups = [][]string{
 	{"_PID=1", "MESSAGE_ID=" + msgStarted, "MESSAGE_ID=" + msgJobFailed, "MESSAGE_ID=" + msgStopped, "MESSAGE_ID=" + msgExit, "MESSAGE_ID=" + msgFailed},
 	{"_TRANSPORT=kernel"},

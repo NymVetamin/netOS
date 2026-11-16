@@ -95,6 +95,46 @@ func TestDHCPEventsAllServersWithoutRenewals(t *testing.T) {
 	}
 }
 
+// dnsmasq's DNS lines share the DHCP stream; they must cost a substring check,
+// not the eight patterns. Run with -bench DNSNoise to compare.
+var dnsNoise = []string{
+	"Nov 16 12:00:00 dnsmasq[812]: reply www.example.com is 93.184.216.34",
+	"Nov 16 12:00:00 dnsmasq[812]: forwarded www.example.com to 127.0.0.1#5053",
+	"Nov 16 12:00:00 dnsmasq[812]: cached www.example.com is 93.184.216.34",
+	"Nov 16 12:00:00 dnsmasq[812]: query[A] www.example.com from 192.168.1.5",
+}
+
+func TestDNSNoiseIsNotDHCP(t *testing.T) {
+	l, lan := lanFixture()
+	for _, line := range dnsNoise {
+		lan.DHCP(time.Unix(1792000000, 0), line)
+	}
+	if got := messages(l, DHCP); len(got) != 0 {
+		t.Fatal(got)
+	}
+	// What the dns.log reader does with the same lines: one query, no DHCP.
+	queries := 0
+	for _, line := range dnsNoise {
+		if _, _, ok := DNSQuery(line); ok {
+			queries++
+		}
+	}
+	if queries != 1 {
+		t.Fatal(queries)
+	}
+}
+
+func BenchmarkDNSNoise(b *testing.B) {
+	_, lan := lanFixture()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		line := dnsNoise[i%3] // replies, forwards, cache: not queries
+		if _, _, ok := DNSQuery(line); !ok {
+			lan.DHCP(time.Time{}, line)
+		}
+	}
+}
+
 func TestLANStateIsBounded(t *testing.T) {
 	_, lan := lanFixture()
 	at := time.Unix(1792000000, 0)
