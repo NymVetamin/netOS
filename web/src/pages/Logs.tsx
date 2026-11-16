@@ -4,7 +4,7 @@ import { Empty, Notice, TableWrap } from "../ui";
 
 // Разделы совпадают с eventlog.Topics; «Общий» — все разделы вместе.
 const tabs = [
- {id:"all",name:"Общий"},{id:"services",name:"Службы"},{id:"access",name:"Доступ"},{id:"firewall",name:"Firewall"},{id:"dns",name:"DNS"},
+ {id:"all",name:"Общий"},{id:"services",name:"Службы"},{id:"vpn",name:"VPN"},{id:"access",name:"Доступ"},{id:"firewall",name:"Firewall"},{id:"dns",name:"DNS"},
 ];
 const LIMIT=1000;
 const fromHash=()=>{const kind=new URLSearchParams(window.location.hash.split("?")[1] || "").get("log");return tabs.some(t=>t.id===kind)?kind!:"all"};

@@ -101,6 +101,7 @@ type Server struct {
 	networkConflictStatus networkConflictCache
 	vpnStatusMu           sync.Mutex
 	vpnStatus             map[string]*vpnStatusCache
+	vpnPresence           vpnPresence
 	dashboardMetrics      dashboardMetrics
 	dashboardServices     dashboardServiceCache
 	realtime              realtimeMonitor

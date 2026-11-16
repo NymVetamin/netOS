@@ -114,7 +114,7 @@ func (s *Server) queryLog() bool {
 
 // followJournal is started once with the server.
 func (s *Server) followJournal(ctx context.Context) {
-	j := &eventlog.Journal{Log: s.Events, Reason: s.unitReason, DNS: s.queryLog}
+	j := &eventlog.Journal{Log: s.Events, Reason: s.unitReason, DNS: s.queryLog, VPNServer: s.vpnServerName}
 	j.Follow(ctx)
 }
 

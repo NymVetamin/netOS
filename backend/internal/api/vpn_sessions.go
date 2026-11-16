@@ -35,9 +35,10 @@ func (s *Server) monitorVPNClients(ctx context.Context) {
 		if s.Engine != nil {
 			servers := s.Engine.Current().VPNServers
 			keep := map[string]bool{}
+			results := make([][]vpnClientStatus, len(servers))
 			var wg sync.WaitGroup
 			slots := make(chan struct{}, 4)
-			for _, server := range servers {
+			for i, server := range servers {
 				keep[server.ID] = true
 				select {
 				case slots <- struct{}{}:
@@ -45,13 +46,16 @@ func (s *Server) monitorVPNClients(ctx context.Context) {
 					return
 				}
 				wg.Add(1)
-				go func(server config.VPNServer) {
+				go func(i int, server config.VPNServer) {
 					defer wg.Done()
 					defer func() { <-slots }()
-					s.vpnClientSnapshot(ctx, server, cycleStarted)
-				}(server)
+					if rows, at := s.vpnClientSnapshot(ctx, server, cycleStarted); !at.IsZero() {
+						results[i] = rows
+					}
+				}(i, server)
 			}
 			wg.Wait()
+			s.vpnPresence.observe(s.Events, servers, results, time.Now())
 			s.vpnStatusMu.Lock()
 			for id := range s.vpnStatus {
 				if !keep[id] {
