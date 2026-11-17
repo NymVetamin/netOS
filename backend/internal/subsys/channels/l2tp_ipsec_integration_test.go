@@ -190,50 +190,19 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 		exec.Command("systemctl", "daemon-reload").Run()
 		exec.Command("systemctl", append([]string{"reset-failed"}, units...)...).Run()
 	}()
-	// pppd seeds its LCP magic numbers with host^seconds^microseconds^PID. The
-	// test client and server share one host and can start pppd in the same
-	// microsecond with adjacent PIDs; both then draw identical magic numbers
-	// and quit with "Serial line is looped back" (EXIT_LOOPBACK, seen in CI).
-	// Separate hosts never collide, so the step is retried once in that case.
-	var stepStart time.Time
-	loopedBack := func() bool {
-		out, _ := exec.Command("journalctl", "_COMM=pppd", "--since", stepStart.Add(-time.Second).Format("2006-01-02 15:04:05"), "-o", "cat", "--no-pager").CombinedOutput()
-		return strings.Contains(string(out), "Serial line is looped back")
-	}
-	applyOnce := func() error {
+	// Unexpected failures must reach diagnose unchanged. A message from an
+	// unrelated pppd in the host journal is not a reason to repeat a step.
+	apply := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 65*time.Second)
 		defer cancel()
 		return s.Apply(ctx, cfg)
 	}
-	apply := func() error {
-		stepStart = time.Now()
-		err := applyOnce()
-		if err != nil && loopedBack() {
-			t.Log("pppd magic-number collision (EXIT_LOOPBACK); retrying apply once")
-			err = applyOnce()
-		}
-		return err
-	}
-	pingOnce := func() error {
-		for _, args := range [][]string{{"ip", "route", "replace", "10.253.94.1/32", "dev", channels.InterfaceName(ch)}, {"ping", "-c", "1", "-W", "3", "10.253.94.1"}} {
-			if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
-				return fmt.Errorf("%v: %v %s", args, err, out)
-			}
-		}
-		return nil
-	}
 	ping := func() {
 		t.Helper()
-		err := pingOnce()
-		if err != nil && loopedBack() {
-			// xl2tpd redials on its own (redial timeout 5 s); wait for the session.
-			t.Log("pppd magic-number collision (EXIT_LOOPBACK); waiting for redial")
-			for deadline := time.Now().Add(60 * time.Second); err != nil && time.Now().Before(deadline); time.Sleep(time.Second) {
-				err = pingOnce()
+		for _, args := range [][]string{{"ip", "route", "replace", "10.253.94.1/32", "dev", channels.InterfaceName(ch)}, {"ping", "-c", "1", "-W", "3", "10.253.94.1"}} {
+			if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+				diagnose("connectivity", fmt.Errorf("%v: %v %s", args, err, out))
 			}
-		}
-		if err != nil {
-			diagnose("connectivity", err)
 		}
 	}
 	if err := apply(); err != nil {
