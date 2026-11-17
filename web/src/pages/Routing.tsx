@@ -1,4 +1,5 @@
 import { interfaceDisplay } from "../interfaceDisplay";
+import { channelNATInterface } from "../channelNAT";
 import { useEffect, useState } from "react";
 import { api, RouteEntry } from "../api";
 import { canonicalTable, observedTables, tableDetails } from "../routingTables";
@@ -7,6 +8,26 @@ import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch, Table
 import { Icon } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
+
+// Everything a static route can point at by name: ports, bridges and VLANs,
+// PPP sessions of uplinks, channel tunnels and WireGuard servers. A typed name
+// is easy to get wrong, and a wrong one fails only when the route is applied.
+export function routeInterfaceOptions(config: any): { name: string; label: string }[] {
+  const out = new Map<string, string>();
+  const add = (name: string, label: string) => { if (name && !out.has(name)) out.set(name, label); };
+  for (const i of config.interfaces || []) add(i.name, interfaceDisplay(config, i.name));
+  for (const w of config.wans || []) {
+    if (w.proto === "pppoe" || w.proto === "l2tp") add(`ppp-${w.id}`, `ppp-${w.id} — сессия аплинка «${w.name || w.id}»`);
+  }
+  for (const c of config.channels || []) {
+    const name = channelNATInterface(c);
+    add(name, `${name} — канал «${c.name || c.id}»`);
+  }
+  for (const s of config.vpn_servers || []) {
+    if (s.type === "wireguard" && s.index > 0) add(`wg-srv${s.index}`, `wg-srv${s.index} — VPN-сервер «${s.name || s.id}»`);
+  }
+  return [...out].map(([name, label]) => ({ name, label }));
+}
 
 type RoutesResponse = { routes: string; rules: string; parsed: RouteEntry[] };
 
@@ -52,6 +73,8 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   const observed = observedTables(live?.parsed || [], live?.rules || "");
   const automatic = observed.filter(name => !["main", "local", "default"].includes(name) && !tableDetails(name, config).manual);
   const displayedRoutes = (live?.parsed || []).filter(r => selectedTable === "all" || canonicalTable(r.table || "main") === selectedTable);
+  const ifaces = routeInterfaceOptions(config);
+  const ifaceNames = new Set(ifaces.map((o) => o.name));
 
   return (
     <>
@@ -143,8 +166,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                           patch((d) => (d.routing.static[idx].gateway = e.target.value))
                         }
                       /></Cap>
-                  <Cap label="Или интерфейс"><input
-                        type="text"
+                  <Cap label="Или интерфейс"><select
                         aria-label={`Интерфейс статического маршрута ${r.name || idx + 1}`}
                         className="mono"
                         disabled={r.type && r.type !== "unicast"}
@@ -152,7 +174,11 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         onChange={(e) =>
                           patch((d) => (d.routing.static[idx].interface = e.target.value))
                         }
-                      /></Cap>
+                      >
+                        <option value="">не выбран</option>
+                        {ifaces.map((o) => <option key={o.name} value={o.name}>{o.label}</option>)}
+                        {r.interface && !ifaceNames.has(r.interface) && <option value={r.interface}>{r.interface} — нет в конфигурации</option>}
+                      </select></Cap>
                   <Cap label="Метрика"><input
                         type="number"
                         aria-label={`Метрика статического маршрута ${r.name || idx + 1}`}
