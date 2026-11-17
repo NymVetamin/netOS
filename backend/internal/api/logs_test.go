@@ -133,6 +133,35 @@ func TestLogsPendingBatchIncludesArrivals(t *testing.T) {
 	}
 }
 
+func TestLogsEmptyContinuationWaitsForFirstEvent(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	_, first := logRequest(s, "", true, context.Background())
+	if !first.Reset || first.Latest != 0 {
+		t.Fatal(first)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan eventlog.Page, 1)
+	go func() {
+		_, p := logRequest(s, fmt.Sprintf("epoch=%s&after=0", first.Epoch), true, ctx)
+		done <- p
+	}()
+	select {
+	case p := <-done:
+		t.Fatalf("empty continuation did not wait: %+v", p)
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.Events.Add(time.Now(), eventlog.System, eventlog.Info, "panel", "first")
+	select {
+	case p := <-done:
+		if len(p.Events) != 1 || p.Events[0].Message != "first" || p.Latest == 0 {
+			t.Fatal(p)
+		}
+	case <-ctx.Done():
+		t.Fatal("first event did not wake continuation")
+	}
+}
+
 func TestLogsLongPollStopsWithClient(t *testing.T) {
 	s := &Server{Events: eventlog.New()}
 	_, first := logRequest(s, "", true, context.Background())

@@ -123,10 +123,11 @@ func (l *Log) Since(topic, epoch string, after uint64) (Page, <-chan struct{}, b
 	if topic != "all" && l.rings[topic] == nil {
 		return Page{}, nil, false
 	}
-	if epoch != l.epoch || after > l.seq {
+	reset := epoch != l.epoch || after > l.seq || (after == 0 && l.seq > 0)
+	if reset {
 		after = 0
 	}
-	p := Page{Epoch: l.epoch, Latest: l.seq, Reset: after == 0, Events: []Event{}}
+	p := Page{Epoch: l.epoch, Latest: l.seq, Reset: reset, Events: []Event{}}
 	for _, t := range Topics {
 		if (topic == "all" || t == topic) && l.rings[t].dropped > after {
 			// The client missed rotated events: it gets the whole list anew.
