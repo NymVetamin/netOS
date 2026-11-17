@@ -74,6 +74,65 @@ func TestLogsLongPollWakesOnlyForItsTopic(t *testing.T) {
 	}
 }
 
+func TestLogsPendingEventsAreBatched(t *testing.T) {
+	for _, count := range []int{1, eventlog.Size, eventlog.Size + 1} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			s := &Server{Events: eventlog.New()}
+			s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "initial")
+			_, p := logRequest(s, "", true, context.Background())
+			for repeat := 0; repeat < 2; repeat++ {
+				for i := 0; i < count; i++ {
+					s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "pending")
+				}
+				started := time.Now()
+				_, p = logRequest(s, fmt.Sprintf("epoch=%s&after=%d", p.Epoch, p.Latest), true, context.Background())
+				if elapsed := time.Since(started); elapsed < logBatch {
+					t.Fatalf("pending %d events returned after %s, want >=%s", count, elapsed, logBatch)
+				}
+				t.Logf("%d pending: %s, reset=%v", count, time.Since(started), p.Reset)
+				if len(p.Events) != min(count, eventlog.Size) {
+					t.Fatalf("lost pending events: got %d want %d", len(p.Events), min(count, eventlog.Size))
+				}
+			}
+		})
+	}
+}
+
+func TestLogsPendingBatchCanBeCancelled(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "initial")
+	_, first := logRequest(s, "", true, context.Background())
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "pending")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, p := logRequest(s, fmt.Sprintf("epoch=%s&after=%d", first.Epoch, first.Latest), true, ctx)
+	if len(p.Events) != 0 {
+		t.Fatal("cancelled request returned a batch")
+	}
+}
+
+func TestLogsPendingBatchIncludesArrivals(t *testing.T) {
+	s := &Server{Events: eventlog.New()}
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "initial")
+	_, first := logRequest(s, "", true, context.Background())
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "pending")
+	done := make(chan eventlog.Page, 1)
+	go func() {
+		_, p := logRequest(s, fmt.Sprintf("epoch=%s&after=%d", first.Epoch, first.Latest), true, context.Background())
+		done <- p
+	}()
+	time.Sleep(logBatch / 4)
+	s.Events.Add(time.Now(), eventlog.Access, eventlog.Info, "SSH", "during batch")
+	select {
+	case p := <-done:
+		if len(p.Events) != 2 || p.Events[0].Message != "during batch" {
+			t.Fatal(p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch did not finish")
+	}
+}
+
 func TestLogsLongPollStopsWithClient(t *testing.T) {
 	s := &Server{Events: eventlog.New()}
 	_, first := logRequest(s, "", true, context.Background())

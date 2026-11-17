@@ -64,6 +64,11 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			// Events of other topics also wake the waiter; keep waiting for ours.
 			page, changed, _ = s.Events.Since(topic, epoch, after)
 		}
+	}
+	// A continuation must batch even when events were already pending. A
+	// rotated list is still a continuation; only the first snapshot or a
+	// different daemon epoch bypasses the delay.
+	if epoch == page.Epoch && after > 0 {
 		batch := time.NewTimer(logBatch)
 		defer batch.Stop()
 		select {
