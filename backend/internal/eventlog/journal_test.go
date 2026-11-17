@@ -131,6 +131,28 @@ func TestFirewallAndSSHEvents(t *testing.T) {
 	}
 }
 
+func TestSSHExistingUserNamedInvalid(t *testing.T) {
+	log := New()
+	j := &Journal{Log: log}
+	lines := []string{
+		`{"__CURSOR":"1","__REALTIME_TIMESTAMP":"1","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for invalid from 198.51.100.7 port 4444 ssh2"}`,
+		`{"__CURSOR":"2","__REALTIME_TIMESTAMP":"2","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Failed publickey for invalid from 2001:db8::7 port 4444 ssh2"}`,
+		`{"__CURSOR":"3","__REALTIME_TIMESTAMP":"3","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for invalid from 198.51.100.7 port 4444 ssh2"}`,
+	}
+	for _, line := range lines {
+		j.Handle(context.Background(), []byte(line), time.Time{})
+	}
+	got, _, _ := log.Since(Access, "", 0)
+	if len(got.Events) != 3 {
+		t.Fatalf("failed logins for existing invalid account: got %d events, want 3", len(got.Events))
+	}
+	for _, e := range got.Events {
+		if e.Level != Warning || !strings.Contains(e.Message, "неудачный вход invalid с ") {
+			t.Fatalf("wrong failed-login event: %+v", e)
+		}
+	}
+}
+
 // The user name is sent by an unauthenticated client and may hold spaces; the
 // address sshd itself appended must be the one shown.
 func TestSSHInvalidUserCannotForgeAddress(t *testing.T) {

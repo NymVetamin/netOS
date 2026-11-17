@@ -433,7 +433,7 @@ func SSHEvent(message string) (level, text string, ok bool) {
 			return "", "", false
 		}
 		return Warning, "неудачный вход " + strings.Join(f[2:at], " ") + " с " + f[at+1] + ": нет такого пользователя", true
-	case len(f) >= 4 && f[0] == "Failed" && f[2] == "for" && f[3] == "invalid":
+	case len(f) >= 5 && f[0] == "Failed" && f[2] == "for" && f[3] == "invalid" && f[4] == "user":
 		return "", "", false
 	case len(f) >= 6 && f[0] == "Failed" && f[2] == "for" && f[4] == "from":
 		return Warning, "неудачный вход " + f[3] + " с " + f[5] + ": неверный пароль или ключ", true
