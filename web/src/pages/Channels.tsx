@@ -637,9 +637,6 @@ function WireGuardEditor({
         <Field label="Endpoint">
           <input className="mono" placeholder="vpn.example.com:51820" value={cfg.endpoint || ""} onChange={(e) => setConfig("endpoint", e.target.value)} />
         </Field>
-        <Field label="AllowedIPs" hint="0.0.0.0/0 — все IPv4-адреса. Какие клиенты и назначения используют канал, задайте в политиках.">
-          <input aria-label="AllowedIPs WireGuard" className="mono" readOnly value={(cfg.allowed_ips || []).join(", ")} />
-        </Field>
         <Field label="Приватный ключ">
           <input aria-label="Приватный ключ WireGuard" type="password" className="mono" autoComplete="off" {...secretInput(channel, "private_key")} value={cfg.private_key || ""} onChange={(e) => setConfig("private_key", e.target.value.trim())} />
         </Field>

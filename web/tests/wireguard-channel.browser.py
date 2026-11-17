@@ -22,7 +22,8 @@ async def main():
   private=page.get_by_label("Приватный ключ WireGuard",exact=True)
   await expect(public).to_have_value(PUB)
   await expect(private).to_have_value("")
-  assert await page.get_by_label("AllowedIPs WireGuard",exact=True).get_attribute("readonly") is not None
+  # An outgoing channel always carries 0.0.0.0/0 (import and validator), so the form does not show it.
+  await expect(page.get_by_label("AllowedIPs WireGuard",exact=True)).to_have_count(0)
   await page.get_by_role("button",name="Сгенерировать новые ключи",exact=True).click()
   await expect(private).to_have_value(KEY)
   await expect(public).to_have_value(PUB)
@@ -39,7 +40,6 @@ async def main():
   for _ in range(2):
    await file.set_input_files({"name":"split.conf","mimeType":"text/plain","buffer":split.encode()})
    await expect(page.get_by_text("Конфигурация перенесена",exact=False)).to_be_visible()
-   await expect(page.get_by_label("AllowedIPs WireGuard",exact=True)).to_have_value("0.0.0.0/0")
    await expect(page.locator('input[placeholder="vpn.example.com:51820"]')).to_have_value("split.example:51821")
    await expect(page.get_by_text("не перенесён",exact=False)).to_have_count(0)
   await file.set_input_files({"name":"bad.conf","mimeType":"text/plain","buffer":text.replace("10.9.0.2/32","10.9.0.2/99").encode()})
@@ -49,5 +49,5 @@ async def main():
   output=Path(__file__).resolve().parents[2]/".codex/wireguard-form.png"
   await page.screenshot(path=str(output),full_page=True)
   await browser.close()
-  print("saved public key, generation, manual key, read-only AllowedIPs, file import/warnings and failed-import preservation PASS")
+  print("saved public key, generation, manual key, no AllowedIPs field, file import/warnings and failed-import preservation PASS")
 asyncio.run(main())
