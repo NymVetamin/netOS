@@ -65,7 +65,7 @@ func TestRefillPerGroupUpToHead(t *testing.T) {
 			return []byte(`{"__CURSOR":"s1","__REALTIME_TIMESTAMP":"1791999999000000","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for root from 192.0.2.9 port 1 ssh2"}` + "\n"), nil
 		case strings.Contains(joined, "_SYSTEMD_UNIT=netos-unbound.service"):
 			var b strings.Builder
-			for i := 0; i < Size; i++ {
+			for i := Size - 1; i >= 0; i-- {
 				fmt.Fprintf(&b, `{"__CURSOR":"d%d","__REALTIME_TIMESTAMP":"%d","_SYSTEMD_UNIT":"netos-unbound.service","MESSAGE":"info: 192.168.1.7 q%d.example. A IN"}`+"\n", i, 1792000000000001+i, i)
 			}
 			return []byte(b.String()), nil
@@ -82,7 +82,7 @@ func TestRefillPerGroupUpToHead(t *testing.T) {
 		t.Fatal(len(calls))
 	}
 	for _, c := range calls[1:] {
-		if !strings.Contains(strings.Join(c, " "), "--until=@1792000000.123456") || !strings.Contains(strings.Join(c, " "), "--lines=1000") {
+		if !strings.Contains(strings.Join(c, " "), "--cursor=head") || !strings.Contains(strings.Join(c, " "), "--reverse") || !strings.Contains(strings.Join(c, " "), "--lines=1000") {
 			t.Fatal(c)
 		}
 	}

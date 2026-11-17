@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,7 +131,7 @@ func (j *Journal) run(ctx context.Context, args ...string) ([]byte, error) {
 
 // refill loads the newest Size records of every group, up to the journal's
 // current last entry, and handles them in time order. Runs once per daemon
-// start: 2 + len(journalGroups) commands.
+// start: 1 + len(journalGroups) commands.
 func (j *Journal) refill(ctx context.Context) {
 	out, err := j.run(ctx, "--output=json", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP", "--lines=1")
 	if err != nil {
@@ -141,21 +141,19 @@ func (j *Journal) refill(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	us, err := strconv.ParseInt(head["__REALTIME_TIMESTAMP"], 10, 64)
-	if err != nil {
-		return
-	}
-	until := "--until=@" + strconv.FormatInt(us/1e6, 10) + "." + fmt.Sprintf("%06d", us%1e6)
 	type row struct {
 		at  int64
 		raw []byte
 	}
 	var rows []row
 	for _, g := range journalGroups {
-		out, err := j.run(ctx, append([]string{"--output=json", "--output-fields=" + journalFields, "--lines=" + strconv.Itoa(Size), until}, g...)...)
+		// Use the follower's exact boundary. A wall-clock cutoff can include
+		// later cursors after a clock correction (or an equal timestamp).
+		out, err := j.run(ctx, append([]string{"--output=json", "--output-fields=" + journalFields, "--lines=" + strconv.Itoa(Size), "--reverse", "--cursor=" + head["__CURSOR"]}, g...)...)
 		if err != nil {
 			continue // an empty group is reported as an error by old journalctl
 		}
+		start := len(rows)
 		for _, line := range bytes.Split(out, []byte{'\n'}) {
 			if len(line) == 0 || len(line) > maxJournalLine {
 				continue
@@ -169,6 +167,8 @@ func (j *Journal) refill(ctx context.Context) {
 			at, _ := strconv.ParseInt(ts.T, 10, 64)
 			rows = append(rows, row{at, line})
 		}
+		// Restore journal order, including ties, before merging the groups.
+		slices.Reverse(rows[start:])
 	}
 	// Each group is already in journal order; a stable sort keeps it.
 	sort.SliceStable(rows, func(a, b int) bool { return rows[a].at < rows[b].at })

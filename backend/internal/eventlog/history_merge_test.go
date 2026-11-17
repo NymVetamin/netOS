@@ -20,7 +20,7 @@ func TestJournalHistoryPreservesNewerLiveEvents(t *testing.T) {
 			return nil, nil
 		}
 		var out strings.Builder
-		for i := 0; i < Size; i++ {
+		for i := Size - 1; i >= 0; i-- {
 			fmt.Fprintf(&out, `{"__CURSOR":"old%d","__REALTIME_TIMESTAMP":"%d","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted publickey for root from 192.0.2.1 port 1234 ssh2"}`+"\n", i, int64(1000+i)*1000000)
 		}
 		return []byte(out.String()), nil
