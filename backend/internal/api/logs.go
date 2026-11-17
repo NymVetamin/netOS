@@ -165,7 +165,7 @@ func (s *Server) addDNSLines(now time.Time, lines []string) {
 }
 
 // lanNames resolves MAC addresses and hostapd interfaces against the applied
-// configuration. Called per Wi-Fi/DHCP event: O(clients) or O(radios).
+// configuration. Called per Wi-Fi/DHCP event: O(clients) or O(radios + SSIDs).
 func (s *Server) lanNames() *eventlog.Names {
 	current := func() *config.Config {
 		if s.Engine == nil {
@@ -192,14 +192,26 @@ func (s *Server) lanNames() *eventlog.Names {
 			for _, radio := range cfg.WiFi {
 				index := 0
 				if iface != radio.Device {
-					n, err := strconv.Atoi(strings.TrimPrefix(iface, radio.Device+"-n"))
-					if err != nil || !strings.HasPrefix(iface, radio.Device+"-n") {
+					suffix, matches := strings.CutPrefix(iface, radio.Device+"-n")
+					if !matches {
 						continue
 					}
-					index = n - 1
+					n, err := strconv.Atoi(suffix)
+					if err != nil || n < 1 || strconv.Itoa(n) != suffix {
+						continue
+					}
+					index = n
 				}
-				if index >= 0 && index < len(radio.SSIDs) {
-					return radio.SSIDs[index].SSID
+				// RenderRadio numbers only enabled SSIDs: the primary is 0,
+				// and the first additional BSS has suffix -n1.
+				for _, ssid := range radio.SSIDs {
+					if !ssid.Enabled {
+						continue
+					}
+					if index == 0 {
+						return ssid.SSID
+					}
+					index--
 				}
 			}
 			return ""
