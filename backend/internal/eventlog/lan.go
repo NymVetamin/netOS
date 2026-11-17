@@ -166,15 +166,15 @@ func (l *LAN) DHCP(at time.Time, line string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	known := l.leases[addr]
+	if kind == "DHCPACK" && known.ip == ip {
+		return
+	}
 	if host == "" {
 		host = known.host
 	}
 	who := l.Names.client(addr, host)
 	switch kind {
 	case "DHCPACK":
-		if known.ip == ip {
-			return
-		}
 		if l.leases == nil || len(l.leases) >= lanStateLimit {
 			l.leases = map[string]lease{}
 		}

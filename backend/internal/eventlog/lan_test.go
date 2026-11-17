@@ -50,6 +50,34 @@ func TestWiFiEvents(t *testing.T) {
 	}
 }
 
+func TestDHCPRenewalSkipsNamesAndKeepsFreshPublishedNames(t *testing.T) {
+	l := New()
+	name, calls := "before", 0
+	lan := &LAN{Log: l, Names: &Names{Client: func(string) string {
+		calls++
+		return name
+	}}}
+	ack := "DHCPACK(br0) 192.0.2.1 aa:bb:cc:dd:ee:01 host"
+	lan.DHCP(time.Unix(1, 0), ack)
+	name = "after"
+	lan.DHCP(time.Unix(2, 0), ack)
+	if calls != 1 {
+		t.Fatalf("unchanged renewal resolved an unused name: %d calls", calls)
+	}
+	lan.DHCP(time.Unix(3, 0), "DHCPRELEASE(br0) 192.0.2.1 aa:bb:cc:dd:ee:01")
+	lan.DHCP(time.Unix(4, 0), ack)
+	lan.DHCP(time.Unix(5, 0), "DHCPNAK(br0) 192.0.2.1 aa:bb:cc:dd:ee:01 wrong network")
+	lan.DHCP(time.Unix(6, 0), ack)
+	want := "info DHCP br0: before (aa:bb:cc:dd:ee:01) получил 192.0.2.1\n" +
+		"info DHCP br0: after (aa:bb:cc:dd:ee:01) освободил 192.0.2.1\n" +
+		"info DHCP br0: after (aa:bb:cc:dd:ee:01) получил 192.0.2.1\n" +
+		"warning DHCP br0: after (aa:bb:cc:dd:ee:01): отказ в адресе 192.0.2.1 (wrong network)\n" +
+		"info DHCP br0: after (aa:bb:cc:dd:ee:01) получил 192.0.2.1"
+	if got := strings.Join(messages(l, DHCP), "\n"); got != want {
+		t.Fatalf("events after rename/release/refusal/retry:\n%s", got)
+	}
+}
+
 func TestDHCPEventsAllServersWithoutRenewals(t *testing.T) {
 	l, lan := lanFixture()
 	at := time.Unix(1792000000, 0)
