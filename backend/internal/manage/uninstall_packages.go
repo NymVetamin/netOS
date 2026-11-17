@@ -11,26 +11,36 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-func (m *Manager) removeInstalledPackages(ctx context.Context) error {
+// packagePurge is what uninstall would purge: ledger packages that netOS
+// installed and that are still present.
+type packagePurge struct {
+	noLedger       bool
+	packages       []string
+	owned, initial map[string]bool
+}
+
+// planPackagePurge only reads: the ledger, dpkg and an apt simulation. Uninstall
+// runs it before its first change, so a refusal leaves the router untouched,
+// and again right before the purge, where the package state is current.
+func (m *Manager) planPackagePurge(ctx context.Context) (packagePurge, error) {
 	dir := m.sys(system.PackageOwnershipDir)
 	initial, err := system.ReadPackageNames(filepath.Join(dir, "initial.txt"))
 	if os.IsNotExist(err) {
-		fmt.Fprintln(m.Err, "В этой старой установке нет учёта пакетов: пакеты APT сохранены, их происхождение нельзя подтвердить.")
-		return nil
+		return packagePurge{noLedger: true}, nil
 	}
 	if err != nil {
-		return err
+		return packagePurge{}, err
 	}
 	if _, err := os.Stat(filepath.Join(dir, "pending")); !os.IsNotExist(err) {
-		return fmt.Errorf("учёт установки пакетов не завершён; список сохранён в %s", dir)
+		return packagePurge{}, fmt.Errorf("учёт установки пакетов не завершён; список сохранён в %s", dir)
 	}
 	owned, err := system.ReadPackageNames(filepath.Join(dir, "owned.txt"))
 	if err != nil {
-		return err
+		return packagePurge{}, err
 	}
 	out, err := m.Output(ctx, "dpkg-query", "-W", "-f="+system.PackageInventoryFormat)
 	if err != nil {
-		return err
+		return packagePurge{}, err
 	}
 	var packages []string
 	foreignBase := map[string]bool{}
@@ -43,15 +53,14 @@ func (m *Manager) removeInstalledPackages(ctx context.Context) error {
 			packages = append(packages, f[0])
 		}
 	}
+	p := packagePurge{packages: packages, owned: owned, initial: initial}
 	if len(packages) == 0 {
-		return nil
+		return p, nil
 	}
 	sort.Strings(packages)
-	// No global autoremove: dependencies are already in our explicit ledger.
-	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "-o", "APT::Get::AutomaticRemove=false", "purge", "-y"}, packages...)
-	plan, err := m.Output(ctx, "apt-get", append([]string{"-s"}, args...)...)
+	plan, err := m.Output(ctx, "apt-get", append([]string{"-s"}, purgeArgs(packages)...)...)
 	if err != nil {
-		return fmt.Errorf("проверка удаления пакетов netOS: %w", err)
+		return packagePurge{}, fmt.Errorf("проверка удаления пакетов netOS: %w", err)
 	}
 	allowed := map[string]bool{}
 	for _, name := range packages {
@@ -66,8 +75,29 @@ func (m *Manager) removeInstalledPackages(ctx context.Context) error {
 			continue
 		}
 		if f[0] == "Inst" || ((f[0] == "Remv" || f[0] == "Purg") && !allowed[f[1]]) {
-			return fmt.Errorf("удаление компонентов затронет сторонний пакет %s; удаление остановлено, данные сохранены", f[1])
+			return packagePurge{}, fmt.Errorf("удаление компонентов затронет сторонний пакет %s", f[1])
 		}
+	}
+	return p, nil
+}
+
+// No global autoremove: dependencies are already in our explicit ledger.
+func purgeArgs(packages []string) []string {
+	return append([]string{"-o", "DPkg::Lock::Timeout=60", "-o", "APT::Get::AutomaticRemove=false", "purge", "-y"}, packages...)
+}
+
+func (m *Manager) removeInstalledPackages(ctx context.Context) error {
+	p, err := m.planPackagePurge(ctx)
+	if err != nil {
+		return fmt.Errorf("%w; удаление остановлено, данные сохранены", err)
+	}
+	if p.noLedger {
+		fmt.Fprintln(m.Err, "В этой старой установке нет учёта пакетов: пакеты APT сохранены, их происхождение нельзя подтвердить.")
+		return nil
+	}
+	packages, owned, initial := p.packages, p.owned, p.initial
+	if len(packages) == 0 {
+		return nil
 	}
 	// The AmneziaWG module stays loaded after its files are purged; unload it
 	// while modprobe can still find it. A module in use refuses, harmlessly.
@@ -78,11 +108,11 @@ func (m *Manager) removeInstalledPackages(ctx context.Context) error {
 		}
 	}
 	fmt.Fprintf(m.Out, "Удаляем пакеты, установленные netOS: %s\n", strings.Join(packages, ", "))
-	if err := m.runEnv(ctx, []string{"DEBIAN_FRONTEND=noninteractive", "LC_ALL=C"}, "apt-get", args...); err != nil {
+	if err := m.runEnv(ctx, []string{"DEBIAN_FRONTEND=noninteractive", "LC_ALL=C"}, "apt-get", purgeArgs(packages)...); err != nil {
 		return err
 	}
 	// A failed or incomplete purge must retain the recovery files and ledger.
-	out, err = m.Output(ctx, "dpkg-query", "-W", "-f="+system.PackageInventoryFormat)
+	out, err := m.Output(ctx, "dpkg-query", "-W", "-f="+system.PackageInventoryFormat)
 	if err != nil {
 		return err
 	}

@@ -119,6 +119,49 @@ func TestFullUninstallKeepsRecoveryOnPurgeFailure(t *testing.T) {
 	}
 }
 
+// A foreign package that came to depend on a ledger package (linux-perf on
+// libpython3.13, seen on a test router) used to stop uninstall only at the
+// purge, after the services were stopped and the network handed to the OS.
+// The refusal must come before the first change.
+func TestUninstallRefusesForeignDependentBeforeAnyChange(t *testing.T) {
+	m, out := testManager()
+	sandbox(t, m)
+	dir := m.sys(system.PackageOwnershipDir)
+	_ = os.MkdirAll(dir, 0700)
+	_ = system.WritePackageNames(filepath.Join(dir, "initial.txt"), map[string]bool{"curl": true})
+	_ = system.WritePackageNames(filepath.Join(dir, "owned.txt"), map[string]bool{"libpython3.13": true})
+	for _, path := range []string{m.Binary, m.CLI, m.Unit, filepath.Join(m.StateDir, "marker")} {
+		_ = os.MkdirAll(filepath.Dir(path), 0700)
+		_ = os.WriteFile(path, []byte("keep"), 0600)
+	}
+	var changes []string
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		switch name {
+		case "apt-get":
+			return "Purg libpython3.13 [3.13.5-2]\nPurg linux-perf [6.12.113-1]\n", nil
+		case "dpkg-query":
+			return "curl\tii \nlibpython3.13\tii \nlinux-perf\tii \n", nil
+		}
+		return "", nil
+	}
+	m.Run = func(_ context.Context, c command) error {
+		changes = append(changes, c.name+" "+strings.Join(c.args, " "))
+		return nil
+	}
+	err := m.uninstall(context.Background(), true, false, false, true)
+	if err == nil || !strings.Contains(err.Error(), "linux-perf") || !strings.Contains(err.Error(), "до изменений") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(changes) != 0 || strings.Contains(out.String(), "Останавливаем netOS") {
+		t.Fatalf("uninstall changed the system before refusing: %v\n%s", changes, out.String())
+	}
+	for _, path := range []string{m.Binary, m.CLI, m.Unit, filepath.Join(m.StateDir, "marker"), filepath.Join(dir, "owned.txt")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+	}
+}
+
 // The purged module would stay loaded until reboot; it is unloaded first.
 func TestUninstallUnloadsAmneziaWGModuleBeforePurge(t *testing.T) {
 	m, _ := testManager()
