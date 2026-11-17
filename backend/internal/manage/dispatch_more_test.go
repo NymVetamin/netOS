@@ -2,10 +2,13 @@ package manage
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -237,6 +240,63 @@ func TestBackupIncludesExistingDataAndUsesPrivateMode(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("backup mode=%04o", info.Mode().Perm())
+	}
+}
+
+// Statistics stores are left out of a copy; settings, including the database
+// WAL that may hold committed changes after a crash, stay. Real GNU tar.
+func TestBackupLeavesOutStatisticsWithRealTar(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("GNU tar semantics are checked on Linux")
+	}
+	if _, err := exec.LookPath("tar"); err != nil {
+		t.Skip(err)
+	}
+	m, _ := testManager()
+	sandbox(t, m)
+	m.Run = m.runOS
+	files := map[string]bool{ // name -> expected in the copy
+		"netos.db": true, "netos.db-wal": true, "netos.db-shm": true, "generated/dnsmasq.conf": true,
+		"second-history.sqlite": false, "second-history.sqlite-wal": false, "second-history.sqlite-shm": false,
+		"client-history.sqlite": false, "client-history.sqlite-wal": false, "client-history.sqlite-journal": false,
+		"traffic-history.json": false,
+	}
+	for name := range files {
+		path := filepath.Join(m.StateDir, name)
+		_ = os.MkdirAll(filepath.Dir(path), 0o700)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, err := m.backup(context.Background(), "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	state := strings.TrimPrefix(filepath.Clean(m.StateDir), "/") + "/"
+	for r := tar.NewReader(gz); ; {
+		h, err := r.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[strings.TrimPrefix(h.Name, state)] = true
+	}
+	for name, want := range files {
+		if got[name] != want {
+			t.Fatalf("%s in copy = %v, want %v; copy: %v", name, got[name], want, got)
+		}
 	}
 }
 

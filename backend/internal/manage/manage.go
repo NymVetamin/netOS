@@ -1739,7 +1739,14 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 			return "", err
 		}
 	} else {
-		args := append([]string{"-C", string(filepath.Separator), "-czf", path}, sources...)
+		args := []string{"-C", string(filepath.Separator), "-czf", path}
+		// Statistics are not settings; netosd recreates them empty after restore.
+		// netos.db-wal stays: after a crash it may hold committed changes.
+		// Excludes precede the sources; "*" also takes -wal/-shm/-journal.
+		for _, name := range []string{"second-history.sqlite", "client-history.sqlite", "traffic-history.json"} {
+			args = append(args, "--exclude="+strings.TrimPrefix(filepath.Join(m.StateDir, name), string(filepath.Separator))+"*")
+		}
+		args = append(args, sources...)
 		if err := m.run(ctx, "tar", args...); err != nil {
 			_ = os.Remove(path)
 			return "", fmt.Errorf("резервное копирование: %w", err)
