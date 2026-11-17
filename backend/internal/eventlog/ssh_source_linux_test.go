@@ -62,3 +62,27 @@ func TestSSHJournalLinuxTrustedOrigin(t *testing.T) {
 		t.Fatal("real SSH login was not retained")
 	}
 }
+
+func TestJournalHistoryLinux(t *testing.T) {
+	if os.Getenv("NETOS_JOURNAL_LINUX_TEST") != "1" {
+		t.Skip("requires authorized journald host with a real SSH login")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	l := New()
+	l.Add(time.Now().Add(time.Hour), Access, Info, "panel", "newer panel event")
+	first, _, _ := l.Since(Access, "", 0)
+	j := &Journal{Log: l}
+	j.refill(ctx)
+	p, _, _ := l.Since(Access, first.Epoch, first.Latest)
+	if !p.Reset || len(p.Events) < 2 || p.Events[0].Source != "panel" {
+		t.Fatal("real journal history did not preserve/reset the newer panel event")
+	}
+	found := false
+	for _, e := range p.Events {
+		found = found || e.Source == "SSH"
+	}
+	if !found || j.Log != l || j.cursor == "" {
+		t.Fatal("real SSH history or live log/cursor lost")
+	}
+}

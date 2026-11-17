@@ -78,6 +78,10 @@ var wifiReasons = map[string]string{
 
 // WiFi handles one hostapd output line.
 func (l *LAN) WiFi(at time.Time, line string) {
+	l.wifi(at, line, l.Log)
+}
+
+func (l *LAN) wifi(at time.Time, line string, log *Log) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if m := hostapdReason.FindStringSubmatch(line); m != nil {
@@ -101,14 +105,14 @@ func (l *LAN) WiFi(at time.Time, line string) {
 	who := l.Names.client(addr, "")
 	switch event {
 	case "AP-STA-CONNECTED":
-		l.Log.Add(at, WiFi, Info, source, who+" подключился")
+		log.Add(at, WiFi, Info, source, who+" подключился")
 	case "AP-STA-DISCONNECTED":
 		msg := who + " отключился"
 		if note, ok := l.reasons[addr]; ok && at.Sub(note.at) < 3*time.Second && note.text != "" {
 			msg += ": " + note.text
 		}
 		delete(l.reasons, addr)
-		l.Log.Add(at, WiFi, Info, source, msg)
+		log.Add(at, WiFi, Info, source, msg)
 	case "AP-STA-POSSIBLE-PSK-MISMATCH":
 		// hostapd reports every retry of the handshake; one attempt is one event.
 		if last, ok := l.mismatch[addr]; ok && at.Sub(last) < 30*time.Second {
@@ -118,12 +122,16 @@ func (l *LAN) WiFi(at time.Time, line string) {
 			l.mismatch = map[string]time.Time{}
 		}
 		l.mismatch[addr] = at
-		l.Log.Add(at, WiFi, Warning, source, who+": неверный пароль Wi-Fi")
+		log.Add(at, WiFi, Warning, source, who+": неверный пароль Wi-Fi")
 	}
 }
 
 // DHCP handles one line of dnsmasq, ISC dhcpd or Kea.
 func (l *LAN) DHCP(at time.Time, line string) {
+	l.dhcp(at, line, l.Log)
+}
+
+func (l *LAN) dhcp(at time.Time, line string, log *Log) {
 	// Every pattern below needs one of these words. dnsmasq writes its DNS
 	// traffic to the same stream (dns.log, or journald while the traffic
 	// monitor is on), several lines per query: they stop here.
@@ -179,18 +187,18 @@ func (l *LAN) DHCP(at time.Time, line string) {
 			l.leases = map[string]lease{}
 		}
 		l.leases[addr] = lease{ip, host}
-		l.Log.Add(at, DHCP, Info, source, who+" получил "+ip)
+		log.Add(at, DHCP, Info, source, who+" получил "+ip)
 	case "DHCPRELEASE":
 		delete(l.leases, addr)
-		l.Log.Add(at, DHCP, Info, source, who+" освободил "+ip)
+		log.Add(at, DHCP, Info, source, who+" освободил "+ip)
 	case "DHCPNAK":
 		delete(l.leases, addr)
 		msg := who + ": отказ в адресе " + ip
 		if reason != "" {
 			msg += " (" + reason + ")"
 		}
-		l.Log.Add(at, DHCP, Warning, source, msg)
+		log.Add(at, DHCP, Warning, source, msg)
 	case "NOFREE":
-		l.Log.Add(at, DHCP, Error, source, who+": нет свободных адресов")
+		log.Add(at, DHCP, Error, source, who+": нет свободных адресов")
 	}
 }

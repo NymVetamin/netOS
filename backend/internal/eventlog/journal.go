@@ -174,9 +174,17 @@ func (j *Journal) refill(ctx context.Context) {
 	sort.SliceStable(rows, func(a, b int) bool { return rows[a].at < rows[b].at })
 	// The zero time marks history: no reason lookups, or a unit that kept
 	// failing before the start would cost a command per failure.
+	if len(rows) == 0 {
+		j.cursor = head["__CURSOR"]
+		return
+	}
+	live := j.Log
+	j.Log = New()
 	for _, r := range rows {
 		j.Handle(ctx, r.raw, time.Time{})
 	}
+	live.MergeHistory(j.Log)
+	j.Log = live
 	j.cursor = head["__CURSOR"]
 }
 
@@ -243,9 +251,9 @@ func (j *Journal) Handle(ctx context.Context, raw []byte, now time.Time) {
 			j.Log.Add(at, Firewall, Info, rule, msg)
 		}
 	case j.LAN != nil && rec["SYSLOG_IDENTIFIER"] == "hostapd":
-		j.LAN.WiFi(at, rec["MESSAGE"])
+		j.LAN.wifi(at, rec["MESSAGE"], j.Log)
 	case j.LAN != nil && (rec["_SYSTEMD_UNIT"] == dhcpUnits[0] || rec["_SYSTEMD_UNIT"] == dhcpUnits[1] || rec["_SYSTEMD_UNIT"] == dhcpUnits[2]):
-		j.LAN.DHCP(at, rec["MESSAGE"])
+		j.LAN.dhcp(at, rec["MESSAGE"], j.Log)
 	case rec["_SYSTEMD_UNIT"] == unboundUnit:
 		if j.DNS != nil && j.DNS() {
 			if client, msg, ok := DNSQuery(rec["MESSAGE"]); ok {

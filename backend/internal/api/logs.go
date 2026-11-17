@@ -327,10 +327,13 @@ func (s *Server) refillAudit() {
 		return
 	}
 	entries, err := s.Store.ListAudit(eventlog.Size)
-	if err != nil {
+	if err != nil || len(entries) == 0 {
 		return
 	}
+	history := eventlog.New()
 	for i := len(entries) - 1; i >= 0; i-- {
-		s.addAudit(entries[i])
+		topic, level, source, msg := auditEvent(entries[i])
+		history.Add(entries[i].At, topic, level, source, msg)
 	}
+	s.Events.MergeHistory(history)
 }

@@ -113,6 +113,72 @@ type Page struct {
 	Events []Event `json:"events"`
 }
 
+// MergeHistory imports a bounded startup log, retaining the newest timestamps
+// together with events already received live. Only startup pays for sorting;
+// Add remains constant-time. The source may be discarded after this call.
+func (l *Log) MergeHistory(history *Log) {
+	if l == nil || history == nil || l == history {
+		return
+	}
+	history.mu.Lock()
+	byTopic := make(map[string][]Event)
+	for _, topic := range Topics {
+		if r := history.rings[topic]; r.count > 0 {
+			byTopic[topic] = r.newer(0, nil)
+		}
+	}
+	history.mu.Unlock()
+	if len(byTopic) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var merged []Event
+	for _, topic := range Topics {
+		if len(byTopic[topic]) > 0 {
+			merged = l.rings[topic].newer(0, merged)
+		}
+	}
+	for _, topic := range Topics {
+		merged = append(merged, byTopic[topic]...)
+	}
+	// These copies get new public sequences below. Use their temporary Seq
+	// as a tie rank so O(H log H) sorting preserves live-before-history ties
+	// and each source's newest-first order without a second ordering pass.
+	for i := range merged {
+		merged[i].Seq = uint64(len(merged) - i)
+	}
+	slices.SortFunc(merged, func(a, b Event) int {
+		if c := cmp.Compare(b.Time, a.Time); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.Seq, a.Seq)
+	})
+	counts := make(map[string]int)
+	kept := merged[:0]
+	for _, e := range merged {
+		if counts[e.Topic] < Size {
+			kept = append(kept, e)
+			counts[e.Topic]++
+		}
+	}
+	resetAfter := l.seq + 1
+	for topic := range byTopic {
+		*l.rings[topic] = ring{}
+	}
+	// Assign sequence numbers in chronological order across topics too.
+	for i := len(kept) - 1; i >= 0; i-- {
+		l.seq++
+		kept[i].Seq = l.seq
+		l.rings[kept[i].Topic].add(kept[i])
+	}
+	for topic := range byTopic {
+		l.rings[topic].dropped = resetAfter
+	}
+	close(l.changed)
+	l.changed = make(chan struct{})
+}
+
 // Since returns events of topic ("all" for every topic) newer than after,
 // newest first, at most Size. Reset tells the client to replace its list:
 // a different epoch (restart) or events lost to rotation since after.
