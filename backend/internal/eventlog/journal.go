@@ -24,7 +24,7 @@ const (
 	msgFailed    = "d9b373ed55a64feb8242e02dbe79a49c"
 )
 
-const journalFields = "__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,MESSAGE_ID,_PID,_TRANSPORT,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,UNIT,JOB_TYPE,JOB_RESULT,UNIT_RESULT,EXIT_CODE,EXIT_STATUS,INVOCATION_ID,IKE_SA_NAME"
+const journalFields = "__CURSOR,__REALTIME_TIMESTAMP,MESSAGE,MESSAGE_ID,_PID,_UID,_TRANSPORT,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,UNIT,JOB_TYPE,JOB_RESULT,UNIT_RESULT,EXIT_CODE,EXIT_STATUS,INVOCATION_ID,IKE_SA_NAME"
 
 const unboundUnit = "netos-unbound.service"
 
@@ -42,7 +42,7 @@ const unboundUnit = "netos-unbound.service"
 var journalGroups = [][]string{
 	{"_PID=1", "MESSAGE_ID=" + msgStarted, "MESSAGE_ID=" + msgJobFailed, "MESSAGE_ID=" + msgStopped, "MESSAGE_ID=" + msgExit, "MESSAGE_ID=" + msgFailed},
 	{"_TRANSPORT=kernel"},
-	{"SYSLOG_IDENTIFIER=sshd", "SYSLOG_IDENTIFIER=sshd-session"},
+	{"_UID=0", "SYSLOG_IDENTIFIER=sshd", "SYSLOG_IDENTIFIER=sshd-session"},
 	{"_SYSTEMD_UNIT=" + unboundUnit},
 	// VPN daemons: only authentication refusals are taken from them.
 	{"SYSLOG_IDENTIFIER=ocserv", "SYSLOG_IDENTIFIER=charon-systemd", "SYSLOG_IDENTIFIER=pppd"},
@@ -263,7 +263,7 @@ func (j *Journal) Handle(ctx context.Context, raw []byte, now time.Time) {
 			}
 			j.Log.Add(at, VPN, Warning, source, msg)
 		}
-	case strings.HasPrefix(rec["SYSLOG_IDENTIFIER"], "sshd"):
+	case rec["_UID"] == "0" && (rec["SYSLOG_IDENTIFIER"] == "sshd" || rec["SYSLOG_IDENTIFIER"] == "sshd-session"):
 		if level, msg, ok := SSHEvent(rec["MESSAGE"]); ok {
 			j.Log.Add(at, Access, level, "SSH", msg)
 		}

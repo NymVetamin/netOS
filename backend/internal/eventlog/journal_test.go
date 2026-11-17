@@ -107,17 +107,17 @@ func TestFirewallAndSSHEvents(t *testing.T) {
 		`{"__CURSOR":"a","__REALTIME_TIMESTAMP":"1","_TRANSPORT":"kernel","MESSAGE":"netos drop-ssh: IN=eth0 OUT= MAC=00:11 SRC=203.0.113.5 DST=192.0.2.1 LEN=60 TOS=0x00 PROTO=TCP SPT=51515 DPT=22 WINDOW=64240 SYN"}`,
 		`{"__CURSOR":"b","__REALTIME_TIMESTAMP":"2","_TRANSPORT":"kernel","MESSAGE":"netos ping: IN=br0 OUT=eth1 SRC=2001:db8::1 DST=2001:db8::2 LEN=64 PROTO=ICMPv6 TYPE=128 CODE=0"}`,
 		`{"__CURSOR":"c","__REALTIME_TIMESTAMP":"3","_TRANSPORT":"kernel","MESSAGE":"e1000e: eth0 NIC Link is Up 1000 Mbps Full Duplex"}`,
-		`{"__CURSOR":"d","__REALTIME_TIMESTAMP":"4","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted publickey for root from 198.51.100.7 port 50022 ssh2: ED25519 SHA256:x"}`,
-		`{"__CURSOR":"e","__REALTIME_TIMESTAMP":"5","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Invalid user bob from 198.51.100.8 port 4444"}`,
-		`{"__CURSOR":"f","__REALTIME_TIMESTAMP":"6","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Failed password for invalid user bob from 198.51.100.8 port 4444 ssh2"}`,
-		`{"__CURSOR":"f2","__REALTIME_TIMESTAMP":"6","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Invalid user scan from 198.51.100.10 port 4446"}`,
-		`{"__CURSOR":"f3","__REALTIME_TIMESTAMP":"6","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Connection closed by invalid user scan 198.51.100.10 port 4446 [preauth]"}`,
-		`{"__CURSOR":"g","__REALTIME_TIMESTAMP":"7","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for root from 198.51.100.9 port 4445 ssh2"}`,
-		`{"__CURSOR":"h","__REALTIME_TIMESTAMP":"8","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Disconnected from user root 198.51.100.7 port 50022"}`,
-		`{"__CURSOR":"i","__REALTIME_TIMESTAMP":"9","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"pam_unix(sshd:session): session closed for user root"}`,
+		`{"__CURSOR":"d","__REALTIME_TIMESTAMP":"4","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted publickey for root from 198.51.100.7 port 50022 ssh2: ED25519 SHA256:x"}`,
+		`{"__CURSOR":"e","__REALTIME_TIMESTAMP":"5","_UID":"0","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Invalid user bob from 198.51.100.8 port 4444"}`,
+		`{"__CURSOR":"f","__REALTIME_TIMESTAMP":"6","_UID":"0","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Failed password for invalid user bob from 198.51.100.8 port 4444 ssh2"}`,
+		`{"__CURSOR":"f2","__REALTIME_TIMESTAMP":"6","_UID":"0","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Invalid user scan from 198.51.100.10 port 4446"}`,
+		`{"__CURSOR":"f3","__REALTIME_TIMESTAMP":"6","_UID":"0","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Connection closed by invalid user scan 198.51.100.10 port 4446 [preauth]"}`,
+		`{"__CURSOR":"g","__REALTIME_TIMESTAMP":"7","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for root from 198.51.100.9 port 4445 ssh2"}`,
+		`{"__CURSOR":"h","__REALTIME_TIMESTAMP":"8","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Disconnected from user root 198.51.100.7 port 50022"}`,
+		`{"__CURSOR":"i","__REALTIME_TIMESTAMP":"9","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"pam_unix(sshd:session): session closed for user root"}`,
 		`not json`,
-		`{"__REALTIME_TIMESTAMP":"10","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for a from b port 1 ssh2"}`,
-		`{"__CURSOR":"j","__REALTIME_TIMESTAMP":"11","SYSLOG_IDENTIFIER":"sshd","MESSAGE":[208,159]}`,
+		`{"__REALTIME_TIMESTAMP":"10","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for a from b port 1 ssh2"}`,
+		`{"__CURSOR":"j","__REALTIME_TIMESTAMP":"11","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":[208,159]}`,
 	)
 	if got := strings.Join(messages(l, Firewall), "\n"); got != "info drop-ssh: TCP 203.0.113.5:51515 → 192.0.2.1:22, вход eth0\ninfo ping: ICMPv6 [2001:db8::1] → [2001:db8::2] тип 128, вход br0, выход eth1" {
 		t.Fatal(got)
@@ -135,9 +135,9 @@ func TestSSHExistingUserNamedInvalid(t *testing.T) {
 	log := New()
 	j := &Journal{Log: log}
 	lines := []string{
-		`{"__CURSOR":"1","__REALTIME_TIMESTAMP":"1","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for invalid from 198.51.100.7 port 4444 ssh2"}`,
-		`{"__CURSOR":"2","__REALTIME_TIMESTAMP":"2","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Failed publickey for invalid from 2001:db8::7 port 4444 ssh2"}`,
-		`{"__CURSOR":"3","__REALTIME_TIMESTAMP":"3","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for invalid from 198.51.100.7 port 4444 ssh2"}`,
+		`{"__CURSOR":"1","__REALTIME_TIMESTAMP":"1","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for invalid from 198.51.100.7 port 4444 ssh2"}`,
+		`{"__CURSOR":"2","__REALTIME_TIMESTAMP":"2","_UID":"0","SYSLOG_IDENTIFIER":"sshd-session","MESSAGE":"Failed publickey for invalid from 2001:db8::7 port 4444 ssh2"}`,
+		`{"__CURSOR":"3","__REALTIME_TIMESTAMP":"3","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password for invalid from 198.51.100.7 port 4444 ssh2"}`,
 	}
 	for _, line := range lines {
 		j.Handle(context.Background(), []byte(line), time.Time{})
@@ -175,8 +175,8 @@ func TestSSHInvalidUserCannotForgeAddress(t *testing.T) {
 func TestReadSkipsOverlongRecord(t *testing.T) {
 	l := New()
 	j := &Journal{Log: l}
-	long := `{"__CURSOR":"x","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"` + strings.Repeat("a", maxJournalLine) + `"}`
-	ok := `{"__CURSOR":"y","__REALTIME_TIMESTAMP":"1","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for u from 192.0.2.1 port 1 ssh2"}`
+	long := `{"__CURSOR":"x","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"` + strings.Repeat("a", maxJournalLine) + `"}`
+	ok := `{"__CURSOR":"y","__REALTIME_TIMESTAMP":"1","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for u from 192.0.2.1 port 1 ssh2"}`
 	j.read(context.Background(), strings.NewReader(long+"\n"+ok+"\n"))
 	if got := messages(l, Access); len(got) != 1 || j.cursor != "y" {
 		t.Fatal(got, j.cursor)

@@ -62,7 +62,7 @@ func TestRefillPerGroupUpToHead(t *testing.T) {
 		case strings.Contains(joined, "_PID=1"):
 			return []byte(unitRecord("u1", msgStarted, "netos-dnsmasq.service", ``) + "\n"), nil
 		case strings.Contains(joined, "SYSLOG_IDENTIFIER=sshd"):
-			return []byte(`{"__CURSOR":"s1","__REALTIME_TIMESTAMP":"1791999999000000","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for root from 192.0.2.9 port 1 ssh2"}` + "\n"), nil
+			return []byte(`{"__CURSOR":"s1","__REALTIME_TIMESTAMP":"1791999999000000","_UID":"0","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted password for root from 192.0.2.9 port 1 ssh2"}` + "\n"), nil
 		case strings.Contains(joined, "_SYSTEMD_UNIT=netos-unbound.service"):
 			var b strings.Builder
 			for i := 0; i < Size; i++ {
