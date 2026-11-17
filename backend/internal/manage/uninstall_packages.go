@@ -69,14 +69,25 @@ func (m *Manager) planPackagePurge(ctx context.Context) (packagePurge, error) {
 			allowed[base] = true
 		}
 	}
+	// All foreign packages are named at once: the administrator decides about
+	// each, and a refusal listing only the first would repeat for the next.
+	var foreign []string
 	for _, line := range strings.Split(plan, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 {
 			continue
 		}
-		if f[0] == "Inst" || ((f[0] == "Remv" || f[0] == "Purg") && !allowed[f[1]]) {
-			return packagePurge{}, fmt.Errorf("удаление компонентов затронет сторонний пакет %s", f[1])
+		if f[0] == "Inst" {
+			return packagePurge{}, fmt.Errorf("удаление компонентов потребовало бы установить пакет %s", f[1])
 		}
+		if (f[0] == "Remv" || f[0] == "Purg") && !allowed[f[1]] {
+			foreign = append(foreign, f[1])
+		}
+	}
+	if len(foreign) > 0 {
+		list := strings.Join(foreign, " ")
+		return packagePurge{}, fmt.Errorf("удаление компонентов затронет сторонние пакеты: %s — они зависят от пакетов, установленных netOS.\n"+
+			"Что сделать: если эти пакеты не нужны, удалите их (sudo apt-get purge %s) и снова запустите sudo netos uninstall; если нужны — оставьте netOS установленным", list, list)
 	}
 	return p, nil
 }
@@ -89,7 +100,7 @@ func purgeArgs(packages []string) []string {
 func (m *Manager) removeInstalledPackages(ctx context.Context) error {
 	p, err := m.planPackagePurge(ctx)
 	if err != nil {
-		return fmt.Errorf("%w; удаление остановлено, данные сохранены", err)
+		return fmt.Errorf("удаление остановлено, данные сохранены: %w", err)
 	}
 	if p.noLedger {
 		fmt.Fprintln(m.Err, "В этой старой установке нет учёта пакетов: пакеты APT сохранены, их происхождение нельзя подтвердить.")

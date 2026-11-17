@@ -57,6 +57,46 @@ func TestUninstallWorkerFailureAndCancelledConsent(t *testing.T) {
 	}
 }
 
+// The worker runs detached and writes only to its log; the terminal must still
+// get the reason. A result left by an earlier run is never shown as this one's.
+func TestUninstallFailureShowsWorkerReason(t *testing.T) {
+	for _, tc := range []struct {
+		name, previous, appended, want string
+	}{
+		{"reason", "", "2026-11-17T10:47:26Z Завершение удаления: причина\nЧто сделать: совет\n", "удаление не выполнено: причина\nЧто сделать: совет\nПодробности: "},
+		{"after earlier runs", "x Завершение удаления: старая причина\nx Завершение удаления: <nil>\n", "x Завершение удаления: новая причина\n", "удаление не выполнено: новая причина\n"},
+		{"crashed worker", "x Завершение удаления: старая причина\n", "x > systemctl stop netosd\n", "запуск или выполнение удаления завершилось ошибкой"},
+		{"no log", "", "", "запуск или выполнение удаления завершилось ошибкой"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, out := testManager()
+			sandbox(t, m)
+			m.LaunchUninstall = m.launchUninstall
+			path := m.sys(uninstallLogPath)
+			_ = os.MkdirAll(filepath.Dir(path), 0755)
+			if tc.previous != "" {
+				_ = os.WriteFile(path, []byte(tc.previous), 0600)
+			}
+			m.Run = func(context.Context, command) error {
+				if tc.appended != "" {
+					f, _ := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+					f.WriteString(tc.appended)
+					f.Close()
+				}
+				return errors.New("exit status 1: Running as unit: netos-uninstall.service")
+			}
+			err := m.uninstall(context.Background(), true, false, false, true)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "старая причина") ||
+				(strings.HasPrefix(tc.want, "удаление не выполнено") && strings.Contains(err.Error(), "Running as unit")) {
+				t.Fatalf("err=%v", err)
+			}
+			if strings.Contains(out.String(), "netOS удалён") {
+				t.Fatal(out.String())
+			}
+		})
+	}
+}
+
 func TestInternalUninstallLocksAndDoesNotRelaunch(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)

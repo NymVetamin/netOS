@@ -138,9 +138,10 @@ func TestUninstallRefusesForeignDependentBeforeAnyChange(t *testing.T) {
 	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
 		switch name {
 		case "apt-get":
-			return "Purg libpython3.13 [3.13.5-2]\nPurg linux-perf [6.12.113-1]\n", nil
+			// Every foreign package is named, not only the first.
+			return "Purg libpython3.13 [3.13.5-2]\nPurg linux-perf [6.12.113-1]\nRemv python3-perf [6.12.113-1]\n", nil
 		case "dpkg-query":
-			return "curl\tii \nlibpython3.13\tii \nlinux-perf\tii \n", nil
+			return "curl\tii \nlibpython3.13\tii \nlinux-perf\tii \npython3-perf\tii \n", nil
 		}
 		return "", nil
 	}
@@ -149,7 +150,8 @@ func TestUninstallRefusesForeignDependentBeforeAnyChange(t *testing.T) {
 		return nil
 	}
 	err := m.uninstall(context.Background(), true, false, false, true)
-	if err == nil || !strings.Contains(err.Error(), "linux-perf") || !strings.Contains(err.Error(), "до изменений") {
+	if err == nil || !strings.Contains(err.Error(), "до изменений") || !strings.Contains(err.Error(), "Что сделать:") ||
+		!strings.Contains(err.Error(), "sudo apt-get purge linux-perf python3-perf") {
 		t.Fatalf("err=%v", err)
 	}
 	if len(changes) != 0 || strings.Contains(out.String(), "Останавливаем netOS") {

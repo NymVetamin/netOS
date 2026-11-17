@@ -1371,7 +1371,7 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	// found only there left the router half removed, and every retry failed
 	// the same way. The final step plans again against the current state.
 	if _, err := m.planPackagePurge(ctx); err != nil {
-		return fmt.Errorf("удаление пакетов netOS: %w; удаление остановлено до изменений, система не изменена", err)
+		return fmt.Errorf("удаление остановлено до изменений, система не изменена: %w", err)
 	}
 	uplink, err := m.captureManagementUplink(ctx, "удалением")
 	if err != nil {

@@ -3,7 +3,9 @@ package manage
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/netip"
+	"os"
 	"strings"
 )
 
@@ -28,11 +30,52 @@ func (m *Manager) launchUninstall(ctx context.Context, keepData, backup bool) er
 		args = append(args, "--no-backup")
 	}
 	fmt.Fprintf(m.Out, "Удаление будет выполняться отдельной службой и продолжится при разрыве SSH. Журнал: %s\n", uninstallLogPath)
+	// The worker writes to the journal, not to this terminal; its result is
+	// read back from the part of the log appended by this run only.
+	var logStart int64
+	if info, err := os.Stat(m.sys(uninstallLogPath)); err == nil {
+		logStart = info.Size()
+	}
 	if err := m.run(ctx, "systemd-run", args...); err != nil {
+		if reason := m.uninstallResult(logStart); reason != "" {
+			return fmt.Errorf("удаление не выполнено: %s\nПодробности: %s", reason, uninstallLogPath)
+		}
 		return fmt.Errorf("запуск или выполнение удаления завершилось ошибкой: %w; журнал: %s; журнал службы: journalctl -u netos-uninstall", err, uninstallLogPath)
 	}
 	fmt.Fprintln(m.Out, "netOS удалён.")
 	return nil
+}
+
+// uninstallResult returns the error the worker recorded in the log after
+// offset start, or "" when this run recorded none (it crashed or succeeded).
+// A truncated log is read from its beginning.
+func (m *Manager) uninstallResult(start int64) string {
+	f, err := os.Open(m.sys(uninstallLogPath))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || info.Size() < start {
+		start = 0
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	// The worker's log is bounded by one uninstall; 4 MiB is far above it.
+	data, err := io.ReadAll(io.LimitReader(f, 4<<20))
+	if err != nil {
+		return ""
+	}
+	const marker = " Завершение удаления: "
+	i := strings.LastIndex(string(data), marker)
+	if i < 0 {
+		return ""
+	}
+	reason := strings.TrimSpace(string(data[i+len(marker):]))
+	if reason == "<nil>" {
+		return ""
+	}
+	return reason
 }
 
 // DHCP can temporarily install an IPv4LL default with no gateway. It is not
