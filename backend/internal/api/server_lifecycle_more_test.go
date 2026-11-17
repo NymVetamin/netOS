@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -10,9 +11,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -70,6 +73,52 @@ func freeTCPPort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+// A forked child briefly owns CLOEXEC listeners until exec, even after the
+// parent's Close. Wait for that bounded handoff, but still reject a leaked
+// listener and do not retry unrelated errors.
+func waitTCPPortReleased(address string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	inUse := syscall.EADDRINUSE
+	if runtime.GOOS == "windows" {
+		inUse = syscall.Errno(10048) // Winsock WSAEADDRINUSE, not Go's POSIX errno.
+	}
+	for {
+		ln, err := net.Listen("tcp", address)
+		if err == nil {
+			return ln.Close()
+		}
+		if !errors.Is(err, inUse) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestWaitTCPPortReleasedKeepsLeakCheck(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	address := ln.Addr().String()
+	if err := waitTCPPortReleased(address, 20*time.Millisecond); err == nil {
+		t.Fatalf("held listener was accepted: %v", err)
+	}
+	closed := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		ln.Close()
+		close(closed)
+	}()
+	if err := waitTCPPortReleased(address, time.Second); err != nil {
+		t.Fatal("released listener still rejected", err)
+	}
+	<-closed
+	if err := waitTCPPortReleased("invalid-address", time.Second); err == nil {
+		t.Fatal("invalid address accepted")
+	}
 }
 
 func runTLSServer(t *testing.T, cfg *config.Config, tlsDir string) (*http.Response, string) {
@@ -218,15 +267,17 @@ func TestReadyCallbackRunsAfterLiveAPIAndFailureClosesListener(t *testing.T) {
 		called = true
 		return fmt.Errorf("injected marker write failure")
 	}
-	err := s.Start(context.Background(), cfg, t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := s.Start(ctx, cfg, t.TempDir())
+	cancel()
 	if err == nil || !strings.Contains(err.Error(), "marker write failure") || !called {
 		t.Fatalf("Start error=%v called=%v", err, called)
 	}
-	ln, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cfg.System.Panel.Port))
+	listenErr := waitTCPPortReleased(fmt.Sprintf("127.0.0.1:%d", cfg.System.Panel.Port), 2*time.Second)
 	if listenErr != nil {
 		t.Fatalf("panel listener leaked after Ready failure: %v", listenErr)
 	}
-	_ = ln.Close()
 }
 
 func TestPruneOnceRemovesExpiredSessionAndCSRFState(t *testing.T) {

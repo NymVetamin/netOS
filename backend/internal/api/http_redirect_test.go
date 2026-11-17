@@ -171,11 +171,10 @@ func TestPanelHTTPRedirectLifecycle(t *testing.T) {
 					s.Certificates.Close()
 				}
 				if !occupied {
-					ln, err := net.Listen("tcp", address)
+					err := waitTCPPortReleased(address, 2*time.Second)
 					if err != nil {
 						t.Fatalf("HTTP port leaked: %v", err)
 					}
-					ln.Close()
 				}
 			})
 		}
