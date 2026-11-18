@@ -11,7 +11,9 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"os"
 	"reflect"
+	"runtime"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -128,7 +130,7 @@ func (s *Subsystem) writeTables(cfg *config.Config) error {
 	for _, t := range cfg.Routing.Tables {
 		fmt.Fprintf(&b, "%d\t%s\n", t.Number, t.Name)
 	}
-	return system.WriteFileAtomic(rtTablesPath, []byte(b.String()), 0o644)
+	return writeRegistry(rtTablesPath, []byte(b.String()))
 }
 
 // writeProtos регистрирует имя протокола, чтобы ip route показывал proto netos
@@ -137,7 +139,17 @@ func (s *Subsystem) writeProtos() error {
 	var b strings.Builder
 	b.WriteString("# Сгенерировано netOS. Правки будут перезаписаны.\n")
 	fmt.Fprintf(&b, "%d\t%s\n", config.RouteProto, config.RouteProtoName)
-	return system.WriteFileAtomic(rtProtosPath, []byte(b.String()), 0o644)
+	return writeRegistry(rtProtosPath, []byte(b.String()))
+}
+
+func writeRegistry(path string, data []byte) error {
+	const mode = 0o644
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode().IsRegular() && info.Size() == int64(len(data)) &&
+		(runtime.GOOS == "windows" || info.Mode() == mode) && !system.FileChanged(path, data) {
+		return nil
+	}
+	return system.WriteFileAtomic(path, data, mode)
 }
 
 // applyRoutes приводит статические маршруты к описанному виду.

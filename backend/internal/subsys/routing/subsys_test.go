@@ -83,6 +83,53 @@ func TestApplyWritesRegistriesAndReconciles(t *testing.T) {
 	}
 }
 
+func TestApplyPreservesMatchingRegistriesAndRepairsDrift(t *testing.T) {
+	dir := t.TempDir()
+	oldTables, oldProtos := rtTablesPath, rtProtosPath
+	rtTablesPath, rtProtosPath = filepath.Join(dir, "tables"), filepath.Join(dir, "protos")
+	t.Cleanup(func() { rtTablesPath, rtProtosPath = oldTables, oldProtos })
+	cfg, subsystem := config.Default(), New(&recordingRunner{})
+	apply := func() {
+		t.Helper()
+		if err := subsystem.Apply(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply()
+	paths := []string{rtTablesPath, rtProtosPath}
+	for _, path := range paths {
+		if err := os.Link(path, path+".original"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply()
+	for _, path := range paths {
+		before, err := os.Stat(path + ".original")
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatalf("repeat replaced %s", path)
+		}
+	}
+	cfg.Routing.Tables = []config.RouteTable{{Number: 201, Name: "changed"}}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(rtProtosPath, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply()
+	assertFile(t, rtTablesPath, "201\tchanged", 0644)
+	cfg.Routing.Tables[0].Name = "renamed"
+	apply()
+	assertFile(t, rtTablesPath, "201\trenamed", 0644)
+	assertFile(t, rtProtosPath, fmt.Sprintf("%d\tnetos", config.RouteProto), 0644)
+}
+
 func TestApplyStopsAtEveryFailedStage(t *testing.T) {
 	oldTables, oldProtos := rtTablesPath, rtProtosPath
 	t.Cleanup(func() { rtTablesPath, rtProtosPath = oldTables, oldProtos })
