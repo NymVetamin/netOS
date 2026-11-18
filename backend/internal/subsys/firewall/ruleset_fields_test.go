@@ -37,6 +37,16 @@ func TestInterfaceMappingsZoneDeduplicationAndExpectedChains(t *testing.T) {
 	if strings.Join(zones["lan"], ",") != "lan0" || strings.Join(zones["wan"], ",") != "ppp-w2,wan0,wg-ch7" || strings.Join(zones["vpn"], ",") != "vpns8+" {
 		t.Fatalf("zones=%+v", zones)
 	}
+	// Membership is scoped to each zone; rebuilding observes edits and keeps
+	// distinct interface names sorted even when two segments share a port.
+	cfg.Networks[0].Zone = "guest"
+	cfg.Networks[2].Enabled = true
+	updated := buildZoneMap(cfg)
+	if strings.Join(updated["guest"], ",") != "lan0" || strings.Join(updated["lan"], ",") != "lan0" || len(zones["guest"]) != 0 {
+		t.Fatalf("stale or overlapping zone membership: %+v, previous %+v", updated, zones)
+	}
+	cfg.Networks[0].Zone = "lan"
+	cfg.Networks[2].Enabled = false
 	wantChains := len(cfg.Firewall.Zones) * 3
 	if got := ExpectedChains(cfg); len(got) != wantChains {
 		t.Fatalf("chains=%v", got)

@@ -73,17 +73,17 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 		byID[iface.ID] = iface.Name
 	}
 
-	zm := zoneMap{}
+	byZone := make(map[string]map[string]struct{})
 	add := func(zone, iface string) {
 		if zone == "" || iface == "" {
 			return
 		}
-		for _, existing := range zm[zone] {
-			if existing == iface {
-				return
-			}
+		names := byZone[zone]
+		if names == nil {
+			names = make(map[string]struct{})
+			byZone[zone] = names
 		}
-		zm[zone] = append(zm[zone], iface)
+		names[iface] = struct{}{}
 	}
 
 	for _, n := range cfg.Networks {
@@ -115,8 +115,14 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 		}
 	}
 
-	for zone := range zm {
-		sort.Strings(zm[zone])
+	zm := make(zoneMap, len(byZone))
+	for zone, names := range byZone {
+		interfaces := make([]string, 0, len(names))
+		for name := range names {
+			interfaces = append(interfaces, name)
+		}
+		sort.Strings(interfaces)
+		zm[zone] = interfaces
 	}
 	return zm
 }
