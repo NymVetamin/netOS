@@ -50,3 +50,22 @@ test("replacement preserves shared paths, duplicate rows and fresh edits", () =>
   assert.deepEqual(choices(), [""]);
   assert.deepEqual([...replacementChannelIDs([], "")], []);
 });
+
+test("channel deletion guards match incoming references on each config snapshot", () => {
+  const cfg = { channels: [{ id: "a", fallback: "a" }, { id: "a" }, { fallback: "b" }],
+    clients: [{ channel: "c" }, { channel: "c" }], socks: { enabled: false, channel: "a" } };
+  function check(expected) {
+    const isReferenced = exports.channelReferenceLookup(cfg);
+    assert.deepEqual(["a", "b", "c"].filter(isReferenced), expected);
+    for (const id of ["a", "b", "c", "missing", undefined]) {
+      assert.equal(isReferenced(id), channelReferences(cfg, id).length > 0);
+    }
+  }
+  check(["b", "c"]);
+  cfg.socks.enabled = true;
+  cfg.clients = [];
+  check(["a", "b"]);
+  cfg.socks.enabled = false;
+  cfg.channels = [];
+  check([]);
+});

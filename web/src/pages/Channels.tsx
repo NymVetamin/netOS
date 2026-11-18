@@ -1,8 +1,8 @@
 import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
-import { channelReferences, replacementChannelIDs } from "../channelReferences";
+import { channelReferences, channelReferenceLookup, replacementChannelIDs } from "../channelReferences";
 import { secretInput } from "../secrets";
-import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, Fragment, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { channelComponents, channelComponentReady, channelKind, channelAWGServers } from "../channelComponents";
 import { newID } from "../id";
@@ -66,6 +66,7 @@ export function ChannelsPage({ config, patch }: Props) {
     return () => { active = false; unsubscribe(); };
   }, [statusPolling]);
   const channels = config.channels || [];
+  const isReferenced = useMemo(() => channelReferenceLookup(config), [config]);
   const awgServers = channelAWGServers(config);
   const policies = config.policies || [];
   const ready = (type: string) => channelComponentReady(config, installed, type);
@@ -89,7 +90,7 @@ export function ChannelsPage({ config, patch }: Props) {
     if (!current) return;
     const next = structuredClone(current);
     mutate(next);
-    if (current.enabled && !next.enabled && channelReferences(config, id).length) {
+    if (current.enabled && !next.enabled && isReferenced(id)) {
       setDisableID(id);
       setReplacement("");
       return;
@@ -271,7 +272,7 @@ export function ChannelsPage({ config, patch }: Props) {
               channel={channel}
               channels={channels}
               installed={ready(channelKind(channel, awgServers))}
-              referenced={isChannelReferenced(config, channel.id)}
+              referenced={isReferenced(channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() =>
                 patch((draft) => {
@@ -285,7 +286,7 @@ export function ChannelsPage({ config, patch }: Props) {
               channel={channel}
               channels={channels}
               installed={openconnectInstalled}
-              referenced={isChannelReferenced(config, channel.id)}
+              referenced={isReferenced(channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })}
             />
@@ -295,7 +296,7 @@ export function ChannelsPage({ config, patch }: Props) {
               channel={channel}
               channels={channels}
               installed={xrayInstalled}
-              referenced={isChannelReferenced(config, channel.id)}
+              referenced={isReferenced(channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })}
             />
@@ -305,20 +306,20 @@ export function ChannelsPage({ config, patch }: Props) {
               channel={channel}
               channels={channels}
               installed={l2tpInstalled}
-              referenced={isChannelReferenced(config, channel.id)}
+              referenced={isReferenced(channel.id)}
               update={(mutate) => updateChannel(channel.id, mutate)}
               remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })}
             />
 		  ) : channel.type === "ikev2" ? (
 			<IKEv2Editor key={channel.id} channel={channel} channels={channels} installed={strongswanInstalled}
-				referenced={isChannelReferenced(config, channel.id)} update={(mutate) => updateChannel(channel.id, mutate)}
+				referenced={isReferenced(channel.id)} update={(mutate) => updateChannel(channel.id, mutate)}
 				remove={() => patch((draft) => { draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id); })} />
           ) : (
             <Notice key={channel.id} tone="warn" title={`Неподдерживаемый канал: ${channel.type || "без типа"}`}>
               <strong>{channel.name || channel.id}</strong>
               <p>Этот сохранённый канал нельзя включить в текущей версии. Его настройки сохранены; канал можно удалить.</p>
-              {isChannelReferenced(config, channel.id) && <p>Сначала уберите ссылки на канал в настройках устройств, сегментов, политик, запасных каналов, DNS и VPN-доступа.</p>}
-              <button type="button" className="btn ghost sm" aria-label={`Удалить канал ${channel.name || channel.id}`} disabled={isChannelReferenced(config, channel.id)} onClick={() => patch((draft) => {
+              {isReferenced(channel.id) && <p>Сначала уберите ссылки на канал в настройках устройств, сегментов, политик, запасных каналов, DNS и VPN-доступа.</p>}
+              <button type="button" className="btn ghost sm" aria-label={`Удалить канал ${channel.name || channel.id}`} disabled={isReferenced(channel.id)} onClick={() => patch((draft) => {
                 draft.channels = draft.channels.filter((item: any) => item.id !== channel.id); removeChannelNAT(draft, channel.id);
               })}>Удалить</button>
             </Notice>
@@ -814,8 +815,4 @@ function updatePolicyDay(patch: Props["patch"], id: string, day: string, checked
     const days: string[] = policy.schedule.days || [];
     policy.schedule.days = checked ? [...days, day] : days.filter((item) => item !== day);
   });
-}
-
-function isChannelReferenced(config: any, id: string) {
-  return channelReferences(config, id).length > 0;
 }
