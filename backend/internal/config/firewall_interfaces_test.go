@@ -52,9 +52,15 @@ func TestFirewallMembershipVirtualInterfaces(t *testing.T) {
 			c := Default()
 			c.Channels = []Channel{{Type: tc.kind, Index: 2}}
 			c.VPNServers = []VPNServer{{Type: tc.kind, Index: 2}}
-			for _, name := range []string{tc.channel, tc.server} {
-				if name != "" && (!c.FirewallInterfaceInZone(name, "vpn") || c.FirewallInterfaceInZone(name, "lan")) {
-					t.Fatalf("wrong zone membership for %s", name)
+			// A channel is an Internet exit; only server interfaces are VPN.
+			for name, zone := range map[string]string{tc.channel: "wan", tc.server: "vpn"} {
+				if name == "" {
+					continue
+				}
+				for _, other := range []string{"lan", "wan", "vpn"} {
+					if c.FirewallInterfaceInZone(name, other) != (other == zone) {
+						t.Fatalf("wrong zone membership for %s in %s", name, other)
+					}
 				}
 			}
 		})
@@ -91,5 +97,34 @@ func TestForwardOutputValidation(t *testing.T) {
 	c.VPNServers = []VPNServer{{Type: "ocserv", Index: 2}}
 	if !c.FirewallInterfaceInZone("vpns2+", "vpn") {
 		t.Fatal("ocserv wildcard not recognized")
+	}
+}
+
+// Channels left the VPN zone; saved rules that name their tunnel must follow,
+// or the stored configuration would fail validation after an update.
+func TestNormalizeMovesChannelRulesToInternet(t *testing.T) {
+	c := Default()
+	c.Firewall.Zones[1].Description = zoneDescriptions["wan"][0]
+	c.Firewall.Zones[2].Description = "своё"
+	c.Channels = []Channel{{ID: "wg", Type: "wireguard", Index: 1}, {ID: "exit", Type: "wireguard", Index: 2, WireGuardPeer: &WireGuardPeerChannel{ServerIndex: 1}}}
+	c.Firewall.Rules = []FirewallRule{
+		{ID: "in", Zone: "vpn", Flow: "in", Interface: "wg-ch1"},
+		{ID: "to", Zone: "lan", Flow: "forward", DstZone: "vpn", OutInterface: "wg-ch1"},
+		{ID: "server", Zone: "vpn", Flow: "in", Interface: "wg-srv1"},
+		{ID: "all", Zone: "lan", Flow: "forward", DstZone: "vpn"},
+	}
+	c.Normalize()
+	got := map[string]string{}
+	for _, r := range c.Firewall.Rules {
+		got[r.ID] = r.Zone + ">" + r.DstZone
+	}
+	want := map[string]string{"in": "wan>", "to": "lan>wan", "server": "vpn>", "all": "lan>vpn"}
+	for id, w := range want {
+		if got[id] != w {
+			t.Fatalf("%s: %s want %s", id, got[id], w)
+		}
+	}
+	if c.Firewall.Zones[1].Description != zoneDescriptions["wan"][1] || c.Firewall.Zones[2].Description != "своё" {
+		t.Fatalf("descriptions: %+v", c.Firewall.Zones)
 	}
 }

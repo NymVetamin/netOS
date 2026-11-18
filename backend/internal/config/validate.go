@@ -1678,13 +1678,13 @@ func (c *Config) zoneHasInterfaces(zone string) bool {
 				return true
 			}
 		}
-	}
-	if zone == "vpn" {
 		for _, ch := range c.Channels {
-			if ch.Enabled && ch.Type != "direct" {
+			if ch.Enabled && ChannelInterface(ch) != "" {
 				return true
 			}
 		}
+	}
+	if zone == "vpn" {
 		for _, s := range c.VPNServers {
 			if s.Enabled {
 				return true

@@ -34,7 +34,7 @@ func TestInterfaceMappingsZoneDeduplicationAndExpectedChains(t *testing.T) {
 	cfg.Channels = []config.Channel{{ID: "ch", Type: "wireguard", Index: 7, Enabled: true}, {ID: "direct", Type: "direct", Enabled: true}}
 	cfg.VPNServers = []config.VPNServer{{ID: "srv", Type: "ocserv", Index: 8, Enabled: true}}
 	zones := buildZoneMap(cfg)
-	if strings.Join(zones["lan"], ",") != "lan0" || strings.Join(zones["wan"], ",") != "ppp-w2,wan0" || strings.Join(zones["vpn"], ",") != "vpns8+,wg-ch7" {
+	if strings.Join(zones["lan"], ",") != "lan0" || strings.Join(zones["wan"], ",") != "ppp-w2,wan0,wg-ch7" || strings.Join(zones["vpn"], ",") != "vpns8+" {
 		t.Fatalf("zones=%+v", zones)
 	}
 	wantChains := len(cfg.Firewall.Zones) * 3

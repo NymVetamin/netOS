@@ -597,6 +597,11 @@ type Channel struct {
 	Fallback string         `json:"fallback,omitempty" plan:"Запасной канал" sensitivity:"public" reference:"channel"`
 	Probe    Probe          `json:"probe" plan:"Проверка канала" sensitivity:"public"`
 	Config   map[string]any `json:"config,omitempty" plan:"Параметры подключения" sensitivity:"public"`
+
+	// The far end is a router that sends its clients out through this one
+	// (an exit through a server client). Channels are in the Internet zone,
+	// so such new connections are dropped unless the administrator says so.
+	AcceptInbound bool `json:"accept_inbound,omitempty" plan:"Принимать транзит из канала" sensitivity:"public" format:"switch"`
 }
 
 type Policy struct {

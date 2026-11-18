@@ -24,6 +24,11 @@ async def main():
   await expect(private).to_have_value("")
   # An outgoing channel always carries 0.0.0.0/0 (import and validator), so the form does not show it.
   await expect(page.get_by_label("AllowedIPs WireGuard",exact=True)).to_have_count(0)
+  # Channels are in the Internet zone; transit from the far router is opt-in.
+  inbound=page.get_by_label("Принимать транзит из канала",exact=True)
+  await expect(inbound).not_to_be_checked()
+  await page.get_by_text("Принимать транзит из канала",exact=True).click()
+  await expect(inbound).to_be_checked()
   await page.get_by_role("button",name="Сгенерировать новые ключи",exact=True).click()
   await expect(private).to_have_value(KEY)
   await expect(public).to_have_value(PUB)
@@ -49,5 +54,5 @@ async def main():
   output=Path(__file__).resolve().parents[2]/".codex/wireguard-form.png"
   await page.screenshot(path=str(output),full_page=True)
   await browser.close()
-  print("saved public key, generation, manual key, no AllowedIPs field, file import/warnings and failed-import preservation PASS")
+  print("saved public key, generation, manual key, no AllowedIPs field, inbound transit switch, file import/warnings and failed-import preservation PASS")
 asyncio.run(main())

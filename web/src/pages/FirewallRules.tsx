@@ -9,6 +9,8 @@ import { Badge, Switch, Row } from "../ui";
 function origin(comment: string, sources: Record<string,string>): [string,string] | null {
  if (comment.startsWith("NAT аплинка")) return ["Аплинк → NAT", "network"];
  if (comment.startsWith("NAT канала")) return ["Интернет-канал → NAT", "channels"];
+ if (comment.startsWith("транзит из канала")) return ["Интернет-канал → Выход для другого роутера", "channels"];
+ if (comment.startsWith("выход через клиента")) return ["VPN → Клиент как интернет-канал", "vpn-servers"];
  if (comment.startsWith("ACME")) return ["Система → Сертификат панели", "system"];
  if (/samba|SMB|обнаружение Windows/i.test(comment)) return ["Диски и файлы → Файловый сервер", "storage"];
  if (/DNS/i.test(comment)) return ["Сетевые службы → DNS", "services?tab=dns"];

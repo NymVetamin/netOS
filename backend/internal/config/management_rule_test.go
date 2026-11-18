@@ -37,8 +37,12 @@ func TestManagementRuleRequiresEveryAccessCondition(t *testing.T) {
 			r.Zone = "vpn"
 			c.Channels = []Channel{{Enabled: true, Type: "direct"}}
 		}, false},
-		{"VPN channel", func(c *Config, r *FirewallRule) {
+		{"VPN channel is not VPN", func(c *Config, r *FirewallRule) {
 			r.Zone = "vpn"
+			c.Channels = []Channel{{Enabled: true, Type: "xray"}}
+		}, false},
+		{"VPN channel is Internet", func(c *Config, r *FirewallRule) {
+			r.Zone = "wan"
 			c.Channels = []Channel{{Enabled: true, Type: "xray"}}
 		}, true},
 		{"VPN server", func(c *Config, r *FirewallRule) { r.Zone = "vpn"; c.VPNServers = []VPNServer{{Enabled: true}} }, true},

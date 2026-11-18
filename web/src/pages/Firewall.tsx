@@ -1132,15 +1132,16 @@ function interfacesOfZone(config: any, zone: string): string[] {
     for (const w of config.wans || []) {
       if (w.enabled) names.push(w.proto === "pppoe" || w.proto === "l2tp" ? `ppp-${w.id}` : String(byID.get(w.interface) || ""));
     }
+    // Outgoing channels are Internet exits; a server-client exit stays on its server interface.
+    for (const channel of config.channels || []) {
+      if (!channel.enabled || channel.type === "direct" || channel.wireguard_peer) continue;
+      const prefix = channel.type === "wireguard" ? "wg-ch" :
+        channel.type === "l2tp" ? "ppp-ch" :
+        channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";
+      names.push(`${prefix}${channel.index}`);
+    }
   }
 	if (zone === "vpn") {
-		for (const channel of config.channels || []) {
-			if (!channel.enabled || channel.type === "direct" || channel.wireguard_peer) continue;
-			const prefix = channel.type === "wireguard" ? "wg-ch" :
-				channel.type === "l2tp" ? "ppp-ch" :
-				channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";
-			names.push(`${prefix}${channel.index}`);
-		}
 		for (const server of config.vpn_servers || []) {
 			if (!server.enabled) continue;
 			const prefix = server.type === "wireguard" ? "wg-srv" :

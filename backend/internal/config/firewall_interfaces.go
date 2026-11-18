@@ -2,6 +2,20 @@ package config
 
 import "fmt"
 
+// ChannelInterface is the tunnel of an outgoing channel, or "" for a direct
+// exit and an exit through a VPN-server client, whose interface is the
+// server's own and stays in the VPN zone.
+func ChannelInterface(ch Channel) string {
+	if ch.WireGuardPeer != nil {
+		return ""
+	}
+	prefix := map[string]string{"wireguard": "wg-ch", "l2tp": "ppp-ch", "ikev2": "xfrm-ch", "xray": "tun-ch", "openconnect": "tun-ch"}[ch.Type]
+	if prefix == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s%d", prefix, ch.Index)
+}
+
 // Membership includes disabled configuration objects: disabling a connection
 // must not invalidate its saved firewall rules. Runtime expansion remains limited
 // to active interfaces and fails closed when the selected exit is unavailable.
@@ -25,17 +39,14 @@ func (c *Config) firewallInterfaceInZone(name, zone string, interfaceName func(s
 				return true
 			}
 		}
-	}
-	if zone == "vpn" {
+		// An outgoing channel is an Internet exit like an uplink.
 		for _, ch := range c.Channels {
-			if ch.WireGuardPeer != nil {
-				continue
-			} // shared interface is listed by its VPN server
-			prefix := map[string]string{"wireguard": "wg-ch", "l2tp": "ppp-ch", "ikev2": "xfrm-ch", "xray": "tun-ch", "openconnect": "tun-ch"}[ch.Type]
-			if prefix != "" && name == fmt.Sprintf("%s%d", prefix, ch.Index) {
+			if iface := ChannelInterface(ch); iface != "" && iface == name {
 				return true
 			}
 		}
+	}
+	if zone == "vpn" {
 		for _, s := range c.VPNServers {
 			if s.Type == "l2tp" && name == L2TPInterfacePrefix(s.Index)+"+" {
 				return true
@@ -51,4 +62,28 @@ func (c *Config) firewallInterfaceInZone(name, zone string, interfaceName func(s
 		}
 	}
 	return false
+}
+
+// moveChannelRulesToWAN carries saved rules that name a channel tunnel from
+// the VPN zone, where channels used to be, to the Internet zone. Left in place
+// they would fail validation and block every later apply.
+func (c *Config) moveChannelRulesToWAN() {
+	channels := map[string]bool{}
+	for _, ch := range c.Channels {
+		if iface := ChannelInterface(ch); iface != "" {
+			channels[iface] = true
+		}
+	}
+	if len(channels) == 0 {
+		return
+	}
+	for i := range c.Firewall.Rules {
+		r := &c.Firewall.Rules[i]
+		if r.Zone == "vpn" && channels[r.Interface] {
+			r.Zone = "wan"
+		}
+		if r.DstZone == "vpn" && channels[r.OutInterface] {
+			r.DstZone = "wan"
+		}
+	}
 }

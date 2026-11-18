@@ -101,9 +101,12 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 		}
 		add("wan", name)
 	}
+	// A channel is an Internet exit: its far end is no more trusted than the
+	// provider. An exit through a server client shares the server interface;
+	// filter classifies it by the peer address (clientExitsAsWAN).
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && ch.Type != "direct" {
-			add("vpn", channelInterface(ch))
+		if ch.Enabled {
+			add("wan", config.ChannelInterface(ch))
 		}
 	}
 	for _, s := range cfg.VPNServers {
@@ -297,19 +300,34 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// strongSwan 6.0.1 не всегда присваивает входящий XFRM ID трафику
 	// road-warrior. Ядро уже проверило IPsec-политику, поэтому классифицируем
 	// такой трафик до перехода по физическому WAN-интерфейсу.
+	jumped := map[string]bool{}
 	if ikev2ServerEnabled(cfg) && len(zones["vpn"]) > 0 {
+		// An IKEv2 channel's packets match the IPsec policy too; its XFRM
+		// interface puts them in the Internet zone first.
+		for _, ch := range cfg.Channels {
+			if iface := config.ChannelInterface(ch); ch.Enabled && ch.Type == "ikev2" {
+				b.line("-A INPUT -i %s -j WAN-IN", iface)
+				b.line("-A FORWARD -i %s -j WAN-FWD", iface)
+				jumped["INPUT "+iface], jumped["FORWARD "+iface] = true, true
+			}
+		}
 		b.line("-A INPUT -m policy --dir in --pol ipsec -j %s", ChainName("vpn", "IN"))
 		b.line("-A FORWARD -m policy --dir in --pol ipsec -j %s", ChainName("vpn", "FWD"))
 	}
 	for _, c := range chains {
 		for _, iface := range zones[c.zone.Name] {
-			b.line("-A %s %s %s -j %s", c.hook.builtin, c.hook.selector, iface, c.chain)
+			if !jumped[c.hook.builtin+" "+iface] {
+				b.line("-A %s %s %s -j %s", c.hook.builtin, c.hook.selector, iface, c.chain)
+			}
 		}
 	}
 
 	// 3. Содержимое цепочек.
 	for _, c := range chains {
 		b.line("# --- %s: %s ---", c.chain, describeChain(c.zone, c.hook))
+		if c.zone.Name == "vpn" && c.hook.flow != "out" && len(zones["wan"]) > 0 {
+			b.clientExitsAsWAN(cfg, c.chain, ChainName("wan", c.hook.suffix))
+		}
 
 		for _, r := range cfg.Firewall.Rules {
 			if !r.Enabled || r.Zone != c.zone.Name {
@@ -338,6 +356,11 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		// а пакет всё равно не дойдёт.
 		if c.hook.flow == "forward" && c.zone.Name == "wan" {
 			b.portForwardAccept(cfg, c.chain)
+			for _, ch := range cfg.Channels {
+				if iface := config.ChannelInterface(ch); ch.Enabled && ch.AcceptInbound && ch.Type == "wireguard" {
+					b.line("-A %s -i %s -m comment --comment %q -j ACCEPT", c.chain, iface, truncate("транзит из канала «"+ch.Name+"»", 240))
+				}
+			}
 		}
 		if c.hook.flow == "in" && c.zone.Name == "wan" {
 			b.vpnServerAccept(cfg, c.chain)
@@ -357,6 +380,23 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+// A server client used as an Internet channel is the far end of that channel,
+// not a VPN user: what it opens towards the router is judged as the Internet.
+// Its address is the only source NETOS-WGEXIT lets through for new connections.
+func (b *builder) clientExitsAsWAN(cfg *config.Config, chain, wanChain string) {
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "wireguard" {
+			continue
+		}
+		for _, peer := range server.Peers {
+			if peer.Enabled && peer.UseAsChannel {
+				b.line("-A %s -s %s/32 -i %s -m comment --comment %q -j %s", chain, peer.Address, serverInterface(server),
+					truncate("выход через клиента «"+peer.Name+"»", 240), wanChain)
+			}
+		}
+	}
 }
 
 func ikev2ServerEnabled(cfg *config.Config) bool {
@@ -888,7 +928,7 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && clampZone["vpn"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		if ch.Enabled && clampZone["wan"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			links = append(links, channelInterface(ch))
 		}
 	}

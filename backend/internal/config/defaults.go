@@ -107,12 +107,30 @@ func DefaultZones() []Zone {
 		},
 		{
 			Name: "wan", Title: "Интернет", Policy: "drop", MSSClamp: true,
-			Description: "Всё, что приходит со стороны провайдера. По умолчанию не пропускается.",
+			Description: zoneDescriptions["wan"][1],
 		},
 		{
 			Name: "vpn", Title: "VPN", Policy: "accept", MSSClamp: true,
-			Description: "Туннели: и каналы наружу, и подключившиеся клиенты.",
+			Description: zoneDescriptions["vpn"][1],
 		},
+	}
+}
+
+// Previous default text → current one. Outgoing channels moved from the VPN
+// zone to the Internet zone; a description the administrator wrote stays.
+var zoneDescriptions = map[string][2]string{
+	"wan": {"Всё, что приходит со стороны провайдера. По умолчанию не пропускается.",
+		"Аплинки провайдеров и интернет-каналы через VPN. Новые соединения оттуда по умолчанию не пропускаются."},
+	"vpn": {"Туннели: и каналы наружу, и подключившиеся клиенты.",
+		"Клиенты, подключившиеся к VPN-серверам роутера."},
+}
+
+func (c *Config) normalizeZoneDescriptions() {
+	for i := range c.Firewall.Zones {
+		z := &c.Firewall.Zones[i]
+		if d, ok := zoneDescriptions[z.Name]; ok && z.Description == d[0] {
+			z.Description = d[1]
+		}
 	}
 }
 
@@ -335,6 +353,8 @@ func (c *Config) Normalize() {
 	if legacy && len(c.Firewall.Zones) == 0 {
 		c.Firewall.Zones = DefaultZones()
 	}
+	c.normalizeZoneDescriptions()
+	c.moveChannelRulesToWAN()
 	if c.Components == nil {
 		c.Components = []Component{}
 	}
