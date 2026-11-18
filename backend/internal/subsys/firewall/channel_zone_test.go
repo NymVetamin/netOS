@@ -71,3 +71,38 @@ func TestChannelsAreJudgedAsInternet(t *testing.T) {
 		t.Fatalf("inbound transit not accepted before the zone policy:\n%s", rs.IPv4)
 	}
 }
+
+func TestPeerOnlyInternetChains(t *testing.T) {
+	cfg := config.Default()
+	cfg.VPNServers = []config.VPNServer{{Type: "wireguard", Index: 1, Enabled: true, Peers: []config.VPNPeer{{Enabled: true, UseAsChannel: true, Address: "10.9.0.3"}}}}
+	for _, configured := range []bool{true, false} {
+		if !configured {
+			cfg.Firewall.Zones = cfg.Firewall.Zones[2:]
+		}
+		rs, _ := Build(cfg)
+		expected := strings.Join(ExpectedChains(cfg), " ")
+		for _, h := range hooks {
+			chain := ChainName("wan", h.suffix)
+			want := configured && h.flow != "out"
+			if strings.Contains(rs.IPv4, ":"+chain+" ") != want || strings.Contains(expected, chain) != want {
+				t.Fatalf("declaration %s", chain)
+			}
+			if h.flow == "out" {
+				continue
+			}
+			target := "DROP"
+			if configured {
+				target = chain
+			}
+			for _, line := range strings.Split(rs.IPv4, "\n") {
+				if strings.HasPrefix(line, "-A "+ChainName("vpn", h.suffix)+" -s 10.9.0.3/32 -i wg-srv1 ") && strings.HasSuffix(line, " -j "+target) {
+					target = ""
+					break
+				}
+			}
+			if target != "" {
+				t.Fatalf("missing %s jump to %s", h.builtin, target)
+			}
+		}
+	}
+}

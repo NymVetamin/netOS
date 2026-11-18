@@ -190,17 +190,45 @@ func ExpectedChains(cfg *config.Config) []string {
 	if !cfg.Firewall.Enabled {
 		return nil
 	}
-	zones := buildZoneMap(cfg)
 	var out []string
-	for _, z := range cfg.Firewall.Zones {
-		if len(zones[z.Name]) == 0 {
-			continue
-		}
-		for _, h := range hooks {
-			out = append(out, ChainName(z.Name, h.suffix))
-		}
+	for _, c := range liveChains(cfg, buildZoneMap(cfg)) {
+		out = append(out, c.chain)
 	}
 	return out
+}
+
+type liveChain struct {
+	zone  config.Zone
+	hook  hook
+	chain string
+}
+
+func liveChains(cfg *config.Config, zones zoneMap) []liveChain {
+	var peerExit bool
+	for _, server := range cfg.VPNServers {
+		if server.Enabled && server.Type == "wireguard" {
+			for _, p := range server.Peers {
+				if p.Enabled && p.UseAsChannel {
+					peerExit = true
+					break
+				}
+			}
+		}
+		if peerExit {
+			break
+		}
+	}
+	var chains []liveChain
+
+	for _, z := range cfg.Firewall.Zones {
+		for _, h := range hooks {
+			if len(zones[z.Name]) == 0 && !(peerExit && z.Name == "wan" && h.flow != "out") {
+				continue
+			}
+			chains = append(chains, liveChain{zone: z, hook: h, chain: ChainName(z.Name, h.suffix)})
+		}
+	}
+	return chains
 }
 
 // ---------------------------------------------------------------------------
@@ -233,22 +261,10 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 
 	// Объявляем только те цепочки, для которых есть интерфейсы: цепочка без
 	// входа — мусор, который сбивает с толку при разборе.
-	type liveChain struct {
-		zone  config.Zone
-		hook  hook
-		chain string
-	}
-	var chains []liveChain
-
-	for _, z := range cfg.Firewall.Zones {
-		if len(zones[z.Name]) == 0 {
-			continue
-		}
-		for _, h := range hooks {
-			chains = append(chains, liveChain{zone: z, hook: h, chain: ChainName(z.Name, h.suffix)})
-		}
-	}
+	chains := liveChains(cfg, zones)
+	targets := map[string]bool{}
 	for _, c := range chains {
+		targets[c.chain] = true
 		b.line(":%s - [0:0]", c.chain)
 	}
 
@@ -300,14 +316,15 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// strongSwan 6.0.1 не всегда присваивает входящий XFRM ID трафику
 	// road-warrior. Ядро уже проверило IPsec-политику, поэтому классифицируем
 	// такой трафик до перехода по физическому WAN-интерфейсу.
+	b.clientExitsAsWAN(cfg, targets)
 	jumped := map[string]bool{}
-	if ikev2ServerEnabled(cfg) && len(zones["vpn"]) > 0 {
+	if ikev2ServerEnabled(cfg) && targets["VPN-IN"] {
 		// An IKEv2 channel's packets match the IPsec policy too; its XFRM
 		// interface puts them in the Internet zone first.
 		for _, ch := range cfg.Channels {
 			if iface := config.ChannelInterface(ch); ch.Enabled && ch.Type == "ikev2" {
-				b.line("-A INPUT -i %s -j WAN-IN", iface)
-				b.line("-A FORWARD -i %s -j WAN-FWD", iface)
+				b.line("-A INPUT -i %s -j %s", iface, zoneTarget(targets, "WAN-IN"))
+				b.line("-A FORWARD -i %s -j %s", iface, zoneTarget(targets, "WAN-FWD"))
 				jumped["INPUT "+iface], jumped["FORWARD "+iface] = true, true
 			}
 		}
@@ -325,9 +342,6 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// 3. Содержимое цепочек.
 	for _, c := range chains {
 		b.line("# --- %s: %s ---", c.chain, describeChain(c.zone, c.hook))
-		if c.zone.Name == "vpn" && c.hook.flow != "out" && len(zones["wan"]) > 0 {
-			b.clientExitsAsWAN(cfg, c.chain, ChainName("wan", c.hook.suffix))
-		}
 
 		for _, r := range cfg.Firewall.Rules {
 			if !r.Enabled || r.Zone != c.zone.Name {
@@ -382,18 +396,35 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	b.line("COMMIT")
 }
 
+func zoneTarget(declared map[string]bool, chain string) string {
+	if declared[chain] {
+		return chain
+	}
+	return "DROP"
+}
+
 // A server client used as an Internet channel is the far end of that channel,
 // not a VPN user: what it opens towards the router is judged as the Internet.
 // Its address is the only source NETOS-WGEXIT lets through for new connections.
-func (b *builder) clientExitsAsWAN(cfg *config.Config, chain, wanChain string) {
+func (b *builder) clientExitsAsWAN(cfg *config.Config, declared map[string]bool) {
 	for _, server := range cfg.VPNServers {
 		if !server.Enabled || server.Type != "wireguard" {
 			continue
 		}
 		for _, peer := range server.Peers {
 			if peer.Enabled && peer.UseAsChannel {
-				b.line("-A %s -s %s/32 -i %s -m comment --comment %q -j %s", chain, peer.Address, serverInterface(server),
-					truncate("выход через клиента «"+peer.Name+"»", 240), wanChain)
+				iface := serverInterface(server)
+				comment := truncate("выход через клиента «"+peer.Name+"»", 240)
+				for _, h := range hooks {
+					if h.flow == "out" {
+						continue
+					}
+					source := ChainName("vpn", h.suffix)
+					if !declared[source] {
+						source = h.builtin
+					}
+					b.line("-A %s -s %s/32 -i %s -m comment --comment %q -j %s", source, peer.Address, iface, comment, zoneTarget(declared, ChainName("wan", h.suffix)))
+				}
 			}
 		}
 	}
