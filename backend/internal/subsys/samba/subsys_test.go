@@ -340,3 +340,36 @@ func TestDeviceDiscoveryRetainsParentUSBTransport(t *testing.T) {
 		t.Fatalf("partition lost USB transport: %v, %v", devices, err)
 	}
 }
+
+func TestVolumeHealthReadsAccountOncePerCheck(t *testing.T) {
+	ctx := context.Background()
+	r := newRunner()
+	s := testSubsystem(t, r)
+	c := fixture()
+	other := c.Samba.Volumes[0]
+	other.ID, other.UUID = "other", "1234-5678"
+	c.Samba.Volumes = append(c.Samba.Volumes, other)
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		r.calls = nil
+		if err := s.Health(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Count(strings.Join(r.calls, "\n"), "getent passwd netos-storage"); got != 1 {
+			t.Fatalf("getent calls: %d", got)
+		}
+	}
+	r.fail = "getent"
+	if err := s.Health(ctx, c); err == nil {
+		t.Fatal("missing account error")
+	}
+	r.fail = ""
+	if err := os.Remove(filepath.Join(s.UnitDir, mountUnit(other))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, c); err == nil || !strings.Contains(err.Error(), other.UUID) {
+		t.Fatalf("second unit drift: %v", err)
+	}
+}

@@ -452,22 +452,26 @@ func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {
 			return fmt.Errorf("настройки обнаружения Samba изменены вне netOS")
 		}
 	}
+	var accountFields []string
 	for _, v := range c.Samba.Volumes {
-		if v.Enabled && !sd.IsActive(ctx, strings.TrimSuffix(mountUnit(v), ".mount")+".automount") {
+		if !v.Enabled {
+			continue
+		}
+		if !sd.IsActive(ctx, strings.TrimSuffix(mountUnit(v), ".mount")+".automount") {
 			return fmt.Errorf("автоподключение тома %s не работает", v.UUID)
 		}
-		if v.Enabled {
+		if accountFields == nil {
 			out, err := s.Runner.Run(ctx, "getent", "passwd", "netos-storage")
 			if err != nil {
 				return err
 			}
-			fields := strings.Split(strings.TrimSpace(out), ":")
-			if len(fields) != 7 {
+			accountFields = strings.Split(strings.TrimSpace(out), ":")
+			if len(accountFields) != 7 {
 				return fmt.Errorf("учётная запись накопителей отсутствует")
 			}
-			if system.FileChanged(filepath.Join(s.UnitDir, mountUnit(v)), []byte(mountText(v, fields[2], fields[3]))) || system.FileChanged(filepath.Join(s.UnitDir, strings.TrimSuffix(mountUnit(v), ".mount")+".automount"), []byte(automountText(v))) {
-				return fmt.Errorf("настройки тома %s изменены вне netOS", v.UUID)
-			}
+		}
+		if system.FileChanged(filepath.Join(s.UnitDir, mountUnit(v)), []byte(mountText(v, accountFields[2], accountFields[3]))) || system.FileChanged(filepath.Join(s.UnitDir, strings.TrimSuffix(mountUnit(v), ".mount")+".automount"), []byte(automountText(v))) {
+			return fmt.Errorf("настройки тома %s изменены вне netOS", v.UUID)
 		}
 	}
 	return nil
