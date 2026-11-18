@@ -1,3 +1,4 @@
+import { nextVPNPeerAddress } from "../vpnAddress";
 import { syncWireGuardPeerChannels } from "../wireGuardPeerChannels";
 import { channelReferences } from "../channelReferences";
 import { indexClientStatuses } from "../clientStatusIndex";
@@ -377,13 +378,13 @@ function PasswordPeers({ server, config, patch, empty }: any) {
   const { statusIndex } = useClientStatuses(server.id);
   const { channels, update } = serverTools(server, config, patch);
   function addPeer() {
+    const address = nextVPNPeerAddress(server);
     const id = newID("peer");
     openOnCreate(id);
     update((draft) => {
-      const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
       draft.peers = draft.peers || [];
       const number = draft.peers.length + 1;
-      draft.peers.push({ id, name: `Клиент ${number}`, enabled: false, address: `${prefix}.${number + 1}`, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+      draft.peers.push({ id, name: `Клиент ${number}`, enabled: false, address, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
     });
   }
   useClientCreator(server.id, addPeer);
@@ -471,6 +472,9 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   const protocol = cfg.protocol || "reality";
   const [wgClientKeys, setWGClientKeys] = useState<Record<string, string>>({});
 
+  const latestServer = useRef(server);
+  latestServer.current = server;
+
   async function addPeer() {
     const peerID = newID("peer");
     openOnCreate(peerID);
@@ -479,12 +483,12 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
       try { wgPair = await api.wireGuardKeypair(); }
       catch (err: any) { setError(err?.message || "Не удалось создать ключ клиента"); return; }
     }
+    const address = nextVPNPeerAddress(latestServer.current);
     const peerNumber = (server.peers || []).length + 1;
     const credentials: Record<string, string> = protocol === "wireguard" ? { public_key: wgPair!.public_key } : protocol === "reality" || protocol === "vless" || protocol === "vmess" ? { uuid: crypto.randomUUID() } : protocol === "trojan" || protocol === "shadowsocks" || protocol === "hysteria" ? { password: randomHex(16) } : { username: `user${peerNumber}`, password: randomHex(12) };
     update((draft) => {
-      const prefix = String(draft.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
       draft.peers = draft.peers || [];
-      draft.peers.push({ id: peerID, name: `Клиент ${draft.peers.length + 1}`, enabled: false, address: `${prefix}.${draft.peers.length + 2}`, channel: "", credentials, comment: "" });
+      draft.peers.push({ id: peerID, name: `Клиент ${draft.peers.length + 1}`, enabled: false, address, channel: "", credentials, comment: "" });
     });
     if (wgPair) setWGClientKeys((old) => ({ ...old, [peerID]: wgPair.private_key }));
   }
@@ -647,6 +651,9 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
   const exitReferenced = useContext(ReferencedChannels).has(`wg-exit-${server.id}`);
   const exitPeerID = (server.peers || []).find((p:any) => p.use_as_channel)?.id;
 
+  const latestServer = useRef(server);
+  latestServer.current = server;
+
   async function addPeer() {
     setError("");
     try {
@@ -657,16 +664,12 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
       const clientPair = await api.wireGuardKeypair();
       const id = `peer-${crypto.randomUUID()}`;
       openOnCreate(id);
-      const prefix = String(server.subnet || "10.9.0.1/24").split("/")[0].split(".").slice(0, 3).join(".");
-      const used = new Set((server.peers || []).map((peer: any) => peer.address));
-      let host = 2;
-      while (used.has(`${prefix}.${host}`) && host < 255) host++;
-      if (host >= 255) throw new Error("В адресном пуле WireGuard не осталось свободных адресов");
+      const address = nextVPNPeerAddress(latestServer.current);
       const peer = {
         id,
         name: `Клиент ${(server.peers || []).length + 1}`,
         enabled: true,
-        address: `${prefix}.${host}`,
+        address,
         channel: "",
         wireguard_profile: newWireGuardProfile(),
         credentials: { private_key: clientPair.private_key, public_key: clientPair.public_key, preshared_key: randomWireGuardKey() },

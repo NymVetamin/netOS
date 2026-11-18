@@ -240,7 +240,7 @@ function conditions(r: any): string {
 
 // parseCIDR разбирает «10.0.0.1/24» или «10.0.0.1» и приводит адрес к адресу
 // сети: адрес интерфейса роутера «192.168.10.1/24» означает подсеть.
-function parseCIDR(text: string): Subnet | undefined {
+export function parseCIDR(text: string): Subnet | undefined {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/.exec(String(text || "").trim());
   if (!m) return undefined;
   const octets = m.slice(1, 5).map(Number);

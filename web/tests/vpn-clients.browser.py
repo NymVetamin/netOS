@@ -43,6 +43,9 @@ async def scenario(browser, mode):
             cfg["vpn_servers"].append({"id": kind, "name": kind, "type": kind, "index": i,
                 "enabled": False, "subnet": f"10.{8+i}.0.1/24", "port": 443, "peers": [],
                 "config": {"protocol": "reality"} if kind == "xray" else {}})
+        for server in cfg["vpn_servers"]:
+            server["subnet"] = f"10.{8+server['index']}.0.129/25"
+        peer["address"] = "10.9.0.130"
     if mode.startswith("sessions-"):
         kind = mode.removeprefix("sessions-")
         cfg["vpn_servers"][0].update(type=kind, config={"protocol": "reality"} if kind == "xray" else {})
@@ -240,6 +243,9 @@ async def scenario(browser, mode):
             async with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("/api/config")):
                 await page.get_by_role("button", name=f"Добавить клиента на {name}", exact=True).click()
             after = {s["id"]: len(s["peers"]) for s in state["config"]["vpn_servers"]}
+            saved = next(s for s in state["config"]["vpn_servers"] if s["id"] == sid)
+            expected_host = 131 if sid == "srv" else 130
+            assert saved["peers"][-1]["address"] == f"10.{8+saved['index']}.0.{expected_host}"
             assert after == {key: value + (key == sid) for key, value in before.items()}, (sid, before, after)
             await expect(page.locator(f'[data-peers-of="{sid}"] .peer-card').last.locator(".xbody")).to_be_visible()
         assert not errors, errors
