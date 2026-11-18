@@ -274,6 +274,11 @@ test("inbound WG transit follows active WAN interfaces and earlier rules", () =>
   assert.equal(verdict(["wg-ch1", "eth0"]), "p");
   cfg.firewall.rules.push({ enabled: true, zone: "wan", flow: "forward", action: "drop" });
   assert.equal(verdict(["wg-ch1"]), "n");
+  cfg.firewall.rules.at(-1).interface = "wg-ch1";
+  assert.equal(verdict(["wg-ch1", "eth0"]), "n");
+  cfg.firewall.rules.at(-1).interface = "eth0";
+  cfg.firewall.rules.at(-1).action = "accept";
+  assert.equal(verdict(["wg-ch1", "eth0"]), "y");
   cfg.firewall.rules.pop();
   ch.accept_inbound = false;
   assert.equal(verdict(["wg-ch1"]), "n");

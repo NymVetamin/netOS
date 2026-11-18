@@ -27,7 +27,6 @@ export type Entity = {
   subnet?: Subnet;
   isolated?: boolean;
   vpn?: boolean;
-  inboundTransit?: "all" | "some";
 };
 
 export type Matrix = {
@@ -78,13 +77,6 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
       transit.add(`wg-ch${ch.index}`);
     }
   }
-  if (transit.size) {
-    for (const src of sources) {
-      if (src.zone !== "wan") continue;
-      const count = src.ifaces.reduce((n, iface) => n + Number(transit.has(iface)), 0);
-      if (count) src.inboundTransit = count === src.ifaces.length ? "all" : "some";
-    }
-  }
   const destinations = [...internet, ...segments, ...vpn, router];
   const globalRules: RuleGroups = { in: [], forward: [] };
   const zoneRules = new Map<any, RuleGroups>();
@@ -108,13 +100,34 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
     }
     return setSpecs.get(id);
   };
-  const cells = sources.map((src) =>
-    destinations.map((dst) => (src.id === dst.id ? null : evaluate(config, src, dst, segments, globalRules, zoneRules, parsedAddresses, setSpec))),
-  );
+  const cells = sources.map((src) => {
+    const enabled: string[] = [];
+    const other: string[] = [];
+    if (src.zone === "wan" && transit.size) {
+      for (const iface of src.ifaces) (transit.has(iface) ? enabled : other).push(iface);
+    }
+    const mixed = enabled.length > 0 && other.length > 0;
+    const tunnel = mixed ? { ...src, ifaces: enabled } : src;
+    const rest = mixed ? { ...src, ifaces: other } : src;
+    const access = (from: Entity, to: Entity, allowTransit: boolean) =>
+      evaluate(config, from, to, segments, globalRules, zoneRules, parsedAddresses, setSpec, allowTransit);
+    return destinations.map((dst): Access | null => {
+      if (src.id === dst.id) return null;
+      if (!mixed || dst.kind === "router") return access(src, dst, enabled.length > 0);
+      const on = access(tunnel, dst, true);
+      const off = access(rest, dst, false);
+      return {
+        verdict: on.verdict === off.verdict ? on.verdict : "p",
+        reason: on.reason === off.reason ? on.reason :
+          `каналы с транзитом — ${on.reason}, остальные интерфейсы — ${off.reason}`,
+        exceptions: [...new Set([...on.exceptions, ...off.exceptions])],
+      };
+    });
+  });
   return { sources, destinations, cells };
 }
 
-function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>, parsedAddresses: ParsedAddresses, setSpec: (id: string) => string | undefined): Access {
+function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], globalRules: RuleGroups, zoneRules: Map<any, RuleGroups>, parsedAddresses: ParsedAddresses, setSpec: (id: string) => string | undefined, allowTransit: boolean): Access {
   const fw = config.firewall || {};
   if (!fw.enabled) return { verdict: "y", reason: "файрволл выключен", exceptions: [] };
 
@@ -167,11 +180,7 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], glo
       }
     }
   }
-  if (flow === "forward" && src.inboundTransit) {
-    const reason = "разрешён транзит из канала WireGuard";
-    if (src.inboundTransit === "all") return finish(true, reason);
-    partial.push({ accept: true, text: reason });
-  }
+  if (flow === "forward" && allowTransit) return finish(true, "разрешён транзит из канала WireGuard");
   if (flow === "in" && src.zone === "wan") {
     for (const s of config.vpn_servers || []) {
       if (s.enabled) partial.push({ accept: true, text: `VPN-сервер «${s.name}»` });
