@@ -960,7 +960,11 @@ func (b *builder) reducedPathMSS(cfg *config.Config) {
 		}
 	}
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && clampZone["wan"] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
+		zone := "wan"
+		if ch.WireGuardPeer != nil {
+			zone = "vpn"
+		}
+		if ch.Enabled && clampZone[zone] && (ch.Type == "wireguard" || ch.Type == "openconnect" || ch.Type == "xray" || ch.Type == "l2tp" || ch.Type == "ikev2") {
 			links = append(links, channelInterface(ch))
 		}
 	}

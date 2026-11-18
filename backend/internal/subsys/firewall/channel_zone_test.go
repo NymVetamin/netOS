@@ -123,3 +123,29 @@ func TestPeerChannelIgnoresInboundSwitch(t *testing.T) {
 		t.Fatal("inapplicable switch changed firewall rules")
 	}
 }
+
+func TestTunnelMSSFollowsInterfaceZone(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = []config.Channel{{Enabled: true, Type: "wireguard", Index: 2}, {Enabled: true, Type: "wireguard", WireGuardPeer: &config.WireGuardPeerChannel{ServerIndex: 1}}}
+	for _, wan := range []bool{false, true} {
+		for _, vpn := range []bool{false, true} {
+			for i, z := range cfg.Firewall.Zones {
+				switch z.Name {
+				case "wan":
+					cfg.Firewall.Zones[i].MSSClamp = wan
+				case "vpn":
+					cfg.Firewall.Zones[i].MSSClamp = vpn
+				}
+			}
+			var b builder
+			b.reducedPathMSS(cfg)
+			for iface, on := range map[string]bool{"wg-ch2": wan, "wg-srv1": vpn} {
+				for _, dir := range []string{"-i", "-o"} {
+					if strings.Contains(b.String(), dir+" "+iface+" ") != on {
+						t.Fatalf("wan=%v vpn=%v %s %s", wan, vpn, dir, iface)
+					}
+				}
+			}
+		}
+	}
+}
