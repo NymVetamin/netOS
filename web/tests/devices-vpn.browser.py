@@ -70,7 +70,7 @@ async def scenario(browser, mode):
             await expect(settings.locator("svg")).to_have_count(1)
             await page.get_by_text("Phone",exact=True).click()
             await expect(page.get_by_text("192.0.2.10:4567",exact=True)).to_be_visible()
-            await expect(page.get_by_text("45,6 МиБ / 74,1 МиБ",exact=True)).to_be_visible()
+            await expect(page.get_by_text("45.6 МБ / 74.1 МБ",exact=True)).to_be_visible()
             await expect(page.get_by_role("link",name="Настройки VPN-клиента").first).to_have_attribute("href","#vpn-servers?server=wg1&client=phone")
             telemetry_error=True
             await expect(page.get_by_text("Состояние VPN-клиентов недоступно",exact=True)).to_be_visible(timeout=10000)
