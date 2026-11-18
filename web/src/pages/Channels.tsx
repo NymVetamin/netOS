@@ -1,6 +1,6 @@
 import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
-import { channelReferences, canReplaceChannel } from "../channelReferences";
+import { channelReferences, replacementChannelIDs } from "../channelReferences";
 import { secretInput } from "../secrets";
 import { createContext, Fragment, ReactNode, useContext, useEffect, useState } from "react";
 import { api } from "../api";
@@ -77,6 +77,7 @@ export function ChannelsPage({ config, patch }: Props) {
   const [disableID, setDisableID] = useState("");
   const [replacement, setReplacement] = useState("");
   const disabling = channels.find((c: any) => c.id === disableID);
+  const replacements = disabling ? replacementChannelIDs(channels, disableID) : null;
   const dependencies = disabling ? channelReferences(config, disableID) : [];
 
   useEffect(() => {
@@ -218,20 +219,20 @@ export function ChannelsPage({ config, patch }: Props) {
 
   return (
     <>
-      {disabling && <div id="channel-disable-choice"><Notice tone="warn" title={`Канал «${disabling.name || disabling.id}» используется`}>
+      {disabling && replacements && <div id="channel-disable-choice"><Notice tone="warn" title={`Канал «${disabling.name || disabling.id}» используется`}>
         <p>Перед отключением выберите новый выход для связанных настроек:</p>
         <ul>{dependencies.map((ref, i) => <li key={i}>{ref.label}</li>)}</ul>
         <div className="form-grid"><Field label="Новый канал выхода"><select aria-label="Новый канал вместо отключаемого" value={replacement} onChange={e => setReplacement(e.target.value)}>
           <option value="">— выберите —</option>
-          {channels.filter((c: any) => canReplaceChannel(config, disableID, c.id)).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
+          {channels.filter((c: any) => replacements.has(c.id)).map((c: any) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
         </select></Field></div>
         {replacement === "direct" && <p>Связанный трафик пойдёт напрямую, без этого VPN-канала.</p>}
         <div className="row wrap">
           <button type="button" className="btn" onClick={() => { setDisableID(""); setReplacement(""); }}>Отмена</button>
-          <button type="button" className="btn danger" disabled={!canReplaceChannel(config, disableID, replacement)} onClick={() => {
+          <button type="button" className="btn danger" disabled={!replacements.has(replacement)} onClick={() => {
             patch(draft => {
               const target = draft.channels.find((c: any) => c.id === disableID);
-              if (!target || !canReplaceChannel(draft, disableID, replacement)) return;
+              if (!target || !replacementChannelIDs(draft.channels, disableID).has(replacement)) return;
               for (const ref of channelReferences(draft, disableID)) ref.owner[ref.key] = replacement;
               target.enabled = false;
             });

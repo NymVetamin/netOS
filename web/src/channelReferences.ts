@@ -16,15 +16,26 @@ export function channelReferences(config: any, id?: string): { owner: any; key: 
 }
 
 // Replacing incoming fallback edges must not turn a fallback chain into a cycle.
-export function canReplaceChannel(config: any, removed: string, replacement: string): boolean {
-  const channels = config.channels || [];
-  if (removed === replacement || !channels.some((c: any) => c.id === replacement && c.enabled)) return false;
-  const visited = new Set<string>();
-  let id = replacement;
-  while (id) {
-    if (id === removed || visited.has(id)) return false;
-    visited.add(id);
-    id = channels.find((c: any) => c.id === id)?.fallback || "";
+export function replacementChannelIDs(channels: any[], removed: string): Set<string> {
+  const fallback = new Map<string, string>();
+  const candidates = new Set<string>();
+  for (const channel of channels) {
+    if (!fallback.has(channel.id)) fallback.set(channel.id, channel.fallback || "");
+    if (channel.enabled && channel.id !== removed) candidates.add(channel.id);
   }
-  return true;
+  const safe = new Map<string, boolean>([[removed, false]]);
+  const path: string[] = [];
+  for (const start of candidates) {
+    let id = start;
+    while (id && !safe.has(id)) {
+      safe.set(id, false); // Revisiting an unfinished path means a cycle.
+      path.push(id);
+      id = fallback.get(id) || "";
+    }
+    const allowed = !id || safe.get(id) === true;
+    for (const step of path) safe.set(step, allowed);
+    path.length = 0;
+    if (!allowed) candidates.delete(start);
+  }
+  return candidates;
 }
