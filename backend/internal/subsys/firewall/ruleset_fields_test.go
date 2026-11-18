@@ -34,7 +34,7 @@ func TestInterfaceMappingsZoneDeduplicationAndExpectedChains(t *testing.T) {
 	cfg.Channels = []config.Channel{{ID: "ch", Type: "wireguard", Index: 7, Enabled: true}, {ID: "direct", Type: "direct", Enabled: true}}
 	cfg.VPNServers = []config.VPNServer{{ID: "srv", Type: "ocserv", Index: 8, Enabled: true}}
 	zones := buildZoneMap(cfg)
-	if strings.Join(zones["lan"], ",") != "lan0" || strings.Join(zones["wan"], ",") != "ppp-w2,wan0,wg-ch7" || strings.Join(zones["vpn"], ",") != "vpns8+" {
+	if strings.Join(zones.members["lan"], ",") != "lan0" || strings.Join(zones.members["wan"], ",") != "ppp-w2,wan0,wg-ch7" || strings.Join(zones.members["vpn"], ",") != "vpns8+" {
 		t.Fatalf("zones=%+v", zones)
 	}
 	// Membership is scoped to each zone; rebuilding observes edits and keeps
@@ -42,7 +42,7 @@ func TestInterfaceMappingsZoneDeduplicationAndExpectedChains(t *testing.T) {
 	cfg.Networks[0].Zone = "guest"
 	cfg.Networks[2].Enabled = true
 	updated := buildZoneMap(cfg)
-	if strings.Join(updated["guest"], ",") != "lan0" || strings.Join(updated["lan"], ",") != "lan0" || len(zones["guest"]) != 0 {
+	if strings.Join(updated.members["guest"], ",") != "lan0" || strings.Join(updated.members["lan"], ",") != "lan0" || len(zones.members["guest"]) != 0 {
 		t.Fatalf("stale or overlapping zone membership: %+v, previous %+v", updated, zones)
 	}
 	cfg.Networks[0].Zone = "lan"

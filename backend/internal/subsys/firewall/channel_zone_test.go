@@ -59,7 +59,7 @@ func TestChannelsAreJudgedAsInternet(t *testing.T) {
 
 	// The exit side of the same scheme: the far router's clients arrive as new
 	// connections and are accepted only when the administrator says so.
-	accept := `-A WAN-FWD -i wg-ch1 -m comment --comment "транзит из канала «WG»" -j ACCEPT`
+	accept := `-A WAN-FWD -i wg-ch1 -m comment --comment "транзит из канала «WG»" -j NETOS-WG-UPLINK`
 	cfg.Channels[0].Name = "WG"
 	if rs, _ := Build(cfg); strings.Contains(rs.IPv4, accept) {
 		t.Fatal("inbound transit accepted without the channel switch")
@@ -69,6 +69,21 @@ func TestChannelsAreJudgedAsInternet(t *testing.T) {
 	policy := `-A WAN-FWD -m comment --comment "политика зоны"`
 	if !strings.Contains(rs.IPv4, accept) || strings.Index(rs.IPv4, accept) > strings.Index(rs.IPv4, policy) {
 		t.Fatalf("inbound transit not accepted before the zone policy:\n%s", rs.IPv4)
+	}
+	cfg.WANs = append(cfg.WANs, config.WAN{ID: "p", Proto: "pppoe", Enabled: true}, config.WAN{ID: "l", Proto: "l2tp", Enabled: true}, config.WAN{ID: "off", Proto: "pppoe"})
+	rs, _ = Build(cfg)
+	for _, name := range []string{"eth0", "ppp-p", "ppp-l"} {
+		if !strings.Contains(rs.IPv4, "-A NETOS-WG-UPLINK -o "+name+" -j ACCEPT\n") {
+			t.Fatal("missing uplink", name)
+		}
+	}
+	if strings.Count(rs.IPv4, "-A NETOS-WG-UPLINK ") != 3 {
+		t.Fatal("unexpected uplink")
+	}
+	cfg.WANs = nil
+	rs, _ = Build(cfg)
+	if strings.Contains(rs.IPv4, "NETOS-WG-UPLINK") {
+		t.Fatal("transit without an uplink")
 	}
 }
 

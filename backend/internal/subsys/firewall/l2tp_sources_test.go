@@ -12,7 +12,7 @@ func TestL2TPSourceBindingPrecedesPersonalPolicy(t *testing.T) {
 		{Enabled: true, Address: "10.99.0.2"}, {Enabled: true, Address: "10.99.0.3"}, {Enabled: false, Address: "10.99.0.4"},
 	}}, {Type: "l2tp", Index: 10, Enabled: false}}
 	b := &builder{}
-	b.mangle(cfg, nil)
+	b.mangle(cfg, zoneMap{})
 	text := b.String()
 	for _, want := range []string{
 		"-A PREROUTING -i pp1-+ -j NETOS-L2TP",

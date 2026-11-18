@@ -660,7 +660,7 @@ function WireGuardEditor({
         </>}
         {!channel.wireguard_peer && cfg.amneziawg && <AmneziaWGFields value={cfg.amneziawg} onChange={(next) => setConfig("amneziawg", next)} />}
         {channel.wireguard_peer && <p className="hint">Выход через клиента WG-сервера, интерфейс wg-srv{channel.wireguard_peer.server_index}. Ключи и подключение настраиваются в VPN-серверах.</p>}
-        {!channel.wireguard_peer && <Field label="Выход для другого роутера" hint="Разрешает новые транзитные соединения из туннеля в интернет и в локальные сети. Ограничить назначения можно правилами пересылки зоны «Интернет».">
+        {!channel.wireguard_peer && <Field label="Выход для другого роутера" hint="Разрешает транзит из туннеля через включённые аплинки провайдеров. Для доступа в локальные сети или другие VPN добавьте отдельное правило пересылки зоны «Интернет».">
           <Switch checked={!!channel.accept_inbound} label="Принимать транзит из канала" onChange={(on) => update((draft) => { draft.accept_inbound = on; })} />
         </Field>}
         <Field label="При отказе">

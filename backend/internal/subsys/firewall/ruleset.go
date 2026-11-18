@@ -38,7 +38,10 @@ type Ruleset struct {
 	RuleIDs map[string][]string
 }
 
-type zoneMap map[string][]string
+type zoneMap struct {
+	members map[string][]string
+	uplinks []string
+}
 
 // hook связывает направление с встроенной цепочкой и суффиксом имени.
 type hook struct {
@@ -74,23 +77,23 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 	}
 
 	byZone := make(map[string]map[string]struct{})
-	add := func(zone, iface string) {
+	add := func(zone, iface string) bool {
 		if zone == "" || iface == "" {
-			return
+			return false
 		}
 		names := byZone[zone]
 		if names == nil {
 			names = make(map[string]struct{})
 			byZone[zone] = names
 		}
+		if _, exists := names[iface]; exists {
+			return false
+		}
 		names[iface] = struct{}{}
+		return true
 	}
 
-	for _, n := range cfg.Networks {
-		if n.Enabled {
-			add(n.Zone, byID[n.Interface])
-		}
-	}
+	var uplinks []string
 	for _, w := range cfg.WANs {
 		if !w.Enabled {
 			continue
@@ -99,8 +102,16 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 		if w.Proto == "pppoe" || w.Proto == "l2tp" {
 			name = "ppp-" + w.ID
 		}
-		add("wan", name)
+		if add("wan", name) {
+			uplinks = append(uplinks, name)
+		}
 	}
+	for _, n := range cfg.Networks {
+		if n.Enabled {
+			add(n.Zone, byID[n.Interface])
+		}
+	}
+
 	// A channel is an Internet exit: its far end is no more trusted than the
 	// provider. An exit through a server client shares the server interface;
 	// filter classifies it by the peer address (clientExitsAsWAN).
@@ -115,14 +126,14 @@ func buildZoneMap(cfg *config.Config) zoneMap {
 		}
 	}
 
-	zm := make(zoneMap, len(byZone))
+	zm := zoneMap{members: make(map[string][]string, len(byZone)), uplinks: uplinks}
 	for zone, names := range byZone {
 		interfaces := make([]string, 0, len(names))
 		for name := range names {
 			interfaces = append(interfaces, name)
 		}
 		sort.Strings(interfaces)
-		zm[zone] = interfaces
+		zm.members[zone] = interfaces
 	}
 	return zm
 }
@@ -228,7 +239,7 @@ func liveChains(cfg *config.Config, zones zoneMap) []liveChain {
 
 	for _, z := range cfg.Firewall.Zones {
 		for _, h := range hooks {
-			if len(zones[z.Name]) == 0 && !(peerExit && z.Name == "wan" && h.flow != "out") {
+			if len(zones.members[z.Name]) == 0 && !(peerExit && z.Name == "wan" && h.flow != "out") {
 				continue
 			}
 			chains = append(chains, liveChain{zone: z, hook: h, chain: ChainName(z.Name, h.suffix)})
@@ -302,7 +313,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			// A global source still permits a restricted destination zone.
 			// An empty destination zone must match no interfaces, not all traffic.
 			if h.flow == "forward" && r.DstZone != "" {
-				for _, out := range zones[r.DstZone] {
+				for _, out := range zones.members[r.DstZone] {
 					if r.OutInterface != "" && r.OutInterface != out {
 						continue
 					}
@@ -338,7 +349,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		b.line("-A FORWARD -m policy --dir in --pol ipsec -j %s", ChainName("vpn", "FWD"))
 	}
 	for _, c := range chains {
-		for _, iface := range zones[c.zone.Name] {
+		for _, iface := range zones.members[c.zone.Name] {
 			if !jumped[c.hook.builtin+" "+iface] {
 				b.line("-A %s %s %s -j %s", c.hook.builtin, c.hook.selector, iface, c.chain)
 			}
@@ -359,7 +370,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 			// Зона назначения разворачивается в выходные интерфейсы, поэтому
 			// одно правило панели может дать несколько строк в ядре.
 			if c.hook.flow == "forward" && r.DstZone != "" {
-				for _, out := range zones[r.DstZone] {
+				for _, out := range zones.members[r.DstZone] {
 					if r.OutInterface != "" && r.OutInterface != out {
 						continue
 					}
@@ -376,12 +387,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		// а пакет всё равно не дойдёт.
 		if c.hook.flow == "forward" && c.zone.Name == "wan" {
 			b.portForwardAccept(cfg, c.chain)
-			for _, ch := range cfg.Channels {
-				if ch.Enabled && ch.AcceptInbound && ch.Type == "wireguard" && ch.WireGuardPeer == nil {
-					iface := config.ChannelInterface(ch)
-					b.line("-A %s -i %s -m comment --comment %q -j ACCEPT", c.chain, iface, truncate("транзит из канала «"+ch.Name+"»", 240))
-				}
-			}
+			b.channelTransit(cfg, c.chain, zones.uplinks)
 		}
 		if c.hook.flow == "in" && c.zone.Name == "wan" {
 			b.vpnServerAccept(cfg, c.chain)
@@ -401,6 +407,27 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	}
 
 	b.line("COMMIT")
+}
+
+// Unmatched outputs return to WAN-FWD and follow its remaining rules.
+func (b *builder) channelTransit(cfg *config.Config, chain string, uplinks []string) {
+	if len(uplinks) == 0 {
+		return
+	}
+	declared := false
+	for _, ch := range cfg.Channels {
+		if !ch.Enabled || !ch.AcceptInbound || ch.Type != "wireguard" || ch.WireGuardPeer != nil {
+			continue
+		}
+		if !declared {
+			b.line(":NETOS-WG-UPLINK - [0:0]")
+			for _, out := range uplinks {
+				b.line("-A NETOS-WG-UPLINK -o %s -j ACCEPT", out)
+			}
+			declared = true
+		}
+		b.line("-A %s -i %s -m comment --comment %q -j NETOS-WG-UPLINK", chain, config.ChannelInterface(ch), truncate("транзит из канала «"+ch.Name+"»", 240))
+	}
 }
 
 func zoneTarget(declared map[string]bool, chain string) string {
@@ -941,7 +968,7 @@ func (b *builder) mangle(cfg *config.Config, zones zoneMap) {
 		if !z.MSSClamp {
 			continue
 		}
-		for _, iface := range zones[z.Name] {
+		for _, iface := range zones.members[z.Name] {
 			b.line("-A FORWARD -o %s -p tcp --tcp-flags SYN,RST SYN -m comment --comment %q -j TCPMSS --clamp-mss-to-pmtu",
 				iface, "подгонка размера пакетов")
 		}
@@ -1457,7 +1484,7 @@ func (b *builder) ipv6Filter(cfg *config.Config) {
 		// selectors не обрабатывает зону: в IPv4 её ограничивает переход
 		// в цепочку. Здесь пересекаем зону с явным интерфейсом правила;
 		// пустая зона не должна превращаться в глобальное разрешение.
-		for _, iface := range zones[r.Zone] {
+		for _, iface := range zones.members[r.Zone] {
 			if r.Interface != "" && r.Interface != iface {
 				continue
 			}
@@ -1472,7 +1499,7 @@ func (b *builder) ipv6Filter(cfg *config.Config) {
 		if z.Policy != "accept" {
 			continue
 		}
-		for _, iface := range zones[z.Name] {
+		for _, iface := range zones.members[z.Name] {
 			b.line("-A INPUT -i %s -j ACCEPT", iface)
 			b.line("-A FORWARD -i %s -j ACCEPT", iface)
 		}

@@ -41,7 +41,7 @@ func TestIntegrationL2TPSourceBinding(t *testing.T) {
 	apply := func() {
 		t.Helper()
 		b := &builder{}
-		b.mangle(cfg, nil)
+		b.mangle(cfg, zoneMap{})
 		cmd := exec.Command("ip", "netns", "exec", server, "iptables-restore")
 		cmd.Stdin = strings.NewReader(b.String())
 		if out, err := cmd.CombinedOutput(); err != nil {

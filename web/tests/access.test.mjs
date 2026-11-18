@@ -263,26 +263,15 @@ test("address-set lookup preserves first match and observes edits on every calcu
  assert.equal(result().verdict,"y");
 });
 
-test("inbound WG transit follows active WAN interfaces and earlier rules", () => {
-  const ch = { type: "wireguard", index: 1, enabled: true, accept_inbound: true };
-  const cfg = config([], { channels: [ch] });
-  function verdict(wan) {
-    const m = accessMatrix(cfg, { wan });
+test("the WG exit switch leaves LAN access to explicit rules", () => {
+  const cfg = config([], { channels: [{ type: "wireguard", index: 1, enabled: true, accept_inbound: true }] });
+  const verdict = () => {
+    const m = accessMatrix(cfg, { wan: ["wg-ch1", "eth0"] });
     return m.cells[m.sources.findIndex(s => s.zone === "wan")][m.destinations.findIndex(d => d.id === "segment:office")].verdict;
-  }
-  assert.equal(verdict(["wg-ch1"]), "y");
-  assert.equal(verdict(["wg-ch1", "eth0"]), "p");
-  cfg.firewall.rules.push({ enabled: true, zone: "wan", flow: "forward", action: "drop" });
-  assert.equal(verdict(["wg-ch1"]), "n");
-  cfg.firewall.rules.at(-1).interface = "wg-ch1";
-  assert.equal(verdict(["wg-ch1", "eth0"]), "n");
-  cfg.firewall.rules.at(-1).interface = "eth0";
-  cfg.firewall.rules.at(-1).action = "accept";
-  assert.equal(verdict(["wg-ch1", "eth0"]), "y");
+  };
+  assert.equal(verdict(), "n");
+  cfg.firewall.rules.push({ enabled: true, zone: "wan", flow: "forward", interface: "wg-ch1", dst_zone: "lan", action: "accept" });
+  assert.equal(verdict(), "p");
   cfg.firewall.rules.pop();
-  ch.accept_inbound = false;
-  assert.equal(verdict(["wg-ch1"]), "n");
-  ch.accept_inbound = true;
-  ch.wireguard_peer = { server_index: 1 };
-  assert.equal(verdict(["wg-ch1"]), "n");
+  assert.equal(verdict(), "n");
 });
