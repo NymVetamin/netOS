@@ -15,6 +15,19 @@ export function StoragePage({ config, patch, admin }: Props) {
   const installed = (config.components || []).some((c: any) => c.id === "samba" && c.installed);
   const [deviceSnapshot, setDevices] = useState<any[] | null>(null);
   const devices = deviceSnapshot || [];
+  const volumeLabels = new Map<string, string>();
+  if (s.shares?.length) {
+    const labelsByUUID = new Map<string, string>();
+    for (const device of devices) {
+      const uuid = device.uuid.toLowerCase();
+      if (!labelsByUUID.has(uuid)) labelsByUUID.set(uuid, device.label);
+    }
+    for (const volume of s.volumes || []) {
+      if (!volumeLabels.has(volume.id)) {
+        volumeLabels.set(volume.id, labelsByUUID.get(volume.uuid.toLowerCase()) || volume.uuid);
+      }
+    }
+  }
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
@@ -87,10 +100,10 @@ export function StoragePage({ config, patch, admin }: Props) {
         {(s.shares || []).length === 0 && <Empty>Выберите том и создайте сетевую папку.</Empty>}
         {(s.shares || []).length > 0 && <Rows cols={["Папка", "Том", "Права", "Доступ", "Состояние"]} toggle="Опубликовать">{(s.shares || []).map((sh: any) => {
           const update = (fn: (x: any) => void) => edit(d => fn(d.shares.find((x: any) => x.id === sh.id)));
-          return <Row key={sh.id} id={sh.id} cells={[<strong><span className="mono">{`\\\\${server}\\${sh.name}`}</span></strong>, devices.find(d => d.uuid === (s.volumes || []).find((v: any) => v.id === sh.volume)?.uuid)?.label || <span className="dim">том не выбран</span>,
+          return <Row key={sh.id} id={sh.id} cells={[<strong><span className="mono">{`\\\\${server}\\${sh.name}`}</span></strong>, volumeLabels.get(sh.volume) || <span className="dim">том не выбран</span>,
             sh.read_only ? "только чтение" : "чтение и запись", `пользователей: ${(sh.users || []).length}`, <Badge tone={sh.enabled ? "ok" : "neutral"}>{sh.enabled ? "опубликована" : "черновик"}</Badge>]}
             toggle={<Switch label="" ariaLabel="Опубликовать" checked={!!sh.enabled} disabled={!installed && !sh.enabled} onChange={v => update(x => x.enabled = v)} />}>
-            <div className="form-grid"><Field label="Имя папки"><input value={sh.name} maxLength={20} onChange={e => update(x => x.name = e.target.value)} /></Field><Field label="Том"><select value={sh.volume} onChange={e => update(x => x.volume = e.target.value)}><option value="">Выберите том</option>{(s.volumes || []).map((v: any) => <option key={v.id} value={v.id} disabled={!v.enabled}>{devices.find(d => d.uuid === v.uuid)?.label || v.uuid}{!v.enabled ? " — отключён" : ""}</option>)}</select></Field><Field label="Права"><Switch label="Только чтение" checked={!!sh.read_only} onChange={v => update(x => x.read_only = v)} /></Field></div>
+            <div className="form-grid"><Field label="Имя папки"><input value={sh.name} maxLength={20} onChange={e => update(x => x.name = e.target.value)} /></Field><Field label="Том"><select value={sh.volume} onChange={e => update(x => x.volume = e.target.value)}><option value="">Выберите том</option>{(s.volumes || []).map((v: any) => <option key={v.id} value={v.id} disabled={!v.enabled}>{volumeLabels.get(v.id) || v.uuid}{!v.enabled ? " — отключён" : ""}</option>)}</select></Field><Field label="Права"><Switch label="Только чтение" checked={!!sh.read_only} onChange={v => update(x => x.read_only = v)} /></Field></div>
             <div style={{ marginTop: "0.8rem" }}><Field label="Кто может подключаться">{(s.users || []).map((u: any) => <Switch key={u.id} label={u.name || "Без имени"} checked={access.usersByShare.get(sh)!.has(u.id)} onChange={on => update(x => x.users = on ? [...(x.users || []), u.id] : (x.users || []).filter((id: string) => id !== u.id))} />)}</Field></div>
             <div className="row-actions end"><button className="btn ghost sm" disabled={sh.enabled} onClick={() => edit(d => d.shares = d.shares.filter((x: any) => x.id !== sh.id))}>Удалить</button></div>
           </Row>;

@@ -30,3 +30,22 @@ test('no disks and no remembered volumes: one empty line and no column header',(
  const saved=config;config={components:[{id:'samba',installed:true}],samba:{volumes:[]}};
  try{const html=render([]);assert.match(html,/Накопителей нет\. Вставьте USB-диск/);assert.doesNotMatch(html,/<span>Файловая система<\/span>/)}finally{config=saved}
 });
+
+test('share summary follows the selected volume across inventory changes', () => {
+ const saved = config;
+ const share = {id: 'files', name: 'Files', volume: 'v1'};
+ config = {samba: {volumes: [{id: 'v1', uuid: 'ABCD-1234'}], shares: [share]}};
+ try {
+   for (const snapshot of [null, [], [{uuid: 'abcd-1234', label: ''}]]) {
+     const html = render(snapshot);
+     assert.doesNotMatch(html, /том не выбран/);
+     assert.match(html, /ABCD-1234/);
+   }
+   // The latest label appears in both the summary and the selector.
+   assert.equal(render([{uuid: 'abcd-1234', label: 'Backup'}]).split('Backup').length - 1, 3);
+   share.volume = '';
+   assert.match(render([]), /том не выбран/);
+ } finally {
+   config = saved;
+ }
+});
