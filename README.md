@@ -292,7 +292,7 @@ P12, показать пароль его импорта, отозвать се�
 
 ```bash
 # сборка выполняется только на машине разработчика или в CI
-cd web && npm install && npm run build
+(cd web && npm install && npm run build)
 
 # на стенд отправляется уже готовый Linux-бинарник
 NETOS_BINARY_FILE=/path/to/netosd-linux-amd64 NETOS_HOST=netos ./scripts/dev-push.sh

@@ -28,7 +28,7 @@ ssh() { return 1; }
 export -f command gh scp ssh
 for EXACT_BUILD in no yes yes; do
     export EXACT_BUILD
-    output=$(bash scripts/dev-push.sh 2>&1) && exit 1
+    output=$(./scripts/dev-push.sh 2>&1) && exit 1
     if [[ "$EXACT_BUILD" == no ]]; then
         [[ "$output" == *"$EXPECTED_REVISION"* && "$output" != *"download "* ]]
     else
