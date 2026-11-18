@@ -91,9 +91,9 @@ async def main():
   peers = page.locator('[data-peers-of="oc"]')
   await expect(peers.locator('input[type=password]').nth(0)).to_have_attribute('placeholder', '••••••••')
   await expect(peers.locator('input[type=password]').nth(1)).to_have_attribute('placeholder', 'Не задан')
-  dns = page.get_by_label('DNS OpenConnect', exact=True)
+  dns = page.get_by_role('textbox', name='DNS для клиентов', exact=True)
   await expect(dns).to_have_value('9.9.9.9')
-  switch = page.get_by_role('checkbox', name='Использовать DNS роутера', exact=True)
+  switch = page.get_by_role('checkbox', name='DNS роутера', exact=True)
   async with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT'):
    await switch.locator('..').click()
   await expect(dns).to_have_count(0)
