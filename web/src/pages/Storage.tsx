@@ -16,17 +16,21 @@ export function StoragePage({ config, patch, admin }: Props) {
   const installed = (config.components || []).some((c: any) => c.id === "samba" && c.installed);
   const [deviceSnapshot, setDevices] = useState<any[] | null>(null);
   const devices = deviceSnapshot || [];
-  const volumeLabels = new Map<string, string>();
-  if (s.shares?.length) {
-    const labelsByUUID = new Map<string, string>();
+  const volumes = s.volumes || [];
+  const deviceByUUID = new Map<string, any>();
+  if (volumes.length) {
     for (const device of devices) {
       const uuid = device.uuid.toLowerCase();
-      if (!labelsByUUID.has(uuid)) labelsByUUID.set(uuid, device.label);
+      if (!deviceByUUID.has(uuid)) deviceByUUID.set(uuid, device);
     }
-    for (const volume of s.volumes || []) {
-      if (!volumeLabels.has(volume.id)) {
-        volumeLabels.set(volume.id, labelsByUUID.get(volume.uuid.toLowerCase()) || volume.uuid);
-      }
+  }
+  const configuredUUIDs = new Set<string>();
+  const volumeLabels = new Map<string, string>();
+  for (const volume of volumes) {
+    const uuid = volume.uuid.toLowerCase();
+    configuredUUIDs.add(uuid);
+    if (s.shares?.length && !volumeLabels.has(volume.id)) {
+      volumeLabels.set(volume.id, deviceByUUID.get(uuid)?.label || volume.uuid);
     }
   }
   const [error, setError] = useState("");
@@ -81,11 +85,11 @@ export function StoragePage({ config, patch, admin }: Props) {
         {deviceSnapshot !== null && !error && devices.length === 0 && (s.volumes || []).length === 0 && <Empty>Накопителей нет. Вставьте USB-диск с ext2/3/4, FAT, exFAT или NTFS; форматирование не выполняется.</Empty>}
         {/* Шапку столбцов без строк не показываем. */}
         <div className="storage-volumes" aria-busy={admin && deviceSnapshot === null && !error}>{(devices.length > 0 || (s.volumes || []).length > 0) && <Rows cols={["Том", "Файловая система", "Размер", "Подключение", "Состояние"]} toggle="Автоподключение">
-        {devices.filter(d => !(s.volumes || []).some((v: any) => v.uuid.toLowerCase() === d.uuid.toLowerCase())).map(d =>
+        {devices.filter(d => !configuredUUIDs.size || !configuredUUIDs.has(d.uuid.toLowerCase())).map(d =>
           <Row key={d.path} cells={[<strong>{d.label || d.path}</strong>, d.fstype, `${(Number(d.size) / 1073741824).toFixed(1)} ГБ`, d.tran || "диск", <span className="dim" title={d.reason || d.uuid}>{d.reason || d.uuid}</span>]}
             toggle={<button className="btn sm" disabled={!installed || !d.available} onClick={() => edit(v => v.volumes.push({ id: newID("volume"), uuid: d.uuid, filesystem: d.fstype, enabled: true }))}>Подключить</button>} />)}
         {(s.volumes || []).map((v: any) => {
-          const live = devices.find(d => d.uuid.toLowerCase() === v.uuid.toLowerCase());
+          const live = deviceByUUID.get(v.uuid.toLowerCase());
           const mounted = live?.mountpoints?.some((p: string | null) => p?.startsWith("/srv/netos/"));
           return <Row key={v.id} cells={[<strong>{live?.label || v.uuid}</strong>, v.filesystem, live ? `${(Number(live.size) / 1073741824).toFixed(1)} ГБ` : "—", <button className="btn ghost sm" disabled={v.enabled || (s.shares || []).some((x: any) => x.volume === v.id)} onClick={() => edit(d => d.volumes = d.volumes.filter((x: any) => x.id !== v.id))}>Забыть том</button>, <Badge tone={mounted && !error ? "ok" : "neutral"}>{deviceSnapshot === null || error ? "Нет данных" : mounted ? "Подключён в системе" : live ? "Диск обнаружен" : "Диск отсутствует"}</Badge>]}
             toggle={<Switch checked={!!v.enabled} disabled={!installed && !v.enabled} label="" ariaLabel="Автоподключение" onChange={on => edit(d => { d.volumes.find((x: any) => x.id === v.id).enabled = on; if (!on) d.shares.forEach((x: any) => { if (x.volume === v.id) x.enabled = false; }); })} />} />;

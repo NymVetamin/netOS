@@ -63,3 +63,12 @@ test('SMB address follows the VPN router and prefers a selected LAN', () => {
     assert.ok(render([]).includes('smb://192.0.2.1<'));
   } finally { config = previous; }
 });
+
+test('saved volume uses the first matching device even with duplicate UUIDs', () => {
+  const first = {uuid: 'TEST-VOLUME', label: 'First'};
+  const second = {uuid: 'test-volume', label: 'Second'};
+  const html = render([first, second]);
+  assert.match(html, /First/);
+  assert.doesNotMatch(html, /Second/);
+  assert.match(render([second, first]), /Second/);
+});
