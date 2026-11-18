@@ -40,7 +40,7 @@ export function StoragePage({ config, patch, admin }: Props) {
       <Card title="Файловый сервер">
         {!installed && <NeedComponent name="Samba" effect="без неё сетевые папки не открыть" />}
         <div className="storage-server">
-          <Switch checked={!!s.enabled} disabled={!installed} label="Включить доступ к файлам" onChange={v => edit(d => d.enabled = v)} />
+          <Switch checked={!!s.enabled} disabled={!installed && !s.enabled} label="Включить доступ к файлам" onChange={v => edit(d => d.enabled = v)} />
           {/* Как подключиться — там, где сервер включают, а не над всей страницей. */}
           <div className="hint storage-address">
             Адрес: <span className="mono">{`\\\\${server}`}</span> в Проводнике Windows, <span className="mono">{`smb://${server}`}</span> в других системах, вход по логину Samba
@@ -70,7 +70,7 @@ export function StoragePage({ config, patch, admin }: Props) {
           const live = devices.find(d => d.uuid.toLowerCase() === v.uuid.toLowerCase());
           const mounted = live?.mountpoints?.some((p: string | null) => p?.startsWith("/srv/netos/"));
           return <Row key={v.id} cells={[<strong>{live?.label || v.uuid}</strong>, v.filesystem, live ? `${(Number(live.size) / 1073741824).toFixed(1)} ГБ` : "—", <button className="btn ghost sm" disabled={v.enabled || (s.shares || []).some((x: any) => x.volume === v.id)} onClick={() => edit(d => d.volumes = d.volumes.filter((x: any) => x.id !== v.id))}>Забыть том</button>, <Badge tone={mounted && !error ? "ok" : "neutral"}>{deviceSnapshot === null || error ? "Нет данных" : mounted ? "Подключён в системе" : live ? "Диск обнаружен" : "Диск отсутствует"}</Badge>]}
-            toggle={<Switch checked={!!v.enabled} disabled={!installed} label="" ariaLabel="Автоподключение" onChange={on => edit(d => { d.volumes.find((x: any) => x.id === v.id).enabled = on; if (!on) d.shares.forEach((x: any) => { if (x.volume === v.id) x.enabled = false; }); })} />} />;
+            toggle={<Switch checked={!!v.enabled} disabled={!installed && !v.enabled} label="" ariaLabel="Автоподключение" onChange={on => edit(d => { d.volumes.find((x: any) => x.id === v.id).enabled = on; if (!on) d.shares.forEach((x: any) => { if (x.volume === v.id) x.enabled = false; }); })} />} />;
         })}
         </Rows>}</div>
         <div className="rows-foot"><details className="more"><summary>Как извлечь диск и какие права у файлов</summary><p className="faint">Для извлечения выключите автоподключение и примените изменения: связанные папки отключатся. Дождитесь успешного применения. Занятый диск не отключается принудительно. На ext2/3/4 сохраняются существующие права файлов: для записи нужен доступ системному пользователю netos-storage. NTFS, FAT и exFAT подключаются с правами этого пользователя.</p></details></div>
@@ -89,7 +89,7 @@ export function StoragePage({ config, patch, admin }: Props) {
           const update = (fn: (x: any) => void) => edit(d => fn(d.shares.find((x: any) => x.id === sh.id)));
           return <Row key={sh.id} id={sh.id} cells={[<strong><span className="mono">{`\\\\${server}\\${sh.name}`}</span></strong>, devices.find(d => d.uuid === (s.volumes || []).find((v: any) => v.id === sh.volume)?.uuid)?.label || <span className="dim">том не выбран</span>,
             sh.read_only ? "только чтение" : "чтение и запись", `пользователей: ${(sh.users || []).length}`, <Badge tone={sh.enabled ? "ok" : "neutral"}>{sh.enabled ? "опубликована" : "черновик"}</Badge>]}
-            toggle={<Switch label="" ariaLabel="Опубликовать" checked={!!sh.enabled} disabled={!installed} onChange={v => update(x => x.enabled = v)} />}>
+            toggle={<Switch label="" ariaLabel="Опубликовать" checked={!!sh.enabled} disabled={!installed && !sh.enabled} onChange={v => update(x => x.enabled = v)} />}>
             <div className="form-grid"><Field label="Имя папки"><input value={sh.name} maxLength={20} onChange={e => update(x => x.name = e.target.value)} /></Field><Field label="Том"><select value={sh.volume} onChange={e => update(x => x.volume = e.target.value)}><option value="">Выберите том</option>{(s.volumes || []).map((v: any) => <option key={v.id} value={v.id} disabled={!v.enabled}>{devices.find(d => d.uuid === v.uuid)?.label || v.uuid}{!v.enabled ? " — отключён" : ""}</option>)}</select></Field><Field label="Права"><Switch label="Только чтение" checked={!!sh.read_only} onChange={v => update(x => x.read_only = v)} /></Field></div>
             <div style={{ marginTop: "0.8rem" }}><Field label="Кто может подключаться">{(s.users || []).map((u: any) => <Switch key={u.id} label={u.name || "Без имени"} checked={access.usersByShare.get(sh)!.has(u.id)} onChange={on => update(x => x.users = on ? [...(x.users || []), u.id] : (x.users || []).filter((id: string) => id !== u.id))} />)}</Field></div>
             <div className="row-actions end"><button className="btn ghost sm" disabled={sh.enabled} onClick={() => edit(d => d.shares = d.shares.filter((x: any) => x.id !== sh.id))}>Удалить</button></div>

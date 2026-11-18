@@ -193,6 +193,20 @@ async def main():
         async with page.expect_response(is_put):
             await forget.click()
         assert state["config"]["samba"]["volumes"] == []
+        samba = state["config"]["samba"]
+        samba["enabled"] = True
+        samba["volumes"] = [{"id": "vol1", "uuid": "ABCD-1234", "filesystem": "ext4", "enabled": True}]
+        samba["shares"] = [{"id": "files", "volume": "vol1", "name": "Files", "enabled": True}]
+        next(c for c in state["config"]["components"] if c["id"] == "samba")["installed"] = False
+        await page.reload()
+        for label in ("Опубликовать", "Автоподключение", "Включить доступ к файлам"):
+            switch = page.get_by_role("checkbox", name=label, exact=True)
+            await expect(switch).to_be_checked()
+            async with page.expect_response(is_put):
+                await switch.locator("..").click()
+            await expect(switch).to_be_disabled()
+        await page.reload()
+        await expect(page.get_by_role("checkbox", name="Включить доступ к файлам")).not_to_be_checked()
         await page.goto("http://netos-ui.test/#clients")
         await page.locator(".xrow").filter(has=page.get_by_role("combobox", name=f"Канал для устройства {MAC}", exact=True)).locator(":scope > details > summary").click()
         pin = page.get_by_role("button", name="Закрепить адрес", exact=True)
