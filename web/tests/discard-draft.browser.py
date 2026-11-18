@@ -41,6 +41,8 @@ async def scenario(browser, mode):
         status, body = 200, {}
         if path == "/api/session":
             body = {"username": "admin", "role": "admin", "csrf_token": "local-test"}
+        elif path == "/api/components/updates" and req.method == "GET":
+            body = {"components": {}}
         elif path == "/api/catalog":
             body = {"components": [{"id": "samba", "title": "Samba", "group": "Files", "description": "Test component"}]}
         elif path == "/api/status":

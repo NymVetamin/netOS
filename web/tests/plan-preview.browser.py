@@ -31,6 +31,8 @@ async def scenario(browser, width):
             return
         if path == "/api/session":
             body = {"username": "admin", "role": "admin", "csrf_token": "fixture"}
+        elif path == "/api/components/updates" and req.method == "GET":
+            body = {"components": {}}
         elif path == "/api/catalog":
             body = {"components": [{"id": "samba", "title": "Samba", "group": "Files", "description": "Test"}]}
         elif path == "/api/status":
@@ -76,6 +78,13 @@ async def scenario(browser, width):
         target.mkdir(parents=True, exist_ok=True)
         await page.screenshot(path=str(target / f"plan-{width}.png"))
     toggle = page.get_by_role("checkbox", name="Компонент Samba включён")
+    if width == 390:
+        # The expanded plan covers the bottom half of the mobile viewport.
+        await toggle.evaluate("""el => {
+            const top = document.querySelector("header.panel").getBoundingClientRect().bottom;
+            const bottom = document.querySelector(".applybar").getBoundingClientRect().top;
+            window.scrollBy(0, el.getBoundingClientRect().top - (top + bottom) / 2);
+        }""")
     await toggle.locator("..").click()
     await expect(preview).to_have_count(0)
     # A late preview must not reappear after editing while it was being built.
