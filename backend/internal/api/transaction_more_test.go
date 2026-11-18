@@ -16,8 +16,9 @@ import (
 )
 
 type transactionSubsystem struct {
-	applied []string
-	planErr bool
+	applied         []string
+	planErr         bool
+	failNextApplies int
 }
 
 func (s *transactionSubsystem) Name() string { return "firewall" }
@@ -45,7 +46,49 @@ func (s *transactionSubsystem) Apply(ctx context.Context, cfg *config.Config) er
 		return err
 	}
 	s.applied = append(s.applied, cfg.System.Hostname)
+	if s.failNextApplies > 0 {
+		s.failNextApplies--
+		return fmt.Errorf("injected apply failure")
+	}
 	return nil
+}
+
+func TestApplyRecordsActualRecovery(t *testing.T) {
+	s, cookie, csrf, subsystem := transactionServer(t)
+	cfg := *s.Engine.Current()
+	cfg.System.Hostname = "changed"
+	draft := s.privateDraftLocked("admin")
+	draft.Config = &cfg
+	body, err := json.Marshal(applyRequest{DraftVersion: draft.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		failures int
+		state    string
+		message  string
+	}{
+		{2, store.StateFailed, "откат не удался"},
+		{1, store.StateRolledBack, apply.ErrRestored.Error()},
+	} {
+		subsystem.failNextApplies = tc.failures
+		w := serveAuthed(s.Routes(), http.MethodPost, "/api/config/apply", body, cookie, csrf)
+		if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), tc.message) {
+			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+		}
+		revision, err := s.Store.LatestRevision()
+		if err != nil || revision.State != tc.state || draft.Config != &cfg {
+			t.Fatalf("revision=%+v draft retained=%v err=%v", revision, draft.Config == &cfg, err)
+		}
+	}
+	w := serveAuthed(s.Routes(), http.MethodPost, "/api/config/apply", body, cookie, csrf)
+	if w.Code != http.StatusOK {
+		t.Fatalf("retry: %d %s", w.Code, w.Body.String())
+	}
+	w = serveAuthed(s.Routes(), http.MethodPost, "/api/config/confirm", nil, cookie, csrf)
+	if w.Code != http.StatusOK {
+		t.Fatalf("confirm: %d %s", w.Code, w.Body.String())
+	}
 }
 func (s *transactionSubsystem) Health(ctx context.Context, _ *config.Config) error {
 	return ctx.Err()

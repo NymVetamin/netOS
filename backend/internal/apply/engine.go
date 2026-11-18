@@ -402,6 +402,9 @@ type Result struct {
 // состояние осталось прежним, и говорить об откате здесь нельзя.
 var ErrPendingConfirmation = errors.New("предыдущее применение ещё не подтверждено")
 
+// ErrRestored accompanies the original error only after rollback and its health check succeed.
+var ErrRestored = errors.New("система возвращена к прежней конфигурации")
+
 // Apply применяет конфигурацию целиком.
 //
 // Если needConfirm истинно, запускается таймер отката длиной
@@ -437,27 +440,12 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 		// Применение упало на середине — система в промежуточном состоянии,
 		// немедленно возвращаемся к предыдущему конфигу.
 		e.log.Errorf("применение не удалось: %v", err)
-		if previous != nil {
-			rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if rbErr := e.restore(rollbackCtx, previous); rbErr != nil {
-				return nil, fmt.Errorf("применение не удалось (%w) и откат тоже не удался: %v", err, rbErr)
-			}
-			e.log.Warnf("выполнен откат к предыдущей конфигурации")
-		}
-		return nil, err
+		return nil, e.restoreAfterFailure(previous, err)
 	}
 
 	if err := e.health(ctx, cfg); err != nil {
 		e.log.Errorf("проверка после применения не прошла: %v", err)
-		if previous != nil {
-			rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if rbErr := e.restore(rollbackCtx, previous); rbErr != nil {
-				return nil, fmt.Errorf("проверка не прошла (%w) и откат не удался: %v", err, rbErr)
-			}
-		}
-		return nil, fmt.Errorf("проверка после применения не прошла: %w", err)
+		return nil, e.restoreAfterFailure(previous, fmt.Errorf("проверка после применения не прошла: %w", err))
 	}
 
 	e.mu.Lock()
@@ -630,6 +618,19 @@ func (e *Engine) restore(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("проверка после отката: %w", err)
 	}
 	return nil
+}
+
+func (e *Engine) restoreAfterFailure(previous *config.Config, cause error) error {
+	if previous == nil {
+		return cause
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := e.restore(ctx, previous); err != nil {
+		return fmt.Errorf("%w; откат не удался: %v", cause, err)
+	}
+	e.log.Warnf("выполнен откат к предыдущей конфигурации")
+	return fmt.Errorf("%w; %w", cause, ErrRestored)
 }
 
 func (e *Engine) run(ctx context.Context, cfg *config.Config) error {

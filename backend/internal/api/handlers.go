@@ -1356,7 +1356,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, apply.ErrPendingConfirmation) {
 		// Здесь ничего не менялось: предыдущая транзакция всё ещё ждёт
 		// подтверждения. Сообщать об откате было бы неправдой.
-		_ = s.Store.SetRevisionState(revID, store.StateRolledBack)
+		_ = s.Store.SetRevisionState(revID, store.StateFailed)
 		_ = s.Store.Audit(store.AuditEntry{
 			User: username, Action: "apply", Target: strconv.FormatInt(revID, 10),
 			Detail: err.Error(), SourceIP: clientIP(r), Success: false,
@@ -1366,7 +1366,13 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		_ = s.Store.SetRevisionState(revID, store.StateRolledBack)
+		state := store.StateFailed
+		if errors.Is(err, apply.ErrRestored) {
+			state = store.StateRolledBack
+		}
+		if stateErr := s.Store.SetRevisionState(revID, state); stateErr != nil {
+			err = fmt.Errorf("%w; не удалось записать состояние ревизии: %v", err, stateErr)
+		}
 		_ = s.Store.Audit(store.AuditEntry{
 			User: username, Action: "apply", Target: strconv.FormatInt(revID, 10),
 			Detail: err.Error(), SourceIP: clientIP(r), Success: false,
@@ -1375,8 +1381,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		// которого всё и упало. Это правильно — исправлять его администратору,
 		// — но без подсказки следующая попытка бьётся в ту же стену.
 		writeError(w, http.StatusInternalServerError,
-			"применение не удалось: %v. Система откачена к прежней конфигурации; "+
-				"исправьте черновик или отмените изменения", err)
+			"применение не удалось: %v. Исправьте черновик или отмените изменения", err)
 		return
 	}
 

@@ -24,6 +24,7 @@ const (
 	StateDraft      = "draft"
 	StateApplying   = "applying"
 	StateActive     = "active"
+	StateFailed     = "failed"
 	StateRolledBack = "rolled_back"
 	StateSuperseded = "superseded"
 	// schemaVersion describes SQLite tables, not the independently versioned

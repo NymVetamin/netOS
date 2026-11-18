@@ -121,6 +121,8 @@ function stateBadge(state: string) {
       return <Badge tone="ok">применена</Badge>;
     case "rolled_back":
       return <Badge tone="danger">откачена</Badge>;
+    case "failed":
+      return <Badge tone="danger">ошибка применения</Badge>;
     case "draft":
       return <Badge tone="neutral">черновик</Badge>;
     case "superseded":

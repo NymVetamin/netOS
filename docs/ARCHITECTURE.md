@@ -104,7 +104,7 @@ CREATE TABLE revisions (
   author      TEXT NOT NULL,
   comment     TEXT,
   config      TEXT NOT NULL,   -- JSON
-  state       TEXT NOT NULL,   -- draft | applying | active | rolled_back | superseded
+  state       TEXT NOT NULL,   -- draft | applying | active | rolled_back | failed | superseded
   applied_at  INTEGER
 );
 ```
