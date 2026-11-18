@@ -382,3 +382,78 @@ func commandStrings(commands []recordedCommand) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// Benchmark the whole routing pass against an unchanged kernel snapshot.
+func BenchmarkTunnelRouteReconcile(b *testing.B) {
+	for _, n := range []int{32, 2048} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := config.Default()
+			cfg.Channels = append(cfg.Channels, config.Channel{Index: 1, Type: "wireguard", Enabled: true})
+			var live strings.Builder
+			for i := 0; i < n; i++ {
+				dest := fmt.Sprintf("10.%d.%d.0/24", i/256, i%256)
+				fmt.Fprintf(&live, "%s dev wg-ch1 scope link\n", dest)
+				cfg.Routing.Static = append(cfg.Routing.Static, config.StaticRoute{Destination: dest, Interface: "wg-ch1", Enabled: true})
+			}
+			r := &recordingRunner{responses: map[string]runnerResponse{"ip -4 route show table all proto static": {out: live.String()}}}
+			s, late := New(r), &TunnelRoutes{Runner: r}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				r.commands = r.commands[:0]
+				ctx := context.Background()
+				if err := s.applyRoutes(ctx, cfg); err != nil {
+					b.Fatal(err)
+				}
+				if err := late.Apply(ctx, cfg); err != nil {
+					b.Fatal(err)
+				}
+				if err := late.Health(ctx, cfg); err != nil {
+					b.Fatal(err)
+				}
+				if len(r.commands) != 6 {
+					b.Fatalf("unchanged routes issued %d commands", len(r.commands))
+				}
+			}
+			b.ReportMetric(6, "commands/op")
+		})
+	}
+}
+
+func TestDisabledOwnerOnlySuspendsItsUnicastRoutes(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = []config.Channel{
+		{Index: 1, Type: "wireguard", Enabled: false},
+		{Index: 2, Type: "wireguard", WireGuardPeer: &config.WireGuardPeerChannel{}},
+	}
+	cfg.VPNServers = []config.VPNServer{{Index: 1, Type: "wireguard", Enabled: true}}
+	for _, r := range []config.StaticRoute{
+		{Interface: "wg-ch1", Type: "unicast"}, {Interface: "wg-srv1"}, {Interface: "unknown"},
+		{Interface: "wg-ch1", Type: "blackhole"},
+	} {
+		r.Enabled = true
+		cfg.Routing.Static = append(cfg.Routing.Static, r)
+	}
+	base, tunnels := splitRoutes(cfg, true)
+	if !reflect.DeepEqual(base, cfg.Routing.Static[2:]) || !reflect.DeepEqual(tunnels, cfg.Routing.Static[1:2]) {
+		t.Fatalf("base %v tunnels %v", base, tunnels)
+	}
+	off := *cfg
+	off.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
+	off.VPNServers[0].Enabled = false
+	actions, err := New(&recordingRunner{}).Plan(cfg, &off)
+	if err != nil || len(actions) != 1 || actions[0].Confirmation == "safe" {
+		t.Fatalf("route suspension plan: %+v, %v", actions, err)
+	}
+	r := &recordingRunner{}
+	late := &TunnelRoutes{Runner: r}
+	if err := late.Apply(context.Background(), &off); err != nil {
+		t.Fatal(err)
+	}
+	if err := late.Health(context.Background(), &off); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.commands) != 0 {
+		t.Fatalf("inactive tunnels issued commands: %+v", r.commands)
+	}
+}

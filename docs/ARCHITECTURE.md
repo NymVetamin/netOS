@@ -148,10 +148,12 @@ provider-файла и кэша. Если источник временно не
 
 ```
 components → system → sysctl → bridge-ipv6 → netconf → interfaces → ipv6
-      → networks → wan → multiwan → qos → routing → channels → vpn-servers
+      → networks → wan → multiwan → qos → routing → channels → vpn-servers → peer-channels → tunnel-routes
       → policy → firewall → policy-cleanup → dhcp → dns → ddns → wifi
       → samba → components-cleanup
 ```
+
+Обычная статика применяется до запуска туннелей. Маршруты через управляемый канал или WG-сервер устанавливаются после создания интерфейса. При выключении владельца маршрут остаётся в конфигурации и исключается из действующей статики.
 
 Порядок важен и в двух местах критичен. Правила файрволла и политики ссылаются
 на интерфейсы, которых до шага `channels` может не существовать. А `netconf`

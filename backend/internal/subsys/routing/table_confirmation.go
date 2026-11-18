@@ -9,8 +9,8 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
-func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Config) bool {
-	if !reflect.DeepEqual(enabledRoutes(old), enabledRoutes(next)) || !reflect.DeepEqual(enabledRules(old), enabledRules(next)) {
+func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Config, routes []config.StaticRoute) bool {
+	if !reflect.DeepEqual(enabledRules(old), enabledRules(next)) {
 		return false
 	}
 	before, after := map[config.RouteTable]bool{}, map[config.RouteTable]bool{}
@@ -33,21 +33,19 @@ func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Conf
 			changed[fmt.Sprint(table.Number)] = true
 		}
 	}
-	for _, cfg := range []*config.Config{old, next} {
-		for _, route := range enabledRoutes(cfg) {
-			if changed[route.Table] {
-				return false
-			}
+	for _, route := range routes {
+		if changed[route.Table] {
+			return false
 		}
-		for _, rule := range enabledRules(cfg) {
-			if changed[rule.Table] {
-				return false
-			}
+	}
+	for _, rule := range enabledRules(old) {
+		if changed[rule.Table] {
+			return false
 		}
 	}
 	for _, family := range []string{"-4", "-6"} {
-		routes, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all")
-		if err != nil || referencesChangedTable(routes, changed) {
+		liveRoutes, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all")
+		if err != nil || referencesChangedTable(liveRoutes, changed) {
 			return false
 		}
 		rules, err := s.Runner.Run(ctx, "ip", family, "rule", "show")
@@ -68,7 +66,7 @@ func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Conf
 			return false
 		}
 		wanted := map[string]config.StaticRoute{}
-		for _, route := range enabledRoutes(old) {
+		for _, route := range routes {
 			if routeFamily(route) == family {
 				wanted[staticRouteKey(route)] = route
 			}

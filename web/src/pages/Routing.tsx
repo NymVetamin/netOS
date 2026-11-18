@@ -12,21 +12,28 @@ type Patch = (mutate: (draft: any) => void) => void;
 // Everything a static route can point at by name: ports, bridges and VLANs,
 // PPP sessions of uplinks, channel tunnels and WireGuard servers. A typed name
 // is easy to get wrong, and a wrong one fails only when the route is applied.
-export function routeInterfaceOptions(config: any): { name: string; label: string }[] {
-  const out = new Map<string, string>();
-  const add = (name: string, label: string) => { if (name && !out.has(name)) out.set(name, label); };
+type RouteInterface = { name: string; label: string; inactive?: string };
+
+export function routeInterfaceOptions(config: any): RouteInterface[] {
+  const out = new Map<string, RouteInterface>();
+  const add = (name: string, label: string, inactive?: string) => {
+    if (name && !out.has(name)) out.set(name, { name, label, inactive });
+  };
   for (const i of config.interfaces || []) add(i.name, interfaceDisplay(config, i.name));
   for (const w of config.wans || []) {
     if (w.proto === "pppoe" || w.proto === "l2tp") add(`ppp-${w.id}`, `ppp-${w.id} — сессия аплинка «${w.name || w.id}»`);
   }
   for (const c of config.channels || []) {
     const name = channelNATInterface(c);
-    add(name, `${name} — канал «${c.name || c.id}»`);
+    add(name, `${name} — канал «${c.name || c.id}»`, c.wireguard_peer || c.enabled ? undefined : "Неактивен: канал выключен");
   }
   for (const s of config.vpn_servers || []) {
-    if (s.type === "wireguard" && s.index > 0) add(`wg-srv${s.index}`, `wg-srv${s.index} — VPN-сервер «${s.name || s.id}»`);
+    if (s.type !== "wireguard" || !(s.index > 0)) continue;
+    const name = `wg-srv${s.index}`;
+    add(name, `${name} — VPN-сервер «${s.name || s.id}»`);
+    out.get(name)!.inactive = s.enabled ? undefined : "Неактивен: сервер выключен";
   }
-  return [...out].map(([name, label]) => ({ name, label }));
+  return [...out.values()];
 }
 
 type RoutesResponse = { routes: string; rules: string; parsed: RouteEntry[] };
@@ -74,7 +81,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   const automatic = observed.filter(name => !["main", "local", "default"].includes(name) && !tableDetails(name, config).manual);
   const displayedRoutes = (live?.parsed || []).filter(r => selectedTable === "all" || canonicalTable(r.table || "main") === selectedTable);
   const ifaces = routeInterfaceOptions(config);
-  const ifaceNames = new Set(ifaces.map((o) => o.name));
+  const ifaceByName = new Map(ifaces.map(o => [o.name, o]));
 
   return (
     <>
@@ -115,11 +122,13 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
           <Empty>Статических маршрутов нет.</Empty>
         ) : (
           <Rows cols={["Название", "Куда", "Через", "Таблица", ""]}>
-          {routing.static.map((r: any, idx: number) => (
+          {routing.static.map((r: any, idx: number) => {
+            const inactive = r.enabled && (!r.type || r.type === "unicast") && ifaceByName.get(r.interface)?.inactive;
+            return (
               <Row
                 key={r.id}
                 id={r.id}
-                cells={[<strong>{r.name}</strong>, <span className="mono">{r.destination || "—"}</span>,
+                cells={[<><strong>{r.name}</strong>{inactive && <div className="dim">{inactive}</div>}</>, <span className="mono">{r.destination || "—"}</span>,
                   r.type && r.type !== "unicast" ? <span className="dim">{ROUTE_TYPE[r.type] || r.type}</span> : <span className="mono">{r.gateway || interfaceDisplay(config, r.interface) || "—"}</span>,
                   <span className="mono">{r.table || "основная"}</span>]}
                 toggle={<Switch
@@ -177,7 +186,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                       >
                         <option value="">не выбран</option>
                         {ifaces.map((o) => <option key={o.name} value={o.name}>{o.label}</option>)}
-                        {r.interface && !ifaceNames.has(r.interface) && <option value={r.interface}>{r.interface} — нет в конфигурации</option>}
+                        {r.interface && !ifaceByName.has(r.interface) && <option value={r.interface}>{r.interface} — нет в конфигурации</option>}
                       </select></Cap>
                   <Cap label="Метрика"><input
                         type="number"
@@ -216,7 +225,8 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                         Удалить
                       </button></div>
               </Row>
-          ))}
+            );
+          })}
         </Rows>
         )}
       </Card>

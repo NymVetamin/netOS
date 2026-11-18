@@ -23,3 +23,14 @@ test('route interfaces list ports, PPP sessions, channels and WireGuard servers 
  assert.match(routeInterfaceOptions(config).find(o=>o.name==='wg-ch1').label,/канал «WireGuard 1»/);
  assert.deepEqual(routeInterfaceOptions({}),[]);
 });
+test('route inactivity follows the device owner when the draft changes',()=>{
+ const channel={type:'wireguard',index:1,enabled:false};
+ const peer={type:'wireguard',index:2,enabled:false,wireguard_peer:{server_index:1}};
+ const server={type:'wireguard',index:1,enabled:true};
+ const config={channels:[channel,peer],vpn_servers:[server]};
+ const states=()=>routeInterfaceOptions(config).map(o=>o.inactive);
+ assert.deepEqual(states(),['Неактивен: канал выключен',undefined]);
+ channel.enabled=true;
+ server.enabled=false;
+ assert.deepEqual(states(),[undefined,'Неактивен: сервер выключен']);
+});

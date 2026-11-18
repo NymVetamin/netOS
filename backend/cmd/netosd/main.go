@@ -603,6 +603,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		channelMonitor,
 		vpnSubsystem,
 		&channels.PeerRoutes{S: channelMonitor},
+		&routing.TunnelRoutes{Runner: runner},
 		policy.New(runner, stateDir),
 		wifi.New(runner, stateDir),
 		sambaController,

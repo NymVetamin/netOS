@@ -63,14 +63,16 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 		return actions, nil
 	}
 
+	oldRoutes, newRoutes := enabledRoutes(old), enabledRoutes(new)
+	routesEqual := reflect.DeepEqual(oldRoutes, newRoutes)
 	if !reflect.DeepEqual(old.Routing.Tables, new.Routing.Tables) {
 		action := apply.Action{Kind: "update", Target: "таблицы маршрутизации"}
-		if s.unusedTablesOnly(ctx, old, new) {
+		if routesEqual && s.unusedTablesOnly(ctx, old, new, oldRoutes) {
 			action.Confirmation = apply.ConfirmationSafe
 		}
 		actions = append(actions, action)
 	}
-	if !reflect.DeepEqual(enabledRoutes(old), enabledRoutes(new)) {
+	if !routesEqual {
 		actions = append(actions, apply.Action{Kind: "update", Target: "статические маршруты"})
 	}
 	if !reflect.DeepEqual(enabledRules(old), enabledRules(new)) {
@@ -78,7 +80,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 			Kind: "update", Target: "правила маршрутизации", Disruptive: true,
 		})
 	}
-	if len(actions) > 0 && routingNamesOnly(old, new) && s.unusedTablesOnly(ctx, old, old) {
+	if len(actions) > 0 && routingNamesOnly(old, new, oldRoutes, newRoutes) && s.unusedTablesOnly(ctx, old, old, oldRoutes) {
 		// Identical table registries leave only the helper's exact live-state
 		// checks: a name edit must not silently exempt concurrent route repair.
 		for i := range actions {
@@ -89,10 +91,10 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	return actions, nil
 }
 
-func routingNamesOnly(old, next *config.Config) bool {
-	strip := func(cfg *config.Config) config.Routing {
+func routingNamesOnly(old, next *config.Config, oldRoutes, newRoutes []config.StaticRoute) bool {
+	strip := func(cfg *config.Config, routes []config.StaticRoute) config.Routing {
 		out := cfg.Routing
-		out.Static = append([]config.StaticRoute(nil), out.Static...)
+		out.Static = append([]config.StaticRoute(nil), routes...)
 		out.Rules = append([]config.RouteRule(nil), out.Rules...)
 		for i := range out.Static {
 			out.Static[i].Name = ""
@@ -102,7 +104,7 @@ func routingNamesOnly(old, next *config.Config) bool {
 		}
 		return out
 	}
-	return reflect.DeepEqual(strip(old), strip(next))
+	return reflect.DeepEqual(strip(old, oldRoutes), strip(next, newRoutes))
 }
 
 func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
@@ -146,8 +148,11 @@ func (s *Subsystem) writeProtos() error {
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	wanted := map[string]map[string]bool{"-4": {}, "-6": {}}
 	live := map[string]map[string]string{"-4": {}, "-6": {}}
-	for _, r := range enabledRoutes(cfg) {
-		wanted[routeFamily(r)][staticRouteKey(r)] = true
+	base, tunnels := splitRoutes(cfg, true)
+	for _, routes := range [][]config.StaticRoute{base, tunnels} {
+		for _, r := range routes {
+			wanted[routeFamily(r)][staticRouteKey(r)] = true
+		}
 	}
 
 	for _, family := range []string{"-4", "-6"} {
@@ -159,10 +164,14 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 			}
 			for _, line := range strings.Split(out, "\n") {
 				line = strings.TrimSpace(line)
-				if protocol == "static" && line != "" {
-					live[family][routeLineKey(line)] = line
+				if line == "" {
+					continue
 				}
-				if line == "" || wanted[family][routeLineKey(line)] {
+				key := routeLineKey(line)
+				if protocol == "static" {
+					live[family][key] = line
+				}
+				if wanted[family][key] {
 					continue
 				}
 				args := append([]string{family, "route", "del"}, strings.Fields(line)...)
@@ -173,7 +182,11 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	for _, r := range enabledRoutes(cfg) {
+	return s.installRoutes(ctx, base, live)
+}
+
+func (s *Subsystem) installRoutes(ctx context.Context, routes []config.StaticRoute, live map[string]map[string]string) error {
+	for _, r := range routes {
 		if staticRouteAlreadyApplied(live[routeFamily(r)][staticRouteKey(r)], r) {
 			continue
 		}
@@ -229,13 +242,20 @@ func routeKey(table, destination, routeType, gateway, iface string, metric int) 
 	}
 	// ip route show renders host prefixes without /32 or /128.
 	if prefix, err := netip.ParsePrefix(destination); err == nil {
-		destination = prefix.Masked().String()
+		if prefix.Bits() == 0 {
+			destination = "default"
+		} else {
+			destination = prefix.Masked().String()
+		}
 	} else if addr, err := netip.ParseAddr(destination); err == nil {
 		bits := 32
 		if addr.Is6() {
 			bits = 128
 		}
 		destination = netip.PrefixFrom(addr, bits).String()
+	}
+	if addr, err := netip.ParseAddr(gateway); err == nil {
+		gateway = addr.String()
 	}
 	if routeType == "" {
 		routeType = "unicast"
@@ -244,7 +264,12 @@ func routeKey(table, destination, routeType, gateway, iface string, metric int) 
 }
 
 func staticRouteKey(r config.StaticRoute) string {
-	return routeKey(r.Table, r.Destination, r.Type, r.Gateway, r.Interface, r.Metric)
+	metric := r.Metric
+	// Linux assigns metric 1024 to IPv6 routes without an explicit metric.
+	if metric == 0 && routeFamily(r) == "-6" {
+		metric = 1024
+	}
+	return routeKey(r.Table, r.Destination, r.Type, r.Gateway, r.Interface, metric)
 }
 
 func routeLineKey(line string) string {
@@ -270,6 +295,10 @@ func routeLineKey(line string) string {
 		case "metric":
 			_, _ = fmt.Sscan(fields[i+1], &metric)
 		}
+	}
+	// Some iproute2 outputs omit the default metric.
+	if metric == 0 && (strings.Contains(destination, ":") || strings.Contains(gateway, ":")) {
+		metric = 1024
 	}
 	return routeKey(table, destination, routeType, gateway, iface, metric)
 }
@@ -357,13 +386,8 @@ func hasRule(out string, priority int, table string) bool {
 // ---------------------------------------------------------------------------
 
 func enabledRoutes(cfg *config.Config) []config.StaticRoute {
-	var out []config.StaticRoute
-	for _, r := range cfg.Routing.Static {
-		if r.Enabled {
-			out = append(out, r)
-		}
-	}
-	return out
+	base, tunnels := splitRoutes(cfg, true)
+	return append(base, tunnels...)
 }
 
 func enabledRules(cfg *config.Config) []config.RouteRule {
