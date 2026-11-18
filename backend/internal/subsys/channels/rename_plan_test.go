@@ -36,3 +36,29 @@ func TestWireGuardRenameConfirmation(t *testing.T) {
 		t.Fatal("comparison mutated old revision")
 	}
 }
+
+func TestInboundTransitHasNoChannelAction(t *testing.T) {
+	s, _ := newTestSubsystem(t)
+	old, next := channelConfig(), channelConfig()
+	if err := s.Apply(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	ch := &next.Channels[len(next.Channels)-1]
+	ch.AcceptInbound = true
+	check := func(wantUpdate bool) {
+		t.Helper()
+		actions, err := s.Plan(old, next)
+		if err != nil || (len(actions) > 0) != wantUpdate || apply.NeedsConfirmation(actions) != wantUpdate {
+			t.Fatalf("want update %t: %+v, %v", wantUpdate, actions, err)
+		}
+	}
+	check(false)
+	check(false)
+	ch.FailMode = "direct"
+	check(true)
+	ch.FailMode = "block"
+	if err := os.WriteFile(filepath.Join(s.StateDir, "wg-ch1.conf"), []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+}

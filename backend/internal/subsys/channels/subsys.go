@@ -330,6 +330,8 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	var healthChecked, oldHealthy bool
 	for _, ch := range wanted {
 		before, ok := previous[ch.ID]
+		// Transit permission changes the firewall only. Health still detects channel drift.
+		before.AcceptInbound = ch.AcceptInbound
 		delete(previous, ch.ID)
 		if !ok {
 			actions = append(actions, apply.Action{Kind: "create", Target: ch.Name, Detail: InterfaceName(ch), Disruptive: true})

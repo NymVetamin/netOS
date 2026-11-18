@@ -96,6 +96,13 @@ func TestIntegrationWireGuardChannelRenameTunnel(t *testing.T) {
 		t.Fatal("no handshake")
 	}
 	port := run("wg", "show", InterfaceName(ch), "listen-port")
+	previous := *cfg
+	previous.Channels = append([]config.Channel(nil), cfg.Channels...)
+	cfg.Channels[len(cfg.Channels)-1].AcceptInbound = true
+	if actions, err := s.Plan(&previous, cfg); err != nil || len(actions) != 0 {
+		t.Fatalf("firewall-only toggle planned channel changes: %+v %v", actions, err)
+	}
+	ping()
 	for _, name := range []string{"After", "After", "Before"} {
 		previous := *cfg
 		previous.Channels = append([]config.Channel(nil), cfg.Channels...)
