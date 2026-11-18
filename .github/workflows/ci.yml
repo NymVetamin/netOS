@@ -164,4 +164,5 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           bash -n install.sh
           bash -n scripts/dev-push.sh
+          bash scripts/tests/dev-push-revision.sh
           shellcheck --severity=warning install.sh scripts/dev-push.sh

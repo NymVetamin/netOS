@@ -11,7 +11,7 @@
 #
 #   1. Есть локальный Go — кросс-сборка под linux/amd64 прямо здесь. Самый
 #      быстрый круг: секунды на сборку, секунды на заливку.
-#   2. Go нет — берётся артефакт последней сборки CI для текущей ветки.
+#   2. Go нет — берётся артефакт CI для текущего коммита ветки.
 #      Компилятор при этом не нужен нигде, но ждать приходится саму CI.
 #
 # Переменные окружения:
@@ -61,11 +61,12 @@ else
         echo "   нужен либо Go, либо gh для загрузки артефакта CI" >&2; exit 1; }
 
     BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-    RUN=$(gh run list --workflow=ci.yml --branch "$BRANCH" --limit 1 \
-        --json databaseId,status,conclusion,headSha \
+    REVISION="$(git rev-parse HEAD)"
+    RUN=$(gh run list --workflow=ci.yml --branch "$BRANCH" --commit "$REVISION" --limit 1 \
+        --json databaseId,status,conclusion \
         -q '.[0] | select(.status=="completed" and .conclusion=="success") | .databaseId')
     [ -n "${RUN:-}" ] || {
-        echo "   нет успешной сборки CI для ветки $BRANCH — запушьте изменения и дождитесь её" >&2
+        echo "   нет успешной сборки CI для $BRANCH ($REVISION) — запушьте изменения и дождитесь её" >&2
         exit 1; }
 
     TMPDIR_ART="$(mktemp -d)"
