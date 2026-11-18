@@ -6,7 +6,7 @@ import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
 import { confirmAction } from "../confirm";
 import { secretInput } from "../secrets";
-import { useContext, useEffect, useState } from "react";
+import { useMemo, useContext, useEffect, useState } from "react";
 import { HintContext } from "../HintContext";
 import { api, Problem } from "../api";
 import { newID } from "../id";
@@ -722,6 +722,13 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
     refreshPorts();
   }, []);
 
+  const liveByName = useMemo(() => {
+    const byName = new Map<string, any>();
+    for (const port of liveInterfaces) {
+      if (!byName.has(port.name)) byName.set(port.name, port);
+    }
+    return byName;
+  }, [liveInterfaces]);
   const configuredNames = new Set(interfaces.map((i: any) => i.name));
   const discovered = liveInterfaces.filter(
     (i: any) => i.physical && !configuredNames.has(i.name),
@@ -816,7 +823,9 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                   </button>}
             />
           ))}
-          {interfaces.map((i: any, idx: number) => (
+          {interfaces.map((i: any, idx: number) => {
+            const live = liveByName.get(i.name);
+            return (
             <Row
               key={i.id}
               id={i.id}
@@ -825,8 +834,8 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                 <span><strong className={i.label ? undefined : "mono"}>{i.label || i.name}</strong>{i.label && <div className="mono faint">{i.name}</div>}</span>,
                 <Badge tone="neutral">{typeLabel(i.type)}</Badge>,
                 <span className="dim">{interfaceView.usage(i) || "свободен"}</span>,
-                <span className="mono">{i.mac || liveInterfaces.find((live: any) => live.name === i.name)?.mac || "—"}</span>,
-                (() => { const live = liveInterfaces.find((l:any)=>l.name===i.name); return live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?(<span title={linkSpeed(live)}>{linkSpeed(live,true) || "Линк есть"}</span>):"Включён, нет линка"}</Badge> : i.enabled === false ? <Badge>выключен</Badge> : <Badge tone="warn"><span title="Интерфейс включён в настройках, но в системе его нет">не создан</span></Badge>; })(),
+                <span className="mono">{i.mac || live?.mac || "—"}</span>,
+                live ? <Badge tone={live.up?"ok":"neutral"}>{live.admin_up===false?"Отключён":live.up?(<span title={linkSpeed(live)}>{linkSpeed(live,true) || "Линк есть"}</span>):"Включён, нет линка"}</Badge> : i.enabled === false ? <Badge>выключен</Badge> : <Badge tone="warn"><span title="Интерфейс включён в настройках, но в системе его нет">не создан</span></Badge>,
               ]}
               toggle={<Switch
                     checked={i.enabled}
@@ -870,7 +879,7 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                     type="text"
                     className="mono"
                     aria-label={`MAC интерфейса ${i.name}`}
-                    placeholder={liveInterfaces.find((live: any) => live.name === i.name)?.mac || "не менять"}
+                    placeholder={live?.mac || "не менять"}
                     title="Пусто — оставить заводской адрес"
                     value={i.mac || ""}
                     onChange={(e) => patch((d) => (d.interfaces[idx].mac = e.target.value.trim()))}
@@ -878,7 +887,7 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                 <Cap label="MTU"><input
                     type="number"
                     aria-label={`MTU интерфейса ${i.name}`}
-                    placeholder={String(liveInterfaces.find((live: any) => live.name === i.name)?.mtu || "")}
+                    placeholder={String(live?.mtu || "")}
                     title="Пусто — не менять"
                     value={i.mtu || ""}
                     onChange={(e) => patch((d) => (d.interfaces[idx].mtu = Number(e.target.value)))}
@@ -896,7 +905,8 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                     </button>
                   )}</div>
             </Row>
-          ))}
+            );
+          })}
         </Rows>
       {scanError && <div className="rows-notes"><Notice tone="warn" title="Список портов недоступен">{scanError}</Notice></div>}
       <div className="rows-foot faint" style={{ fontSize: 12.5 }}>
