@@ -1,3 +1,4 @@
+import { vpnRouterAddress } from "../vpnAddress";
 import { storageAccessIndex } from "../storageAccess";
 import { secretInput } from "../secrets";
 import { useEffect, useState } from "react";
@@ -46,7 +47,11 @@ export function StoragePage({ config, patch, admin }: Props) {
   const toggle = (field: string, id: string, on: boolean) => edit(d => { d[field] = on ? [...(d[field] || []), id] : (d[field] || []).filter((x: string) => x !== id); });
   const networks = (config.networks || []).filter((n: any) => n.enabled && !n.isolated && n.zone !== "wan");
   const vpns = (config.vpn_servers || []).filter((v: any) => v.enabled && v.type !== "xray");
-  const server = networks.find((n: any) => (s.networks || []).includes(n.id))?.router_address?.split("/")[0] || vpns.find((v: any) => (s.vpns || []).includes(v.id))?.subnet?.split("/")[0] || config.system?.hostname || "netos";
+  const selectedNetworks = new Set(s.networks || []);
+  const selectedVPNs = new Set(s.vpns || []);
+  const server = networks.find((n: any) => selectedNetworks.has(n.id))?.router_address?.split("/")[0]
+    || vpnRouterAddress(vpns.find((v: any) => selectedVPNs.has(v.id)))
+    || config.system?.hostname || "netos";
   return <>
     <div className="page-head"><h1><Icon name="hard-drive" />Диски и файлы</h1><p>Файлы на USB-дисках по SMB из локальной сети и VPN</p></div>
     <fieldset className="storage-settings" disabled={!admin} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
@@ -66,8 +71,8 @@ export function StoragePage({ config, patch, admin }: Props) {
             <Field label="Сетевое окружение"><Switch checked={!!s.discovery} label="Обнаружение Windows (WS-Discovery)" onChange={v => edit(d => d.discovery = v)} /></Field>
           </div>
           <div className="storage-server-grid">
-            <Field label="Локальные сети с доступом"><div className="stack">{networks.length ? networks.map((n: any) => <Switch key={n.id} label={`${n.name} (${n.router_address})`} checked={(s.networks || []).includes(n.id)} onChange={v => toggle("networks", n.id, v)} />) : <Empty>Нет подходящих локальных сетей.</Empty>}</div></Field>
-            <Field label="VPN-серверы с доступом" hint="WireGuard, OpenConnect, IKEv2 и L2TP. Права Samba действуют и для VPN-клиентов."><div className="stack">{vpns.length ? vpns.map((v: any) => <Switch key={v.id} label={`${v.name} (${v.type}, ${v.subnet})`} checked={(s.vpns || []).includes(v.id)} onChange={on => toggle("vpns", v.id, on)} />) : <Empty>Сначала включите VPN-сервер в разделе «VPN-доступ».</Empty>}</div></Field>
+            <Field label="Локальные сети с доступом"><div className="stack">{networks.length ? networks.map((n: any) => <Switch key={n.id} label={`${n.name} (${n.router_address})`} checked={selectedNetworks.has(n.id)} onChange={v => toggle("networks", n.id, v)} />) : <Empty>Нет подходящих локальных сетей.</Empty>}</div></Field>
+            <Field label="VPN-серверы с доступом" hint="WireGuard, OpenConnect, IKEv2 и L2TP. Права Samba действуют и для VPN-клиентов."><div className="stack">{vpns.length ? vpns.map((v: any) => <Switch key={v.id} label={`${v.name} (${v.type}, ${v.subnet})`} checked={selectedVPNs.has(v.id)} onChange={on => toggle("vpns", v.id, on)} />) : <Empty>Сначала включите VPN-сервер в разделе «VPN-доступ».</Empty>}</div></Field>
           </div>
         </div>
       </Card>

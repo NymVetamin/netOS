@@ -49,3 +49,17 @@ test('share summary follows the selected volume across inventory changes', () =>
    config = saved;
  }
 });
+
+test('SMB address follows the VPN router and prefers a selected LAN', () => {
+  const previous = config;
+  const vpn = {id: 'vpn', enabled: true, type: 'ocserv', subnet: '10.9.0.17/24'};
+  config = {samba: {vpns: ['vpn']}, vpn_servers: [vpn]};
+  try {
+    assert.ok(render([]).includes('smb://10.9.0.1<'));
+    vpn.type = 'wireguard';
+    assert.ok(render([]).includes('smb://10.9.0.17<'));
+    config.networks = [{id: 'lan', enabled: true, router_address: '192.0.2.1/24'}];
+    config.samba.networks = ['lan'];
+    assert.ok(render([]).includes('smb://192.0.2.1<'));
+  } finally { config = previous; }
+});
