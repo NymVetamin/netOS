@@ -704,7 +704,16 @@ func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) [
 
 	paths, _ := filepath.Glob(filepath.Join(ifupdownDir, "*"))
 	paths = append(paths, ifupdownMain)
-	managed := managedInterfaces(cfg)
+	managed := make(map[string]bool)
+	for _, iface := range cfg.Interfaces {
+		if iface.Name != "" {
+			managed[iface.Name] = true
+		}
+	}
+
+	if len(managed) == 0 {
+		return nil
+	}
 
 	var conflicts []string
 	hotplug := false
@@ -716,18 +725,32 @@ func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) [
 		if err != nil {
 			continue
 		}
-		for _, name := range managed {
-			if mentionsInterface(string(data), name) {
-				conflicts = append(conflicts, path+" → "+name)
+		seen := map[string]bool{}
+		start := len(conflicts)
+		for _, line := range strings.Split(string(data), "\n") {
+			for _, name := range declarationNames(line) {
+				if managed[name] && !seen[name] {
+					seen[name] = true
+					conflicts = append(conflicts, path+" → "+name)
+				}
 			}
+		}
+		sort.Strings(conflicts[start:])
+		// Hotplug uses logical lines, including continuations. A later file
+		// can activate warnings for declarations collected in earlier files.
+		if !hotplug {
 			for _, line := range ifupdownLines(data) {
 				fields := ifupdownFields(line)
 				if len(fields) > 1 && fields[0] == "allow-hotplug" {
-					for _, candidate := range fields[1:] {
-						if candidate == name {
+					for _, name := range fields[1:] {
+						if managed[name] {
 							hotplug = true
+							break
 						}
 					}
+				}
+				if hotplug {
+					break
 				}
 			}
 		}
@@ -745,21 +768,25 @@ func (s *Subsystem) IfupdownConflicts(ctx context.Context, cfg *config.Config) [
 // eth0 не должен находиться внутри eth0.100.
 func mentionsInterface(content, name string) bool {
 	for _, line := range strings.Split(content, "\n") {
-		line, _, _ = strings.Cut(line, "#")
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		switch fields[0] {
-		case "iface", "auto", "allow-hotplug":
-			for _, f := range fields[1:] {
-				if f == name {
-					return true
-				}
+		for _, candidate := range declarationNames(line) {
+			if candidate == name {
+				return true
 			}
 		}
 	}
 	return false
+}
+
+func declarationNames(line string) []string {
+	line, _, _ = strings.Cut(line, "#")
+	fields := strings.Fields(line)
+	if len(fields) >= 2 {
+		switch fields[0] {
+		case "iface", "auto", "allow-hotplug":
+			return fields[1:]
+		}
+	}
+	return nil
 }
 
 // renderPassive отдаёт адресацию интерфейса netOS, оставляя его при этом
