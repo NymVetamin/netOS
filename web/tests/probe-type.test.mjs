@@ -34,3 +34,15 @@ test("adds a port when replacing a legacy ICMP probe", () => {
   assert.deepEqual([...probe.targets], ["1.1.1.1:443", "[2001:db8::1]:443"]);
   assert.equal(probe.tcp_response, "HTTP/");
 });
+
+test("keeps a single pair of brackets around IPv6 probe targets", () => {
+  const probe = { type: "http", targets: [
+    "http://[2001:db8::1]:8080/check?q=1", "https://[::1]/", "http://[::1]/",
+  ] };
+  const expected = ["[2001:db8::1]:8080", "[::1]:443", "[::1]:80"];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    changeProbeType(probe, "tcp");
+    assert.deepEqual([...probe.targets], expected);
+    assert.equal(probe.tcp_request, "GET /check?q=1 HTTP/1.0\r\nHost: [2001:db8::1]:8080\r\n\r\n");
+  }
+});

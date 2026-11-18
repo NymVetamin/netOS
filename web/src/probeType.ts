@@ -9,9 +9,8 @@ function httpTargetToTCP(value: string) {
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    const host = url.hostname.includes(":") ? `[${url.hostname}]` : url.hostname;
     return {
-      target: `${host}:${url.port || (url.protocol === "https:" ? "443" : "80")}`,
+      target: `${url.hostname}:${url.port || (url.protocol === "https:" ? "443" : "80")}`,
       request: `GET ${url.pathname || "/"}${url.search} HTTP/1.0\r\nHost: ${url.host}\r\n\r\n`,
     };
   } catch {
