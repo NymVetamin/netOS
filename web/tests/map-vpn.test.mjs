@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import ts from "typescript";
+import { buildSync } from "esbuild";
 
-const exports = {};
-const source = readFileSync(new URL("../src/mapVPN.ts", import.meta.url), "utf8");
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports });
-const { vpnMapServers } = exports;
+const bundle = buildSync({
+  entryPoints: [fileURLToPath(new URL("../src/mapVPN.ts", import.meta.url))],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  write: false,
+});
+const loaded = { exports: {} };
+vm.runInNewContext(bundle.outputFiles[0].text, { module: loaded, exports: loaded.exports });
+const { vpnMapServers } = loaded.exports;
 const peer = { id: "same", name:"Phone", address:"10.9.0.2", enabled:true, credentials:{public_key:"key"} };
 const server = { id:"server", name:"WG",type:"wireguard",enabled:true,subnet:"10.9.0.1/24",peers:[peer] };
 test("VPN peers remain visible before telemetry and after telemetry failure", () => {
