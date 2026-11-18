@@ -137,9 +137,9 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - name: проверка управления NAT каналов
+      - name: тесты панели
         working-directory: web
-        run: npm run test:channel-nat
+        run: npm test
 
       # Сборка фронтенда кладёт файлы в backend/internal/api/webdist. Если она
       # оставила репозиторий грязным сверх ожидаемого, значит что-то пишется не

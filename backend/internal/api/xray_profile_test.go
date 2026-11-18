@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/tlsutil"
 )
 
 func profileTestServer(protocol string) config.VPNServer {
@@ -94,6 +96,51 @@ func TestXrayProfileEndpointAndPublicCARenewal(t *testing.T) {
 		s.Config["public_endpoint"] = endpoint
 		if _, err := xrayClientProfile(s, s.Peers[0], ""); err == nil {
 			t.Fatalf("invalid endpoint %q", endpoint)
+		}
+	}
+}
+
+func TestXrayProfileUsesFirstCertificateAndRefreshesPin(t *testing.T) {
+	cfg := config.Default()
+	server := profileTestServer("hysteria")
+	makeCert := func(host string) (string, string) {
+		t.Helper()
+		path, _, fingerprint, err := tlsutil.EnsureSelfSignedForNames(t.TempDir(), "router", host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data), strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
+	}
+	first, firstPin := makeCert("vpn.example.test")
+	second, secondPin := makeCert("vpn.example.test")
+	other, _ := makeCert("other.example.test")
+	for _, tc := range []struct{ pem, want string }{
+		{strings.ReplaceAll(first+second, "\n", "\r\n"), firstPin},
+		{"", ""}, {"invalid PEM", ""}, {"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----", ""},
+		{other, ""}, {second + first, secondPin},
+	} {
+		server.Config["tls"] = map[string]any{"mode": "custom", "cert_pem": tc.pem}
+		pin, err := xrayProfilePin(cfg, server)
+		if tc.want == "" {
+			if err == nil || pin != "" {
+				t.Fatal("invalid certificate produced a pin")
+			}
+			continue
+		}
+		if err != nil || pin != tc.want {
+			t.Fatalf("pin=%q want=%q err=%v", pin, tc.want, err)
+		}
+		profile, err := xrayClientProfile(server, server.Peers[0], pin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		link, err := url.Parse(profile.Link)
+		if err != nil || link.Query().Get("pinSHA256") != tc.want {
+			t.Fatalf("export lost leaf pin: %v", err)
 		}
 	}
 }

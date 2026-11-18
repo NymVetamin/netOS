@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
+    "test": "node --test scripts/*.test.cjs tests/*.test.mjs",
     "test:channel-nat": "node scripts/channel-nat.test.cjs"
   },
   "dependencies": {
