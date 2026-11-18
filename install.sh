@@ -78,10 +78,11 @@ snapshot_path() {
 restore_path() {
     target_path=$1
     label=$2
-    rm -rf -- "$target_path"
-    if [ ! -f "$INSTALL_TXN/$label.absent" ]; then
-        cp -a -- "$INSTALL_TXN/$label" "$target_path"
+    if rm -rf -- "$target_path" && { [ -f "$INSTALL_TXN/$label.absent" ] || cp -a -- "$INSTALL_TXN/$label" "$target_path"; }; then
+        return 0
     fi
+    restore_failed=1
+    warn "не удалось восстановить $target_path"
 }
 
 wait_netosd_ready() {
@@ -140,6 +141,7 @@ wait_netosd_ready() {
 
 rollback_and_cleanup() {
     status=$?
+    restore_failed=0
     trap - EXIT
     set +e
     if [ -n "$SRC" ] && [ "$SRC" != "/" ]; then rm -rf -- "$SRC"; fi
@@ -176,12 +178,16 @@ rollback_and_cleanup() {
         fi
         rm -f /run/netosd.ready
         if [ "$PREVIOUS_ACTIVE" = "1" ] && systemctl start netosd >/dev/null 2>&1 && wait_netosd_ready 360; then
-            warn "предыдущая версия netOS восстановлена и работает"
+            warn "служба netosd запущена и готова"
         elif [ "$PREVIOUS_ACTIVE" = "1" ]; then
-            warn "предыдущие файлы восстановлены, но netosd не запустился; проверьте journalctl -u netosd"
+            warn "готовность netosd не подтверждена; проверьте journalctl -u netosd"
         fi
     fi
-    if [ -n "$INSTALL_TXN" ] && [ "$INSTALL_TXN" != "/" ]; then rm -rf -- "$INSTALL_TXN"; fi
+    if [ "$restore_failed" = "1" ]; then
+        warn "восстановление файлов не завершено; снимок сохранён в $INSTALL_TXN"
+    elif [ -n "$INSTALL_TXN" ] && [ "$INSTALL_TXN" != "/" ]; then
+        rm -rf -- "$INSTALL_TXN"
+    fi
     exit "$status"
 }
 trap rollback_and_cleanup EXIT

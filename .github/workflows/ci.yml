@@ -165,4 +165,5 @@ jobs:
           bash -n install.sh
           bash -n scripts/dev-push.sh
           bash scripts/tests/dev-push-revision.sh
+          bash scripts/tests/installer-restore.sh
           shellcheck --severity=warning install.sh scripts/dev-push.sh
