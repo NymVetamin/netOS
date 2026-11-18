@@ -101,9 +101,10 @@ async def scenario(browser, mode):
             await expect(toggle).to_be_disabled()
         if mode in ("pending", "error"):
             state.update(ready=True, error=False)
-            await add.click(timeout=10000)
-            await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_be_visible()
-            await expect(toggle).to_be_enabled()
+            # The next catalog poll starts five seconds after the previous response.
+            await expect(toggle).to_be_enabled(timeout=15000)
+            await add.click()
+            await expect(page.get_by_role("button", name="WireGuard", exact=True)).to_be_enabled()
             await expect(page.locator('input[value="Poland"]')).to_be_visible()
         else:
             title = await page.get_by_text("нужен WireGuard", exact=True).get_attribute("title")
