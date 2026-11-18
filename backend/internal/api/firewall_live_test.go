@@ -97,3 +97,15 @@ func TestFirewallPreviewDoesNotExecuteOrSave(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestLiveFirewallMatchesFirstDeclarationWithinEachTable(t *testing.T) {
+	raw := "*filter\n:A - [0:0]\n:A - [0:0]\n-A A -j ACCEPT\nCOMMIT\n*nat\n-A A -j DROP\n:B - [0:0]\n-A B -j RETURN\nCOMMIT"
+	tables := parseLiveFirewall(raw)
+	if len(tables) != 2 || len(tables[0].Chains) != 2 || len(tables[1].Chains) != 1 {
+		t.Fatalf("tables: %+v", tables)
+	}
+	first, duplicate, other := tables[0].Chains[0], tables[0].Chains[1], tables[1].Chains[0]
+	if len(first.Rules) != 1 || first.Rules[0] != "-A A -j ACCEPT" || len(duplicate.Rules) != 0 || len(other.Rules) != 1 || other.Rules[0] != "-A B -j RETURN" {
+		t.Fatalf("rules: %+v", tables)
+	}
+}

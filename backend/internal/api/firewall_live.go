@@ -31,11 +31,13 @@ type liveFirewallFamily struct {
 func parseLiveFirewall(raw string) []liveFirewallTable {
 	tables := []liveFirewallTable{}
 	var table *liveFirewallTable
+	var chainIndex map[string]int
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "*") {
 			tables = append(tables, liveFirewallTable{Name: line[1:], Chains: []liveFirewallChain{}})
 			table = &tables[len(tables)-1]
+			chainIndex = make(map[string]int)
 			continue
 		}
 		if line == "COMMIT" {
@@ -50,6 +52,9 @@ func parseLiveFirewall(raw string) []liveFirewallTable {
 			if len(fields) < 3 {
 				continue
 			}
+			if _, found := chainIndex[fields[0]]; !found {
+				chainIndex[fields[0]] = len(table.Chains)
+			}
 			table.Chains = append(table.Chains, liveFirewallChain{Name: fields[0], Policy: fields[1], Counters: fields[2], Rules: []string{}})
 			continue
 		}
@@ -60,11 +65,8 @@ func parseLiveFirewall(raw string) []liveFirewallTable {
 		if len(fields) < 2 || fields[0] != "-A" {
 			continue
 		}
-		for i := range table.Chains {
-			if table.Chains[i].Name == fields[1] {
-				table.Chains[i].Rules = append(table.Chains[i].Rules, line)
-				break
-			}
+		if i, found := chainIndex[fields[1]]; found {
+			table.Chains[i].Rules = append(table.Chains[i].Rules, line)
 		}
 	}
 	return tables
