@@ -44,15 +44,40 @@ func (c *Config) RuntimeNetworkConfig() *Config {
 	out := *c
 	out.Interfaces = append([]Interface(nil), c.Interfaces...)
 	out.WANs = append([]WAN(nil), c.WANs...)
+	type linkState struct {
+		enabled bool
+		parent  string // non-empty only while an enabled VLAN still needs resolution
+	}
+	links := make(map[string]linkState, len(c.Interfaces))
+	for _, iface := range c.Interfaces {
+		if _, exists := links[iface.ID]; exists {
+			continue // InterfaceEnabled uses the first matching ID.
+		}
+		state := linkState{enabled: iface.Enabled}
+		if iface.Enabled && iface.Type == "vlan" {
+			state.parent = iface.Parent
+		}
+		links[iface.ID] = state
+	}
+	var resolve func(string) bool
+	resolve = func(id string) bool {
+		state := links[id]
+		if state.parent == "" {
+			return state.enabled
+		}
+		// Encountering this link on the current path means a cycle.
+		links[id] = linkState{}
+		enabled := resolve(state.parent)
+		links[id] = linkState{enabled: enabled}
+		return enabled
+	}
 	for j := range out.Interfaces {
-		out.Interfaces[j].Enabled = c.InterfaceEnabled(out.Interfaces[j].ID)
+		out.Interfaces[j].Enabled = resolve(out.Interfaces[j].ID)
 	}
 	for j := range out.WANs {
 		// Preserve handling of unknown interface references by validation/subsystems.
-		for _, i := range c.Interfaces {
-			if i.ID == out.WANs[j].Interface && !c.InterfaceEnabled(i.ID) {
-				out.WANs[j].Enabled = false
-			}
+		if state, known := links[out.WANs[j].Interface]; known && !state.enabled {
+			out.WANs[j].Enabled = false
 		}
 	}
 	return &out
