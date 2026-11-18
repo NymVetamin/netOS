@@ -38,31 +38,32 @@ func buildPlan(cfg *config.Config) plan {
 		VLANs:        map[string][]config.Interface{},
 		Uplink:       map[string]bool{},
 		Names:        map[string]string{},
-		Enabled:      map[string]bool{},
+		Enabled:      cfg.InterfaceStates(),
 		SuppressIPv6: cfg.IPv6.Mode == "off",
 	}
 
-	byID := map[string]config.Interface{}
+	firstName := make(map[string]string, len(cfg.Interfaces))
 	for _, iface := range cfg.Interfaces {
-		byID[iface.ID] = iface
+		if _, seen := firstName[iface.ID]; !seen {
+			firstName[iface.ID] = iface.Name
+		}
 		p.Names[iface.ID] = iface.Name
-		p.Enabled[iface.ID] = cfg.InterfaceEnabled(iface.ID)
 	}
 
 	for _, n := range cfg.Networks {
 		if !n.Enabled || n.RouterAddress == "" {
 			continue
 		}
-		if iface, ok := byID[n.Interface]; ok {
-			p.Address[iface.Name] = n.RouterAddress
+		if name, ok := p.Names[n.Interface]; ok {
+			p.Address[name] = n.RouterAddress
 		}
 	}
 	for _, w := range cfg.WANs {
 		if !w.Enabled {
 			continue
 		}
-		if iface, ok := byID[w.Interface]; ok {
-			p.Uplink[iface.Name] = true
+		if name, ok := p.Names[w.Interface]; ok {
+			p.Uplink[name] = true
 		}
 	}
 
@@ -72,11 +73,13 @@ func buildPlan(cfg *config.Config) plan {
 	for _, iface := range cfg.Interfaces {
 		switch iface.Type {
 		case "bridge", "bond":
-			for _, member := range cfg.InterfaceNames(iface.Members) {
-				p.Master[member] = iface
+			for _, id := range iface.Members {
+				if member := firstName[id]; member != "" {
+					p.Master[member] = iface
+				}
 			}
 		case "vlan":
-			if parent := cfg.InterfaceName(iface.Parent); parent != "" {
+			if parent := firstName[iface.Parent]; parent != "" {
 				p.VLANs[parent] = append(p.VLANs[parent], iface)
 			}
 		}
@@ -90,7 +93,7 @@ func buildPlan(cfg *config.Config) plan {
 		var group []config.Interface
 		for _, iface := range cfg.Interfaces {
 			if iface.Type == kind {
-				iface.Enabled = cfg.InterfaceEnabled(iface.ID)
+				iface.Enabled = p.Enabled[iface.ID]
 				group = append(group, iface)
 			}
 		}

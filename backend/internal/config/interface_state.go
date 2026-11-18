@@ -44,41 +44,46 @@ func (c *Config) RuntimeNetworkConfig() *Config {
 	out := *c
 	out.Interfaces = append([]Interface(nil), c.Interfaces...)
 	out.WANs = append([]WAN(nil), c.WANs...)
-	type linkState struct {
-		enabled bool
-		parent  string // non-empty only while an enabled VLAN still needs resolution
-	}
-	links := make(map[string]linkState, len(c.Interfaces))
-	for _, iface := range c.Interfaces {
-		if _, exists := links[iface.ID]; exists {
-			continue // InterfaceEnabled uses the first matching ID.
-		}
-		state := linkState{enabled: iface.Enabled}
-		if iface.Enabled && iface.Type == "vlan" {
-			state.parent = iface.Parent
-		}
-		links[iface.ID] = state
-	}
-	var resolve func(string) bool
-	resolve = func(id string) bool {
-		state := links[id]
-		if state.parent == "" {
-			return state.enabled
-		}
-		// Encountering this link on the current path means a cycle.
-		links[id] = linkState{}
-		enabled := resolve(state.parent)
-		links[id] = linkState{enabled: enabled}
-		return enabled
-	}
+	enabled := c.InterfaceStates()
 	for j := range out.Interfaces {
-		out.Interfaces[j].Enabled = resolve(out.Interfaces[j].ID)
+		out.Interfaces[j].Enabled = enabled[out.Interfaces[j].ID]
 	}
 	for j := range out.WANs {
 		// Preserve handling of unknown interface references by validation/subsystems.
-		if state, known := links[out.WANs[j].Interface]; known && !state.enabled {
+		if on, known := enabled[out.WANs[j].Interface]; known && !on {
 			out.WANs[j].Enabled = false
 		}
 	}
 	return &out
+}
+
+// InterfaceStates resolves administrative state for a single config snapshot.
+// A missing parent or a VLAN cycle disables every link depending on it.
+func (c *Config) InterfaceStates() map[string]bool {
+	enabled := make(map[string]bool, len(c.Interfaces))
+	parents := map[string]string{}
+	for _, iface := range c.Interfaces {
+		if _, known := enabled[iface.ID]; known {
+			continue // InterfaceByID uses the first matching ID.
+		}
+		if iface.Enabled && iface.Type == "vlan" && iface.Parent != "" {
+			parents[iface.ID] = iface.Parent
+			enabled[iface.ID] = false
+		} else {
+			enabled[iface.ID] = iface.Enabled
+		}
+	}
+	var resolve func(string) bool
+	resolve = func(id string) bool {
+		if parent, pending := parents[id]; pending {
+			// Leave the default false visible to recursive visits of a cycle.
+			delete(parents, id)
+			enabled[id] = resolve(parent)
+		}
+		return enabled[id]
+	}
+	for id := range parents {
+		resolve(id)
+	}
+	return enabled
 }
