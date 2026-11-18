@@ -7,7 +7,10 @@ from playwright.async_api import async_playwright, expect
 DIST=Path(__file__).resolve().parents[2]/'backend/internal/api/webdist'
 async def main():
  async with async_playwright() as p:
-  browser=await p.chromium.launch(headless=True,executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE',str(Path(os.environ['ProgramFiles'])/'Google/Chrome/Application/chrome.exe')))
+  executable = os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE')
+  if not executable and os.name == 'nt':
+   executable = str(Path(os.environ['ProgramFiles'])/'Google/Chrome/Application/chrome.exe')
+  browser=await p.chromium.launch(headless=True,executable_path=executable)
   page=await browser.new_page()
   await page.add_init_script("new MutationObserver(()=>document.querySelectorAll('details.xd').forEach(e=>e.open=true)).observe(document,{childList:true,subtree:true})")
   cfg={'system':{'hostname':'test'},'interfaces':[],'networks':[],'policies':[],'components':[{'id':'xray','installed':True}],'channels':[{'id':'direct','enabled':True,'name':'Напрямую','type':'direct'}],'vpn_servers':[{'id':'srv','name':'Reality','type':'xray','index':1,'enabled':True,'port':443,'subnet':'10.9.0.1/24','reality_key_set':True,'config':{'protocol':'reality','private_key':'','public_endpoint':'vpn.example:443','server_names':['example.com'],'short_ids':['abcd'],'flow':'xtls-rprx-vision'},'peers':[{'id':'phone','name':'Телефон','enabled':True,'credentials':{'uuid':''}}]}]}
@@ -25,11 +28,15 @@ async def main():
     body={'config':copy.deepcopy(state['cfg']),'dirty':False,'draft_version':1,'problems':[]}
    elif path=='/api/status':body={'interfaces':[],'channels':[],'uptime_seconds':1}
    elif path.endswith('/clients'):body=[]
-   elif path.endswith('/reality-profile'):
+   elif path == '/api/vpn-servers/srv/peers/phone/xray-profile':
     state['reads']+=1
     sid=state['cfg']['vpn_servers'][0]['config']['short_ids'][0]
     state['link']='vless://12345678-1234-1234-1234-123456789abc@vpn.example:443?'+urlencode({'security':'reality','pbk':'A'*43,'sid':sid,'sni':'example.com'})+'#phone'
-    body={'link':state['link']}
+    body={'link':state['link'], 'config':{
+     'inbounds':[{'listen':'127.0.0.1','protocol':'socks','port':1080}],
+     'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':'vpn.example','port':443,
+      'users':[{'id':'12345678-1234-1234-1234-123456789abc'}]}]},
+      'streamSettings':{'security':'reality','realitySettings':{'shortId':sid}}}]}}
    elif path=='/api/xray/keypair':raise AssertionError('export requested private key derivation in browser')
    await r.fulfill(json=body)
   await page.route('**/*',route)
@@ -52,12 +59,14 @@ async def main():
   await expect(page.get_by_role('button',name='Открыть QR-код',exact=True)).to_have_count(0)
   await page.evaluate("Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:async text=>{window.copiedText=text}}})")
   await page.get_by_role('button',name='Скопировать ссылку',exact=True).click()
-  await expect(page.get_by_role('button',name='Скопировано',exact=True)).to_be_visible()
+  await expect(page.get_by_role('button',name='Ссылка скопирована',exact=True)).to_be_visible()
   assert await page.evaluate('window.copiedText')==state['link']
-  await page.get_by_role('button',name='Скопировано',exact=True).click()
+  await page.evaluate("window.copiedText = null")
+  await page.get_by_role('button',name='Ссылка скопирована',exact=True).click()
+  await page.wait_for_function('expected => window.copiedText === expected',arg=state['link'])
   await page.evaluate("()=>{navigator.clipboard.writeText=async()=>{throw new Error('denied')}}")
-  await page.get_by_role('button',name='Скопировано',exact=True).click()
-  await expect(page.get_by_text('Не удалось скопировать.',exact=False)).to_be_visible()
+  await page.get_by_role('button',name='Ссылка скопирована',exact=True).click()
+  await expect(page.get_by_text('denied',exact=True)).to_be_visible()
   await expect(page.get_by_role('region',name='Клиенты сервера Reality')).to_be_visible()
   await page.locator('.peer-group-heading').scroll_into_view_if_needed()
   await page.screenshot(path='output/playwright/vpn-profile-groups.png')
