@@ -1352,7 +1352,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	// подтверждения или собственного отката независимо от соединения браузера.
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	result, err := s.Engine.Apply(managementContext(applyCtx, r), cfg, revID, true)
+	result, err := s.Engine.ApplyWithCommit(managementContext(applyCtx, r), cfg, revID, true, s.Store.MarkActive)
 	if errors.Is(err, apply.ErrPendingConfirmation) {
 		// Здесь ничего не менялось: предыдущая транзакция всё ещё ждёт
 		// подтверждения. Сообщать об откате было бы неправдой.
@@ -1389,9 +1389,6 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	s.pendingOwner = username
 	s.draftMu.Unlock()
 	if !result.NeedsConfirm {
-		if err := s.Store.MarkActive(revID); err != nil {
-			s.Logger.Warnf("не удалось пометить ревизию активной: %v", err)
-		}
 		s.draftMu.Lock()
 		s.draft = nil
 		s.draftVersion++

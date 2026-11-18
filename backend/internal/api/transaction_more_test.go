@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +21,67 @@ type transactionSubsystem struct {
 	applied         []string
 	planErr         bool
 	failNextApplies int
+}
+
+func TestImmediateApplySurvivesCommitFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	logger := &lifecycleLogger{}
+	s := &Server{Store: st, Engine: apply.NewEngine(logger, false), Logger: logger}
+	subsystem := &transactionSubsystem{}
+	if err := s.Engine.Register(subsystem); err != nil {
+		t.Fatal(err)
+	}
+	old := config.Default()
+	oldID, err := st.CreateRevision(old, "admin", "initial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Engine.ApplyWithCommit(context.Background(), old, oldID, false, st.MarkActive); err != nil {
+		t.Fatal(err)
+	}
+	next := *old
+	next.System.Timezone = "Asia/Tokyo"
+	s.draft = &next
+	request := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.handleApply(w, httptest.NewRequest(http.MethodPost, "/api/config/apply", strings.NewReader("{}")))
+		return w
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_active BEFORE UPDATE OF state ON revisions
+		WHEN NEW.state='active' BEGIN SELECT RAISE(ABORT,'commit failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	w := request()
+	if w.Code != 500 || !strings.Contains(w.Body.String(), "commit failed") {
+		t.Fatalf("failed commit: %d %s", w.Code, w.Body.String())
+	}
+	active, err := st.ActiveRevision()
+	if err != nil || active.ID != oldID || s.Engine.Current() != old || s.draft != &next {
+		t.Fatalf("active=%+v current restored=%v draft retained=%v err=%v", active, s.Engine.Current() == old, s.draft == &next, err)
+	}
+	last, err := st.LatestRevision()
+	if err != nil || last.State != store.StateRolledBack || len(subsystem.applied) != 3 {
+		t.Fatalf("rollback: revision=%+v applies=%v err=%v", last, subsystem.applied, err)
+	}
+	if _, err := db.Exec("DROP TRIGGER reject_active"); err != nil {
+		t.Fatal(err)
+	}
+	w = request()
+	active, err = st.ActiveRevision()
+	if w.Code != 200 || err != nil || active.Config.System.Timezone != next.System.Timezone || s.Engine.Current() != &next || s.draft != nil {
+		t.Fatalf("retry: %d %s active=%+v err=%v", w.Code, w.Body.String(), active, err)
+	}
 }
 
 func (s *transactionSubsystem) Name() string { return "firewall" }

@@ -411,6 +411,12 @@ var ErrRestored = errors.New("система возвращена к прежн�
 // cfg.System.Panel.CommitTimeout. Первое применение при загрузке системы
 // подтверждения не требует: подтверждать некому.
 func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, needConfirm bool) (*Result, error) {
+	return e.ApplyWithCommit(ctx, cfg, revision, needConfirm, nil)
+}
+
+// ApplyWithCommit persists an immediately active revision before publishing Current.
+// A change awaiting confirmation is persisted separately by Confirm.
+func (e *Engine) ApplyWithCommit(ctx context.Context, cfg *config.Config, revision int64, needConfirm bool, commit func(int64) error) (*Result, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
 
@@ -448,11 +454,18 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, 
 		return nil, e.restoreAfterFailure(previous, fmt.Errorf("проверка после применения не прошла: %w", err))
 	}
 
+	waitForConfirm := needConfirm && previous != nil && NeedsConfirmation(actions)
+	if !waitForConfirm && commit != nil {
+		if err := commit(revision); err != nil {
+			return nil, e.restoreAfterFailure(previous, fmt.Errorf("фиксация ревизии %d: %w", revision, err))
+		}
+	}
+
 	e.mu.Lock()
 	e.current = cfg
 	res := &Result{Applied: actions, Revision: revision}
 
-	if needConfirm && previous != nil && NeedsConfirmation(actions) {
+	if waitForConfirm {
 		timeout := time.Duration(cfg.System.Panel.CommitTimeout) * time.Second
 		if timeout <= 0 {
 			timeout = 30 * time.Second
