@@ -97,10 +97,15 @@ READY_PATH=/run/netosd.ready
 EXPECTED_SHA=${NETOS_EXPECTED_SHA:?candidate SHA-256 is required}
 TXN=$(mktemp -d) || { echo "не удалось создать deploy transaction" >&2; exit 1; }
 DEPLOY_OK=0
+KEEP_SNAPSHOT=0
 
 cleanup() {
     rm -f -- "$BIN_PATH.new"
-    rm -rf -- "$TXN"
+    if [ "$KEEP_SNAPSHOT" = 1 ]; then
+        echo "   снимок для восстановления сохранён в $TXN" >&2
+    else
+        rm -rf -- "$TXN"
+    fi
 }
 trap cleanup EXIT
 
@@ -117,7 +122,7 @@ snapshot_path() {
 restore_path() {
     restore_target=$1
     restore_label=$2
-    rm -rf -- "$restore_target"
+    rm -rf -- "$restore_target" || return 1
     if [ ! -f "$TXN/$restore_label.absent" ]; then
         cp -a -- "$TXN/$restore_label" "$restore_target"
     fi
@@ -168,6 +173,7 @@ then
     exit 1
 fi
 
+KEEP_SNAPSHOT=1
 chmod 0755 "$BIN_PATH.new" \
     && mv -f "$BIN_PATH.new" "$BIN_PATH" \
     && ln -sfn "$BIN_PATH" "$CLI_PATH" \
@@ -184,6 +190,7 @@ chmod 0755 "$BIN_PATH.new" \
     && DEPLOY_OK=1
 
 if [ "$DEPLOY_OK" = "1" ]; then
+    KEEP_SNAPSHOT=0
     echo "   работает: $($CLI_PATH version)"
     exit 0
 fi
@@ -197,7 +204,12 @@ restore_path "$CLI_PATH" cli || RESTORE_OK=0
 restore_path "$COMPLETION_PATH" completion || RESTORE_OK=0
 rm -f "$COMPLETION_PATH.new" "$READY_PATH"
 systemctl reset-failed netosd >/dev/null 2>&1 || true
-if [ "$RESTORE_OK" = "1" ] && systemctl restart netosd >/dev/null 2>&1 && wait_ready && verify_plan; then
+if [ "$RESTORE_OK" != "1" ]; then
+    echo "   не удалось восстановить предыдущие файлы" >&2
+    exit 1
+fi
+KEEP_SNAPSHOT=0
+if systemctl restart netosd >/dev/null 2>&1 && wait_ready && verify_plan; then
     echo "   предыдущая версия восстановлена: $($CLI_PATH version)" >&2
 else
     echo "   предыдущие файлы восстановлены, но готовность службы не подтверждена" >&2
