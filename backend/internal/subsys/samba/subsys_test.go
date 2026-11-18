@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -144,6 +145,42 @@ func TestApplyIdempotentAndLifecycle(t *testing.T) {
 		t.Fatal("credentials remain published")
 	}
 }
+func TestApplyRemovesChangedAndMissingVolumesInOwnershipOrder(t *testing.T) {
+	r := newRunner()
+	s := testSubsystem(t, r)
+	c := config.Default()
+	keep := config.StorageVolume{ID: "keep", UUID: "AAAA", Filesystem: "exfat", Enabled: true}
+	replace, drop := keep, keep
+	replace.ID, drop.ID = "replace", "drop"
+	c.Samba.Volumes = []config.StorageVolume{replace, keep, drop, drop}
+	apply := func() {
+		t.Helper()
+		if err := s.Apply(context.Background(), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply()
+	replace.UUID = "BBBB"
+	c.Samba.Volumes = []config.StorageVolume{keep, replace}
+	for attempt := 0; attempt < 2; attempt++ {
+		r.calls = nil
+		apply()
+		var checked []string
+		for _, cmd := range r.calls {
+			if strings.HasPrefix(cmd, "systemctl is-active ") && strings.HasSuffix(cmd, ".mount") {
+				checked = append(checked, strings.TrimPrefix(cmd, "systemctl is-active "))
+			}
+		}
+		var want []string
+		if attempt == 0 {
+			want = []string{mountUnit(replace), mountUnit(drop), mountUnit(drop)}
+		}
+		if !slices.Equal(checked, want) {
+			t.Fatalf("removal checks %v, want %v", checked, want)
+		}
+	}
+}
+
 func TestBusyUnmountFailsAndRollbackRecovers(t *testing.T) {
 	r := newRunner()
 	s := testSubsystem(t, r)

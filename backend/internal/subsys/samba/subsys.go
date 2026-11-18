@@ -124,13 +124,21 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 			wanted = append(wanted, v)
 		}
 	}
-	for _, v := range wanted {
-		known := false
-		for _, o := range old {
-			if o.ID == v.ID {
-				known = true
-			}
+	sameVolumes := reflect.DeepEqual(old, wanted)
+	var knownIDs map[string]bool
+	var wantedVolumes map[config.StorageVolume]bool
+	if !sameVolumes && len(old) > 0 && len(wanted) > 0 {
+		knownIDs = make(map[string]bool, len(old))
+		for _, v := range old {
+			knownIDs[v.ID] = true
 		}
+		wantedVolumes = make(map[config.StorageVolume]bool, len(wanted))
+		for _, v := range wanted {
+			wantedVolumes[v] = true
+		}
+	}
+	for _, v := range wanted {
+		known := sameVolumes || knownIDs[v.ID]
 		for _, ext := range []string{".mount", ".automount"} {
 			p := filepath.Join(s.UnitDir, strings.TrimSuffix(mountUnit(v), ".mount")+ext)
 			if info, e := os.Lstat(p); e == nil && (!known || !info.Mode().IsRegular()) {
@@ -206,7 +214,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		}
 	}
 	changed := system.FileChanged(filepath.Join(s.StateDir, "samba", "applied"), s.stamp(c))
-	if !reflect.DeepEqual(old, wanted) || !c.Samba.Enabled || changed {
+	if !sameVolumes || !c.Samba.Enabled || changed {
 		for _, u := range []string{"netos-wsdd.service", "netos-samba.service"} {
 			if err := sd.Disable(ctx, u); err != nil {
 				return err
@@ -214,13 +222,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		}
 	}
 	for _, v := range old {
-		keep := false
-		for _, n := range wanted {
-			if n == v {
-				keep = true
-			}
-		}
-		if !keep {
+		if !sameVolumes && !wantedVolumes[v] {
 			if err := s.removeVolume(ctx, v); err != nil {
 				return err
 			}
