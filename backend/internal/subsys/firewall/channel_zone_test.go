@@ -106,3 +106,20 @@ func TestPeerOnlyInternetChains(t *testing.T) {
 		}
 	}
 }
+
+func TestPeerChannelIgnoresInboundSwitch(t *testing.T) {
+	cfg := config.Default()
+	cfg.WANs = []config.WAN{{ID: "w", Proto: "pppoe", Enabled: true}}
+	cfg.VPNServers = []config.VPNServer{{ID: "s", Type: "wireguard", Index: 1, Enabled: true, Peers: []config.VPNPeer{{ID: "p", Address: "10.9.0.3", Enabled: true, UseAsChannel: true}}}}
+	cfg.Normalize()
+	before, _ := Build(cfg)
+	for i := range cfg.Channels {
+		if cfg.Channels[i].WireGuardPeer != nil {
+			cfg.Channels[i].AcceptInbound = true
+		}
+	}
+	after, _ := Build(cfg)
+	if after.IPv4 != before.IPv4 {
+		t.Fatal("inapplicable switch changed firewall rules")
+	}
+}

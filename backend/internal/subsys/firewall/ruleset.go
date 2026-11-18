@@ -371,7 +371,8 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		if c.hook.flow == "forward" && c.zone.Name == "wan" {
 			b.portForwardAccept(cfg, c.chain)
 			for _, ch := range cfg.Channels {
-				if iface := config.ChannelInterface(ch); ch.Enabled && ch.AcceptInbound && ch.Type == "wireguard" {
+				if ch.Enabled && ch.AcceptInbound && ch.Type == "wireguard" && ch.WireGuardPeer == nil {
+					iface := config.ChannelInterface(ch)
 					b.line("-A %s -i %s -m comment --comment %q -j ACCEPT", c.chain, iface, truncate("транзит из канала «"+ch.Name+"»", 240))
 				}
 			}
