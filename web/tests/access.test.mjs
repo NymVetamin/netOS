@@ -262,3 +262,22 @@ test("address-set lookup preserves first match and observes edits on every calcu
  cfg.firewall.enabled=false;cfg.firewall.ipsets=[null];
  assert.equal(result().verdict,"y");
 });
+
+test("inbound WG transit follows active WAN interfaces and earlier rules", () => {
+  const ch = { type: "wireguard", index: 1, enabled: true, accept_inbound: true };
+  const cfg = config([], { channels: [ch] });
+  function verdict(wan) {
+    const m = accessMatrix(cfg, { wan });
+    return m.cells[m.sources.findIndex(s => s.zone === "wan")][m.destinations.findIndex(d => d.id === "segment:office")].verdict;
+  }
+  assert.equal(verdict(["wg-ch1"]), "y");
+  assert.equal(verdict(["wg-ch1", "eth0"]), "p");
+  cfg.firewall.rules.push({ enabled: true, zone: "wan", flow: "forward", action: "drop" });
+  assert.equal(verdict(["wg-ch1"]), "n");
+  cfg.firewall.rules.pop();
+  ch.accept_inbound = false;
+  assert.equal(verdict(["wg-ch1"]), "n");
+  ch.accept_inbound = true;
+  ch.wireguard_peer = { server_index: 1 };
+  assert.equal(verdict(["wg-ch1"]), "n");
+});

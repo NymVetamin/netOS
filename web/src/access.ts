@@ -27,6 +27,7 @@ export type Entity = {
   subnet?: Subnet;
   isolated?: boolean;
   vpn?: boolean;
+  inboundTransit?: "all" | "some";
 };
 
 export type Matrix = {
@@ -71,6 +72,19 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
   const router: Entity = { id: "router", title: "Роутер", kind: "router", zone: "", ifaces: [] };
 
   const sources = [...segments, ...vpn, ...internet];
+  const transit = new Set<string>();
+  for (const ch of config.channels || []) {
+    if (ch.enabled && ch.accept_inbound && ch.type === "wireguard" && !ch.wireguard_peer) {
+      transit.add(`wg-ch${ch.index}`);
+    }
+  }
+  if (transit.size) {
+    for (const src of sources) {
+      if (src.zone !== "wan") continue;
+      const count = src.ifaces.reduce((n, iface) => n + Number(transit.has(iface)), 0);
+      if (count) src.inboundTransit = count === src.ifaces.length ? "all" : "some";
+    }
+  }
   const destinations = [...internet, ...segments, ...vpn, router];
   const globalRules: RuleGroups = { in: [], forward: [] };
   const zoneRules = new Map<any, RuleGroups>();
@@ -152,6 +166,11 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], glo
         partial.push({ accept: true, text: `проброс «${n.name}»: ${String(n.protocol || "").toUpperCase()} ${n.ext_port} → ${n.dest_ip}` });
       }
     }
+  }
+  if (flow === "forward" && src.inboundTransit) {
+    const reason = "разрешён транзит из канала WireGuard";
+    if (src.inboundTransit === "all") return finish(true, reason);
+    partial.push({ accept: true, text: reason });
   }
   if (flow === "in" && src.zone === "wan") {
     for (const s of config.vpn_servers || []) {
