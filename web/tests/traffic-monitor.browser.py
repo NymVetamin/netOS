@@ -42,6 +42,12 @@ async def main():
    await r.fulfill(json=body,content_type='application/json')
   await page.route('**/*',route);await page.goto('http://netos-ui.test/#dashboard')
   await expect(page.get_by_text('Трафик клиентов',exact=True)).to_be_visible()
+  await page.get_by_label('Период статистики').select_option('0')
+  history_charts=page.get_by_role('img',name='График скорости за выбранный период')
+  await expect(history_charts).to_have_count(2)
+  for chart in await history_charts.all():
+   paths=await chart.locator('path').evaluate_all('(els)=>els.map(e=>e.getAttribute("d"))')
+   assert paths and all(d and 'NaN' not in d and 'Infinity' not in d for d in paths),paths
   await page.get_by_label('Период статистики').select_option('5')
   await expect(page.get_by_role('img',name='График скорости в реальном времени')).to_have_count(2)
   assert any(path=='/api/statistics/realtime/history' and q.get('minutes')==['5'] for path,q in calls)
