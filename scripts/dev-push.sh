@@ -34,14 +34,6 @@ done
 
 cd "$REPO"
 
-# Фронтенд собирается всегда и первым: vite кладёт результат в
-# backend/internal/api/webdist, откуда его встраивает go:embed. Без этого шага
-# на машину уезжает панель от прошлой сборки, а правки в web/src молча теряются.
-if [ "${NETOS_SKIP_WEB:-0}" != "1" ]; then
-    echo "→ собираю фронтенд"
-    ( cd web && npm run build >/dev/null ) || { echo "   СБОРКА ФРОНТЕНДА НЕ УДАЛАСЬ"; exit 1; }
-fi
-
 BINARY="$(mktemp -t netosd.XXXXXX)"
 trap 'rm -f "$BINARY"' EXIT
 
@@ -50,6 +42,11 @@ if [ -n "${NETOS_BINARY_FILE:-}" ]; then
         echo "   готовый бинарник не найден: $NETOS_BINARY_FILE" >&2; exit 1; }
     cp "$NETOS_BINARY_FILE" "$BINARY"
 elif command -v go >/dev/null 2>&1; then
+    # go:embed берёт панель из webdist при локальной сборке.
+    if [ "${NETOS_SKIP_WEB:-0}" != "1" ]; then
+        echo "→ собираю фронтенд"
+        ( cd web && npm run build >/dev/null ) || { echo "   СБОРКА ФРОНТЕНДА НЕ УДАЛАСЬ"; exit 1; }
+    fi
     echo "→ собираю netosd под linux/$ARCH"
     # CGO выключён: sqlite взят в чистой реализации на Go, поэтому бинарник
     # получается статическим и кросс-сборка с любой системы работает как есть.

@@ -1,8 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-export NETOS_SKIP_WEB=1
-unset NETOS_BINARY_FILE
+unset NETOS_SKIP_WEB NETOS_BINARY_FILE
 export EXPECTED_REVISION
 EXPECTED_REVISION=$(git rev-parse HEAD)
 
@@ -23,9 +22,15 @@ gh() {
         echo 42
     fi
 }
-scp() { return 1; }
+npm() { echo "unexpected npm" >&2; return 1; }
+scp() {
+    if [[ -n ${NETOS_BINARY_FILE:-} ]] && cmp -s "$NETOS_BINARY_FILE" "$2"; then
+        echo "candidate matched" >&2
+    fi
+    return 1
+}
 ssh() { return 1; }
-export -f command gh scp ssh
+export -f command gh npm scp ssh
 for EXACT_BUILD in no yes yes; do
     export EXACT_BUILD
     output=$(./scripts/dev-push.sh 2>&1) && exit 1
@@ -35,3 +40,10 @@ for EXACT_BUILD in no yes yes; do
         [[ "$output" == *"download 42"* ]]
     fi
 done
+
+export NETOS_BINARY_FILE
+NETOS_BINARY_FILE=$(mktemp)
+trap 'rm -f -- "$NETOS_BINARY_FILE"' EXIT
+printf 'prebuilt candidate' > "$NETOS_BINARY_FILE"
+output=$(./scripts/dev-push.sh 2>&1) && exit 1
+[[ "$output" == *"candidate matched"* && "$output" != *"unexpected npm"* ]]
