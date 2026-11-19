@@ -122,7 +122,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
       .catch(error => { if (alive) setAutomaticError(error.message); });
     return () => { alive = false; };
   }, [showAutomatic, config]);
-  const baseGroups = buildGroups(config, rules);
+  const zoneInterfaces = interfacesByZone(config);
+  const baseGroups = buildGroups(config, rules, zoneInterfaces);
   const groups = showAutomatic && automatic && automatic.config === config ? includeAutomatic(baseGroups, automatic.data, config) : baseGroups;
 
   return (
@@ -144,7 +145,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         </Notice>
       )}
 
-      <AccessCard config={config} />
+      <AccessCard config={config} zoneInterfaces={zoneInterfaces} />
 
       <AddressSets config={config} patch={patch} />
 
@@ -173,7 +174,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
 
         <Rows cols={["Зона", "Цепочки", "Интерфейсы", "Без правила", "Размер пакетов"]}>
           {zones.map((z: any, idx: number) => {
-            const ifaces = interfacesOfZone(config, z.name);
+            const ifaces = zoneInterfaces.get(z.name) || [];
             return (
               <Row
                 key={z.name}
@@ -228,6 +229,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
         {adding && (
           <div style={{ padding: "1.1rem", borderBottom: "1px solid var(--border)" }}>
             <RuleForm
+              zoneInterfaces={zoneInterfaces}
               config={config}
               onCancel={() => setAdding(false)}
               onSubmit={(rule) => {
@@ -253,6 +255,7 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
                   <tbody>
                     {g.items.map(({ r, i, automatic }) => automatic ? <AutomaticRuleRow key={r.id} rule={r} config={config} /> : (
                       <RuleRow
+                        zoneInterfaces={zoneInterfaces}
                         key={r.id}
                         rule={r}
                         index={i}
@@ -282,7 +285,8 @@ export function FirewallPage({ config, patch, problems }: { config: any; patch: 
 // Форма правила
 // ---------------------------------------------------------------------------
 
-function RuleForm({ config, initial, onSubmit, onCancel }: {
+function RuleForm({ config, zoneInterfaces, initial, onSubmit, onCancel }: {
+  zoneInterfaces: Map<string, string[]>;
   config: any; initial?: any; onSubmit: (rule: any) => void; onCancel: () => void;
 }) {
   const zones: any[] = config.firewall?.zones || [];
@@ -292,9 +296,12 @@ function RuleForm({ config, initial, onSubmit, onCancel }: {
     schedule: null, dst_zone: "", log: false, comment: "", ...initial }));
   const set = (k: string, v: any) => setR((previous: any) => ({ ...previous, [k]: v }));
   const needsProtocol = !!(r.src_port || r.dst_port) && !["tcp", "udp"].includes(r.protocol);
-  const options = (zone: string): string[] => zone && zone !== "global" ? interfacesOfZone(config, zone) :
-    [...new Set<string>(["lo", ...(config.interfaces || []).map((i: any) => i.name), ...zones.flatMap(z => interfacesOfZone(config, z.name))])];
-  const inputOptions = options(r.zone), outputOptions = options(r.flow === "out" ? r.zone : r.dst_zone);
+  const options = (zone: string): string[] => zone !== "global" ? zoneInterfaces.get(zone) || [] :
+    [...new Set<string>(["lo", ...(config.interfaces || []).map((i: any) => i.name), ...zones.flatMap(z => zoneInterfaces.get(z.name) || [])])];
+  const inputZone = r.zone || "global";
+  const outputZone = r.flow === "out" ? inputZone : r.dst_zone || "global";
+  const inputOptions = options(inputZone);
+  const outputOptions = inputZone === outputZone ? inputOptions : options(outputZone);
   const badInput = r.flow !== "out" && r.interface && !inputOptions.includes(r.interface);
   const output = r.flow === "out" ? r.interface : r.out_interface;
   const badOutput = r.flow !== "in" && output && !outputOptions.includes(output);
@@ -439,6 +446,7 @@ function RuleForm({ config, initial, onSubmit, onCancel }: {
 // ---------------------------------------------------------------------------
 
 function RuleRow({
+  zoneInterfaces,
   rule,
   index,
   config,
@@ -450,6 +458,7 @@ function RuleRow({
   reorderDisabled,
 }: {
   rule: any;
+  zoneInterfaces: Map<string, string[]>;
   reorderDisabled: boolean;
   index: number;
   config: any;
@@ -596,6 +605,7 @@ function RuleRow({
               </Notice>
             )}
             <RuleForm
+              zoneInterfaces={zoneInterfaces}
               config={config}
               initial={rule}
               onCancel={onToggleExpand}
@@ -651,8 +661,8 @@ function AccessArrow({ verdict, width = 20 }: { verdict: "y" | "n" | "p"; width?
 // AccessCard — матрица «кто куда может ходить». Только показывает: итог
 // считается из зон и правил, менять его — правилами ниже. Подробности —
 // по нажатию на плашку.
-function AccessCard({ config }: { config: any }) {
-  const zoneIfaces = { wan: interfacesOfZone(config, "wan"), vpn: interfacesOfZone(config, "vpn") };
+function AccessCard({ config, zoneInterfaces }: { config: any; zoneInterfaces: Map<string, string[]> }) {
+  const zoneIfaces = { wan: zoneInterfaces.get("wan") || [], vpn: zoneInterfaces.get("vpn") || [] };
   const matrix = accessMatrix(config, zoneIfaces);
   const [open, setOpen] = useState<{ i: number; j: number } | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -1076,81 +1086,71 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
 
 // buildGroups раскладывает правила по цепочкам ровно так же, как это делает
 // генератор: панель должна показывать ту же структуру, что окажется в ядре.
-function buildGroups(config: any, rules: any[]) {
+function buildGroups(config: any, rules: any[], zoneInterfaces: Map<string, string[]>) {
   const zones: any[] = config.firewall?.zones || [];
-  const groups: RuleGroup[] = [];
-
-  const add = (key: string, chain: string, description: string, r: any, i: number) => {
-    let g = groups.find((x) => x.key === key);
-    if (!g) {
-      g = { key, chain, description, items: [] };
-      groups.push(g);
-    }
-    g.items.push({ r, i });
-  };
+  const groups = new Map<string, RuleGroup>();
+  const titles = new Map<string, string>();
+  for (const z of zones) if (!titles.has(z.name)) titles.set(z.name, z.title);
 
   rules.forEach((r, i) => {
-    const f = FLOWS.find((x) => x.id === r.flow);
-    if (r.zone === "global") {
-      add(`builtin-${r.flow}`, f?.chain || r.flow, `без привязки к зоне — ${f?.hint}`, r, i);
-      return;
+    const global = r.zone === "global";
+    const key = global ? `builtin-${r.flow}` : `${r.zone}-${r.flow}`;
+    let group = groups.get(key);
+    if (!group) {
+      const flow = FLOWS.find(x => x.id === r.flow);
+      const title = titles.get(r.zone) || r.zone;
+      const description = global ? `без привязки к зоне — ${flow?.hint}` :
+        zoneInterfaces.has(r.zone) ? `${flow?.hint}, зона «${title}»` :
+        `в зоне «${title}» пока нет интерфейсов, поэтому эти правила не действуют`;
+      const chain = global ? flow?.chain || r.flow : targetChain(r);
+      group = { key, chain, description, items: [] };
+      groups.set(key, group);
     }
-    const z = zones.find((x: any) => x.name === r.zone);
-    const suffix = r.flow === "in" ? "IN" : r.flow === "out" ? "OUT" : "FWD";
-    const chain = `${String(r.zone).toUpperCase()}-${suffix}`;
-    const live = interfacesOfZone(config, r.zone).length > 0;
-    add(
-      `${r.zone}-${r.flow}`,
-      chain,
-      live
-        ? `${f?.hint}, зона «${z?.title || r.zone}»`
-        : `в зоне «${z?.title || r.zone}» пока нет интерфейсов, поэтому эти правила не действуют`,
-      r,
-      i,
-    );
+    group.items.push({ r, i });
   });
 
-  return groups;
+  return [...groups.values()];
 }
 
 function targetChain(r: any): string {
-  const f = FLOWS.find((x) => x.id === r.flow);
-  if (r.zone === "global") return f?.chain || "?";
+  if (r.zone === "global") return FLOWS.find(x => x.id === r.flow)?.chain || "?";
   const suffix = r.flow === "in" ? "IN" : r.flow === "out" ? "OUT" : "FWD";
   return `${String(r.zone).toUpperCase()}-${suffix}`;
 }
 
-function interfacesOfZone(config: any, zone: string): string[] {
-  if (!zone) return [];
-  const names: string[] = [];
+function interfacesByZone(config: any): Map<string, string[]> {
+  const members = new Map<string, Set<string>>();
+  function add(zone: string, name: string) {
+    if (!zone || !name) return;
+    let names = members.get(zone);
+    if (!names) {
+      names = new Set();
+      members.set(zone, names);
+    }
+    names.add(name);
+  }
   const byID = new Map((config.interfaces || []).map((i: any) => [i.id, i.name]));
-
   for (const n of config.networks || []) {
-    if (n.enabled && n.zone === zone) names.push(String(byID.get(n.interface) || ""));
+    if (n.enabled) add(n.zone, String(byID.get(n.interface) || ""));
   }
-  if (zone === "wan") {
-    for (const w of config.wans || []) {
-      if (w.enabled) names.push(w.proto === "pppoe" || w.proto === "l2tp" ? `ppp-${w.id}` : String(byID.get(w.interface) || ""));
-    }
-    // Outgoing channels are Internet exits; a server-client exit stays on its server interface.
-    for (const channel of config.channels || []) {
-      if (!channel.enabled || channel.type === "direct" || channel.wireguard_peer) continue;
-      const prefix = channel.type === "wireguard" ? "wg-ch" :
-        channel.type === "l2tp" ? "ppp-ch" :
-        channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";
-      names.push(`${prefix}${channel.index}`);
-    }
+  for (const w of config.wans || []) {
+    if (w.enabled) add("wan", w.proto === "pppoe" || w.proto === "l2tp" ? `ppp-${w.id}` : String(byID.get(w.interface) || ""));
   }
-	if (zone === "vpn") {
-		for (const server of config.vpn_servers || []) {
-			if (!server.enabled) continue;
-			const prefix = server.type === "wireguard" ? "wg-srv" :
-				server.type === "ocserv" ? "vpns" :
-				server.type === "ikev2" ? "xfrm-srv" : server.type === "l2tp" ? "pp" : "";
-			if (prefix) names.push(`${prefix}${server.index}${server.type === "ocserv" ? "+" : server.type === "l2tp" ? "-+" : ""}`);
-		}
-	}
-  return [...new Set(names.filter(Boolean))];
+  for (const channel of config.channels || []) {
+    if (!channel.enabled || channel.type === "direct" || channel.wireguard_peer) continue;
+    const prefix = channel.type === "wireguard" ? "wg-ch" :
+      channel.type === "l2tp" ? "ppp-ch" :
+      channel.type === "ikev2" ? "xfrm-ch" : "tun-ch";
+    add("wan", `${prefix}${channel.index}`);
+  }
+  for (const server of config.vpn_servers || []) {
+    if (!server.enabled) continue;
+    const prefix = server.type === "wireguard" ? "wg-srv" :
+      server.type === "ocserv" ? "vpns" :
+      server.type === "ikev2" ? "xfrm-srv" : server.type === "l2tp" ? "pp" : "";
+    if (prefix) add("vpn", `${prefix}${server.index}${server.type === "ocserv" ? "+" : server.type === "l2tp" ? "-+" : ""}`);
+  }
+  return new Map(Array.from(members, ([zone, names]) => [zone, [...names]]));
 }
 
 function describeConditions(r: any, config: any): string {
