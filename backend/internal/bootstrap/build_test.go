@@ -112,6 +112,31 @@ func (r addressRunner) Run(context.Context, string, ...string) (string, error) {
 	return r.output, r.err
 }
 
+func TestDetectKeepsUnnumberedWANOutOfLAN(t *testing.T) {
+	old := sysClassNet
+	sysClassNet = t.TempDir()
+	t.Cleanup(func() { sysClassNet = old })
+	for _, name := range []string{"eth0", "eth1"} {
+		if err := os.MkdirAll(filepath.Join(sysClassNet, name, "device"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := Detect(context.Background(), detectRunner{routes: "default dev eth0 scope link"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.WANInterface != "eth0" || !reflect.DeepEqual(d.LANCandidates, []string{"eth1"}) {
+		t.Fatalf("unexpected port assignment: %+v", d)
+	}
+	cfg, err := BuildInitial(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := cfg.Validate(); result.HasErrors() || cfg.WANs[0].Proto != "dhcp" {
+		t.Fatalf("initial configuration: %v, WANs %v", result.Problems, cfg.WANs)
+	}
+}
+
 func (r addressRunner) RunInput(ctx context.Context, _ string, name string, args ...string) (string, error) {
 	return r.Run(ctx, name, args...)
 }

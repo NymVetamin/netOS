@@ -86,7 +86,7 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 		// Wi-Fi is configured separately and hostapd creates/attaches the AP;
 		// choosing a fresh or hwsim radio as factory LAN makes every daemon start
 		// fail while repeatedly disturbing the management uplink.
-		if len(addrs) == 0 && !isWirelessInterface(name) {
+		if name != d.WANInterface && len(addrs) == 0 && !isWirelessInterface(name) {
 			d.LANCandidates = append(d.LANCandidates, name)
 		}
 	}
