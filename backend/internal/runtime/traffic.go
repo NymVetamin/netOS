@@ -228,6 +228,12 @@ func (h *TrafficHistory) load() error {
 			return fmt.Errorf("разбор истории трафика: %w", err)
 		}
 	} else {
+		// An interrupted append can leave a fragment after the last newline.
+		// The first successful sample atomically rewrites the recovered points.
+		tail := bytes.LastIndexByte(data, '\n') + 1
+		if tail < len(data) && !json.Valid(data[tail:]) {
+			data = data[:tail]
+		}
 		scanner := bufio.NewScanner(bytes.NewReader(data))
 		scanner.Buffer(make([]byte, 64<<10), 4<<20)
 		for scanner.Scan() {

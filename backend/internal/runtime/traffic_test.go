@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +13,80 @@ import (
 	"testing"
 	"time"
 )
+
+func TestTrafficRestartAfterInterruptedAppend(t *testing.T) {
+	for _, tail := range []string{"partial", "missing newline"} {
+		t.Run(tail, func(t *testing.T) {
+			now := time.Now().UTC().Truncate(time.Second)
+			path := filepath.Join(t.TempDir(), "history")
+			var data bytes.Buffer
+			var want []TrafficPoint
+			for i := 0; i < 100; i++ {
+				point := TrafficPoint{At: now.Add(time.Duration(i-100) * time.Second), Interfaces: map[string]TrafficRate{"lan": {RXBytes: int64(i)}}}
+				if err := json.NewEncoder(&data).Encode(point); err != nil {
+					t.Fatal(err)
+				}
+				want = append(want, point)
+			}
+			if tail == "partial" {
+				data.WriteString(`{"at":`)
+			} else {
+				data.Truncate(data.Len() - 1)
+			}
+			if err := os.WriteFile(path, data.Bytes(), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			for i := 0; i < 2; i++ {
+				h := NewTrafficHistory(path, &Collector{})
+				h.Now = func() time.Time { return now }
+				h.Collect = func() ([]InterfaceStat, error) {
+					return []InterfaceStat{{Name: "lan", RXBytes: int64(100 + i)}}, nil
+				}
+				h.Run(ctx)
+				want = append(want, TrafficPoint{At: now, Interfaces: map[string]TrafficRate{"lan": {RXBytes: int64(100 + i), RXBPS: 8}}})
+				if got := h.Points(time.Time{}, nil); !reflect.DeepEqual(got, want) {
+					t.Fatalf("restart %d: got %d points, expected %d with original counters and rates", i, len(got), len(want))
+				}
+				now = now.Add(time.Second)
+			}
+		})
+	}
+}
+
+func BenchmarkTrafficRestart(b *testing.B) {
+	for _, n := range []int{100, 10000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			now := time.Now().UTC()
+			var data bytes.Buffer
+			enc := json.NewEncoder(&data)
+			for i := 0; i < n; i++ {
+				if err := enc.Encode(TrafficPoint{At: now.Add(time.Duration(i-n) * time.Second), Interfaces: map[string]TrafficRate{"lan": {RXBytes: int64(i)}}}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			path := filepath.Join(b.TempDir(), "history")
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				if err := os.WriteFile(path, data.Bytes(), 0600); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				h := NewTrafficHistory(path, &Collector{})
+				h.Now = func() time.Time { return now }
+				h.Collect = func() ([]InterfaceStat, error) { return nil, nil }
+				h.Run(ctx)
+				if len(h.points) != n+1 {
+					b.Fatal(len(h.points))
+				}
+			}
+		})
+	}
+}
 
 func TestTrafficHistoryRatesResetAndPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic.json")
