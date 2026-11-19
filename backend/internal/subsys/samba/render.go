@@ -33,16 +33,40 @@ type Access struct {
 	IPsec             bool
 }
 
-func Accesses(c *config.Config) []Access {
+func lanAccesses(c *config.Config) []Access {
+	if len(c.Samba.Networks) == 0 || len(c.Networks) == 0 {
+		return nil
+	}
+	selectedLANs := make(map[string]bool, len(c.Samba.Networks))
+	for _, id := range c.Samba.Networks {
+		selectedLANs[id] = true
+	}
+
+	var names map[string]string
 	var out []Access
 	for _, n := range c.Networks {
-		if n.Enabled && selected(c.Samba.Networks, n.ID) {
-			_, sub, e := net.ParseCIDR(n.RouterAddress)
-			if e == nil {
-				out = append(out, Access{Interface: c.InterfaceName(n.Interface), Subnet: sub.String()})
+		if !n.Enabled || !selectedLANs[n.ID] {
+			continue
+		}
+		_, subnet, err := net.ParseCIDR(n.RouterAddress)
+		if err != nil {
+			continue
+		}
+		if names == nil {
+			names = make(map[string]string, len(c.Interfaces))
+			for _, iface := range c.Interfaces {
+				if _, exists := names[iface.ID]; !exists {
+					names[iface.ID] = iface.Name
+				}
 			}
 		}
+		out = append(out, Access{Interface: names[n.Interface], Subnet: subnet.String()})
 	}
+	return out
+}
+
+func Accesses(c *config.Config) []Access {
+	out := lanAccesses(c)
 	for _, v := range c.VPNServers {
 		if v.Enabled && v.Type != "xray" && selected(c.Samba.VPNs, v.ID) {
 			_, sub, e := net.ParseCIDR(v.Subnet)

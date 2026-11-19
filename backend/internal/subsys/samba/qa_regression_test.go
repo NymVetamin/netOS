@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -401,5 +402,56 @@ func TestBoundL2TPListenerSurvivesDisconnectAndReconnect(t *testing.T) {
 	conf, err := os.ReadFile(filepath.Join(s.StateDir, "samba.conf"))
 	if err != nil || strings.Contains(string(conf), "10.99.1.1/24") {
 		t.Fatal("revoked VPN binding retained")
+	}
+}
+
+func TestAccessesLANSelection(t *testing.T) {
+	c := fixture()
+	c.Interfaces = append(c.Interfaces, config.Interface{ID: "lanif", Name: "later"})
+	c.Samba.Networks = []string{"other", "lan", "lan", "disabled", "bad"}
+	c.Networks = append(c.Networks,
+		config.Network{ID: "other", Interface: "missing", Enabled: true, RouterAddress: "10.0.0.1/24"},
+		config.Network{ID: "disabled", RouterAddress: "10.1.1.1/32"},
+		config.Network{ID: "bad", Enabled: true, RouterAddress: "bad"},
+		c.Networks[0],
+	)
+	want := []Access{
+		{Interface: "eth1", Subnet: "192.168.50.0/24"},
+		{Subnet: "10.0.0.0/24"},
+		{Interface: "eth1", Subnet: "192.168.50.0/24"},
+	}
+	if got := Accesses(c); !slices.Equal(got, want) {
+		t.Fatalf("accesses = %v, want %v", got, want)
+	}
+	c.Samba.Networks = []string{"lan"}
+	c.Interfaces[0].Name = "renamed"
+	want = []Access{{Interface: "renamed", Subnet: "192.168.50.0/24"}, {Interface: "renamed", Subnet: "192.168.50.0/24"}}
+	if got := Accesses(c); !slices.Equal(got, want) {
+		t.Fatalf("after edit = %v, want %v", got, want)
+	}
+	c.Samba.Networks = nil
+	if got := Accesses(c); got != nil {
+		t.Fatal(got)
+	}
+}
+
+func BenchmarkRenderSelectedLANs(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			c := config.Default()
+			for i := 0; i < n; i++ {
+				id := fmt.Sprintf("net%d", i)
+				iface := fmt.Sprintf("eth%d", i)
+				c.Interfaces = append(c.Interfaces, config.Interface{ID: iface, Name: iface})
+				c.Networks = append(c.Networks, config.Network{ID: id, Interface: iface, Enabled: true, RouterAddress: fmt.Sprintf("10.%d.%d.1/24", i/256, i%256)})
+				c.Samba.Networks = append(c.Samba.Networks, id)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := Render(c, "generated"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
