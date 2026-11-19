@@ -36,7 +36,7 @@ func TestIntegrationChannelRouteLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		if self == host {
-			t.Skip("requires private " + kind + " namespace")
+			t.Fatal("requires private " + kind + " namespace")
 		}
 	}
 	root := t.TempDir()
@@ -62,6 +62,8 @@ func TestIntegrationChannelRouteLifecycle(t *testing.T) {
 		}
 		return strings.TrimSpace(v)
 	}
+	run("mount", "--make-rprivate", "/")
+	run("mount", "-t", "sysfs", "sysfs", "/sys")
 	run("ip", "link", "set", "lo", "up")
 	run("ip", "link", "add", "qa-wan", "type", "dummy")
 	run("ip", "addr", "add", "192.0.2.1/24", "dev", "qa-wan")
