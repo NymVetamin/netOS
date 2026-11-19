@@ -14,13 +14,26 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
   const statusPolling = useStatusPolling();
   const [status, setStatus] = useState<any>(null);
   const [statusError, setStatusError] = useState(false);
-  const labelsByName = useMemo(() => {
+  const hasSegments = !!config.networks?.length;
+  const { labelsByName, namesByID } = useMemo(() => {
     const labels = new Map<string, string>();
-    for (const { name, label } of config.interfaces || []) {
+    const names = new Map<string, string>();
+    for (const { id, name, label } of config.interfaces || []) {
       if (!labels.has(name)) labels.set(name, label);
+      if (hasSegments && !names.has(id)) names.set(id, name);
     }
-    return labels;
-  }, [config.interfaces]);
+    return { labelsByName: labels, namesByID: names };
+  }, [config.interfaces, hasSegments]);
+
+  const liveByName = useMemo(() => {
+    const ports = new Map<string, any>();
+    if (hasSegments) {
+      for (const port of status?.interfaces || []) {
+        if (!ports.has(port.name)) ports.set(port.name, port);
+      }
+    }
+    return ports;
+  }, [status?.interfaces, hasSegments]);
 
   const wanInterfaces = (config.wans || [])
     .filter((w: any) => w.enabled)
@@ -95,8 +108,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
         ) : (
           <div className="stack">
             {config.networks.map((n: any) => {
-              const iface = interfaceName(config, n.interface);
-              const live = interfaces.find((i) => i.name === iface);
+              const iface = namesByID.get(n.interface) || n.interface;
+              const live = liveByName.get(iface);
               return (
                 <div key={n.id} className="row between wrap">
                   <div className="row">

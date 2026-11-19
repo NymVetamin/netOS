@@ -92,6 +92,21 @@ async def main():
         await expect(page.get_by_text("49.0 °C",exact=True)).to_be_visible(timeout=10000)
         await expect(page.get_by_text("40.0 %",exact=True)).to_be_visible()
         await expect(page.get_by_text("Не удалось обновить состояние роутера",exact=True)).to_have_count(0)
+        cfg["interfaces"] = [{"id":"port","name":"lan0"},{"id":"port","name":"lan1"}]
+        cfg["networks"] = [{"id":"a","name":"Segment A","interface":"port"},
+                           {"id":"b","name":"Segment B","interface":"unknown0"}]
+        status["interfaces"] = [{"name":"lan0","up":False},{"name":"lan0","up":True}]
+        await page.reload()
+        segments = page.locator(".row.between.wrap").filter(has=page.get_by_text("Segment A",exact=True))
+        fallback = page.locator(".row.between.wrap").filter(has=page.get_by_text("Segment B",exact=True))
+        await expect(segments.locator(".badge")).to_have_text("не поднят")
+        await expect(fallback.locator(".badge")).to_have_text("не поднят")
+        status["interfaces"] = [{"name":"lan0","up":True},{"name":"unknown0","up":True}]
+        await expect(segments.locator(".badge")).to_have_text("поднят",timeout=10000)
+        await expect(fallback.locator(".badge")).to_have_text("поднят")
+        cfg["interfaces"][0]["name"] = "renamed"
+        await page.reload()
+        await expect(segments.locator(".badge")).to_have_text("не поднят")
         assert not errors,errors
         assert not writes,writes
         await browser.close()
