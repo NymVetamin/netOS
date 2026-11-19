@@ -1,4 +1,5 @@
 import { networkInterfaceView, nextVlan } from "../networkInterfaceView";
+import { segmentAddresses } from "../segmentAddresses";
 import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { interfaceLabel } from "../interfaceDisplay";
@@ -466,18 +467,19 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
             patch((d) => {
               d.networks = d.networks || [];
               const n = d.networks.length + 1;
+              const addresses = segmentAddresses(d.networks, d.vpn_servers || []);
               d.networks.push({
                 id,
                 name: "Сегмент " + n,
                 interface: d.interfaces?.[0]?.id || "",
-                router_address: `192.168.${10 * n}.1/24`,
+                router_address: addresses.router,
                 enabled: true,
                 zone: "lan",
                 isolated: false,
                 dhcp_pool: {
                   enabled: false,
-                  start: `192.168.${10 * n}.100`,
-                  end: `192.168.${10 * n}.200`,
+                  start: addresses.start,
+                  end: addresses.end,
                   lease_time: 43200,
                 },
               });
