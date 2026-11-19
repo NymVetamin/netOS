@@ -4,7 +4,9 @@ import { newID } from './id';
 import { reservationError, reservationHostname, reservationNetwork } from './clientReservation';
 
 export function ReservationEditor({ config, client, reservation, baseReservations = [], devices, conflicts, patch }: any) {
-  const original = baseReservations.find((r: any) => r.mac.toLowerCase() === client.mac.toLowerCase());
+  const mac = client.mac.toLowerCase();
+  const originalIndex = baseReservations.findIndex((r: any) => r.mac.toLowerCase() === mac);
+  const original = baseReservations[originalIndex];
   const [ip, setIP] = useState(reservation?.ip || original?.ip || client.ip || '');
   const network = reservationNetwork(config, client);
   const segment = (config.networks || []).find((n: any) => n.id === network);
@@ -19,13 +21,17 @@ export function ReservationEditor({ config, client, reservation, baseReservation
       <button className="btn sm" disabled={!!error || (enabled && ip === reservation.ip && network === reservation.network)} onClick={() => patch((d: any) => {
         d.dhcp ||= {};
         const list = d.dhcp.reservations ||= [];
-        const existing = list.find((r: any) => String(r.mac).toLowerCase() === client.mac.toLowerCase());
+        const existing = list.find((r: any) => String(r.mac).toLowerCase() === mac);
         if (existing) Object.assign(existing, { ip, network, enabled: true });
         else {
           const restored = original ? { ...original, enabled: true, ip, network }
-            : { id: newID('res'), enabled: true, mac: client.mac.toLowerCase(), ip, network, hostname: reservationHostname(client.hostname || '') };
-          const following = original ? baseReservations.slice(baseReservations.indexOf(original) + 1).map((r: any) => r.id) : [];
-          const index = list.findIndex((r: any) => following.includes(r.id));
+            : { id: newID('res'), enabled: true, mac, ip, network, hostname: reservationHostname(client.hostname || '') };
+          let index = -1;
+          if (original && originalIndex + 1 < baseReservations.length) {
+            const following = new Set<string>();
+            for (let i = originalIndex + 1; i < baseReservations.length; i++) following.add(baseReservations[i].id);
+            index = list.findIndex((r: any) => following.has(r.id));
+          }
           list.splice(index < 0 ? list.length : index, 0, restored);
         }
       })}>{enabled ? 'Изменить закрепление' : 'Закрепить адрес'}</button>

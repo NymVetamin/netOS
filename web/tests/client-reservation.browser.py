@@ -82,6 +82,11 @@ async def main():
         # Simulate an applied reservation with metadata that cannot be rebuilt
         # from the live device. Removing/recreating it must restore exact data.
         cfg['dhcp']['reservations'][0].update(id='original-id',hostname='saved-hostname',comment='keep this comment')
+        for position, suffix in [(0, 1), (2, 2)]:
+            cfg['dhcp']['reservations'].insert(position, {
+                'id': f'neighbor-{suffix}', 'mac': f'02:00:00:00:01:{suffix:02x}',
+                'ip': f'192.168.20.{130 + suffix}', 'network': 'second', 'enabled': True,
+            })
         baseline=copy.deepcopy(cfg)
         await page.reload();await page.get_by_text('Test laptop',exact=True).click()
         for reload_between in [False,True]:
