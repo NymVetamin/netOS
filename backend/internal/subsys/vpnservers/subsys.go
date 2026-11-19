@@ -948,11 +948,18 @@ func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
 }
 
 func (s *Subsystem) verifyUnitStopped(ctx context.Context, unit string) error {
-	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unit)
-	if strings.TrimSpace(active) == "active" {
+	active, err := s.Runner.Run(ctx, "systemctl", "is-active", unit)
+	switch state := strings.TrimSpace(active); state {
+	case "inactive", "failed":
+		return nil // systemctl also returns a nonzero exit status for these states.
+	case "active":
 		return fmt.Errorf("служба %s осталась активной", unit)
+	default:
+		if err != nil {
+			return fmt.Errorf("проверка остановки службы %s: %w", unit, err)
+		}
+		return fmt.Errorf("остановка службы %s не подтверждена: %q", unit, state)
 	}
-	return nil
 }
 
 func pathsAbsent(paths ...string) error {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 type vpnRunnerFunc func(context.Context, string, ...string) (string, error)
@@ -222,6 +223,53 @@ func TestCleanupFailurePreservesOwnership(t *testing.T) {
 	owned, err := s.readOwned()
 	if err != nil || len(owned) != 1 || owned[0].Name != item.Name {
 		t.Fatalf("ownership lost: %#v, %v", owned, err)
+	}
+}
+
+func TestRemoveRetriesWhenServiceStateUnavailable(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestSubsystem(t)
+	s.UnitDir = t.TempDir()
+	item := ownedServer{Name: "xray-srv7", Index: 7, Type: "xray"}
+	if err := s.writeOwned([]ownedServer{item}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	s.Runner = system.NewExec()
+	if err := s.Apply(ctx, config.Default()); err == nil || !strings.Contains(err.Error(), "is-active") {
+		t.Fatalf("missing service status: %v", err)
+	}
+	owned, err := s.readOwned()
+	if err != nil || len(owned) != 1 || owned[0] != item {
+		t.Fatal("lost ownership after inconclusive stop", owned, err)
+	}
+	s.Runner = &vpnServiceRunner{active: map[string]bool{}}
+	if err := s.Apply(ctx, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if owned, err := s.readOwned(); err != nil || len(owned) != 0 {
+		t.Fatal("retry did not finish cleanup", owned, err)
+	}
+}
+
+func TestVerifyVPNServiceStopped(t *testing.T) {
+	for _, tc := range []struct {
+		state   string
+		stopped bool
+	}{
+		{"inactive", true}, {"failed", true}, {"active", false}, {"activating", false},
+		{"deactivating", false}, {"reloading", false}, {"unknown", false}, {"", false},
+	} {
+		s, _ := newTestSubsystem(t)
+		s.Runner = vpnRunnerFunc(func(context.Context, string, ...string) (string, error) {
+			if tc.stopped {
+				return tc.state + "\n", errors.New("exit status 3")
+			}
+			return tc.state, nil
+		})
+		if err := s.verifyUnitStopped(context.Background(), "netos-test.service"); (err == nil) != tc.stopped {
+			t.Errorf("state %q: %v", tc.state, err)
+		}
 	}
 }
 
