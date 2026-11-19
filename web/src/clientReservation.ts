@@ -15,10 +15,22 @@ function subnet(network: any) {
 
 export function reservationNetwork(config: any, client: any): string {
   const networks = config.networks || [];
-  const byInterface = client.interface ? networks.filter((n: any) =>
-    (config.interfaces || []).some((i: any) => i.id === n.interface && i.name === client.interface)) : [];
-  if (byInterface.length === 1) return byInterface[0].id;
-  if (byInterface.length > 1) return '';
+  if (!networks.length) return '';
+  if (client.interface) {
+    const ids = new Set<string>();
+    for (const iface of config.interfaces || []) {
+      if (iface.name === client.interface) ids.add(iface.id);
+    }
+    if (ids.size) {
+      let match;
+      for (const network of networks) {
+        if (!ids.has(network.interface)) continue;
+        if (match) return '';
+        match = network;
+      }
+      if (match) return match.id;
+    }
+  }
   const address = ipv4(client.ip || '');
   const matches = networks.filter((n: any) => {
     const range = subnet(n);

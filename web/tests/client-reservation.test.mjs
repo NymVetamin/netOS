@@ -40,6 +40,17 @@ test('DHCP-only client in second subnet never falls back to first network', () =
 test('physical interface takes precedence over stale address and configured client segment', () => {
   assert.equal(reservationNetwork({ ...cfg, clients: [{ mac, network: 'first' }] }, { mac, interface: 'br1', ip: '192.168.10.100' }), 'second');
 });
+
+test('duplicate interface records preserve a unique segment until another segment matches', () => {
+  const c = { interfaces: [{id:'a', name:'br0'}, {id:'a', name:'br0'}, {id:'b', name:'br0'}],
+    networks: [{id:'first', interface:'a', router_address:'192.0.2.1/24'}] };
+  const client = {interface:'br0', ip:'192.0.2.10'};
+  assert.equal(reservationNetwork(c, client), 'first');
+  c.networks.push({id:'second', interface:'b', router_address:'198.51.100.1/24'});
+  assert.equal(reservationNetwork(c, client), '');
+  c.interfaces = [];
+  assert.equal(reservationNetwork(c, client), 'first');
+});
 test('validate malformed, outside-subnet, infrastructure and conflicting addresses', () => {
   for (const ip of ['', 'word', '1.2.3.999', '192.168.020.5', '::1', '192.168.10.100', '192.168.20.0', '192.168.20.255', '192.168.20.1', '192.168.20.2']) {
     assert.notEqual(reservationError(cfg, mac, ip, 'second'), '', ip);
