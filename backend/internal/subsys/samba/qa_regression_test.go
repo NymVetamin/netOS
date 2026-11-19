@@ -455,3 +455,43 @@ func BenchmarkRenderSelectedLANs(b *testing.B) {
 		})
 	}
 }
+
+func TestRenderShareVolumeSelection(t *testing.T) {
+	c := config.Default()
+	c.Samba.Volumes = []config.StorageVolume{
+		{ID: "disk", Enabled: true, UUID: "first"},
+		{ID: "disk", Enabled: true, UUID: "last"},
+		{ID: "disk", UUID: "disabled"},
+	}
+	c.Samba.Shares = []config.SambaShare{{Name: "skip"}, {Name: "share", Volume: "disk", Enabled: true}}
+	for _, want := range []string{"last", "first"} {
+		out, err := Render(c, "generated")
+		if err != nil || !strings.Contains(out, MountPath(c.Samba.Volumes[0])+" "+want+"\n") {
+			t.Fatalf("expected selected volume %q: %v", want, err)
+		}
+		c.Samba.Volumes[1].Enabled = false
+	}
+	c.Samba.Volumes[0].Enabled = false
+	if _, err := Render(c, "generated"); err == nil || err.Error() != "share share: volume unavailable" {
+		t.Fatal(err)
+	}
+}
+
+func BenchmarkRenderShareVolumes(b *testing.B) {
+	for _, n := range []int{32, 1024} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			c := config.Default()
+			for i := 0; i < n; i++ {
+				id := fmt.Sprint(i)
+				c.Samba.Volumes = append(c.Samba.Volumes, config.StorageVolume{ID: id, Enabled: true})
+				c.Samba.Shares = append(c.Samba.Shares, config.SambaShare{Name: "share" + id, Volume: id, Enabled: true})
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := Render(c, "generated"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
