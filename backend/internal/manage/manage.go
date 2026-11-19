@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/netos-router/netos/internal/ethernet"
 	"github.com/netos-router/netos/internal/releaseversion"
@@ -1791,14 +1792,17 @@ func (m *Manager) backupNow(ctx context.Context) error {
 		removeErr = nil
 	}
 	startErr := m.run(ctx, "systemctl", "start", "netosd")
-	if err != nil {
-		return err
-	}
 	if removeErr != nil {
-		return fmt.Errorf("резервная копия создана в %s, служба запущена, но не удалось сбросить маркер готовности: %w", path, removeErr)
+		removeErr = fmt.Errorf("не удалось сбросить маркер готовности: %w", removeErr)
 	}
 	if startErr != nil {
-		return fmt.Errorf("резервная копия создана в %s, но служба не запустилась: %w", path, startErr)
+		startErr = fmt.Errorf("служба не запустилась: %w", startErr)
+	}
+	if err != nil {
+		return errors.Join(err, removeErr, startErr)
+	}
+	if recoveryErr := errors.Join(removeErr, startErr); recoveryErr != nil {
+		return fmt.Errorf("резервная копия создана в %s, но %w", path, recoveryErr)
 	}
 	// systemd Type=simple reports start success as soon as the process exists.
 	// netosd is usable only after its startup reconciliation and listener probe

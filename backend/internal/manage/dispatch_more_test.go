@@ -205,6 +205,64 @@ func TestBackupNowWaitsForFreshDaemonReadiness(t *testing.T) {
 	}
 }
 
+func TestBackupReportsArchiveAndRestartFailures(t *testing.T) {
+	archiveErr, startErr := errors.New("archive failed"), errors.New("start failed")
+	for _, tc := range []struct {
+		name                     string
+		archive, marker, restart bool
+	}{
+		{"archive", true, false, false}, {"restart", false, false, true},
+		{"both", true, false, true}, {"marker and restart", false, true, true}, {"all", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, out := testManager()
+			sandbox(t, m)
+			if err := os.MkdirAll(m.StateDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(m.StateDir, "netos.db"), []byte("state"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.marker {
+				ready := m.sys(m.ReadyFile)
+				if err := os.MkdirAll(ready, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(ready, "occupied"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			starts := 0
+			m.Run = func(_ context.Context, cmd command) error {
+				if cmd.name == "tar" {
+					if tc.archive {
+						return archiveErr
+					}
+					return os.WriteFile(cmd.args[3], []byte("archive"), 0600)
+				}
+				if cmd.name == "systemctl" && cmd.args[0] == "start" {
+					starts++
+					if tc.restart {
+						return startErr
+					}
+				}
+				return nil
+			}
+			for attempt := 1; attempt <= 2; attempt++ {
+				err := m.Execute(context.Background(), []string{"backup"})
+				if err == nil || starts != attempt || errors.Is(err, archiveErr) != tc.archive || errors.Is(err, startErr) != tc.restart {
+					t.Fatalf("attempt %d: starts=%d err=%v", attempt, starts, err)
+				}
+				message := err.Error()
+				if strings.Contains(message, "маркер готовности") != tc.marker || strings.Contains(message, "создана в") == tc.archive ||
+					tc.restart && strings.Contains(message, "служба запущена") || strings.Contains(out.String(), "Резервная копия создана:") {
+					t.Fatalf("misleading result: %v, output=%q", err, out.String())
+				}
+			}
+		})
+	}
+}
+
 func TestBackupIncludesExistingDataAndUsesPrivateMode(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
