@@ -243,7 +243,7 @@ info "Архитектура: $ARCH"
 NIC_COUNT=$(find /sys/class/net -mindepth 1 -maxdepth 1 ! -name lo -exec test -e {}/device \; -print | wc -l)
 info "Сетевых карт: $NIC_COUNT"
 if [ "$NIC_COUNT" -lt 2 ]; then
-    warn "меньше двух сетевых карт: локальный сегмент будет создан на виртуальном интерфейсе"
+    warn "для автоматической настройки локального сегмента нужен свободный проводной интерфейс"
 fi
 
 if [ -x "$BIN_PATH" ] || [ -s "$STATE_DIR/netos.db" ]; then

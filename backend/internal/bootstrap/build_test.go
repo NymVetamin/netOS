@@ -172,6 +172,9 @@ func TestBuildInitialCreatesDHCPOrStaticWAN(t *testing.T) {
 			if len(cfg.Interfaces) != 1 || cfg.Interfaces[0].Name != "eth0" || len(cfg.WANs) != 1 {
 				t.Fatalf("unexpected WAN objects: interfaces=%v wans=%v", cfg.Interfaces, cfg.WANs)
 			}
+			if len(cfg.Networks) != 0 {
+				t.Fatalf("unexpected LAN without a free interface: %#v", cfg.Networks)
+			}
 			wan := cfg.WANs[0]
 			if wan.Index != 1 {
 				t.Fatalf("WAN index = %d, want 1", wan.Index)
