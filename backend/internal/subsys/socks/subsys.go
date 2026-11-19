@@ -1,12 +1,12 @@
 package socks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -59,25 +59,34 @@ func Render(c *config.Config) ([]byte, error) {
 		"routing": map[string]any{"rules": []any{map[string]any{"type": "field", "ip": []string{"::/0"}, "outboundTag": "block"}}},
 	}, "", "  ")
 }
-func (s *Subsystem) stamp(c *config.Config) []byte {
-	rendered, _ := Render(c)
+func stamp(c *config.Config, rendered []byte) []byte {
 	data, _ := json.Marshal(struct {
 		Settings config.Socks
 		Rendered string
 	}{c.Socks, string(rendered)})
 	return data
 }
-func (s *Subsystem) changed(c *config.Config) bool {
-	return system.FileChanged(filepath.Join(s.StateDir, "socks.applied"), s.stamp(c))
+func unitContents(conf string) []byte {
+	return []byte("[Unit]\nDescription=netOS SOCKS5 proxy\nAfter=network.target\n[Service]\nType=simple\nUMask=0077\nExecStart=/usr/local/bin/xray run -config " + conf + "\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=true\nProtectHome=true\nProtectSystem=strict\nPrivateTmp=true\nCapabilityBoundingSet=CAP_NET_ADMIN\n")
+}
+func (s *Subsystem) filesChanged(conf, unit string, data, unitData, applied []byte) bool {
+	return system.FileChanged(filepath.Join(s.StateDir, "socks.applied"), applied) || system.FileChanged(conf, data) || system.FileChanged(unit, unitData)
 }
 func (s *Subsystem) Plan(old, next *config.Config) ([]apply.Action, error) {
 	if !next.Socks.Enabled && (old == nil || !old.Socks.Enabled) {
 		return nil, nil
 	}
-	if old == nil || !reflect.DeepEqual(s.stamp(old), s.stamp(next)) || s.changed(next) {
-		return []apply.Action{{Subsystem: s.Name(), Kind: "update", Target: "SOCKS5-прокси", Detail: "доступ, авторизация и канал выхода", Disruptive: true}}, nil
+	if old != nil && old.Socks.Enabled && next.Socks.Enabled {
+		oldData, _ := Render(old)
+		nextData, _ := Render(next)
+		applied := stamp(next, nextData)
+		conf, unit := s.paths()
+		if bytes.Equal(stamp(old, oldData), applied) && !s.filesChanged(conf, unit, nextData, unitContents(conf), applied) {
+			return nil, nil
+		}
 	}
-	return nil, nil
+
+	return []apply.Action{{Subsystem: s.Name(), Kind: "update", Target: "SOCKS5-прокси", Detail: "доступ, авторизация и канал выхода", Disruptive: true}}, nil
 }
 
 // Prepare stops a changing listener before firewall permissions move to a new
@@ -95,11 +104,15 @@ func (p *Preparation) Apply(ctx context.Context, c *config.Config) error {
 	} else if err != nil {
 		return err
 	}
-	if p.S.changed(c) || !c.Socks.Enabled {
-		_, err := p.S.Runner.Run(ctx, "systemctl", "stop", Unit)
-		return err
+	if c.Socks.Enabled {
+		data, _ := Render(c)
+		if !system.FileChanged(filepath.Join(p.S.StateDir, "socks.applied"), stamp(c, data)) {
+			return nil
+		}
 	}
-	return nil
+
+	_, err := p.S.Runner.Run(ctx, "systemctl", "stop", Unit)
+	return err
 }
 func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	conf, unit := s.paths()
@@ -137,8 +150,9 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	if _, err = s.Runner.Run(ctx, "/usr/local/bin/xray", "run", "-test", "-config", candidate); err != nil {
 		return fmt.Errorf("проверка SOCKS5: %w", err)
 	}
-	unitData := []byte("[Unit]\nDescription=netOS SOCKS5 proxy\nAfter=network.target\n[Service]\nType=simple\nUMask=0077\nExecStart=/usr/local/bin/xray run -config " + conf + "\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=true\nProtectHome=true\nProtectSystem=strict\nPrivateTmp=true\nCapabilityBoundingSet=CAP_NET_ADMIN\n")
-	changed := s.changed(c) || system.FileChanged(conf, data) || system.FileChanged(unit, unitData)
+	unitData := unitContents(conf)
+	applied := stamp(c, data)
+	changed := s.filesChanged(conf, unit, data, unitData, applied)
 	if _, err = system.WriteFileAtomicIfChanged(conf, data, 0600); err != nil {
 		return err
 	}
@@ -159,7 +173,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	if err = s.Health(ctx, c); err != nil {
 		return err
 	}
-	_, err = system.WriteFileAtomicIfChanged(filepath.Join(s.StateDir, "socks.applied"), s.stamp(c), 0600)
+	_, err = system.WriteFileAtomicIfChanged(filepath.Join(s.StateDir, "socks.applied"), applied, 0600)
 	return err
 }
 func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {

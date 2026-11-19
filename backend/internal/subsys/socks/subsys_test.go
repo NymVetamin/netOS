@@ -7,6 +7,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -159,5 +160,80 @@ func TestSocksStartsAfterFirewall(t *testing.T) {
 	}
 	if positions["socks-prepare"] >= positions["firewall"] || positions["socks"] <= positions["firewall"] {
 		t.Fatal("unsafe SOCKS lifecycle ordering")
+	}
+}
+
+func TestPlanRestoresSocksFiles(t *testing.T) {
+	c := fixture()
+	f := &fake{}
+	s := New(f, t.TempDir())
+	s.UnitDir = t.TempDir()
+	ctx := context.Background()
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	conf, unit := s.paths()
+	check := func(want int) {
+		t.Helper()
+		calls := len(f.calls)
+		actions, err := s.Plan(c, c)
+		if err != nil || len(actions) != want || (want == 1 && !actions[0].Disruptive) || calls != len(f.calls) {
+			t.Fatalf("actions=%v err=%v, runner calls=%d", actions, err, len(f.calls)-calls)
+		}
+	}
+	check(0)
+	for _, path := range []string{conf, unit} {
+		for _, missing := range []bool{true, false} {
+			if missing {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, []byte("drift"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			check(1)
+			f.fail = "-test"
+			if err := s.Apply(ctx, c); err == nil {
+				t.Fatal("validation failure ignored")
+			}
+			check(1)
+			f.fail = ""
+			f.calls = nil
+			if err := s.Apply(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(f.calls, "systemctl restart "+Unit) {
+				t.Fatal("missing planned restart")
+			}
+			check(0)
+		}
+	}
+	c.Socks.Enabled = false
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	check(0)
+}
+
+func BenchmarkSocksPlan(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			c := fixture()
+			for i := 0; i < n; i++ {
+				c.Channels = append(c.Channels, config.Channel{ID: fmt.Sprint(i), Enabled: true, Type: "direct"})
+			}
+			old := *c
+			s := New(&fake{}, b.TempDir())
+			s.UnitDir = b.TempDir()
+			if err := s.Apply(context.Background(), c); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if actions, err := s.Plan(&old, c); err != nil || len(actions) != 0 {
+					b.Fatal(actions, err)
+				}
+			}
+		})
 	}
 }
