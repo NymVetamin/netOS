@@ -219,6 +219,10 @@ func TestHealthRequiresExactRuleAndRouteAndSkipsDisabled(t *testing.T) {
 	if err := s.Health(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "fwmark") {
 		t.Fatalf("cross-line rule Health = %v", err)
 	}
+	rules += "  10003: from all fwmark 0x1003 lookup netos-ch3\n"
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	rules = "10003: from all fwmark 0x1003 lookup 1003\n"
 	if err := s.Health(context.Background(), cfg); err != nil {
 		t.Fatal(err)

@@ -926,6 +926,12 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	rulesByPriority := make(map[string][]string, len(channels))
+	for line := range strings.SplitSeq(rules, "\n") {
+		if priority, _, ok := strings.Cut(strings.TrimSpace(line), ":"); ok {
+			rulesByPriority[priority] = append(rulesByPriority[priority], line)
+		}
+	}
 	for _, ch := range channels {
 		name := InterfaceName(ch)
 		if !s.linkExists(name) {
@@ -1072,7 +1078,7 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		table := fmt.Sprint(TableNumber(ch))
 		tableName := "netos-ch" + fmt.Sprint(ch.Index)
 		found := false
-		for _, line := range strings.Split(rules, "\n") {
+		for _, line := range rulesByPriority[priority] {
 			if hasChannelRuleLine(line, priority, mark, table, tableName) {
 				found = true
 				break
