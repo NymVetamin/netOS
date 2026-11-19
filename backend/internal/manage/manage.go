@@ -278,9 +278,6 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 			username = rest[0]
 		}
 		return m.resetPasswordFromStdin(username)
-	// reinstall — синоним update: установщик и так разворачивает версию заново,
-	// сохраняя данные, и отдельного поведения у переустановки нет. Имя оставлено
-	// потому, что за ним приходят, когда установка развалилась.
 	case "update", "reinstall":
 		if err := m.requireRoot(); err != nil {
 			return err

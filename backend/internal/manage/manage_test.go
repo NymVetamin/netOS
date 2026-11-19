@@ -302,9 +302,7 @@ func TestUpdatePassesRequestedVersionToInstaller(t *testing.T) {
 	}
 }
 
-// reinstall — синоним update, и это должно оставаться проверяемым фактом,
-// а не обещанием в тексте справки.
-func TestReinstallBehavesLikeUpdate(t *testing.T) {
+func TestReinstallPassesRequestedVersionToInstaller(t *testing.T) {
 	m, _ := testManager()
 	var commands []command
 	m.Run = func(_ context.Context, spec command) error {
@@ -316,7 +314,7 @@ func TestReinstallBehavesLikeUpdate(t *testing.T) {
 	}
 	if len(commands) != 2 || commands[1].name != "bash" ||
 		!contains(commands[1].env, "NETOS_VERSION=v1.2.4") {
-		t.Fatalf("reinstall расходится с update: %#v", commands)
+		t.Fatalf("reinstall не передал версию установщику: %#v", commands)
 	}
 }
 
