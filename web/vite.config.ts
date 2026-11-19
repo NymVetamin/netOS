@@ -41,9 +41,9 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://45.38.170.119:8443",
+        target: `https://${process.env.NETOS_DEV_API_HOST || "127.0.0.1:8443"}`,
         changeOrigin: true,
-        secure: false,
+        secure: true,
       },
     },
   },
