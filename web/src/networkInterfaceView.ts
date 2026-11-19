@@ -1,5 +1,7 @@
 ﻿export function networkInterfaceView(config: any) {
   const interfaces: any[] = config.interfaces || [];
+  const firstByName = new Map<string, any>();
+  const parents: any[] = [];
   const byID = new Map<string, any>();
   const masters = new Map<string, any>();
   const wans = new Map<string, any>();
@@ -7,6 +9,7 @@
   const vlans = new Map<string, string[]>();
   const labels = new Map<string, string>();
   for (const iface of interfaces) {
+    if (!firstByName.has(iface.name)) firstByName.set(iface.name, iface);
     if (!byID.has(iface.id)) byID.set(iface.id, iface);
     if (iface.type === "bridge" || iface.type === "bond") {
       for (const member of iface.members || []) if (!masters.has(member)) masters.set(member, iface);
@@ -22,6 +25,7 @@
   for (const iface of interfaces) {
     const parts: string[] = [];
     const master = masters.get(iface.id), wan = wans.get(iface.id), net = networks.get(iface.id);
+    if (!master && iface.type !== "vlan") parents.push(iface);
     if (master) parts.push((master.type === "bond" ? "в агрегации " : "в мосту ") + master.name);
     if (wan) parts.push("аплинк «" + wan.name + "»");
     if (net) parts.push("сегмент «" + net.name + "»");
@@ -30,6 +34,15 @@
     labels.set(iface.id, parts.join(", "));
   }
   return {
+    vlanParents: (exceptID: string): any[] => parents.filter(iface => iface.id !== exceptID),
+    labelForName: (name: string) => firstByName.get(name)?.label,
+    memberBlocker: (id: string, targetID: string): string => {
+      const master = masters.get(id);
+      if (master && master.id !== targetID) return "уже в " + master.name;
+      if (wans.has(id)) return "занят аплинком";
+      const net = networks.get(id);
+      return net ? "занят сегментом «" + net.name + "»" : "";
+    },
     name: (id: string): string | undefined => byID.get(id)?.name,
     displayName: (id: string): string => {
       const iface = byID.get(id);

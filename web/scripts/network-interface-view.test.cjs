@@ -79,3 +79,26 @@ require('node:test')('VLAN creation uses valid IDs on eligible parents and recog
   assert.deepEqual(nextVlan({interfaces: [p, bridge, tag(100, 'br')]}), {parent: bridge, vlanID: 101});
   assert.deepEqual(nextVlan({interfaces: [tag(1)]}), {reason: 'no-parent'});
 });
+
+require('node:test')('bridge membership reasons and VLAN choices follow the current draft', () => {
+  const port = {id: 'p', type: 'physical', name: 'eth0', label: ' first '};
+  const duplicateName = {id: 'q', type: 'physical', name: 'eth0', label: 'second'};
+  const bridge = {id: 'br', type: 'bridge', name: 'br0', members: ['p']};
+  const bond = {id: 'bond', type: 'bond', name: 'bond0', members: ['p']};
+  const child = {id: 'v', type: 'vlan', name: 'br0.1', parent: 'br'};
+  const cfg = {interfaces: [port, duplicateName, bridge, bond, child],
+    wans: [{interface: 'p'}], networks: [{interface: 'p', name: 'LAN'}, {interface: 'p', name: 'duplicate'}]};
+  const initial = networkInterfaceView(cfg);
+  assert.equal(initial.memberBlocker('p', 'bond'), 'уже в br0');
+  assert.equal(initial.memberBlocker('p', 'br'), 'занят аплинком');
+  assert.deepEqual(initial.vlanParents('v'), [duplicateName, bridge, bond]);
+  assert.equal(initial.labelForName('eth0'), ' first ');
+  cfg.interfaces = [duplicateName, port, {...bridge, members: []}, {...bond, members: []}, child];
+  cfg.wans = [];
+  const edited = networkInterfaceView(cfg);
+  assert.equal(edited.memberBlocker('p', 'br'), 'занят сегментом «LAN»');
+  assert.equal(edited.memberBlocker('q', 'br'), '');
+  assert.equal(edited.labelForName('eth0'), 'second');
+  assert.deepEqual(edited.vlanParents('v'), cfg.interfaces.slice(0, 4));
+  assert.equal(initial.memberBlocker('p', 'bond'), 'уже в br0');
+});

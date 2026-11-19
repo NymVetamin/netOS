@@ -1,7 +1,7 @@
-import { networkInterfaceView, nextVlan, vlanParents } from "../networkInterfaceView";
+import { networkInterfaceView, nextVlan } from "../networkInterfaceView";
 import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
-import { interfaceDisplay } from "../interfaceDisplay";
+import { interfaceLabel } from "../interfaceDisplay";
 import { linkSpeed, PortLinkSettings } from "./PortLinkSettings";
 import { wanNAT, setWanNAT } from "../wanNAT";
 import { confirmAction } from "../confirm";
@@ -868,9 +868,9 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                       }
                     /></Cap>}
                 {i.type !== "physical" && <Cap label={i.type === "vlan" ? "Номер и родитель" : "Состав"} wide><div className="mono">{i.type === "vlan" ? (
-                    <VLANPicker config={config} patch={patch} index={idx} iface={i} />
+                    <VLANPicker config={config} interfaceView={interfaceView} patch={patch} index={idx} iface={i} />
                   ) : i.type === "bridge" || i.type === "bond" ? (
-                    <MemberPicker config={config} patch={patch} index={idx} iface={i} />
+                    <MemberPicker config={config} interfaceView={interfaceView} patch={patch} index={idx} iface={i} />
                   ) : (
                     "—"
                   )}</div></Cap>}
@@ -922,16 +922,18 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
 // агрегация. Порт, отданный мосту, отдаёт туда всё, включая тегированное.
 function VLANPicker({
   config,
+  interfaceView,
   patch,
   index,
   iface,
 }: {
   config: any;
+  interfaceView: InterfaceView;
   patch: Patch;
   index: number;
   iface: any;
 }) {
-  const parents = vlanParents(config, iface.id);
+  const parents = interfaceView.vlanParents(iface.id);
   const current = byID(config, iface.parent);
   const orphan = iface.parent && !current;
 
@@ -944,11 +946,11 @@ function VLANPicker({
         {!iface.parent && <option value="">не выбран</option>}
         {orphan && <option value={iface.parent}>интерфейс удалён</option>}
         {current && !parents.some((p: any) => p.id === current.id) && (
-          <option value={current.id}>{interfaceDisplay(config, current.name)} (занят)</option>
+          <option value={current.id}>{interfaceLabel(current.name, interfaceView.labelForName(current.name))} (занят)</option>
         )}
         {parents.map((x: any) => (
           <option key={x.id} value={x.id}>
-            {interfaceDisplay(config, x.name)}
+            {interfaceLabel(x.name, interfaceView.labelForName(x.name))}
           </option>
         ))}
       </select>
@@ -969,16 +971,18 @@ function VLANPicker({
 // объяснение рядом честнее исчезнувшей строки.
 function MemberPicker({
   config,
+  interfaceView,
   patch,
   index,
   iface,
 }: {
   config: any;
+  interfaceView: InterfaceView;
   patch: Patch;
   index: number;
   iface: any;
 }) {
-  const members: string[] = iface.members || [];
+  const members = new Set<string>(iface.members || []);
   const candidates = (config.interfaces || []).filter(
     (x: any) =>
       x.id !== iface.id &&
@@ -994,8 +998,8 @@ function MemberPicker({
     <div className="row wrap" style={{ gap: "0.5rem" }}>
       {candidates.length === 0 && <span className="faint">нет портов</span>}
       {candidates.map((c: any) => {
-        const mine = members.includes(c.id);
-        const blocker = mine ? "" : whyUnavailable(config, c, iface);
+        const mine = members.has(c.id);
+        const blocker = mine ? "" : interfaceView.memberBlocker(c.id, iface.id);
         return (
           <label
             key={c.id}
@@ -1017,7 +1021,7 @@ function MemberPicker({
               }
             />
             <span className="mono" style={blocker ? { opacity: 0.45 } : undefined}>
-              {interfaceDisplay(config, c.name)}
+              {interfaceLabel(c.name, interfaceView.labelForName(c.name))}
             </span>
             {blocker && (
               <span className="faint" style={{ fontSize: 11.5 }}>
@@ -1097,26 +1101,6 @@ const MAX_IFACE_NAME = 15;
 function byID(config: any, id: string): any {
   if (!id) return undefined;
   return (config.interfaces || []).find((i: any) => i.id === id);
-}
-
-// masterOf — мост или агрегация, которой отдан порт.
-function masterOf(config: any, id: string): any {
-  return (config.interfaces || []).find(
-    (i: any) =>
-      (i.type === "bridge" || i.type === "bond") && (i.members || []).includes(id),
-  );
-}
-
-
-// whyUnavailable объясняет, почему порт нельзя включить в этот мост.
-function whyUnavailable(config: any, candidate: any, target: any): string {
-  const master = masterOf(config, candidate.id);
-  if (master && master.id !== target.id) return "уже в " + master.name;
-  const wan = (config.wans || []).find((w: any) => w.interface === candidate.id);
-  if (wan) return "занят аплинком";
-  const net = (config.networks || []).find((n: any) => n.interface === candidate.id);
-  if (net) return "занят сегментом «" + net.name + "»";
-  return "";
 }
 
 // vlanName строит имя так, как его принято записывать в Linux: имя родителя,
