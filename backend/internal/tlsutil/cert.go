@@ -184,7 +184,7 @@ func ValidatePairForNames(certPath, keyPath string, names ...string) (string, er
 // localAddresses собирает адреса машины, чтобы сертификат подходил при
 // обращении по любому из них.
 func localAddresses() []net.IP {
-	ips := []net.IP{net.ParseIP("127.0.0.1")}
+	ips := []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return ips
@@ -194,9 +194,7 @@ func localAddresses() []net.IP {
 		if !ok || ipnet.IP.IsLoopback() {
 			continue
 		}
-		if v4 := ipnet.IP.To4(); v4 != nil {
-			ips = append(ips, v4)
-		}
+		ips = append(ips, ipnet.IP)
 	}
 	return ips
 }

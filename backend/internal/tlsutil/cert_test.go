@@ -6,6 +6,9 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,7 +49,17 @@ func TestEnsureSelfSignedGeneratesUsablePairAndSANs(t *testing.T) {
 		t.Fatalf("generated pair is unusable: %v", err)
 	}
 	cert := loadCertificate(t, certPath)
-	for _, name := range []string{"router", "router.lan", "localhost", "vpn.example.test", "192.0.2.10"} {
+	names := []string{"router", "router.lan", "localhost", "127.0.0.1", "::1", "vpn.example.test", "192.0.2.10"}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, addr := range addrs {
+		if network, ok := addr.(*net.IPNet); ok && !network.IP.IsLoopback() {
+			names = append(names, network.IP.String())
+		}
+	}
+	for _, name := range names {
 		if err := cert.VerifyHostname(name); err != nil {
 			t.Errorf("certificate does not cover %q: %v", name, err)
 		}
@@ -61,6 +74,36 @@ func TestEnsureSelfSignedGeneratesUsablePairAndSANs(t *testing.T) {
 		t.Fatal(err)
 	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("private key mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestPanelTLSOverIPv6(t *testing.T) {
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	defer listener.Close()
+	cert, key, _, err := EnsureSelfSigned(t.TempDir(), "router")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.NotFoundHandler())
+	server.Listener.Close()
+	server.Listener = listener
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
+	server.StartTLS()
+	defer server.Close()
+	res, err := server.Client().Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if len(res.TLS.VerifiedChains) == 0 || res.StatusCode != http.StatusNotFound {
+		t.Fatal("expected HTTPS response with verified certificate")
 	}
 }
 
