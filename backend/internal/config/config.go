@@ -279,6 +279,9 @@ type Routing struct {
 	Rules  []RouteRule   `json:"rules" plan:"Правила" sensitivity:"public"`
 }
 
+// DefaultIPv6RouteMetric is assigned by Linux when a static IPv6 route omits its metric.
+const DefaultIPv6RouteMetric = 1024
+
 // StaticRoute — маршрут, добавляемый вручную.
 type StaticRoute struct {
 	ID      string `json:"id" plan:"Идентификатор" sensitivity:"public" identity:"true"`

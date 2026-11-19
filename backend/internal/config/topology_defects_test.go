@@ -72,3 +72,51 @@ func TestDnsproxyRebindProtectionWarns(t *testing.T) {
 		t.Fatalf("о неработающей защите от rebinding не предупредили: %+v", cfg.Validate().Problems)
 	}
 }
+
+func TestIPv6StaticRouteDefaultMetric(t *testing.T) {
+	for _, tc := range []struct {
+		name, dest, other, gateway string
+		conflict                   bool
+	}{
+		{"prefix", "2001:db8:10::/64", "2001:db8:10::/64", "", true},
+		{"host", "2001:db8::1", "2001:db8::1/128", "", true},
+		{"default", "default", "::/0", "2001:db8::1", true},
+		{"ipv4", "192.0.2.0/24", "192.0.2.0/24", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			a := StaticRoute{ID: "a", Name: "first", Enabled: true, Destination: tc.dest, Type: "blackhole", Gateway: tc.gateway}
+			if tc.gateway != "" {
+				a.Type = "unicast"
+			}
+			b := a
+			b.ID, b.Name, b.Destination, b.Metric = "b", "second", tc.other, 1024
+			for _, pair := range [][]StaticRoute{{a, b}, {b, a}} {
+				c.Routing.Static = pair
+				result := c.Validate()
+				p, ok := problemAt(result, "routing.static[1].destination")
+				if ok != tc.conflict || result.HasErrors() != tc.conflict {
+					t.Fatal(result.Problems)
+				}
+				if ok && (p.Severity != "error" || !strings.Contains(p.Message, "1024") || !strings.Contains(p.Message, pair[0].Name)) {
+					t.Fatalf("metric %d: %+v", pair[1].Metric, result.Problems)
+				}
+			}
+			b.Metric = 1025
+			c.Routing.Static = []StaticRoute{a, b}
+			if r := c.Validate(); r.HasErrors() {
+				t.Fatal(r.Problems)
+			}
+			b.Metric, b.Table = 1024, "local"
+			c.Routing.Static[1] = b
+			if r := c.Validate(); r.HasErrors() {
+				t.Fatal(r.Problems)
+			}
+			b.Table, b.Enabled = "", false
+			c.Routing.Static[1] = b
+			if r := c.Validate(); r.HasErrors() {
+				t.Fatal(r.Problems)
+			}
+		})
+	}
+}

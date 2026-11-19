@@ -1287,7 +1287,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		if !route.Enabled {
 			continue
 		}
-		key := staticRouteConflictKey(route)
+		key, metric := staticRouteConflictKey(route)
 		if prev, taken := routeKeys[key]; taken {
 			table := route.Table
 			if table == "" {
@@ -1295,7 +1295,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 			}
 			r.errf(path+".destination",
 				"маршрут до %s в таблице %s с метрикой %d уже описан правилом %q: ядро оставит только один из них",
-				route.Destination, table, route.Metric, prev)
+				route.Destination, table, metric, prev)
 		}
 		name := route.Name
 		if name == "" {
@@ -1333,7 +1333,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 
 // Compare kernel route identities, not their spelling in the configuration.
 // A bare host and /32 or /128 are the same destination; an omitted table is main.
-func staticRouteConflictKey(route StaticRoute) string {
+func staticRouteConflictKey(route StaticRoute) (string, int) {
 	destination, table := route.Destination, route.Table
 	if destination == "default" {
 		destination = "0.0.0.0/0"
@@ -1341,15 +1341,22 @@ func staticRouteConflictKey(route StaticRoute) string {
 			destination = "::/0"
 		}
 	}
+	var ipv6 bool
 	if prefix, err := netip.ParsePrefix(destination); err == nil {
+		ipv6 = prefix.Addr().Is6()
 		destination = prefix.Masked().String()
 	} else if address, err := netip.ParseAddr(destination); err == nil {
+		ipv6 = address.Is6()
 		destination = netip.PrefixFrom(address, address.BitLen()).String()
 	}
 	if table == "main" {
 		table = ""
 	}
-	return fmt.Sprintf("%s\x00%s\x00%d", destination, table, route.Metric)
+	metric := route.Metric
+	if ipv6 && metric == 0 {
+		metric = DefaultIPv6RouteMetric
+	}
+	return fmt.Sprintf("%s\x00%s\x00%d", destination, table, metric), metric
 }
 
 func routeDestinationFamily(destination string) (is6 bool, ok bool) {
