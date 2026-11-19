@@ -147,9 +147,9 @@ provider-файла и кэша. Если источник временно не
 Порядок применения подсистем:
 
 ```
-components → system → sysctl → bridge-ipv6 → netconf → interfaces → ipv6
+iptv-prepare → socks-prepare → components → system → sysctl → bridge-ipv6 → netconf → interfaces → ipv6
       → networks → wan → multiwan → qos → routing → channels → vpn-servers → peer-channels → tunnel-routes
-      → policy → firewall → policy-cleanup → dhcp → dns → ddns → wifi
+      → policy → firewall → traffic-monitor → socks → iptv → policy-cleanup → dhcp → dns → ddns → wifi
       → samba → components-cleanup
 ```
 
@@ -161,7 +161,7 @@ components → system → sysctl → bridge-ipv6 → netconf → interfaces → 
 отбирает интерфейсы у systemd-networkd, и тот снимает выданные им адреса —
 разрыв закрывают `interfaces`, `networks` и `wan`, идущие сразу следом.
 
-`ipv6` стоит сразу за `netconf` по той же причине: перечитывая свои файлы,
+`ipv6` применяется после `netconf` и создания интерфейсов: перечитывая свои файлы,
 systemd-networkd переписывает `accept_ra` у каждого управляемого линка, и
 параметры ядра, выставленные раньше, до проверки после применения не доживают.
 
