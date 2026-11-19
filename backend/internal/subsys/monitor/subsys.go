@@ -50,12 +50,16 @@ func (s *Subsystem) Name() string { return "traffic-monitor" }
 
 func Interfaces(c *config.Config) []string {
 	names := map[string]bool{}
+	networkPorts := map[string]bool{}
 	for _, n := range c.Networks {
 		if n.Enabled {
-			for _, i := range c.Interfaces {
-				if i.ID == n.Interface && i.Enabled {
-					names[i.Name] = true
-				}
+			networkPorts[n.Interface] = true
+		}
+	}
+	if len(networkPorts) > 0 {
+		for _, i := range c.Interfaces {
+			if i.Enabled && networkPorts[i.ID] {
+				names[i.Name] = true
 			}
 		}
 	}
@@ -70,7 +74,7 @@ func Interfaces(c *config.Config) []string {
 			}
 		}
 	}
-	out := []string{}
+	out := make([]string, 0, len(names))
 	for n := range names {
 		if config.ValidInterfaceName(strings.TrimSuffix(n, "*")) {
 			out = append(out, n)

@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,6 +43,21 @@ func TestClientScopeConfiguredNetworksAndFreshness(t *testing.T) {
 	}
 	if !s.Contains("203.0.113.2") {
 		t.Fatal("operation snapshot mutated")
+	}
+}
+
+func TestInterfacesFollowEnabledNetworks(t *testing.T) {
+	c := scopeFixture(2)
+	c.Networks = append(c.Networks, c.Networks[0], config.Network{Interface: "missing", Enabled: true})
+	c.Interfaces = append(c.Interfaces, config.Interface{ID: "lan0", Name: "another", Enabled: true})
+	c.VPNServers = []config.VPNServer{{Type: "ocserv", Index: 3, Enabled: true}}
+	if got := Interfaces(c); !slices.Equal(got, []string{"another", "lan0", "lan1", "vpns3*"}) {
+		t.Fatalf("initial interfaces: %v", got)
+	}
+	c.Interfaces[0].Enabled = false
+	c.Networks[1].Enabled = false
+	if got := Interfaces(c); !slices.Equal(got, []string{"another", "vpns3*"}) {
+		t.Fatalf("after edit: %v", got)
 	}
 }
 
