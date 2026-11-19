@@ -20,6 +20,7 @@ import { Icon, vpnServerIcon } from "../icons";
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
 type ClientSecret = { publicKey: string; privateKey: string; serverPublicKey: string; presharedKey?: string };
 
+const PolicyPeers = createContext(new Map<string, Set<string>>());
 const ReferencedChannels = createContext<Set<string>>(new Set());
 const ClientCreators = createContext<{ current: Record<string, () => void | Promise<void>> }>({ current: {} });
 function useClientCreator(id: string, create: () => void | Promise<void>) {
@@ -122,6 +123,7 @@ function serverTypeName(server: any): string {
 const XRAY_NAMES: Record<string, string> = { reality: "VLESS Reality", vless: "VLESS TLS", vmess: "VMess", trojan: "Trojan TLS", shadowsocks: "Shadowsocks", socks: "SOCKS", http: "HTTP proxy", wireguard: "Xray WireGuard", hysteria: "Hysteria 2" };
 
 export function VPNServersPage({ config, patch, beforeRead }: Props) {
+  const policyPeers = useMemo(() => indexPolicyPeers(config.policies || []), [config.policies]);
   const referencedChannels = useMemo(() => new Set<string>(channelReferences(config).map(ref => ref.owner[ref.key])), [config]);
   const endpointController = useRef<AbortController | null>(null);
   const [creatingServer, setCreatingServer] = useState(false);
@@ -256,7 +258,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
   return <>
     <div className="page-head"><h1><Icon name="shield-check" />VPN-доступ</h1><p>Безопасное подключение телефонов и компьютеров к роутеру из интернета</p></div>
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
-    <ReferencedChannels.Provider value={referencedChannels}><ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
+    <PolicyPeers.Provider value={policyPeers}><ReferencedChannels.Provider value={referencedChannels}><ClientCreators.Provider value={creators}><Card split title="Серверы" actions={<AddMenu label={creatingServer ? "Создаём сервер…" : "Добавить"} items={addItems.map(item => ({...item, disabled: creatingServer}))} />}>
       <div className="card-part">{servers.length === 0 ? <Empty>VPN-серверов пока нет.</Empty> : <Rows cols={["Сервер", "Тип", "Адрес подключения", "Клиентов", "Состояние"]}>{servers.map((server: any) =>
         server.type === "wireguard" ? <WireGuardServer key={server.id} server={server} config={config} installed={server.config?.amneziawg ? amneziawgInstalled : wireguardInstalled} patch={patch} setClientSecrets={setClientSecrets} setError={setError} /> :
         server.type === "xray" ? <XrayServer key={server.id} server={server} config={config} installed={xrayInstalled} patch={patch} setError={setError} /> :
@@ -271,7 +273,7 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         server.type === "ocserv" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя OpenConnect." /> :
         server.type === "ikev2" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя IKEv2." /> :
         server.type === "l2tp" ? <PasswordPeers key={server.id} server={server} config={config} patch={patch} empty="Добавьте пользователя L2TP." /> : null)}</div></>}
-    </Card></ClientCreators.Provider></ReferencedChannels.Provider>
+    </Card></ClientCreators.Provider></ReferencedChannels.Provider></PolicyPeers.Provider>
   </>;
 }
 
@@ -301,19 +303,21 @@ function channelName(channels: any[], peer: any) {
   return peer.channel === "block" ? "Блок" : peer.channel ? channels.find((item: any) => item.id === peer.channel)?.name || peer.channel : "как у сервера";
 }
 
-function serverTools(server: any, config: any, patch: any) {
+function useServerTools(server: any, config: any, patch: any) {
+  const referencedPeers = useContext(PolicyPeers).get(server.id);
   const update = (mutate: (item: any) => void) => patch((draft: any) => { mutate(draft.vpn_servers.find((item: any) => item.id === server.id)); syncWireGuardPeerChannels(draft); });
   return {
     cfg: server.config || {},
     channels: (config.channels || []).filter((item: any) => item.enabled),
-    referenced: (config.policies || []).some((item: any) => item.vpn_server === server.id),
+    referenced: referencedPeers !== undefined,
+    referencedPeers,
     update,
     setConfig: (key: string, value: unknown) => update((draft) => { draft.config = draft.config || {}; draft.config[key] = value; }),
   };
 }
 
 function L2TPServer({ server, config, installed, patch }: any) {
-  const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
+  const { cfg, channels, referenced, update, setConfig } = useServerTools(server, config, patch);
   const ipsecReady = !cfg.ipsec || (config.components || []).some((item: any) => item.id === "strongswan" && item.installed);
   return <ServerRow server={server} type={cfg.ipsec ? "L2TP/IPsec" : "L2TP"} endpoint={cfg.public_endpoint || (cfg.listen === "0.0.0.0" ? "" : cfg.listen)} installed={installed} referenced={referenced} update={update} patch={patch}>
     {!installed && <NeedComponent name="L2TP" effect="без него сервер не включить" />}
@@ -335,7 +339,7 @@ function L2TPServer({ server, config, installed, patch }: any) {
 }
 
 function IKEv2Server({ server, config, installed, patch }: any) {
-  const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
+  const { cfg, channels, referenced, update, setConfig } = useServerTools(server, config, patch);
   return <ServerRow server={server} type="IKEv2" endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
 		{!installed && <NeedComponent name="strongSwan" effect="без него сервер IKEv2 не включить" />}
 		<div className="form-grid">
@@ -353,7 +357,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 }
 
 function OcservServer({ server, config, installed, patch }: any) {
-  const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
+  const { cfg, channels, referenced, update, setConfig } = useServerTools(server, config, patch);
   return <ServerRow server={server} type="OpenConnect" endpoint={cfg.public_endpoint} installed={installed} referenced={referenced} update={update} patch={patch}>
     {!installed && <NeedComponent name="ocserv" effect="без него сервер OpenConnect не включить" />}
     <div className="form-grid">
@@ -376,7 +380,7 @@ function OcservServer({ server, config, installed, patch }: any) {
 // Пользователи с логином и паролем: OpenConnect, IKEv2 и L2TP устроены одинаково.
 function PasswordPeers({ server, config, patch, empty }: any) {
   const { statusIndex } = useClientStatuses(server.id);
-  const { channels, update } = serverTools(server, config, patch);
+  const { channels, referencedPeers, update } = useServerTools(server, config, patch);
   function addPeer() {
     const address = nextVPNPeerAddress(server);
     const id = newID("peer");
@@ -390,7 +394,7 @@ function PasswordPeers({ server, config, patch, empty }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>{empty}</Empty> : (server.peers || []).map((peer: any) =>
-      <OcservPeer status={statusIndex.get(peer.id)} key={peer.id} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} />)}
+      <OcservPeer status={statusIndex.get(peer.id)} key={peer.id} server={server} peer={peer} referenced={!!referencedPeers?.has(peer.id)} channels={channels} update={update} />)}
   </PeerGroup>;
 }
 
@@ -417,7 +421,7 @@ function OcservPeer({ status, server, peer, referenced, channels, update }: any)
 }
 
 function XrayServer({ server, config, installed, patch, setError }: any) {
-  const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
+  const { cfg, channels, referenced, update, setConfig } = useServerTools(server, config, patch);
   const protocol = cfg.protocol || "reality";
 
   async function generateKey() {
@@ -468,7 +472,7 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
 
 function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   const { statusIndex } = useClientStatuses(server.id);
-  const { cfg, channels, update } = serverTools(server, config, patch);
+  const { cfg, channels, referencedPeers, update } = useServerTools(server, config, patch);
   const protocol = cfg.protocol || "reality";
   const [wgClientKeys, setWGClientKeys] = useState<Record<string, string>>({});
 
@@ -496,7 +500,7 @@ function XrayPeers({ beforeRead, server, config, patch, setError }: any) {
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте клиента и скачайте готовую ссылку подключения.</Empty> : (server.peers || []).map((peer: any) =>
-      <XrayPeerEditor status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} referenced={isPeerReferenced(config, server.id, peer.id)} channels={channels} update={update} setError={setError} />)}
+      <XrayPeerEditor status={peer.credentials?.public_key ? statusIndex.getWithKey(peer.id, peer.credentials.public_key) : statusIndex.get(peer.id)} beforeRead={beforeRead} key={peer.id} server={server} peer={peer} protocol={protocol} wgPrivateKey={wgClientKeys[peer.id]} referenced={!!referencedPeers?.has(peer.id)} channels={channels} update={update} setError={setError} />)}
   </PeerGroup>;
 }
 
@@ -612,7 +616,7 @@ function ClientConnection({ status, session = false }: { status?: ClientStatus; 
 }
 
 function WireGuardServer({ server, config, installed, patch, setClientSecrets, setError }: any) {
-  const { cfg, channels, referenced, update, setConfig } = serverTools(server, config, patch);
+  const { cfg, channels, referenced, update, setConfig } = useServerTools(server, config, patch);
 
   async function generateServerKey() {
     setError("");
@@ -646,7 +650,7 @@ function WireGuardServer({ server, config, installed, patch, setClientSecrets, s
 }
 
 function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setClientSecrets, setError }: any) {
-  const { cfg, channels, update } = serverTools(server, config, patch);
+  const { cfg, channels, referencedPeers, update } = useServerTools(server, config, patch);
   const { statusIndex, statusFailed } = useClientStatuses(server.id);
   const exitReferenced = useContext(ReferencedChannels).has(`wg-exit-${server.id}`);
   const exitPeerID = (server.peers || []).find((p:any) => p.use_as_channel)?.id;
@@ -698,7 +702,7 @@ function WireGuardPeers({ beforeRead, server, config, patch, clientSecrets, setC
   useClientCreator(server.id, addPeer);
   return <PeerGroup server={server}>
     {(server.peers || []).length === 0 ? <Empty>Добавьте телефон, ноутбук или другой роутер — netOS сам подготовит всё необходимое.</Empty> : (server.peers || []).map((peer: any) =>
-      <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : statusIndex.getWithKey(peer.id, peer.credentials?.public_key)} server={server} peer={peer} referenced={isPeerReferenced(config, server.id, peer.id)} exitReferenced={exitReferenced} exitPeerID={exitPeerID} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
+      <PeerEditor beforeRead={beforeRead} key={peer.id} status={statusFailed ? { state: "unknown" } : statusIndex.getWithKey(peer.id, peer.credentials?.public_key)} server={server} peer={peer} referenced={!!referencedPeers?.has(peer.id)} exitReferenced={exitReferenced} exitPeerID={exitPeerID} channels={channels} update={update} secret={clientSecrets[peer.id]} setSecret={(value: ClientSecret) => setClientSecrets((old: Record<string, ClientSecret>) => ({ ...old, [peer.id]: value }))} removeSecret={() => setClientSecrets((old: Record<string, ClientSecret>) => { const next = { ...old }; delete next[peer.id]; return next; })} setError={setError} />)}
   </PeerGroup>;
 }
 
@@ -801,7 +805,15 @@ function PeerEditor({ beforeRead, status, server, peer, referenced, exitReferenc
   </Row>;
 }
 
-function isPeerReferenced(config: any, serverID: string, peerID: string) {
-  return (config.policies || []).some((policy: any) =>
-    policy.vpn_server === serverID && policy.vpn_peer === peerID);
+function indexPolicyPeers(policies: {vpn_server: string; vpn_peer: string}[]) {
+  const index = new Map<string, Set<string>>();
+  for (const policy of policies) {
+    let peers = index.get(policy.vpn_server);
+    if (!peers) {
+      peers = new Set();
+      index.set(policy.vpn_server, peers);
+    }
+    peers.add(policy.vpn_peer);
+  }
+  return index;
 }

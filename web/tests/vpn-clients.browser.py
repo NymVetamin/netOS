@@ -170,6 +170,20 @@ async def scenario(browser, mode):
         assert not any(c.get("wireguard_peer") for c in state["config"]["channels"])
         await expect(peer_row.get_by_text("Трафик через VPN (AllowedIPs)",exact=True)).to_be_visible()
         await expect(other).to_be_enabled()
+        server = state["config"]["vpn_servers"][0]
+        server["enabled"] = False
+        for client in server["peers"]:
+            client["enabled"] = False
+        remove_peer = peer_row.get_by_role("button", name="Удалить", exact=True)
+        remove_server = page.locator('[data-server-id="srv"]').get_by_role("button", name="Удалить", exact=True)
+        for owner, peer_id, server_locked, peer_locked in [
+            ("other", "phone", False, False), ("srv", "second", True, False),
+            ("srv", "phone", True, True), ("other", "phone", False, False),
+        ]:
+            state["config"]["policies"] = [{"enabled": False, "vpn_server": owner, "vpn_peer": peer_id}]
+            await page.reload()
+            await expect(remove_server).to_be_enabled(enabled=not server_locked)
+            await expect(remove_peer).to_be_enabled(enabled=not peer_locked)
         assert not errors,errors
         await page.close();print(mode,"PASS");return
     if mode == "isolation":
