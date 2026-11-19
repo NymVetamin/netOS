@@ -21,6 +21,53 @@ type rateCountingRunner struct {
 	failFilterChange                          bool
 }
 
+func TestIntegrationPartialClientApply(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("root and isolated namespace required")
+	}
+	self, e1 := os.Readlink("/proc/self/ns/net")
+	init, e2 := os.Readlink("/proc/1/ns/net")
+	if e1 != nil || e2 != nil || self == init {
+		t.Fatal("refusing host namespace")
+	}
+	ctx := context.Background()
+	r := system.NewExec()
+	names := []string{"qos-test0", "qos-test1"}
+	if _, err := r.Run(ctx, "ip", "link", "add", names[0], "type", "veth", "peer", "name", names[1]); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if _, err := r.Run(ctx, "ip", "link", "set", name, "up"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := partialClientConfig(names)
+	s := New(&partialApplyRunner{Runner: r, failDevice: names[1]}, t.TempDir())
+	if err := s.Apply(ctx, cfg); !errors.Is(err, errSecondQueue) {
+		t.Fatal(err)
+	}
+	old := config.Default()
+	if err := s.Apply(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		out, err := r.Run(ctx, "tc", "qdisc", "show", "dev", name)
+		if err != nil || lineHasTokens(out, "qdisc", "htb", "root") {
+			t.Fatalf("%s: %s %v", name, out, err)
+		}
+	}
+	s.Runner = r
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *rateCountingRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
 	if name == "tc" && len(args) > 1 {
 		if args[0] == "qdisc" && args[1] == "del" {

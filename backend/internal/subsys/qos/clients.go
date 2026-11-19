@@ -3,6 +3,7 @@ package qos
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,38 +42,44 @@ func (s *Subsystem) applyClients(ctx context.Context, cfg *config.Config) error 
 			}
 		}
 	}
-	for _, item := range desired {
-		if err := s.applyClientInterface(ctx, item); err != nil {
-			if !containsString(previous, item.Name) {
-				if cleanupErr := s.removeClientInterface(ctx, item.Name); cleanupErr != nil {
-					recovery := append(append([]string(nil), previous...), item.Name)
-					sort.Strings(recovery)
-					stateErr := s.writeClientInterfaces(recovery)
-					return fmt.Errorf("лимиты клиентов на %s: %w; уборка нового объекта: %v; сохранение ownership: %v", item.Name, err, cleanupErr, stateErr)
-				}
-			}
-			return fmt.Errorf("лимиты клиентов на %s: %w", item.Name, err)
-		}
-	}
 	names := make([]string, 0, len(desired))
 	for _, item := range desired {
 		names = append(names, item.Name)
+		if err := s.applyClientInterface(ctx, item); err != nil {
+			return s.undoNewClientInterfaces(ctx, previous, names, fmt.Errorf("лимиты клиентов на %s: %w", item.Name, err))
+		}
 	}
 	if err := s.writeClientInterfaces(names); err != nil {
-		var cleanupErrs []string
-		for _, item := range desired {
-			if !containsString(previous, item.Name) {
-				if cleanupErr := s.removeClientInterface(ctx, item.Name); cleanupErr != nil {
-					cleanupErrs = append(cleanupErrs, cleanupErr.Error())
-				}
-			}
-		}
-		if len(cleanupErrs) > 0 {
-			return fmt.Errorf("%w; уборка после отказа записи ownership: %s", err, strings.Join(cleanupErrs, "; "))
-		}
-		return err
+		return s.undoNewClientInterfaces(ctx, previous, names, err)
 	}
 	return nil
+}
+
+func (s *Subsystem) undoNewClientInterfaces(ctx context.Context, previous, attempted []string, cause error) error {
+	owned := make(map[string]bool, len(previous))
+	for _, name := range previous {
+		owned[name] = true
+	}
+	var residual []string
+	var failures []error
+	for _, name := range attempted {
+		if owned[name] {
+			continue
+		}
+		if err := s.removeClientInterface(ctx, name); err != nil {
+			residual = append(residual, name)
+			failures = append(failures, fmt.Errorf("уборка лимитов на %s: %w", name, err))
+		}
+	}
+	if len(residual) > 0 {
+		recovery := append(residual, previous...)
+		sort.Strings(recovery)
+		if err := s.writeClientInterfaces(recovery); err != nil {
+			failures = append(failures, fmt.Errorf("сохранение списка интерфейсов QoS: %w", err))
+		}
+		return errors.Join(cause, errors.Join(failures...))
+	}
+	return cause
 }
 
 func desiredClientInterfaces(cfg *config.Config) ([]clientInterface, error) {
@@ -264,15 +271,6 @@ func (s *Subsystem) deleteClientQdisc(ctx context.Context, name, kind string) er
 		return err
 	}
 	return nil
-}
-
-func containsString(items []string, wanted string) bool {
-	for _, item := range items {
-		if item == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func equalStrings(left, right []string) bool {
