@@ -8,6 +8,21 @@ const exports = {};
 const source = readFileSync(new URL("../src/routingTables.ts", import.meta.url), "utf8");
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports });
 const { observedTables, tableDetails } = exports;
+test("new tables have independent free names and numbers after edits and deletion", () => {
+  const tables = [];
+  for (let i = 0; i < 252; i++) tables.push(exports.nextRouteTable(tables));
+  assert.equal(tables[0].number, 101);
+  assert.equal(new Set(tables.map(t => t.number)).size, 252);
+  assert.ok(tables.every(t => t.number >= 1 && t.number <= 252));
+  assert.equal(exports.nextRouteTable(tables), null);
+  tables.splice(0, 1);
+  const replacement = exports.nextRouteTable(tables);
+  assert.equal(replacement.number, 101);
+  assert.ok(!tables.some(t => t.name === replacement.name));
+  const edited = [{name: "netos-t2", number: 102}];
+  assert.equal(exports.nextRouteTable(edited).name, "netos-t3");
+  assert.equal(exports.nextRouteTable(edited).number, 101);
+});
 test("observes channel routes, empty rule tables and canonical system names", () => {
   const names = observedTables([{ table: "main" }, { table: "netos-ch1" }, { table: "netos-ch1" }], "0: from all lookup 255\n10001: fwmark 0x1001 lookup netos-ch1\n20000: from all lookup 3001\n32766: from all lookup 254");
   assert.equal(names.join(","), "3001,local,main,netos-ch1");

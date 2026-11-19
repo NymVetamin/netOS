@@ -1,8 +1,8 @@
 import { interfaceDisplay, interfaceLabel } from "../interfaceDisplay";
 import { channelNATInterface } from "../channelNAT";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, RouteEntry } from "../api";
-import { canonicalTable, observedTables, tableDetails } from "../routingTables";
+import { canonicalTable, nextRouteTable, observedTables, tableDetails } from "../routingTables";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
@@ -75,6 +75,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   }, []);
 
   const routing = config.routing || { static: [], tables: [], rules: [] };
+  const tablesFull = useMemo(() => routing.tables?.length >= 252 && !nextRouteTable(routing.tables), [routing.tables]);
   const tableNames = ["main", ...(routing.tables || []).map((t: any) => t.name)];
 
   const observed = observedTables(live?.parsed || [], live?.rules || "");
@@ -238,15 +239,17 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
         actions={
           <button
             className="btn sm"
+            disabled={tablesFull}
+            title={tablesFull ? "Заняты все номера таблиц от 1 до 252" : undefined}
             onClick={() =>
               patch((d) => {
                 d.routing = d.routing || { static: [], tables: [], rules: [] };
                 d.routing.tables = d.routing.tables || [];
-                const n = d.routing.tables.length + 1;
+                const table = nextRouteTable(d.routing.tables);
+                if (!table) return;
                 d.routing.tables.push({
                   id: openOnCreate(newID("table")),
-                  name: "netos-t" + n,
-                  number: 100 + n,
+                  ...table,
                   system: false,
                 });
               })

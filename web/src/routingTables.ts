@@ -1,5 +1,21 @@
 import type { RouteEntry } from "./api";
 
+export function nextRouteTable(tables: {name: string; number: number}[]) {
+  const names = new Set<string>();
+  const numbers = new Set<number>();
+  for (const table of tables) {
+    names.add(table.name);
+    numbers.add(table.number);
+  }
+  let suffix = tables.length + 1;
+  while (names.has(`netos-t${suffix}`)) suffix++;
+  for (let offset = 0; offset < 252; offset++) {
+    const number = 1 + (100 + offset) % 252;
+    if (!numbers.has(number)) return {name: `netos-t${suffix}`, number};
+  }
+  return null;
+}
+
 export function observedTables(routes: RouteEntry[], rules: string): string[] {
   const tables = new Set(routes.map(r => canonicalTable(r.table || "main")));
   for (const match of rules.matchAll(/\b(?:lookup|table)\s+(\S+)/g)) tables.add(canonicalTable(match[1]));
