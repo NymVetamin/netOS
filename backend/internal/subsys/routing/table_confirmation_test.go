@@ -49,7 +49,7 @@ func TestTableReferencedInConfigKeepsConfirmation(t *testing.T) {
 	for _, name := range []string{"old-name", "209"} {
 		old.Routing.Rules = []config.RouteRule{{Enabled: true, Priority: 20100, Table: name}}
 		next.Routing.Rules = old.Routing.Rules
-		actions, err := New(&recordingRunner{}).Plan(old, next)
+		actions, err := New(&recordingRunner{responses: map[string]runnerResponse{"ip -4 rule show": {out: "20100: from all lookup " + name}}}).Plan(old, next)
 		if err != nil || len(actions) != 1 || actions[0].Confirmation == apply.ConfirmationSafe {
 			t.Fatalf("referenced table safe: %v %v", actions, err)
 		}

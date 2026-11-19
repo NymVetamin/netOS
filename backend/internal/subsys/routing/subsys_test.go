@@ -40,7 +40,7 @@ func (r *recordingRunner) RunInput(ctx context.Context, _ string, name string, a
 }
 
 func TestMetadataAndPlan(t *testing.T) {
-	s := New(&recordingRunner{})
+	s := New(&recordingRunner{responses: map[string]runnerResponse{"ip -4 rule show": {out: "20100: from all lookup qa"}}})
 	if s.Name() != "routing" {
 		t.Fatalf("Name() = %q", s.Name())
 	}
@@ -502,5 +502,53 @@ func TestDisabledOwnerOnlySuspendsItsUnicastRoutes(t *testing.T) {
 	}
 	if len(r.commands) != 0 {
 		t.Fatalf("inactive tunnels issued commands: %+v", r.commands)
+	}
+}
+
+func BenchmarkRoutingRuleChecks(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		cfg := config.Default()
+		var out strings.Builder
+		for i := 0; i < n; i++ {
+			p := 20000 + i
+			cfg.Routing.Rules = append(cfg.Routing.Rules, config.RouteRule{Enabled: true, Priority: p, Table: "main"})
+			fmt.Fprintf(&out, "%d: from all lookup main\n", p)
+		}
+		for _, op := range []string{"Plan", "Health"} {
+			b.Run(fmt.Sprintf("%s/%d", op, n), func(b *testing.B) {
+				r := &recordingRunner{responses: map[string]runnerResponse{"ip -4 rule show": {out: out.String()}}}
+				s := New(r)
+				b.ReportAllocs()
+				for b.Loop() {
+					r.commands = r.commands[:0]
+					if op == "Plan" {
+						if actions, err := s.Plan(cfg, cfg); err != nil || len(actions) != 0 {
+							b.Fatal(actions, err)
+						}
+					} else if err := s.Health(context.Background(), cfg); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRuleSnapshotReadOncePerPlan(t *testing.T) {
+	cfg := config.Default()
+	cfg.Routing.Rules = []config.RouteRule{{Enabled: true, Priority: 20100, Table: "main"}}
+	next := *cfg
+	next.Routing.Tables = []config.RouteTable{{Name: "spare", Number: 215}}
+	r := &recordingRunner{responses: map[string]runnerResponse{"ip -4 rule show": {out: "20100: from all lookup main"}}}
+	s := New(r)
+	if actions, err := s.Plan(cfg, &next); err != nil || len(actions) != 1 {
+		t.Fatal(actions, err)
+	}
+	if n := strings.Count(commandStrings(r.commands), "ip -4 rule show"); n != 1 {
+		t.Fatalf("IPv4 rule reads: %d", n)
+	}
+	r.responses["ip -4 rule show"] = runnerResponse{err: errors.New("unavailable")}
+	if _, err := s.Plan(cfg, &next); err == nil {
+		t.Fatal("rule snapshot error ignored")
 	}
 }

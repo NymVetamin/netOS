@@ -3,16 +3,17 @@ package routing
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/netos-router/netos/internal/config"
 )
 
-func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Config, routes []config.StaticRoute) bool {
-	if !reflect.DeepEqual(enabledRules(old), enabledRules(next)) {
-		return false
-	}
+type ruleSnapshot struct {
+	output    string
+	unchanged bool
+}
+
+func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Config, routes []config.StaticRoute, rules []config.RouteRule, readRules func() (ruleSnapshot, error)) bool {
 	before, after := map[config.RouteTable]bool{}, map[config.RouteTable]bool{}
 	for _, table := range old.Routing.Tables {
 		before[table] = true
@@ -38,7 +39,7 @@ func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Conf
 			return false
 		}
 	}
-	for _, rule := range enabledRules(old) {
+	for _, rule := range rules {
 		if changed[rule.Table] {
 			return false
 		}
@@ -48,13 +49,20 @@ func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Conf
 		if err != nil || referencesChangedTable(liveRoutes, changed) {
 			return false
 		}
-		rules, err := s.Runner.Run(ctx, "ip", family, "rule", "show")
+		var rules string
+		if family == "-4" {
+			snapshot, err := readRules()
+			if err != nil || !snapshot.unchanged {
+				return false
+			}
+			rules = snapshot.output
+		} else {
+			rules, err = s.Runner.Run(ctx, "ip", family, "rule", "show")
+		}
 		if err != nil || referencesChangedTable(rules, changed) {
 			return false
 		}
-		if family == "-4" && !rulesAlreadyApplied(rules, old) {
-			return false
-		}
+
 		// Prove that applying the unchanged static configuration will not also
 		// migrate, replace, add or remove an unrelated owned route.
 		static, err := s.Runner.Run(ctx, "ip", family, "route", "show", "table", "all", "proto", "static")

@@ -71,6 +71,25 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 	if err := s.Health(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	// Keep priority and table identical while changing the source selector.
+	mustRoutingNS(t, "ip", "-4", "rule", "del", "priority", "20123")
+	mustRoutingNS(t, "ip", "-4", "rule", "add", "from", "198.51.100.0/24", "priority", "20123", "lookup", "200")
+	driftPlan, err := s.Plan(cfg, cfg)
+	if err != nil || len(driftPlan) != 1 || !driftPlan[0].Disruptive {
+		t.Fatalf("drift plan: %v %v", driftPlan, err)
+	}
+	if err := s.Health(context.Background(), cfg); err == nil {
+		t.Fatal("wrong selector reported healthy")
+	}
+	if err := s.applyRules(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if actions, err := s.Plan(cfg, cfg); err != nil || len(actions) != 0 {
+		t.Fatalf("after repair: %v %v", actions, err)
+	}
+	if err := s.Health(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	counted := &routingCountingRunner{}
 	t.Log("IPv4 before repeat:", mustRoutingNS(t, "ip", "-4", "route", "show", "table", "all", "proto", "static"))
 	t.Log("IPv6 before repeat:", mustRoutingNS(t, "ip", "-6", "route", "show", "table", "all", "proto", "static"))
@@ -164,6 +183,34 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 		t.Fatalf("foreign rule table use ignored: %v %v", actions, err)
 	}
 	mustRoutingNS(t, "ip", "-4", "rule", "del", "priority", "12345")
+
+	forms := config.Default()
+	forms.Routing.Rules = []config.RouteRule{
+		{Enabled: true, Priority: 20101, Table: "main", FwMark: "0"},
+		{Enabled: true, Priority: 20102, Table: "main", FwMark: "0/0xffffffff"},
+		{Enabled: true, Priority: 20103, Table: "main", FwMark: "010", Interface: "missing0"},
+		{Enabled: true, Priority: 20104, Table: "main", FwMark: "0/0"},
+	}
+	if err := s.applyRules(context.Background(), forms); err != nil {
+		t.Fatal(err)
+	}
+	if actions, err := s.Plan(forms, forms); err != nil || len(actions) != 0 {
+		t.Fatalf("kernel rule forms: %v %v", actions, err)
+	}
+	forms.Routing.Rules = append(forms.Routing.Rules, config.RouteRule{Enabled: true, Priority: 20104, Table: "main", From: "192.0.2.1/32"})
+	if err := s.applyRules(context.Background(), forms); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), forms); err != nil {
+		t.Fatal(err)
+	}
+	if actions, err := s.Plan(forms, forms); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Fatalf("repeated priority plan: %v %v", actions, err)
+	}
+	mustRoutingNS(t, "ip", "-4", "rule", "del", "from", "192.0.2.1/32", "priority", "20104")
+	if err := s.Health(context.Background(), forms); err == nil {
+		t.Fatal("missing rule with shared priority reported healthy")
+	}
 
 	clean := config.Default()
 	if err := s.applyRoutes(context.Background(), clean); err != nil {

@@ -1,9 +1,7 @@
 package routing
 
 import (
-	"fmt"
 	"net/netip"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -13,11 +11,19 @@ import (
 // Unknown selectors and duplicate priorities deliberately fall back to the
 // existing reconciliation. Only a completely matching owned ruleset is skipped.
 func rulesAlreadyApplied(out string, cfg *config.Config) bool {
+	matches, unique := compareRules(out, cfg, enabledRules(cfg))
+	return matches && unique
+}
+
+// Health verifies every configured rule, including valid repeated priorities.
+// Apply still rebuilds repeated priorities to preserve its ordering policy.
+func compareRules(out string, cfg *config.Config, rules []config.RouteRule) (matches, unique bool) {
 	tables := map[string]string{"local": "255", "main": "254", "default": "253"}
 	for _, table := range cfg.Routing.Tables {
 		tables[table.Name] = strconv.Itoa(table.Number)
 	}
-	key := func(from, to, mark, iface, table string) string {
+	type selectors struct{ from, to, mark, iface, table string }
+	key := func(from, to, mark, iface, table string) selectors {
 		prefix := func(value string) string {
 			if value == "" || value == "all" || value == "0.0.0.0/0" {
 				return "all"
@@ -36,62 +42,86 @@ func rulesAlreadyApplied(out string, cfg *config.Config) bool {
 				parts = append(parts, "0xffffffff")
 			}
 			for i, value := range parts {
-				base := 10
-				if strings.HasPrefix(value, "0x") {
-					base = 16
-					value = value[2:]
-				}
-				if n, err := strconv.ParseUint(value, base, 32); err == nil {
+				if n, err := strconv.ParseUint(value, 0, 32); err == nil {
 					parts[i] = strconv.FormatUint(n, 10)
 				}
 			}
 			mark = strings.Join(parts, "/")
+			if mark == "0/0" {
+				mark = ""
+			}
 		}
 		if number, ok := tables[table]; ok {
 			table = number
 		}
-		return fmt.Sprintf("%s|%s|%s|%s|%s", prefix(from), prefix(to), mark, iface, table)
+		return selectors{prefix(from), prefix(to), mark, iface, table}
 	}
-	want, live := map[int]string{}, map[int]string{}
-	for _, rule := range enabledRules(cfg) {
+	type identity struct {
+		priority  int
+		selectors selectors
+	}
+	remaining := make(map[identity]int, len(rules))
+	priorities := make(map[int]bool, len(rules))
+	unique = true
+	for _, rule := range rules {
 		p := rule.Priority
 		if p < rulePriorityBase || p > rulePriorityMax {
 			p = rulePriorityBase + 100
 		}
-		if _, exists := want[p]; exists {
-			return false
+		if priorities[p] {
+			unique = false
 		}
-		want[p] = key(rule.From, rule.To, rule.FwMark, rule.Interface, rule.Table)
+		priorities[p] = true
+		mark := rule.FwMark
+		// For a bare zero iproute2 leaves the kernel mask unset. Its display
+		// of an explicit 0/0xffffffff, however, is the bare word "0".
+		if mark != "" && !strings.Contains(mark, "/") {
+			if n, err := strconv.ParseUint(mark, 0, 32); err == nil && n == 0 {
+				mark = ""
+			}
+		}
+		remaining[identity{p, key(rule.From, rule.To, mark, rule.Interface, rule.Table)}]++
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		p := leadingPriority(line)
 		if p < rulePriorityBase || p > rulePriorityMax {
 			continue
 		}
-		if _, exists := live[p]; exists {
-			return false
-		}
 		fields := strings.Fields(line)
 		values := map[string]string{}
-		if len(fields)%2 != 1 {
-			return false
-		}
-		for i := 1; i+1 < len(fields); i += 2 {
+		for i := 1; i < len(fields); i += 2 {
+			if i+1 >= len(fields) {
+				return false, unique
+			}
 			name := fields[i]
+			if name == "table" {
+				name = "lookup"
+			}
 			switch name {
 			case "from", "to", "fwmark", "iif", "lookup":
 			default:
-				return false
+				return false, unique
 			}
 			if _, exists := values[name]; exists {
-				return false
+				return false, unique
 			}
 			values[name] = fields[i+1]
+			if name == "iif" && i+2 < len(fields) && fields[i+2] == "[detached]" {
+				i++
+			}
 		}
 		if values["from"] == "" || values["lookup"] == "" {
-			return false
+			return false, unique
 		}
-		live[p] = key(values["from"], values["to"], values["fwmark"], values["iif"], values["lookup"])
+		id := identity{p, key(values["from"], values["to"], values["fwmark"], values["iif"], values["lookup"])}
+		switch remaining[id] {
+		case 0:
+			return false, unique
+		case 1:
+			delete(remaining, id)
+		default:
+			remaining[id]--
+		}
 	}
-	return reflect.DeepEqual(want, live)
+	return len(remaining) == 0, unique
 }

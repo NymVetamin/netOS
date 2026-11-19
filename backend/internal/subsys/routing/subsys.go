@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
@@ -67,9 +68,19 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 
 	oldRoutes, newRoutes := enabledRoutes(old), enabledRoutes(new)
 	routesEqual := reflect.DeepEqual(oldRoutes, newRoutes)
+	oldRules, newRules := enabledRules(old), enabledRules(new)
+	rulesChanged := !reflect.DeepEqual(oldRules, newRules)
+	readRules := sync.OnceValues(func() (ruleSnapshot, error) {
+		out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
+		if err != nil {
+			return ruleSnapshot{}, err
+		}
+		match, unique := compareRules(out, new, newRules)
+		return ruleSnapshot{output: out, unchanged: match && unique}, nil
+	})
 	if !reflect.DeepEqual(old.Routing.Tables, new.Routing.Tables) {
 		action := apply.Action{Kind: "update", Target: "таблицы маршрутизации"}
-		if routesEqual && s.unusedTablesOnly(ctx, old, new, oldRoutes) {
+		if routesEqual && !rulesChanged && s.unusedTablesOnly(ctx, old, new, oldRoutes, oldRules, readRules) {
 			action.Confirmation = apply.ConfirmationSafe
 		}
 		actions = append(actions, action)
@@ -77,12 +88,20 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	if !routesEqual {
 		actions = append(actions, apply.Action{Kind: "update", Target: "статические маршруты"})
 	}
-	if !reflect.DeepEqual(enabledRules(old), enabledRules(new)) {
+	drift := false
+	if !rulesChanged && len(newRules) > 0 {
+		live, err := readRules()
+		if err != nil {
+			return nil, err
+		}
+		drift = !live.unchanged
+	}
+	if rulesChanged || drift {
 		actions = append(actions, apply.Action{
 			Kind: "update", Target: "правила маршрутизации", Disruptive: true,
 		})
 	}
-	if len(actions) > 0 && routingNamesOnly(old, new, oldRoutes, newRoutes) && s.unusedTablesOnly(ctx, old, old, oldRoutes) {
+	if !drift && len(actions) > 0 && routingNamesOnly(old, new, oldRoutes, newRoutes) && s.unusedTablesOnly(ctx, old, old, oldRoutes, oldRules, readRules) {
 		// Identical table registries leave only the helper's exact live-state
 		// checks: a name edit must not silently exempt concurrent route repair.
 		for i := range actions {
@@ -365,34 +384,18 @@ func (s *Subsystem) applyRules(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
-	if len(enabledRules(cfg)) == 0 {
+	rules := enabledRules(cfg)
+	if len(rules) == 0 {
 		return nil
 	}
 	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return err
 	}
-	for _, r := range enabledRules(cfg) {
-		if !hasRule(out, r.Priority, r.Table) {
-			return fmt.Errorf("правило для таблицы %s не применилось", r.Table)
-		}
+	if matches, _ := compareRules(out, cfg, rules); !matches {
+		return fmt.Errorf("правила маршрутизации в ядре расходятся с конфигурацией")
 	}
 	return nil
-}
-
-func hasRule(out string, priority int, table string) bool {
-	for _, line := range strings.Split(out, "\n") {
-		if leadingPriority(line) != priority {
-			continue
-		}
-		fields := strings.Fields(line)
-		for i := 0; i+1 < len(fields); i++ {
-			if (fields[i] == "lookup" || fields[i] == "table") && fields[i+1] == table {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // ---------------------------------------------------------------------------
