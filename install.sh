@@ -413,10 +413,10 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
         export GOMODCACHE="$SRC/gopath/pkg/mod"
         export GOCACHE="$SRC/go-cache"
         export npm_config_cache="$SRC/npm-cache"
-        cd "$SRC/netos/web"
-        npm ci
-        npm run build
-        cd ../backend
+        cd "$SRC/netos/web" || exit 1
+        npm ci || exit 1
+        npm run build || exit 1
+        cd ../backend || exit 1
         # Пакеты собираются по одному: параллельная сборка встроенного
         # SQLite съедает память кратно числу ядер и на роутере валит
         # машину раньше, чем успевает закончиться.
