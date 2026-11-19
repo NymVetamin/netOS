@@ -76,10 +76,8 @@ var Order = []string{
 	"system",
 	"sysctl",
 	"bridge-ipv6",
-	// netconf идёт перед подсистемами, назначающими адреса, и это существенно.
-	// В режиме прямого управления он отбирает интерфейсы у systemd-networkd,
-	// а тот при этом снимает выданные им адреса. Разрыв закрывается тем, что
-	// interfaces, networks и wan назначают адреса netOS сразу следом.
+	// При прямом управлении netconf переводит линки в пассивный режим
+	// systemd-networkd до настройки интерфейсов и адресов средствами netOS.
 	"netconf",
 	"interfaces",
 	// IPv6 applies after interfaces are created. Перечитывая свои файлы,
