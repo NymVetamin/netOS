@@ -245,7 +245,7 @@ var artifacts = []Artifact{
 	{
 		ID: "iptables", Title: "Правила iptables", Active: always,
 		Render: func(cfg *config.Config) (string, error) {
-			rs, err := firewall.Build(cfg)
+			rs, err := firewall.Build(cfg.RuntimeNetworkConfig())
 			if err != nil {
 				return "", err
 			}

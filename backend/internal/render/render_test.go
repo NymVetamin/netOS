@@ -1,11 +1,68 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/firewall"
 )
+
+func TestIPTablesPreviewTracksInterfaceState(t *testing.T) {
+	for _, useVLAN := range []bool{false, true} {
+		cfg := config.Default()
+		port := config.Interface{ID: "port", Name: "eth7", Type: "physical", Enabled: true}
+		cfg.Interfaces = []config.Interface{port}
+		uplink := port
+		if useVLAN {
+			uplink = config.Interface{ID: "tag", Name: "eth7.12", Type: "vlan", VLANID: 12, Parent: port.ID, Enabled: true}
+			cfg.Interfaces = append(cfg.Interfaces, uplink)
+		}
+		cfg.WANs = []config.WAN{{ID: "wan", Index: 1, Name: "uplink", Interface: uplink.ID, Proto: "dhcp", Enabled: true, Metric: 100, Weight: 1}}
+		cfg.Normalize()
+		for _, enabled := range []bool{true, false, true} {
+			cfg.Interfaces[0].Enabled = enabled
+			if v := cfg.Validate(); v.HasErrors() {
+				t.Fatalf("invalid fixture: %v", v)
+			}
+			rules, err := firewall.Build(cfg.RuntimeNetworkConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := Render("iptables", cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got, uplink.Name) != enabled || got != rules.IPv4+"\n# --- ip6tables ---\n"+rules.IPv6 {
+				t.Fatalf("preview differs from effective rules (VLAN=%v, parent enabled=%v)", useVLAN, enabled)
+			}
+			if !cfg.WANs[0].Enabled || useVLAN && !cfg.Interfaces[1].Enabled {
+				t.Fatal("preview modified the desired configuration")
+			}
+		}
+	}
+}
+
+func BenchmarkIPTablesPreview(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := config.Default()
+			for i := 0; i < n; i++ {
+				name := fmt.Sprintf("eth%d", i)
+				cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: name, Name: name, Type: "physical", Enabled: true})
+			}
+			cfg.WANs = []config.WAN{{ID: "wan", Interface: "eth0", Proto: "dhcp", Enabled: true}}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := Render("iptables", cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 func ids(artifacts []Artifact) []string {
 	out := make([]string, 0, len(artifacts))
