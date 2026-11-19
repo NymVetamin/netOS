@@ -2,10 +2,69 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/netos-router/netos/internal/config"
 )
+
+func TestRealtimeIdentityNamePrecedence(t *testing.T) {
+	const mac = "aa:bb:cc:dd:ee:ff"
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "lan", Name: "lan0", Enabled: true}}
+	cfg.Networks = []config.Network{{Interface: "lan", Enabled: true}}
+	cfg.Clients = []config.Client{{MAC: mac}, {MAC: strings.ToUpper(mac), Name: "first"}, {MAC: mac, Name: "second"}}
+	r := &clientsRunner{neighbors: `[{"dst":"192.0.2.2","lladdr":"aa:bb:cc:dd:ee:ff","dev":"lan0"},{"dst":"192.0.2.3","lladdr":"aa:bb:cc:dd:ee:03","dev":"lan0"},{"dst":"192.0.2.4","lladdr":"aa:bb:cc:dd:ee:04","dev":"wan0"}]`}
+	path := filepath.Join(t.TempDir(), "leases")
+	lease := fmt.Sprintf("%d %s 192.0.2.1 hostname *\n", time.Now().Add(time.Hour).Unix(), mac)
+	if err := os.WriteFile(path, []byte(lease), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := ClientHistory{Runner: r, Collector: NewCollector(r, path)}
+	for _, name := range []string{"first", "renamed", "hostname"} {
+		if name == "hostname" {
+			cfg.Clients = nil
+		} else {
+			cfg.Clients[1].Name = name
+		}
+		got := h.RealtimeIdentities(context.Background(), cfg)
+		if len(got) != 3 || got["192.0.2.1"].Name != name || got["192.0.2.2"].Name != name || got["192.0.2.2"].ID != "mac:"+mac || got["192.0.2.3"].Name != "192.0.2.3" {
+			t.Fatalf("name %q: %+v", name, got)
+		}
+	}
+}
+
+func BenchmarkRealtimeIdentityNames(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := config.Default()
+			var leases strings.Builder
+			expires := time.Now().Add(time.Hour).Unix()
+			for i := 0; i < n; i++ {
+				mac := fmt.Sprintf("02:00:00:00:%02x:%02x", i/256, i%256)
+				addr := fmt.Sprintf("10.0.%d.%d", i/250, i%250+1)
+				cfg.Clients = append(cfg.Clients, config.Client{MAC: mac, Name: addr})
+				fmt.Fprintf(&leases, "%d %s %s host *\n", expires, mac, addr)
+			}
+			path := filepath.Join(b.TempDir(), "leases")
+			if err := os.WriteFile(path, []byte(leases.String()), 0600); err != nil {
+				b.Fatal(err)
+			}
+			r := &clientsRunner{neighbors: "[]"}
+			h := ClientHistory{Runner: r, Collector: NewCollector(r, path)}
+			b.ReportAllocs()
+			for b.Loop() {
+				if got := h.RealtimeIdentities(context.Background(), cfg); len(got) != n {
+					b.Fatal(len(got))
+				}
+			}
+		})
+	}
+}
 
 func TestClientHistoryOwnershipAndDNS(t *testing.T) {
 	h, err := NewClientHistory(filepath.Join(t.TempDir(), "history.db"), nil, nil, nil)

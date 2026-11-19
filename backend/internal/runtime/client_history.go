@@ -163,24 +163,35 @@ func (h *ClientHistory) identity(ctx context.Context, cfg *config.Config) map[st
 		local[n] = true
 	}
 	names := map[string]string{}
+	var configuredNames map[string]string
 	add := func(addr, mac, name string) {
 		mac = strings.ToLower(mac)
 		if addr == "" || mac == "" {
 			return
 		}
-		for _, known := range cfg.Clients {
-			if strings.EqualFold(known.MAC, mac) && known.Name != "" {
-				name = known.Name
-				break
+		if configuredNames == nil && len(cfg.Clients) > 0 {
+			configuredNames = make(map[string]string, len(cfg.Clients))
+			for _, known := range cfg.Clients {
+				if known.Name == "" {
+					continue
+				}
+				key := strings.ToLower(known.MAC)
+				if configuredNames[key] == "" {
+					configuredNames[key] = known.Name
+				}
 			}
 		}
-		if name == "" {
-			name = names[mac]
+		if configured := configuredNames[mac]; configured != "" {
+			name = configured
+		} else {
+			if name == "" {
+				name = names[mac]
+			}
+			if name == "" {
+				name = addr
+			}
+			names[mac] = name
 		}
-		if name == "" {
-			name = addr
-		}
-		names[mac] = name
 		out[addr] = ClientCounter{ID: "mac:" + mac, Name: name, Address: addr}
 	}
 	leases, _ := h.Collector.Leases()
