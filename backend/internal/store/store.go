@@ -549,6 +549,7 @@ func (s *Store) CreateSession(token, username, sourceIP string, ttl time.Duratio
 	if _, err := tx.Exec(`DELETE FROM sessions WHERE expires_at < ?`, now.Unix()); err != nil {
 		return nil, err
 	}
+	expiredCount := len(evicted)
 	if _, err := tx.Exec(
 		`INSERT INTO sessions (token, username, created_at, expires_at, source_ip) VALUES (?, ?, ?, ?, ?)`,
 		token, username, now.Unix(), now.Add(ttl).Unix(), sourceIP); err != nil {
@@ -573,7 +574,12 @@ func (s *Store) CreateSession(token, username, sourceIP string, ttl time.Duratio
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	for _, staleToken := range evicted {
+	for i, staleToken := range evicted {
+		// Expired rows were deleted in bulk. Only a reused token could
+		// have been reinserted with the same key in this transaction.
+		if i < expiredCount && staleToken != token {
+			continue
+		}
 		if _, err := tx.Exec(`DELETE FROM sessions WHERE token = ?`, staleToken); err != nil {
 			return nil, err
 		}

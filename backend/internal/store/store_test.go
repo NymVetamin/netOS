@@ -1,13 +1,59 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestSessionExpiryAndUserLimitInOneTransaction(t *testing.T) {
+	st := openTestStore(t)
+	for i := 0; i < 20; i++ {
+		if _, err := st.CreateSession(fmt.Sprintf("active-%02d", i), "admin", "", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.CreateSession("other-live", "viewer", "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateSession("expired", "viewer", "", -time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.CreateSession("other-live", "admin", "", time.Hour); err == nil || got != nil {
+		t.Fatalf("duplicate live token: evicted=%v, err=%v", got, err)
+	}
+	got, err := st.CreateSession("new", "admin", "", time.Hour)
+	if err != nil || !slices.Equal(got, []string{"expired", "active-00"}) {
+		t.Fatalf("evicted after retry: %v, err=%v", got, err)
+	}
+	if _, err := st.SessionUser("active-00"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("oldest session still present: %v", err)
+	}
+	for token, user := range map[string]string{"other-live": "viewer", "new": "admin", "active-01": "admin"} {
+		if got, err := st.SessionUser(token); err != nil || got != user {
+			t.Fatalf("user for %s: %s, err=%v", token, got, err)
+		}
+	}
+}
+
+func TestReusedExpiredSessionTokenStaysRevoked(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := st.CreateSession("reused", "first", "", -time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	evicted, err := st.CreateSession("reused", "second", "", time.Hour)
+	if err != nil || !slices.Equal(evicted, []string{"reused"}) {
+		t.Fatalf("evicted=%v, err=%v", evicted, err)
+	}
+	if _, err := st.SessionUser("reused"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired token regained access: %v", err)
+	}
+}
 
 func TestDatabaseIsPrivate(t *testing.T) {
 	if runtime.GOOS == "windows" {
