@@ -5,11 +5,18 @@ import { Notice, Field } from "./ui";
 
 type Release = { tag_name: string; name: string; body: string; published_at: string };
 export function compareVersions(a: string, b: string): number | null {
-  const parse = (s: string) => /^v?\d+(\.\d+){1,3}$/.test(s) ? s.replace(/^v/, "").split(".").map(Number) : null;
+  const parse = (s: string) => /^v?\d+(\.\d+){1,3}$/.test(s) ? s.replace(/^v/, "").split(".") : null;
   const x = parse(a), y = parse(b);
   if (!x || !y) return null;
+  // Compare decimal uint64 components exactly, in the same order as releaseversion.Compare.
+  const max = "18446744073709551615";
+  const component = (digits = "") => digits.replace(/^0+/, "");
+  const overflow = (digits: string) => digits.length > max.length || (digits.length === max.length && digits > max);
   for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0) ? 1 : -1;
+    const left = component(x[i]), right = component(y[i]);
+    if (overflow(left) || overflow(right)) return null;
+    if (left.length !== right.length) return left.length > right.length ? 1 : -1;
+    if (left !== right) return left > right ? 1 : -1;
   }
   return 0;
 }

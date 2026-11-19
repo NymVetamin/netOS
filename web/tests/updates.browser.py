@@ -48,7 +48,7 @@ async def scenario(browser, mode):
             body = {"interfaces": [], "channels": [], "uptime_seconds": 1, "version": state["current"]}
         elif path == "/api/maintenance/releases":
             if state["error"]: status, body = 502, {"error": "GitHub временно недоступен"}
-            else: body = {"releases": [{"tag_name": "v0.10", "name": "Релиз 0.10", "body": "## Исправления\n- Исправлена сеть\n" + "Подробное описание изменений.\n" * 100, "published_at": "2026-10-14T00:00:00Z"}]}
+            else: body = {"releases": [{"tag_name": state.get("latest", "v0.10"), "name": "Релиз 0.10", "body": "## Исправления\n- Исправлена сеть\n" + "Подробное описание изменений.\n" * 100, "published_at": "2026-10-14T00:00:00Z"}]}
         elif path == "/api/maintenance/update":
             state["posts"].append(req.post_data_json)
             if state["start_error"]:
@@ -72,6 +72,25 @@ async def scenario(browser, mode):
     await expect(check).to_be_visible()
     await expect(update).to_have_count(0)
     await expect(page.get_by_role("button", name="Откат", exact=True)).to_have_count(0)
+    newer, older = "v1.9007199254740993", "v1.9007199254740992"
+    for current, latest, message in (
+        (older, newer, f"Доступна версия {newer}"),
+        (newer, older, "Новых обновлений нет."),
+        ("1.00018446744073709551615", "v1.18446744073709551615.0", "Новых обновлений нет."),
+        ("1.0", "v1.18446744073709551616", "Не удалось сравнить установленную версию с релизом."),
+    ):
+        state.update(current=current, latest=latest)
+        await page.reload()
+        await check.click()
+        await expect(page.get_by_text(message, exact=True)).to_be_visible()
+        await expect(update).to_have_count(int(current == older))
+    state["current"] = older
+    await page.evaluate("""target => sessionStorage.setItem('netos-pending-update',
+        JSON.stringify({target, started: Date.now() - 60000}))""", newer)
+    await page.reload()
+    await expect(page.get_by_text(f"Обновление не подтверждено: роутер сообщает версию {older}, ожидалась {newer}.", exact=True)).to_be_visible()
+    state.update(current="v0.09", latest="v0.10")
+    await page.reload()
     await check.click()
     await expect(update).to_be_visible()
     await expect(page.get_by_text("• Исправлена сеть", exact=True)).to_be_visible()
