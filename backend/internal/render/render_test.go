@@ -98,6 +98,21 @@ func TestEveryArtifactRenders(t *testing.T) {
 	}
 }
 
+func TestTrafficMonitorArtifactFollowsConfiguration(t *testing.T) {
+	cfg := config.Default()
+	cfg.VPNServers = []config.VPNServer{{Type: "l2tp", Index: 2, Subnet: "10.9.0.0/24", Enabled: true}}
+	for _, enabled := range []bool{false, true, false} {
+		cfg.TrafficMonitor.Enabled = enabled
+		if has(ids(Active(cfg)), "traffic-monitor") != enabled {
+			t.Fatalf("unexpected visibility with enabled=%v", enabled)
+		}
+		rules, err := Render("traffic-monitor", cfg)
+		if err != nil || strings.Contains(rules, `iifname "pp2-*" ip saddr { 10.9.0.0/24 }`) != enabled {
+			t.Fatalf("unexpected accounting rules: %v\n%s", err, rules)
+		}
+	}
+}
+
 func TestXrayArtifactFollowsAndRendersChannel(t *testing.T) {
 	cfg := config.Default()
 	if has(ids(Active(cfg)), "xray") {

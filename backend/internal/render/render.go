@@ -20,6 +20,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/firewall"
+	"github.com/netos-router/netos/internal/subsys/monitor"
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
@@ -253,6 +254,16 @@ var artifacts = []Artifact{
 				out += "\n# --- ip6tables ---\n" + rs.IPv6
 			}
 			return out, nil
+		},
+	},
+	{
+		ID: "traffic-monitor", Title: "Учёт трафика клиентов (nftables)",
+		Active: func(c *config.Config) bool { return c.TrafficMonitor.Enabled },
+		Render: func(c *config.Config) (string, error) {
+			if !c.TrafficMonitor.Enabled {
+				return "# Учёт трафика клиентов выключен\n", nil
+			}
+			return monitor.Render(c, false), nil
 		},
 	},
 	{
