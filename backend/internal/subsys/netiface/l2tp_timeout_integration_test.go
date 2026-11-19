@@ -48,7 +48,7 @@ func TestIntegrationL2TPGatewayDeadlineAndRetry(t *testing.T) {
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	err = s.routeToLNS(ctx, config.WAN{Name: "QA", Server: "198.51.100.1", Underlay: "dhcp"}, iface, nil)
+	err = s.routeToLNS(ctx, config.WAN{Name: "QA", Server: "198.51.100.1", Underlay: "dhcp"}, iface, 10)
 	cancel()
 	if err == nil || !strings.Contains(err.Error(), "не найден шлюз сети провайдера") {
 		t.Fatalf("missing provider gateway did not reach caller: %v", err)

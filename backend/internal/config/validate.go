@@ -1024,6 +1024,7 @@ func (c *Config) validateWANs(r *ValidationResult) {
 	// Метрика — единственное, чем аплинки упорядочены между собой: она решает,
 	// какой из них основной. Две одинаковые означают, что выбор остаётся за
 	// ядром, а переключение при отказе становится непредсказуемым.
+	l2tpBase := c.L2TPMetricBase()
 	metricOwner := map[int]string{}
 	indexOwner := map[int]string{}
 	claimMetric := func(path string, metric int, owner string) {
@@ -1062,7 +1063,12 @@ func (c *Config) validateWANs(r *ValidationResult) {
 					// Сеть провайдера под туннелем получает свой маршрут по
 					// умолчанию с худшей метрикой, и он тоже участвует в общем
 					// порядке.
-					claimMetric(path, c.L2TPUnderlayMetric(w), w.Name+" (сеть провайдера)")
+					metric, err := w.L2TPUnderlayMetric(l2tpBase)
+					if err != nil {
+						r.errf(path+".metric", "%s", err)
+					} else {
+						claimMetric(path, metric, w.Name+" (сеть провайдера)")
+					}
 				}
 			}
 		}

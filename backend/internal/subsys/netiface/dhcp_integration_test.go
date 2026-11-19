@@ -254,7 +254,12 @@ func TestIntegrationL2TPRoutesFollowDHCPLease(t *testing.T) {
 	s := NewWAN(nsRunner)
 	s.OwnedLNSRoutePath = filepath.Join(root, "owned.json")
 	w := config.WAN{ID: "qa", Name: "QA", Proto: "l2tp", Server: "203.0.113.7", Metric: 300}
-	if _, _, err := s.ensureDHCPClientFiles(context.Background(), underlayWAN(w, nil), iface); err != nil {
+	// Multi-WAN can place the provider route at the upper uint32 boundary.
+	metric, err := w.L2TPUnderlayMetric(1<<32 - 1 - w.Metric - 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ensureDHCPClientFiles(context.Background(), underlayWAN(w, metric), iface); err != nil {
 		t.Fatal(err)
 	}
 	script := filepath.Join(root, "udhcpc-"+iface+".sh")
@@ -265,7 +270,11 @@ func TestIntegrationL2TPRoutesFollowDHCPLease(t *testing.T) {
 		mustRunVPNStyle(t, runner, "ip", "netns", "exec", namespace, "env", "interface="+iface,
 			"ip=192.0.2.2", "mask=24", "router="+event.gateway, "sh", script, event.kind)
 		if event.kind == "bound" {
-			if err := s.routeToLNS(context.Background(), w, iface, nil); err != nil {
+			routes, err := nsRunner.Run(context.Background(), "ip", "-4", "route", "show", "default")
+			if err != nil || !strings.Contains(routes, "metric 4294967295") {
+				t.Fatalf("provider default route: %s (%v)", routes, err)
+			}
+			if err := s.routeToLNS(context.Background(), w, iface, metric); err != nil {
 				t.Fatal(err)
 			}
 		}

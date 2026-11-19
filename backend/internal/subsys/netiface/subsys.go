@@ -1258,6 +1258,8 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	s.lnsRouteWanted = map[string]ownedLNSRoute{}
 	s.lnsResolved = nil
 	s.balancing = cfg.MultiWAN.Enabled
+	l2tpBase := cfg.L2TPMetricBase()
+	underlayMetrics := map[string]int{}
 	// Fail before looking at host interfaces. Besides producing a useful error
 	// on incomplete/test systems, this prevents an unsupported enabled uplink
 	// from being silently skipped merely because its link is currently absent.
@@ -1266,7 +1268,13 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			continue
 		}
 		switch w.Proto {
-		case "static", "dhcp", "pppoe", "l2tp":
+		case "static", "dhcp", "pppoe":
+		case "l2tp":
+			metric, err := w.L2TPUnderlayMetric(l2tpBase)
+			if err != nil {
+				return fmt.Errorf("аплинк %s: %w", w.Name, err)
+			}
+			underlayMetrics[w.ID] = metric
 		default:
 			return fmt.Errorf("аплинк %s: неизвестный тип подключения %q", w.Name, w.Proto)
 		}
@@ -1324,7 +1332,7 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: w.Metric})
 		}
 		if w.Gateway != "" && w.Proto == "l2tp" && w.Underlay == "static" {
-			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: cfg.L2TPUnderlayMetric(w)})
+			staticWanted = append(staticWanted, ownedWANRoute{Gateway: w.Gateway, Interface: name, Metric: underlayMetrics[w.ID]})
 		}
 	}
 	dhcpWanted := map[string]bool{}
@@ -1404,13 +1412,13 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 				if err := s.stopDHCPClient(ctx, name); err != nil {
 					return err
 				}
-				if err := s.applyStaticOwned(ctx, underlayWAN(w, cfg), name); err != nil {
+				if err := s.applyStaticOwned(ctx, underlayWAN(w, underlayMetrics[w.ID]), name); err != nil {
 					return err
 				}
-			} else if err := s.ensureDHCPClient(ctx, underlayWAN(w, cfg), name); err != nil {
+			} else if err := s.ensureDHCPClient(ctx, underlayWAN(w, underlayMetrics[w.ID]), name); err != nil {
 				return err
 			}
-			if err := s.ensureL2TP(ctx, w, name, cfg); err != nil {
+			if err := s.ensureL2TP(ctx, w, name, underlayMetrics[w.ID]); err != nil {
 				return err
 			}
 		default:

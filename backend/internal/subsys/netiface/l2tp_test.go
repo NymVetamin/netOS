@@ -1,11 +1,27 @@
 package netiface
 
 import (
+	"context"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestL2TPOverflowRejectedBeforeSystemChanges(t *testing.T) {
+	c := config.Default()
+	w := l2tpWAN()
+	w.Metric = math.MaxInt
+	c.WANs = []config.WAN{w}
+	s := NewWAN(nil)
+	for i := 0; i < 2; i++ {
+		err := s.Apply(context.Background(), c)
+		if err == nil || !strings.Contains(err.Error(), "приоритет L2TP") {
+			t.Fatalf("expected a metric error before interface discovery, got %v", err)
+		}
+	}
+}
 
 func l2tpWAN() config.WAN {
 	return config.WAN{
@@ -81,11 +97,9 @@ func TestL2TPLeavesRedialToXl2tpd(t *testing.T) {
 // иначе интернет пойдёт мимо туннеля, как только тот поднимется.
 func TestL2TPUnderlayLosesToTheTunnel(t *testing.T) {
 	w := l2tpWAN()
-	if underlayMetric(w) <= w.Metric {
-		t.Fatalf("метрика подложки %d не хуже туннельной %d", underlayMetric(w), w.Metric)
-	}
-	if underlayWAN(w, nil).Metric != underlayMetric(w) {
-		t.Fatal("подложка получила не ту метрику")
+	metric, err := w.L2TPUnderlayMetric(0)
+	if err != nil || underlayWAN(w, metric).Metric != 110 {
+		t.Fatalf("provider metric %d: %v", metric, err)
 	}
 	// Сам туннель метрику не меняет.
 	if w.Metric != 100 {
