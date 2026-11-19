@@ -38,6 +38,8 @@ async def fixture(browser, session, config=None):
         if path == "/api/session":
             body = {"username": "test", "csrf_token": "test", **session}
         elif path == "/api/config":
+            if req.method == "PUT":
+                state["config"] = req.post_data_json
             body = {"config": state["config"], "dirty": False, "draft_version": 1,
                     "problems": [], "pending_confirmation": False}
         elif path == "/api/status":
@@ -88,6 +90,31 @@ async def service_tabs(browser, session, editable):
     assert not state["writes"] and not state["errors"], state
     await page.close()
     print("service tabs", session, "PASS")
+
+
+async def missing_service_providers(browser, session, editable):
+    config = copy.deepcopy(CONFIG)
+    config["components"] = []
+    page, state = await fixture(browser, session, config)
+    await page.goto("http://netos.test/#services")
+    for service, label in [("DHCP", "DHCP сервер"), ("DNS", "Резолвер включён")]:
+        await page.get_by_role("tab", name=service, exact=True).click()
+        panel = page.get_by_role("tabpanel", name=service, exact=True)
+        await expect(panel.get_by_text("нужен компонент", exact=True)).to_be_visible()
+        toggle = panel.get_by_role("checkbox", name=label, exact=True)
+        await expect(toggle).to_be_checked()
+        if editable:
+            async with page.expect_response(lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"):
+                await panel.get_by_text(label, exact=True).click()
+            config[service.lower()]["enabled"] = False
+            assert state["config"] == config
+            await page.reload()
+            await expect(toggle).not_to_be_checked()
+        await expect(toggle).to_be_disabled()
+    assert state["writes"] == (["/api/config"] * 2 if editable else [])
+    assert not state["errors"], state["errors"]
+    await page.close()
+    print("missing service providers", session, "PASS")
 
 
 async def segment_status(browser):
@@ -166,6 +193,7 @@ async def main():
                                   ({"role": "limited", "permissions": {"services": "view"}}, False),
                                   ({"role": "admin"}, True)]:
             await service_tabs(browser, session, editable)
+            await missing_service_providers(browser, session, editable)
         await segment_status(browser)
         for level in ("none", "view", "manage", "admin"):
             await component_access(browser, level)

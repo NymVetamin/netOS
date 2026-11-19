@@ -128,23 +128,23 @@ function DHCPSection({
 
   return (
     <Card title="Выдача адресов" subtitle="DHCP-сервер для локальных сегментов">
+      <div className="row wrap" style={{ gap: "1.5rem", marginBottom: "1rem" }}>
+        <Switch
+          checked={config.dhcp?.enabled}
+          disabled={providers.length === 0 && !config.dhcp?.enabled}
+          label="DHCP сервер"
+          onChange={(v) =>
+            patch((d) => {
+              d.dhcp.enabled = v;
+              if (v && !d.dhcp.provider) d.dhcp.provider = providers[0];
+            })
+          }
+        />
+      </div>
       {providers.length === 0 ? (
         <NeedComponent name="dnsmasq, ISC DHCP или Kea" effect="без сервера DHCP устройства не получат адреса автоматически" />
       ) : (
         <>
-          <div className="row wrap" style={{ gap: "1.5rem", marginBottom: "1rem" }}>
-            <Switch
-              checked={config.dhcp?.enabled}
-              label="DHCP сервер"
-              onChange={(v) =>
-                patch((d) => {
-                  d.dhcp.enabled = v;
-                  if (v && !d.dhcp.provider) d.dhcp.provider = providers[0];
-                })
-              }
-            />
-          </div>
-
           {providers.length > 1 && (
             <Field label="Чем раздавать" hint="Выбор из установленных компонентов">
               <select
@@ -248,9 +248,27 @@ function DNSSection({
   const cantEncrypt = encrypted.length > 0 && caps && !caps.dot;
   const cantFilterAAAA = config.dns?.enabled && caps && !caps.filterAAAA && config.ipv6?.filter_aaaa;
 
+  const resolverSwitch = (
+    <Switch
+      checked={config.dns?.enabled}
+      disabled={providers.length === 0 && !config.dns?.enabled}
+      label="Резолвер включён"
+      onChange={(v) =>
+        patch((d) => {
+          d.dns.enabled = v;
+          if (v && !d.dns.provider) {
+            d.dns.provider = providers[0];
+            if (providers[0] === "dnsmasq") d.dns.dnssec = false;
+          }
+        })
+      }
+    />
+  );
+
   if (providers.length === 0) {
     return (
       <Card title="Разрешение имён" subtitle="DNS-резолвер">
+        {resolverSwitch}
         <NeedComponent name="dnsmasq, Unbound или dnsproxy" effect="без резолвера клиенты не получат имена; для DoT и DoH подходят два последних" />
       </Card>
     );
@@ -260,19 +278,7 @@ function DNSSection({
     <>
       <Card title="Разрешение имён" subtitle="DNS-резолвер для клиентов сети">
         <div className="row wrap" style={{ gap: "1.5rem", marginBottom: "1rem" }}>
-          <Switch
-            checked={config.dns?.enabled}
-            label="Резолвер включён"
-            onChange={(v) =>
-              patch((d) => {
-                d.dns.enabled = v;
-                if (v && !d.dns.provider) {
-                  d.dns.provider = providers[0];
-                  if (providers[0] === "dnsmasq") d.dns.dnssec = false;
-                }
-              })
-            }
-          />
+          {resolverSwitch}
           <Switch
             checked={config.dns?.force_local}
             label="Заворачивать запросы клиентов на роутер"
