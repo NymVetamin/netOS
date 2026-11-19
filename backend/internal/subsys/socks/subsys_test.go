@@ -103,6 +103,55 @@ func TestSocksNeverFallsBackForMissingChannel(t *testing.T) {
 	}
 }
 
+func TestDisableAfterInterruptedCandidateWrite(t *testing.T) {
+	ctx := context.Background()
+	s := New(&fake{}, t.TempDir())
+	s.UnitDir = t.TempDir()
+	cfg := fixture()
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	conf, unit := s.paths()
+	candidate := filepath.Join(s.StateDir, "socks.candidate.json")
+	// A nonempty directory at the file path makes unlink fail on all platforms.
+	if err := os.Mkdir(candidate, 0700); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(candidate, "blocker")
+	if err := os.WriteFile(blocker, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Socks.Enabled = false
+	if err := s.Apply(ctx, cfg); err == nil {
+		t.Fatal("candidate cleanup failure was ignored")
+	}
+	if _, err := os.Stat(unit); err != nil {
+		t.Fatal("unit must remain available for cleanup retry", err)
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(candidate); err != nil {
+		t.Fatal(err)
+	}
+	// An interrupted validation leaves the candidate beside the live config.
+	data, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+			t.Fatalf("candidate after disable: %v", err)
+		}
+	}
+}
+
 func TestSocksStartsAfterFirewall(t *testing.T) {
 	positions := map[string]int{}
 	for i, name := range apply.Order {

@@ -103,6 +103,7 @@ func (p *Preparation) Apply(ctx context.Context, c *config.Config) error {
 }
 func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	conf, unit := s.paths()
+	candidate := filepath.Join(s.StateDir, "socks.candidate.json")
 	if !c.Socks.Enabled {
 		_, statErr := os.Stat(unit)
 		if statErr != nil && !os.IsNotExist(statErr) {
@@ -113,7 +114,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 				return err
 			}
 		}
-		for _, p := range []string{unit, conf, filepath.Join(s.StateDir, "socks.applied")} {
+		for _, p := range []string{candidate, unit, conf, filepath.Join(s.StateDir, "socks.applied")} {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -129,7 +130,6 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 	if err != nil {
 		return err
 	}
-	candidate := strings.TrimSuffix(conf, ".json") + ".candidate.json"
 	if _, err = system.WriteFileAtomicIfChanged(candidate, data, 0600); err != nil {
 		return err
 	}
