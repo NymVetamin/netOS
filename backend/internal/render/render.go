@@ -56,9 +56,13 @@ var (
 	resolv   = services.NewSystemResolver(nil)
 )
 
+func hasWireGuardChannelConfig(ch config.Channel) bool {
+	return ch.Enabled && ch.Type == "wireguard" && ch.WireGuardPeer == nil
+}
+
 func wireGuardActive(cfg *config.Config) bool {
 	for _, ch := range cfg.Channels {
-		if ch.Enabled && ch.Type == "wireguard" {
+		if hasWireGuardChannelConfig(ch) {
 			return true
 		}
 	}
@@ -68,7 +72,7 @@ func wireGuardActive(cfg *config.Config) bool {
 func renderWireGuard(cfg *config.Config) (string, error) {
 	var b bytes.Buffer
 	for _, ch := range cfg.Channels {
-		if !ch.Enabled || ch.Type != "wireguard" {
+		if !hasWireGuardChannelConfig(ch) {
 			continue
 		}
 		text, err := channels.RenderWireGuard(ch)

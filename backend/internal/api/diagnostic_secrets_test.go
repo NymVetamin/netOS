@@ -21,6 +21,7 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 	cfg.DDNS.Token, cfg.DDNS.Password = "ddns-token", "ddns-secret"
 	cfg.WiFi = []config.WiFiRadio{{ID: "radio", Device: "wlan0", Enabled: true, Band: "2.4", Channel: 6, Width: 20, Country: "FI", SSIDs: []config.WiFiSSID{{ID: "ssid", SSID: "Office", Network: "office", Enabled: true, Security: "wpa2", Password: "wifi-secret"}}}}
 	cfg.Channels = append(cfg.Channels,
+		config.Channel{ID: "linked", Name: "Linked exit", Type: "wireguard", Enabled: true, WireGuardPeer: &config.WireGuardPeerChannel{ServerIndex: 1}},
 		config.Channel{ID: "wg", Name: "WG", Index: 1, Type: "wireguard", Enabled: true, Config: map[string]any{"private_key": "wg-private", "preshared_key": "wg-psk", "peer_public_key": "peer-public", "endpoint": "vpn.example:51820", "allowed_ips": []string{"0.0.0.0/0"}}},
 		config.Channel{ID: "xr", Name: "XR", Index: 2, Type: "xray", Enabled: true, Config: map[string]any{"outbound": map[string]any{"protocol": "vless", "settings": map[string]any{"vnext": []any{map[string]any{"address": "vpn.example", "users": []any{map[string]any{"id": "xray-uuid"}}}}}, "streamSettings": map[string]any{"realitySettings": map[string]any{"privateKey": "reality-private", "shortIds": []string{"short-secret"}}, "wsSettings": map[string]any{"headers": map[string]any{"Authorization": "Bearer header-secret"}}}}}},
 		config.Channel{ID: "oc", Type: "openconnect", Config: map[string]any{"password": "oc-secret"}},
@@ -52,6 +53,9 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 			}
 			if artifact.ID == "wireguard" && (!strings.Contains(w.Body.String(), "peer-public") || !strings.Contains(w.Body.String(), "vpn.example:51820")) {
 				t.Error("public diagnostic details were lost")
+			}
+			if artifact.ID == "wireguard" && strings.Contains(w.Body.String(), "Linked exit") {
+				t.Error("linked peer exit has no separate configuration file")
 			}
 		})
 	}

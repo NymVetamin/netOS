@@ -81,6 +81,63 @@ func has(list []string, id string) bool {
 	return false
 }
 
+func TestWireGuardPeerExitUsesServerArtifact(t *testing.T) {
+	cfg := config.Default()
+	key := strings.Repeat("A", 43) + "="
+	cfg.Components = []config.Component{{ID: "wireguard", Installed: true}}
+	cfg.VPNServers = []config.VPNServer{{
+		ID: "server", Index: 1, Name: "WG", Type: "wireguard", Enabled: true,
+		Subnet: "10.88.0.1/24", Port: 51900, DefaultChannel: "direct", Config: map[string]any{"private_key": key},
+		Peers: []config.VPNPeer{{ID: "exit", Name: "Exit", Enabled: true, UseAsChannel: true, Address: "10.88.0.2", Credentials: map[string]string{"public_key": key}}},
+	}}
+	cfg.Normalize()
+	if v := cfg.Validate(); v.HasErrors() {
+		t.Fatal(v)
+	}
+	linked := cfg.Channels
+	first := config.Channel{ID: "first", Index: 8, Name: "First", Type: "wireguard"}
+	last := config.Channel{ID: "last", Index: 9, Name: "Last", Type: "wireguard"}
+	for _, enabled := range []bool{false, true, false} {
+		first.Enabled, last.Enabled = enabled, enabled
+		cfg.Channels = append([]config.Channel{first}, linked...)
+		cfg.Channels = append(cfg.Channels, last)
+		active := ids(Active(cfg))
+		if has(active, "wireguard") != enabled || !has(active, "wireguard-servers") {
+			t.Fatalf("wrong active artifacts: %v", active)
+		}
+		text, err := Render("wireguard", cfg)
+		want := *cfg
+		want.Channels = []config.Channel{first, last}
+		separate, separateErr := Render("wireguard", &want)
+		if err != nil || separateErr != nil || text != separate || strings.Contains(text, "First") != enabled || strings.Contains(text, "Last") != enabled {
+			t.Fatalf("unexpected separate channel preview (enabled=%v, err=%v)", enabled, err)
+		}
+		server, err := Render("wireguard-servers", cfg)
+		if err != nil || !strings.Contains(server, "PublicKey = "+key) {
+			t.Fatal("missing server peer")
+		}
+	}
+}
+
+func BenchmarkWireGuardPeerExitPreview(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := config.Default()
+			for i := 0; i < n; i++ {
+				cfg.Channels = append(cfg.Channels, config.Channel{Type: "wireguard", Enabled: true, WireGuardPeer: &config.WireGuardPeerChannel{}})
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				Active(cfg)
+				if _, err := Render("wireguard", cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // Диагностика обязана показывать конфигурацию демонов, которые работают. Когда
 // список был зашит в панели, она показывала dnsmasq всегда — в том числе на
 // машине с unbound и ISC DHCP, где dnsmasq выключен и его конфига на диске
