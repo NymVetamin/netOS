@@ -56,6 +56,18 @@ async def main():
   await expect(page.get_by_text('Кабинет',exact=True)).to_be_visible()
   await expect(page.get_by_text('1 Гбит/с · полный дуплекс',exact=True)).to_be_visible()
   await page.screenshot(path='output/playwright/port-links-dashboard.png',full_page=True)
+  # A previously removed uplink can leave 101 occupied by the sole remaining WAN.
+  state['cfg']['wans']=[{'id':'isp','index':2,'name':'ISP','metric':101,'interface':'port1','enabled':True,'proto':'dhcp'}]
+  await page.goto('https://netos-ui.test/#network')
+  await page.reload()
+  add=page.locator('section.card').filter(has=page.get_by_role('heading',name='Аплинки',exact=True)).get_by_role('button',name='Добавить',exact=True)
+  for count in (2,3):
+   await add.click()
+   await expect(page.locator('summary.xsum').filter(has_text=f'Аплинк {count}')).to_be_visible()
+   for _ in range(50):
+    if len(state['cfg']['wans'])==count:break
+    await asyncio.sleep(.1)
+   assert [w['metric'] for w in state['cfg']['wans']]==list(range(101,101+count))
   assert not errors,errors
   await browser.close();print('port labels, identity preserved, mode draft/reload, live speed Network/Dashboard PASS')
 asyncio.run(main())

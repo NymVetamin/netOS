@@ -143,14 +143,23 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
             openOnCreate(id);
             patch((d) => {
               d.wans = d.wans || [];
+              const occupied = new Set<number>();
+              let highestIndex = 0;
+              for (const wan of d.wans) {
+                highestIndex = Math.max(highestIndex, wan.index || 0);
+                occupied.add(wan.metric);
+                if (wan.proto === "l2tp" && !d.multiwan?.enabled) occupied.add(wan.metric + 10);
+              }
+              let metric = 100 + d.wans.length;
+              while (occupied.has(metric)) metric++;
               d.wans.push({
                 id,
-                index: Math.max(0, ...d.wans.map((wan: any) => wan.index || 0)) + 1,
+                index: highestIndex + 1,
                 name: "Аплинк " + (d.wans.length + 1),
                 interface: d.interfaces?.[0]?.id || "",
                 enabled: false,
                 proto: "dhcp",
-                metric: 100 + d.wans.length,
+                metric,
                 weight: 1,
                 probe: { enabled: true, type: "icmp", targets: ["1.1.1.1", "8.8.8.8"], interval: 10, timeout: 3, fail_threshold: 3, rise_threshold: 2 },
               });
