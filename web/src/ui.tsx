@@ -7,11 +7,35 @@ import { useAccess } from "./permissions";
 import { formatBitrate } from "./api";
 import { CARD_ICONS, Icon, IconName } from "./icons";
 
+type ListTextareaProps = Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "onBlur"> & {
+  values: string[];
+  onValuesChange: (items: string[]) => void;
+};
+
+export function ListTextarea({ values, onValuesChange, ...props }: ListTextareaProps) {
+  const canonical = values.join("\n");
+  const [edit, setEdit] = useState<{ text: string; canonical: string } | null>(null);
+  if (edit && edit.canonical !== canonical) setEdit(null);
+  return <textarea {...props} value={edit?.canonical === canonical ? edit.text : canonical}
+    onBlur={() => setEdit(null)}
+    onChange={(event) => {
+      const text = event.target.value;
+      const items = text.split(/\s+/).filter(Boolean);
+      const next = items.join("\n");
+      setEdit(text === next ? null : { text, canonical: next });
+      if (next !== canonical) onValuesChange(items);
+    }} />;
+}
+
+function isFormControl(type: ReactElement["type"]) {
+  return type === ListTextarea || (typeof type === "string" && ["input", "select", "textarea"].includes(type));
+}
+
 function labelNestedControls(node: ReactNode, label: string, hintID?: string): ReactNode {
   return Children.map(node, (child) => {
     if (!isValidElement(child)) return child;
     const element = child as ReactElement<any>;
-    if (typeof element.type === "string" && ["input", "select", "textarea"].includes(element.type)) {
+    if (isFormControl(element.type)) {
       return cloneElement(element, {
         "aria-label": element.props["aria-label"] || label,
         "aria-describedby": element.props["aria-describedby"] || hintID,
@@ -111,7 +135,7 @@ export function Field({
   const labelID = `${generatedID}-label`;
   const hintID = hint ? `${generatedID}-hint` : undefined;
   const element = isValidElement(children) ? (children as ReactElement<{ id?: string; "aria-describedby"?: string }>) : null;
-  const isControl = element != null && typeof element.type === "string" && ["input", "select", "textarea"].includes(element.type);
+  const isControl = element != null && isFormControl(element.type);
   const controlID = isControl ? element.props.id || generatedID : undefined;
   return (
     <div className={wide ? "field wide" : "field"}>

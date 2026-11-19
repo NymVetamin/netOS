@@ -14,7 +14,7 @@ import { effectiveWireGuardProfile, newWireGuardProfile, wireGuardClientConfig, 
 import { randomAmneziaWGParams } from "../amneziawg";
 import { AmneziaWGFields } from "../AmneziaWGFields";
 import { newID } from "../id";
-import { AddMenu, Badge, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { ListTextarea, AddMenu, Badge, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon, vpnServerIcon } from "../icons";
 
 type Props = { beforeRead: () => Promise<void>; config: any; patch: (mutate: (draft: any) => void) => void };
@@ -350,7 +350,7 @@ function IKEv2Server({ server, config, installed, patch }: any) {
 			<Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
 			<Field label="MTU"><input type="number" min={1280} max={9000} value={cfg.mtu || 1400} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <VPNClientDNS cfg={cfg} setConfig={setConfig} />
-			<Field label="Маршруты" hint="Пусто — весь интернет через VPN"><textarea className="mono" value={(cfg.split_routes || []).join("\n")} onChange={(e) => setConfig("split_routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+			<Field label="Маршруты" hint="Пусто — весь интернет через VPN"><ListTextarea className="mono" values={cfg.split_routes || []} onValuesChange={(items) => setConfig("split_routes", items)} /></Field>
 		</div>
 		<Notice tone="info" title="Настройка клиента">Импортируйте сертификат как доверенный корневой, затем создайте IKEv2-подключение к публичному адресу с логином и паролем EAP-MSCHAPv2. <VPNCertificate server={server} /></Notice>
   </ServerRow>;
@@ -368,7 +368,7 @@ function OcservServer({ server, config, installed, patch }: any) {
       <Field label="Канал по умолчанию"><select value={server.default_channel || "direct"} onChange={(e) => update((draft) => draft.default_channel = e.target.value)}>{channels.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       <Field label="MTU"><input type="number" min={576} max={9000} value={cfg.mtu || 1380} onChange={(e) => setConfig("mtu", Number(e.target.value))} /></Field>
       <VPNClientDNS cfg={cfg} setConfig={setConfig} />
-      <Field label="Маршруты" hint="IPv4-сети в формате адрес/префикс, по одной в строке. Пусто — весь интернет через VPN"><textarea className="mono" placeholder={"192.168.10.0/24\n10.0.0.0/8"} value={(cfg.routes || []).join("\n")} onChange={(e) => setConfig("routes", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+      <Field label="Маршруты" hint="IPv4-сети в формате адрес/префикс, по одной в строке. Пусто — весь интернет через VPN"><ListTextarea className="mono" placeholder={"192.168.10.0/24\n10.0.0.0/8"} values={cfg.routes || []} onValuesChange={(items) => setConfig("routes", items)} /></Field>
       <Field label="Приветствие"><input value={cfg.banner || ""} onChange={(e) => setConfig("banner", e.target.value)} /></Field>
     </div>
     <Field label="Авторизация клиентов"><select value={cfg.auth_mode || "password"} onChange={(e) => setConfig("auth_mode", e.target.value)}><option value="password">Логин и пароль</option><option value="certificate">Сертификат клиента</option><option value="certificate_password">Сертификат клиента и пароль</option></select></Field>
@@ -451,8 +451,8 @@ function XrayServer({ server, config, installed, patch, setError }: any) {
       {protocol === "shadowsocks" && <Field label="Шифр"><select value={cfg.method || "aes-256-gcm"} onChange={(e) => setConfig("method", e.target.value)}><option value="aes-256-gcm">AES-256-GCM</option><option value="aes-128-gcm">AES-128-GCM</option><option value="chacha20-poly1305">ChaCha20-Poly1305</option></select></Field>}
       {protocol === "reality" && <>
       <Field label="Сайт-маскировка" hint="Доступный TLS-сайт с портом"><input className="mono" value={cfg.destination || ""} onChange={(e) => setConfig("destination", e.target.value)} /></Field>
-      <Field label="Имена сервера (SNI)" hint="По одному домену в строке"><textarea className="mono" value={(cfg.server_names || []).join("\n")} onChange={(e) => setConfig("server_names", e.target.value.split(/\s+/).filter(Boolean))} /></Field>
-      <Field label="Short ID" hint="Чётное число hex-символов, до 16"><textarea className="mono" value={(cfg.short_ids || []).join("\n")} onChange={(e) => setConfig("short_ids", e.target.value.split(/\s+/).filter(Boolean))} /><button type="button" className="btn ghost sm" onClick={async () => { if (!(cfg.short_ids || []).length || await confirmAction("Заменить все Short ID? После применения старые ссылки перестанут работать. Передайте клиентам новые ссылки или QR-коды.", "Заменить Short ID")) setConfig("short_ids", [randomHex(8)]); }}>Перегенерировать Short ID</button></Field>
+      <Field label="Имена сервера (SNI)" hint="По одному домену в строке"><ListTextarea className="mono" values={cfg.server_names || []} onValuesChange={(items) => setConfig("server_names", items)} /></Field>
+      <Field label="Short ID" hint="Чётное число hex-символов, до 16"><ListTextarea className="mono" values={cfg.short_ids || []} onValuesChange={(items) => setConfig("short_ids", items)} /><button type="button" className="btn ghost sm" onClick={async () => { if (!(cfg.short_ids || []).length || await confirmAction("Заменить все Short ID? После применения старые ссылки перестанут работать. Передайте клиентам новые ссылки или QR-коды.", "Заменить Short ID")) setConfig("short_ids", [randomHex(8)]); }}>Перегенерировать Short ID</button></Field>
       <Field label="Flow"><select value={cfg.flow ?? "xtls-rprx-vision"} onChange={(e) => setConfig("flow", e.target.value)}><option value="xtls-rprx-vision">XTLS Vision</option><option value="">Без flow</option></select></Field>
       <Field label="Диагностика Reality" hint="Показывать отладочные сведения Reality в журнале Xray">
         <Switch checked={!!cfg.show} label="Включить show" onChange={(value) => setConfig("show", value)} />

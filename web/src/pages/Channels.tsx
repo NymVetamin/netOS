@@ -12,7 +12,7 @@ import { AmneziaWGFields } from "../AmneziaWGFields";
 import { parseXrayLink } from "../xrayLink";
 import { changeProbeType } from "../probeType";
 import { channelNAT, setChannelNAT, removeChannelNAT } from "../channelNAT";
-import { AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { ListTextarea, AddMenu, Badge, Cap, Card, Empty, Field, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { CHANNEL_ICONS, Icon } from "../icons";
 
 type Props = {
@@ -416,7 +416,7 @@ function XrayEditor({ channel, channels, installed, referenced, update, remove }
           <Field label="Запрос TCP" hint="Текст отправляется как введён, включая переводы строк. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_request || ""} onChange={(e) => update((draft) => draft.probe.tcp_request = e.target.value)} /></Field>
           <Field label="Начало ответа TCP" hint="Обязательный точный текст в начале ответа удалённой службы. До 4096 байт."><textarea className="mono" value={channel.probe.tcp_response || ""} onChange={(e) => update((draft) => draft.probe.tcp_response = e.target.value)} /></Field>
         </>}
-        <Field label="Цели" hint="По одной в строке"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field>
+        <Field label="Цели" hint="По одной в строке"><ListTextarea className="mono" values={channel.probe?.targets || []} onValuesChange={(items) => update((draft) => draft.probe.targets = items)} /></Field>
       </div><div className="form-grid channel-probe-timing">
         <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => draft.probe.interval = Number(e.target.value))} /></Field>
         <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => draft.probe.timeout = Number(e.target.value))} /></Field>
@@ -456,7 +456,7 @@ function IKEv2Editor({ channel, channels, installed, referenced, update, remove 
       <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => draft.fail_mode = e.target.value)}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
       {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => draft.fallback = e.target.value)}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
       <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe.enabled = enabled; })} /></Field>
-      {channel.probe?.enabled !== false && <><Field label="Тип проверки"><select value={channel.probe?.type || "http"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field><Field label="Цели"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field></>}
+      {channel.probe?.enabled !== false && <><Field label="Тип проверки"><select value={channel.probe?.type || "http"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field><Field label="Цели"><ListTextarea className="mono" values={channel.probe?.targets || []} onValuesChange={(items) => update((draft) => draft.probe.targets = items)} /></Field></>}
     </div>
     <Field label="Доверенный CA-сертификат (PEM)" hint="Скачайте сертификат IKEv2-сервера и вставьте его целиком; соединение проверяет также идентификатор сервера."><textarea className="mono" style={{ minHeight: 160 }} value={cfg.ca_cert || ""} onChange={(e) => setConfig("ca_cert", e.target.value)} /></Field>
   </ChannelRow>;
@@ -483,7 +483,7 @@ function L2TPEditor({ channel, channels, installed, referenced, update, remove }
       <Field label="При отказе"><select value={channel.fail_mode || "block"} onChange={(e) => update((draft) => draft.fail_mode = e.target.value)}><option value="block">Блокировать</option><option value="fallback">Запасной канал</option><option value="direct">Напрямую</option></select></Field>
       {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => draft.fallback = e.target.value)}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
       <Field label="Проверка канала"><Switch checked={channel.probe?.enabled !== false} label="Включена" onChange={(enabled) => update((draft) => { draft.probe.enabled = enabled; })} /></Field>
-      {channel.probe?.enabled !== false && <><Field label="Тип проверки"><select value={channel.probe?.type || "http"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field><Field label="Цели"><textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean))} /></Field></>}
+      {channel.probe?.enabled !== false && <><Field label="Тип проверки"><select value={channel.probe?.type || "http"} onChange={(e) => update((draft) => draft.probe.type = e.target.value)}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field><Field label="Цели"><ListTextarea className="mono" values={channel.probe?.targets || []} onValuesChange={(items) => update((draft) => draft.probe.targets = items)} /></Field></>}
     </div>
   </ChannelRow>;
 }
@@ -544,7 +544,7 @@ function OpenConnectEditor({ channel, channels, installed, referenced, update, r
         {channel.fail_mode === "fallback" && <Field label="Запасной канал"><select value={channel.fallback || ""} onChange={(e) => update((draft) => (draft.fallback = e.target.value))}><option value="">Выберите канал</option>{channels.filter((item: any) => item.enabled && item.id !== channel.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>}
         {channel.probe?.enabled !== false && <>
           <Field label="Тип проверки"><select value={channel.probe?.type || "icmp"} onChange={(e) => update((draft) => (draft.probe.type = e.target.value))}><option value="icmp">ICMP</option><option value="tcp">TCP</option><option value="http">HTTP</option></select></Field>
-          <Field label="Цели" wide><textarea rows={2} className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => (draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean)))} /></Field>
+          <Field label="Цели" wide><ListTextarea rows={2} className="mono" values={channel.probe?.targets || []} onValuesChange={(items) => update((draft) => (draft.probe.targets = items))} /></Field>
         </>}
       </div>
       {channel.probe?.enabled !== false && <details className="openconnect-probe-timing"><summary>Интервалы и пороги</summary><div className="openconnect-timing">
@@ -690,7 +690,7 @@ function WireGuardEditor({
             </select>
           </Field>
           <Field label="Цели" hint="По одной в строке">
-            <textarea className="mono" value={(channel.probe?.targets || []).join("\n")} onChange={(e) => update((draft) => (draft.probe.targets = e.target.value.split(/\s+/).filter(Boolean)))} />
+            <ListTextarea className="mono" values={channel.probe?.targets || []} onValuesChange={(items) => update((draft) => (draft.probe.targets = items))} />
           </Field>
           <Field label="Интервал, сек"><input type="number" min={1} value={channel.probe?.interval || 10} onChange={(e) => update((draft) => (draft.probe.interval = Number(e.target.value)))} /></Field>
           <Field label="Таймаут, сек"><input type="number" min={1} value={channel.probe?.timeout || 3} onChange={(e) => update((draft) => (draft.probe.timeout = Number(e.target.value)))} /></Field>
@@ -766,7 +766,7 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
                           </select>
                         </Field>
                         <Field label="Домены политики" hint="По одному домену в строке. DNS-ответы обновляют маршрут автоматически; время жизни записи — до 5 минут.">
-                          <textarea aria-label={`Домены политики ${policy.name || policy.id}`} className="mono" placeholder={"example.com\nsub.example.org"} value={(policy.domains || []).join("\n")} onChange={(e) => updatePolicy(patch, policy.id, "domains", e.target.value.split(/\s+/).filter(Boolean))} />
+                          <ListTextarea aria-label={`Домены политики ${policy.name || policy.id}`} className="mono" placeholder={"example.com\nsub.example.org"} values={policy.domains || []} onValuesChange={(items) => updatePolicy(patch, policy.id, "domains", items)} />
                         </Field>
                         <Field label="Комментарий">
                           <input value={policy.comment || ""} onChange={(e) => updatePolicy(patch, policy.id, "comment", e.target.value)} />

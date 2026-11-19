@@ -19,7 +19,9 @@ async def scenario(browser):
         "dns": {"enabled": True, "provider": "unbound", "port": 53, "bootstrap": ["1.1.1.1"],
                 "upstreams": [{"id": "up-1", "type": "dot", "address": "1.1.1.1", "enabled": True, "comment": "Old comment"},
                               {"id": "up-2", "type": "dot", "address": "192.0.2.53@8853#dns.example", "enabled": True}],
-                "split_rules": [], "static_records": [], "blocklists": []}}}
+                "split_rules": [{"id": "split", "upstream": "up-2", "channel": "direct",
+                                 "enabled": True, "domains": ["a.example"]}],
+                "static_records": [], "blocklists": []}}}
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
 
@@ -46,6 +48,21 @@ async def scenario(browser):
     await page.route("**/*", route_request)
     await page.goto("http://netos-ui.test/#services?tab=dns")
     await expect(page.get_by_role("heading", name="Сетевые службы", exact=True)).to_be_visible()
+    domains = page.get_by_label("Домены правила Split-DNS 1", exact=True)
+    split_row = page.locator("details.xd").filter(has=domains)
+    await split_row.locator("summary").click()
+    await domains.press("End")
+    await domains.press("Enter")
+    await expect(domains).to_have_value("a.example\n")
+    async with page.expect_response(lambda r: urlparse(r.url).path == "/api/config" and r.request.method == "PUT"):
+        await domains.press_sequentially("b.example")
+    assert state["config"]["dns"]["split_rules"][0]["domains"] == ["a.example", "b.example"]
+    await page.reload()
+    await split_row.locator("summary").click()
+    await expect(domains).to_have_value("a.example\nb.example")
+    async with page.expect_response(lambda r: urlparse(r.url).path == "/api/config" and r.request.method == "PUT"):
+        await domains.fill("x.example  x.example\ny.example ")
+    assert state["config"]["dns"]["split_rules"][0]["domains"] == ["x.example", "x.example", "y.example"]
     row = page.locator("details.xd").filter(has=page.get_by_label("Резолвер DNS-сервера 1", exact=True))
     await row.locator("summary").click()
     choice = page.get_by_label("Резолвер DNS-сервера 1", exact=True)

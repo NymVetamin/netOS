@@ -11,7 +11,7 @@ import { useMemo, useContext, useEffect, useState } from "react";
 import { HintContext } from "../HintContext";
 import { api, Problem } from "../api";
 import { newID } from "../id";
-import { AddMenu, Badge, Cap, Card, Empty, Field, Inactive, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
+import { ListTextarea, AddMenu, Badge, Cap, Card, Empty, Field, Inactive, Notice, openOnCreate, Row, Rows, Switch } from "../ui";
 import { Icon, INTERFACE_ICONS } from "../icons";
 
 type Patch = (mutate: (draft: any) => void) => void;
@@ -678,10 +678,10 @@ function SegmentSection({ config, patch, interfaceView }: { config: any; patch: 
                         />
                       </Field>
                       <Field label="DNS для клиентов" hint="По одному IPv4-адресу в строке; пусто — роутер">
-                        <textarea
+                        <ListTextarea
                           className="mono"
-                          value={(n.dhcp_pool.dns_servers || []).join("\n")}
-                          onChange={(e) => patch((d) => (d.networks[idx].dhcp_pool.dns_servers = e.target.value.split(/\s+/).filter(Boolean)))}
+                          values={n.dhcp_pool.dns_servers || []}
+                          onValuesChange={(items) => patch((d) => (d.networks[idx].dhcp_pool.dns_servers = items))}
                         />
                       </Field>
                     </div>

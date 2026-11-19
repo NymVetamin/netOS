@@ -4,7 +4,7 @@ import { DDNSSection } from "./DDNS";
 import { useContext, useEffect, useState } from "react";
 import { HintContext } from "../HintContext";
 import { PermissionContext } from "../permissions";
-import { Badge, Cap, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
+import { ListTextarea, Badge, Cap, Card, Empty, Field, NeedComponent, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
 import { newID } from "../id";
 import { api, Problem } from "../api";
@@ -408,10 +408,10 @@ function DNSSection({
 
         {provider === "dnsproxy" && (
           <Field label="Bootstrap DNS" hint="Для разрешения имён DoH/DoT/DoQ-серверов; по одному IP-адресу в строке">
-            <textarea
+            <ListTextarea
               className="mono"
-              value={(config.dns?.bootstrap || []).join("\n")}
-              onChange={(e) => patch((d) => (d.dns.bootstrap = e.target.value.split(/\s+/).filter(Boolean)))}
+              values={config.dns?.bootstrap || []}
+              onValuesChange={(items) => patch((d) => (d.dns.bootstrap = items))}
             />
           </Field>
         )}
@@ -546,7 +546,7 @@ function DNSSection({
               toggle={<Switch checked={!!rule.enabled} label="" ariaLabel={`Правило Split-DNS ${idx + 1} включено`} onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} />}
             >
               <div className="form-grid">
-                <Cap label="Домены" wide><textarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" value={(rule.domains || []).join("\n")} onChange={(e) => patch((d) => (d.dns.split_rules[idx].domains = e.target.value.split(/\s+/).filter(Boolean)))} /></Cap>
+                <Cap label="Домены" wide><ListTextarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" values={rule.domains || []} onValuesChange={(items) => patch((d) => (d.dns.split_rules[idx].domains = items))} /></Cap>
                 <Cap label="Резолвер"><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
                       <option value="">Выберите сервер</option>
                       {(config.dns?.upstreams || []).filter((up: any) => up.enabled).map((up: any) => <option key={up.id} value={up.id}>{up.comment || up.address}</option>)}
