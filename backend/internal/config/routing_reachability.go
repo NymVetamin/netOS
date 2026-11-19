@@ -34,8 +34,9 @@ func (c *Config) staticGatewayConnected(route StaticRoute, gateway netip.Addr, i
 			return true
 		}
 	}
+	table := staticTableKey(route.Table)
 	for _, connected := range c.Routing.Static {
-		if connected.Enabled && connected.Gateway == "" && connected.Interface != "" && (connected.Type == "" || connected.Type == "unicast") && connected.Table == route.Table && contains(connected.Destination, connected.Interface) {
+		if connected.Enabled && connected.Gateway == "" && connected.Interface != "" && (connected.Type == "" || connected.Type == "unicast") && staticTableKey(connected.Table) == table && contains(connected.Destination, connected.Interface) {
 			return true
 		}
 	}

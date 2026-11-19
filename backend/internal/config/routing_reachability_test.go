@@ -21,8 +21,8 @@ func TestStaticGatewayConnectedSourcesAndInterfaces(t *testing.T) {
 		{"10.1.0.2", "lan", "", false}, {"10.2.0.2", "first", "", true}, {"10.2.0.2", "second", "", false},
 		{"192.0.2.2", "eth0", "", true}, {"198.51.100.2", "eth0", "", false}, {"203.0.113.2", "wan", "", true},
 		{"10.3.0.2", "", "", true}, {"10.3.0.2", "lan", "", false},
-		{"10.4.0.2", "br0", "main", true}, {"10.4.0.2", "br0", "", false}, {"10.4.0.2", "", "main", true},
-		{"10.5.0.2", "lan", "", true}, {"10.5.0.2", "lan", "main", false},
+		{"10.4.0.2", "br0", "main", true}, {"10.4.0.2", "br0", "", true}, {"10.4.0.2", "br0", "local", false}, {"10.4.0.2", "", "main", true},
+		{"10.5.0.2", "lan", "", true}, {"10.5.0.2", "lan", "main", true}, {"10.5.0.2", "lan", "local", false},
 		{"10.6.0.2", "lan", "", false}, {"10.7.0.2", "lan", "", false}, {"10.8.0.2", "lan", "", false},
 		{"2001:db8::2", "br0", "", true}, {"2001:db8:1::2", "br0", "", false}, {"10.9.0.2", "empty-alias", "", true},
 	} {
@@ -59,4 +59,25 @@ func TestRoutingValidationRefreshesInterfaceNames(t *testing.T) {
 	check(1)
 	c.Interfaces = []Interface{{ID: "lan", Name: "br1"}}
 	check(0)
+}
+
+func TestGatewayWarningAfterChangingTable(t *testing.T) {
+	c := Default()
+	c.Routing.Static = []StaticRoute{
+		{Enabled: true, Destination: "192.0.2.0/24", Interface: "eth0"},
+		{Enabled: true, Destination: "198.51.100.0/24", Interface: "eth0", Gateway: "192.0.2.1"},
+	}
+	for _, tc := range []struct {
+		direct, via string
+		warn        bool
+	}{
+		{"main", "", false}, {"", "main", false}, {"local", "main", true}, {"local", "local", false}, {"", "local", true}, {"", "", false},
+	} {
+		c.Routing.Static[0].Table, c.Routing.Static[1].Table = tc.direct, tc.via
+		r := c.Validate()
+		p, found := problemAt(r, "routing.static[1].gateway")
+		if r.HasErrors() || found != tc.warn || (found && p.Severity != "warning") {
+			t.Fatalf("%+v: %v", tc, r.Problems)
+		}
+	}
 }

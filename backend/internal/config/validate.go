@@ -1331,10 +1331,17 @@ func (c *Config) validateRouting(r *ValidationResult) {
 	}
 }
 
+func staticTableKey(table string) string {
+	if table == "main" {
+		return ""
+	}
+	return table
+}
+
 // Compare kernel route identities, not their spelling in the configuration.
 // A bare host and /32 or /128 are the same destination; an omitted table is main.
 func staticRouteConflictKey(route StaticRoute) (string, int) {
-	destination, table := route.Destination, route.Table
+	destination := route.Destination
 	if destination == "default" {
 		destination = "0.0.0.0/0"
 		if gateway, err := netip.ParseAddr(route.Gateway); err == nil && gateway.Is6() {
@@ -1349,14 +1356,11 @@ func staticRouteConflictKey(route StaticRoute) (string, int) {
 		ipv6 = address.Is6()
 		destination = netip.PrefixFrom(address, address.BitLen()).String()
 	}
-	if table == "main" {
-		table = ""
-	}
 	metric := route.Metric
 	if ipv6 && metric == 0 {
 		metric = DefaultIPv6RouteMetric
 	}
-	return fmt.Sprintf("%s\x00%s\x00%d", destination, table, metric), metric
+	return fmt.Sprintf("%s\x00%s\x00%d", destination, staticTableKey(route.Table), metric), metric
 }
 
 func routeDestinationFamily(destination string) (is6 bool, ok bool) {
