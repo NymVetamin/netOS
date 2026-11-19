@@ -24,6 +24,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/netconf"
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
+	"github.com/netos-router/netos/internal/subsys/socks"
 	"github.com/netos-router/netos/internal/subsys/sysctl"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 	"github.com/netos-router/netos/internal/subsys/wifi"
@@ -246,6 +247,17 @@ var artifacts = []Artifact{
 		return string(services.RenderIPTV(c)), nil
 	}},
 	{ID: "samba", Title: "Сетевые папки Samba", Active: func(c *config.Config) bool { return c.Samba.Enabled }, Render: func(c *config.Config) (string, error) { return samba.Render(c, "/var/lib/netos/generated") }},
+	{
+		ID: "socks", Title: "Конфигурация SOCKS5",
+		Active: func(c *config.Config) bool { return c.Socks.Enabled },
+		Render: func(c *config.Config) (string, error) {
+			if !c.Socks.Enabled {
+				return "# SOCKS5 выключен\n", nil
+			}
+			data, err := socks.Render(c)
+			return string(data), err
+		},
+	},
 	{
 		ID: "iptables", Title: "Правила iptables", Active: always,
 		Render: func(cfg *config.Config) (string, error) {

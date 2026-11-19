@@ -7,6 +7,7 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/firewall"
+	"github.com/netos-router/netos/internal/subsys/socks"
 )
 
 func TestIPTablesPreviewTracksInterfaceState(t *testing.T) {
@@ -70,6 +71,33 @@ func ids(artifacts []Artifact) []string {
 		out = append(out, a.ID)
 	}
 	return out
+}
+
+func TestSocksCatalogFollowsServiceSettings(t *testing.T) {
+	cfg := config.Default()
+	cfg.Socks = config.Socks{Enabled: true, Channel: "direct", Port: 1080, Auth: true, Username: "test", Password: "test-password"}
+	for _, enabled := range []bool{true, false, true} {
+		cfg.Socks.Enabled = enabled
+		if has(ids(Active(cfg)), "socks") != enabled {
+			t.Fatal("SOCKS5 catalog entry does not match service state")
+		}
+		got, err := Render("socks", cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if enabled {
+			want, err := socks.Render(cfg)
+			if err != nil || got != string(want) {
+				t.Fatal("SOCKS5 preview differs from generator", err)
+			}
+		} else if !strings.Contains(got, "выключен") {
+			t.Fatal("missing disabled status")
+		}
+	}
+	cfg.Socks.Channel = "missing"
+	if _, err := Render("socks", cfg); err == nil {
+		t.Fatal("missing egress channel accepted")
+	}
 }
 
 func has(list []string, id string) bool {

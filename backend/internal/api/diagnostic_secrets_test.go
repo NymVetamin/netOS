@@ -19,6 +19,7 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 	cfg.WANs = []config.WAN{{Password: "wan-secret"}}
 	cfg.Samba.Users = []config.SambaUser{{ID: "smb-user", Name: "alice", Password: "samba-diagnostic-fixture"}}
 	cfg.DDNS.Token, cfg.DDNS.Password = "ddns-token", "ddns-secret"
+	cfg.Socks = config.Socks{Enabled: true, Channel: "direct", Port: 1080, Auth: true, Username: "socks-user", Password: "socks-test-password"}
 	cfg.WiFi = []config.WiFiRadio{{ID: "radio", Device: "wlan0", Enabled: true, Band: "2.4", Channel: 6, Width: 20, Country: "FI", SSIDs: []config.WiFiSSID{{ID: "ssid", SSID: "Office", Network: "office", Enabled: true, Security: "wpa2", Password: "wifi-secret"}}}}
 	cfg.Channels = append(cfg.Channels,
 		config.Channel{ID: "linked", Name: "Linked exit", Type: "wireguard", Enabled: true, WireGuardPeer: &config.WireGuardPeerChannel{ServerIndex: 1}},
@@ -35,7 +36,7 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 	secrets := []string{"wan-secret", "ddns-token", "ddns-secret", "wifi-secret", "wg-private", "wg-psk", "xray-uuid", "reality-private", "short-secret", "header-secret", "oc-secret", "server-private", "server-psk", "server-reality-private", "server-short-secret", "server-uuid", "ike-secret", base64.StdEncoding.EncodeToString([]byte("ike-secret"))}
 	before, _ := json.Marshal(cfg)
 	secrets = append(secrets, "l2tp-diagnostic-shared-key", base64.StdEncoding.EncodeToString([]byte("l2tp-diagnostic-shared-key")))
-	secrets = append(secrets, "samba-diagnostic-fixture")
+	secrets = append(secrets, "samba-diagnostic-fixture", cfg.Socks.Password)
 	s := &Server{draft: cfg}
 	for _, artifact := range render.All() {
 		t.Run(artifact.ID, func(t *testing.T) {
@@ -56,6 +57,9 @@ func TestDiagnosticArtifactsHideSecretsWithoutChangingConfiguration(t *testing.T
 			}
 			if artifact.ID == "wireguard" && strings.Contains(w.Body.String(), "Linked exit") {
 				t.Error("linked peer exit has no separate configuration file")
+			}
+			if artifact.ID == "socks" && (!strings.Contains(w.Body.String(), "socks-user") || !strings.Contains(w.Body.String(), diagnosticSecret)) {
+				t.Error("expected SOCKS5 account with masked password")
 			}
 		})
 	}
