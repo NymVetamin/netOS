@@ -172,15 +172,67 @@ func TestTickSuccessLogs(t *testing.T) {
 	}
 }
 
+func TestDisableDuringResolvePreventsProviderUpdate(t *testing.T) {
+	ctx := context.Background()
+	c := New(nil)
+	cfg := baseConfig("duckdns")
+	providerCalls := make(chan struct{}, 4)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls <- struct{}{}
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer provider.Close()
+	c.DuckEndpoint = provider.URL
+	started, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	resolveCalls := 0
+	c.ResolveAddress = func(context.Context, *config.Config) (string, error) {
+		resolveCalls++
+		if resolveCalls == 1 {
+			close(started)
+			<-resume // Interface address lookup can finish after cancellation.
+		}
+		return "192.0.2.1", nil
+	}
+	if err := c.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	go func() { defer close(done); c.tick(ctx, cfg) }()
+	<-started
+	disabled := *cfg
+	disabled.DDNS.Enabled = false
+	if err := c.Apply(ctx, &disabled); err != nil {
+		t.Fatal(err)
+	}
+	close(resume)
+	<-done
+	c.tick(ctx, cfg) // An old snapshot can also reach tick after Apply returns.
+	if len(providerCalls) != 0 || resolveCalls != 1 || c.Status().Enabled {
+		t.Fatalf("disabled DDNS: %d resolutions, %d updates", resolveCalls, len(providerCalls))
+	}
+	if err := c.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	c.tick(ctx, cfg)
+	if len(providerCalls) != 1 || !c.Status().Success {
+		t.Fatal("re-enabled DDNS did not update")
+	}
+}
+
 func TestStaleProviderResponseCannotOverwriteNewConfiguration(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cancelled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(started)
-		<-release
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-release:
+		}
 		_, _ = w.Write([]byte("OK"))
 	}))
 	defer server.Close()
+	defer close(release)
 	logger := &captureLogger{}
 	c := New(logger)
 	c.DuckEndpoint = server.URL
@@ -203,7 +255,11 @@ func TestStaleProviderResponseCannotOverwriteNewConfiguration(t *testing.T) {
 	if err := c.Apply(context.Background(), newConfig); err != nil {
 		t.Fatal(err)
 	}
-	close(release)
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("obsolete provider request was not cancelled")
+	}
 	select {
 	case <-done:
 	case <-time.After(time.Second):

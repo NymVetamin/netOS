@@ -54,6 +54,7 @@ type Controller struct {
 	configured    config.DDNS
 	configuredSet bool
 	suspended     bool
+	cancelTick    context.CancelFunc
 }
 
 func New(logger Logger) *Controller {
@@ -103,6 +104,9 @@ func (c *Controller) Apply(_ context.Context, cfg *config.Config) error {
 	if c.configuredSet && reflect.DeepEqual(c.configured, cfg.DDNS) {
 		return nil
 	}
+	if c.cancelTick != nil {
+		c.cancelTick()
+	}
 	c.configured = cfg.DDNS
 	c.configuredSet = true
 	c.suspended = false
@@ -141,31 +145,39 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	if cfg == nil || !cfg.DDNS.Enabled {
 		return
 	}
-	c.mu.RLock()
+	c.mu.Lock()
 	next := c.status.NextRun
-	suspended := c.suspended
-	c.mu.RUnlock()
-	if suspended || (!next.IsZero() && c.Now().Before(next)) {
+	if c.cancelTick != nil || c.suspended || (!next.IsZero() && c.Now().Before(next)) ||
+		(c.configuredSet && !reflect.DeepEqual(c.configured, cfg.DDNS)) {
+		c.mu.Unlock()
 		return
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancelTick = cancel
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		cancel()
+		c.cancelTick = nil
+		c.mu.Unlock()
+	}()
 	interval := time.Duration(cfg.DDNS.Interval) * time.Second
 	if interval < time.Minute {
 		interval = time.Minute
 	}
 	now := c.Now()
 	address, err := c.ResolveAddress(ctx, cfg)
+	if ctx.Err() != nil {
+		return
+	}
 	if err == nil && cfg.DDNS.Provider == "noip" {
-		c.mu.RLock()
-		unchanged := c.status.Success && c.status.Address == address
-		c.mu.RUnlock()
-		if unchanged {
-			c.mu.Lock()
-			if !c.configuredSet || reflect.DeepEqual(c.configured, cfg.DDNS) {
-				c.status.NextRun = now.Add(interval)
-			}
+		c.mu.Lock()
+		if ctx.Err() == nil && c.status.Success && c.status.Address == address {
+			c.status.NextRun = now.Add(interval)
 			c.mu.Unlock()
 			return
 		}
+		c.mu.Unlock()
 	}
 	if err == nil {
 		err = c.update(ctx, cfg.DDNS, address)
@@ -188,7 +200,7 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	c.mu.Lock()
 	// A provider request can outlive a concurrent configuration Apply. Never
 	// let a response for the old credentials/record overwrite the new status.
-	accepted := !c.configuredSet || reflect.DeepEqual(c.configured, cfg.DDNS)
+	accepted := ctx.Err() == nil
 	if accepted {
 		c.status = status
 		c.suspended = suspend
