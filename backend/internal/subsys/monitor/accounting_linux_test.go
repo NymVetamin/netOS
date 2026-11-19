@@ -35,6 +35,7 @@ func TestIntegrationClientAccountingExit(t *testing.T) {
 	peers := []struct{ name, link, router, client string }{
 		{fmt.Sprintf("nm-lan-%d", os.Getpid()), "lan0", "192.0.2.1/24", "192.0.2.2/24"},
 		{fmt.Sprintf("nm-vpn-%d", os.Getpid()), "wg-srv1", "198.51.100.1/24", "198.51.100.2/24"},
+		{fmt.Sprintf("nm-ppp-%d", os.Getpid()), config.L2TPPeerInterface(2, "10.9.0.2"), "10.9.0.1/24", "10.9.0.2/24"},
 	}
 	for _, p := range peers {
 		run("ip", "netns", "add", p.name)
@@ -53,6 +54,7 @@ func TestIntegrationClientAccountingExit(t *testing.T) {
 	run("ip", "route", "add", "203.0.113.9/32", "via", "198.51.100.2")
 	c := &config.Config{Interfaces: []config.Interface{{ID: "lan", Name: "lan0", Enabled: true}}, Networks: []config.Network{{Interface: "lan", RouterAddress: "192.0.2.1/24", Enabled: true}}, VPNServers: []config.VPNServer{{Index: 1, Type: "wireguard", Enabled: true, Subnet: "198.51.100.1/24", Peers: []config.VPNPeer{{Enabled: true, Address: "198.51.100.2", UseAsChannel: true}}}}}
 	c.TrafficMonitor.Enabled = true
+	c.VPNServers = append(c.VPNServers, config.VPNServer{Index: 2, Type: "l2tp", Enabled: true, Subnet: "10.9.0.0/24"})
 	apply := func(exists bool) {
 		t.Helper()
 		cmd := exec.Command("nft", "-f", "-")
@@ -92,11 +94,11 @@ func TestIntegrationClientAccountingExit(t *testing.T) {
 		return out
 	}
 	apply(false)
-	for _, dst := range []string{"198.51.100.2", "203.0.113.9"} {
+	for _, dst := range []string{"198.51.100.2", "203.0.113.9", "10.9.0.2"} {
 		run("ip", "netns", "exec", peers[0].name, "ping", "-n", "-c", "2", "-W", "2", dst)
 	}
 	before := snapshot()
-	for _, key := range []string{"up4:192.0.2.2", "down4:192.0.2.2", "up4:198.51.100.2", "down4:198.51.100.2"} {
+	for _, key := range []string{"up4:192.0.2.2", "down4:192.0.2.2", "up4:198.51.100.2", "down4:198.51.100.2", "up4:10.9.0.2", "down4:10.9.0.2"} {
 		if before[key] == 0 {
 			t.Errorf("missing client bytes: %s", key)
 		}

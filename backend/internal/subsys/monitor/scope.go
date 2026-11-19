@@ -3,6 +3,7 @@ package monitor
 import (
 	"net/netip"
 	"sort"
+	"strings"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
@@ -49,10 +50,8 @@ func NewClientScope(c *config.Config) ClientScope {
 		if !v.Enabled || v.Type == "xray" {
 			continue
 		}
-		name := vpnservers.InterfaceName(v)
-		if v.Type == "ocserv" {
-			name += "*"
-		}
+		// nft uses '*' for the interface prefix that iptables spells '+'.
+		name := strings.Replace(vpnservers.MatchInterfaceName(v), "+", "*", 1)
 		add(name, v.Subnet)
 	}
 	for b := range lengths {
