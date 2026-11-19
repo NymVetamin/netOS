@@ -21,3 +21,8 @@ test("channel labels and configured tables do not create draft tables", () => {
   assert.equal(tableDetails("4000",config).owner,"Таблица ОС");
   assert.equal(JSON.stringify(config),before);
 });
+
+test("ordinary table names survive canonicalization and sorting", () => {
+  const names = observedTables([{table: "main"}, {table: "constructor"}], "lookup __proto__\nlookup constructor\nlookup toString\nlookup 253");
+  assert.deepEqual(Array.from(names).sort(), ["__proto__", "constructor", "default", "main", "toString"]);
+});

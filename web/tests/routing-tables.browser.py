@@ -20,6 +20,7 @@ async def scenario(browser, mode):
                 {"table": "main", "type": "unicast", "destination": "default", "interface": "eth0", "origin": "dhcp"},
                 {"table": "netos-ch1", "type": "unicast", "destination": "default", "interface": "tun-ch1", "origin": "netos"},
                 {"table": "netos-ch1", "type": "blackhole", "destination": "default", "interface": "", "metric": 1000, "origin": "netos"}]}
+    live["parsed"].append({"table": "constructor", "type": "unicast", "destination": "default", "interface": "eth1", "origin": "static"})
     async def route_request(route):
         req, path = route.request, urlparse(route.request.url).path
         if not path.startswith("/api/"):
@@ -53,6 +54,8 @@ async def scenario(browser, mode):
         await expect(page.get_by_text("eth0",exact=True)).to_have_count(0)
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("3001")
         await expect(page.get_by_text("Действующих маршрутов нет.",exact=True)).to_be_visible()
+        await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("constructor")
+        await expect(page.get_by_text("eth1",exact=True)).to_be_visible()
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("all")
         await expect(page.get_by_text("eth0",exact=True)).to_be_visible()
     assert not writes, writes

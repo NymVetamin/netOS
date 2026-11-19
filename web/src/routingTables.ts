@@ -7,7 +7,12 @@ export function observedTables(routes: RouteEntry[], rules: string): string[] {
 }
 
 export function canonicalTable(name: string): string {
-  return ({ "254": "main", "255": "local", "253": "default" } as Record<string, string>)[name] || name;
+  switch (name) {
+    case "253": return "default";
+    case "254": return "main";
+    case "255": return "local";
+    default: return name;
+  }
 }
 
 export function tableDetails(name: string, config: any) {
