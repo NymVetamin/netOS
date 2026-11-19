@@ -269,7 +269,7 @@ function DNSSection({
     return (
       <Card title="Разрешение имён" subtitle="DNS-резолвер">
         {resolverSwitch}
-        <NeedComponent name="dnsmasq, Unbound или dnsproxy" effect="без резолвера клиенты не получат имена; для DoT и DoH подходят два последних" />
+        <NeedComponent name="dnsmasq, Unbound или dnsproxy" effect="без резолвера клиенты не смогут разрешать имена. DoT поддерживают Unbound и dnsproxy. Для DoH нужен dnsproxy." />
       </Card>
     );
   }

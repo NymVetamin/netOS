@@ -117,6 +117,25 @@ async def missing_service_providers(browser, session, editable):
     print("missing service providers", session, "PASS")
 
 
+async def resolver_guidance(browser):
+    config = copy.deepcopy(CONFIG)
+    config["components"] = []
+    page, state = await fixture(browser, {"role": "admin"}, config)
+    await page.goto("http://netos.test/#services?tab=dns")
+    panel = page.get_by_role("tabpanel", name="DNS", exact=True)
+    await expect(panel.get_by_text("DoT поддерживают Unbound и dnsproxy. Для DoH нужен dnsproxy.", exact=False)).to_be_visible()
+    for provider in ("unbound", "dnsproxy", "dnsmasq"):
+        state["config"]["components"] = [{"id": provider, "installed": True}]
+        state["config"]["dns"]["provider"] = provider
+        await page.reload()
+        for kind, supported in [("DoT", provider != "dnsmasq"), ("DoH", provider == "dnsproxy")]:
+            status = "поддерживается" if supported else "не поддерживается"
+            await expect(panel.get_by_text(f"{kind} {status}", exact=True)).to_be_visible()
+    assert not state["writes"] and not state["errors"], state
+    await page.close()
+    print("DNS provider guidance PASS")
+
+
 async def segment_status(browser):
     config = copy.deepcopy(CONFIG)
     config["interfaces"][0]["label"] = "Local bridge"
@@ -194,6 +213,7 @@ async def main():
                                   ({"role": "admin"}, True)]:
             await service_tabs(browser, session, editable)
             await missing_service_providers(browser, session, editable)
+        await resolver_guidance(browser)
         await segment_status(browser)
         for level in ("none", "view", "manage", "admin"):
             await component_access(browser, level)

@@ -46,6 +46,41 @@ func TestWarnsThatClientNamesNeedDnsmasq(t *testing.T) {
 	}
 }
 
+func TestEncryptedUpstreamProviderGuidance(t *testing.T) {
+	for _, provider := range []string{"dnsmasq", "unbound", "dnsproxy"} {
+		for _, protocol := range []string{"dot", "doh", "doq"} {
+			t.Run(provider+"/"+protocol, func(t *testing.T) {
+				cfg := Default()
+				cfg.DNS.Enabled, cfg.DNS.Provider = true, provider
+				cfg.DNS.Upstreams = []Upstream{{ID: "up", Type: protocol, Enabled: true, Address: "1.1.1.1"}}
+				var messages []string
+				for _, p := range cfg.Validate().Problems {
+					if p.Path == "dns.upstreams[0].type" && p.Severity == "error" {
+						messages = append(messages, p.Message)
+					}
+				}
+				want := ""
+				switch {
+				case provider == "dnsmasq":
+					want = "выберите dnsproxy"
+					if protocol == "dot" {
+						want = "выберите unbound или dnsproxy"
+					}
+				case provider == "unbound" && protocol != "dot":
+					want = "только DoT"
+				}
+				if want == "" {
+					if len(messages) != 0 {
+						t.Errorf("неожиданные ошибки типа: %q", messages)
+					}
+				} else if len(messages) != 1 || !strings.HasSuffix(messages[0], want) {
+					t.Errorf("ошибки типа %q, ожидаемое окончание %q", messages, want)
+				}
+			})
+		}
+	}
+}
+
 func TestUnboundRejectsMixedPlainAndDoTUpstreams(t *testing.T) {
 	cfg := Default()
 	cfg.DNS.Enabled = true

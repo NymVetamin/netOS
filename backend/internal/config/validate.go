@@ -1920,9 +1920,12 @@ func (c *Config) validateDNS(r *ValidationResult) {
 				}
 			}
 			if c.DNS.Enabled && c.DNS.Provider == "dnsmasq" {
+				providers := "dnsproxy"
+				if u.Type == "dot" {
+					providers = "unbound или dnsproxy"
+				}
 				r.errf(path+".type",
-					"dnsmasq не умеет %s — выберите unbound или dnsproxy",
-					strings.ToUpper(u.Type))
+					"dnsmasq не умеет %s — выберите %s", strings.ToUpper(u.Type), providers)
 			}
 			if u.Type != "dot" && c.DNS.Enabled && c.DNS.Provider == "unbound" {
 				r.errf(path+".type", "unbound поддерживает только DoT")
