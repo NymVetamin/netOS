@@ -4,6 +4,7 @@ package qos
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -209,44 +210,47 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	for _, item := range cfg.QoS.WANs {
 		settings[item.WAN] = item
 	}
+	var created []ownedLink
 	for _, item := range wanted {
-		if err := s.applyLink(ctx, item, settings[item.WAN], existingIFB[item.IFB]); err != nil {
-			if !existingIFB[item.IFB] {
-				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
-					recovery := ownedWith(previous, item)
-					stateErr := s.writeOwned(recovery)
-					return fmt.Errorf("QoS %s: %w; уборка нового объекта: %v; сохранение ownership: %v", item.WAN, err, cleanupErr, stateErr)
-				}
-			}
-			return fmt.Errorf("QoS %s: %w", item.WAN, err)
+		added, err := s.applyLink(ctx, item, settings[item.WAN], existingIFB[item.IFB])
+		if added {
+			created = append(created, item)
+		}
+		if err != nil {
+			return errors.Join(fmt.Errorf("QoS %s: %w", item.WAN, err), s.cleanupCreatedLinks(ctx, created, previous))
 		}
 	}
 	if err := s.writeOwned(wanted); err != nil {
-		var cleanupErrs []string
-		for _, item := range wanted {
-			if !existingIFB[item.IFB] {
-				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
-					cleanupErrs = append(cleanupErrs, cleanupErr.Error())
-				}
-			}
-		}
-		if len(cleanupErrs) > 0 {
-			return fmt.Errorf("%w; уборка после отказа записи ownership: %s", err, strings.Join(cleanupErrs, "; "))
-		}
-		return err
+		return errors.Join(err, s.cleanupCreatedLinks(ctx, created, previous))
 	}
 	return s.applyClients(ctx, cfg)
 }
 
-// ownedWith добавляет к списку принадлежности объект, которого в нём ещё нет:
-// уборка могла не удаться и у объекта, о котором запись уже есть.
-func ownedWith(previous []ownedLink, item ownedLink) []ownedLink {
-	for _, existing := range previous {
-		if existing == item {
-			return append([]ownedLink(nil), previous...)
+func (s *Subsystem) cleanupCreatedLinks(ctx context.Context, created, previous []ownedLink) error {
+	var remaining []ownedLink
+	var failures []error
+	for _, item := range created {
+		if err := s.remove(ctx, item); err != nil {
+			remaining = append(remaining, item)
+			failures = append(failures, fmt.Errorf("уборка %s: %w", item.IFB, err))
 		}
 	}
-	return append(append([]ownedLink(nil), previous...), item)
+	if len(remaining) == 0 {
+		return nil
+	}
+	known := make(map[ownedLink]bool, len(previous))
+	for _, item := range previous {
+		known[item] = true
+	}
+	for _, item := range remaining {
+		if !known[item] {
+			previous = append(previous, item)
+		}
+	}
+	if err := s.writeOwned(previous); err != nil {
+		failures = append(failures, fmt.Errorf("сохранение оставшихся QoS-интерфейсов: %w", err))
+	}
+	return errors.Join(failures...)
 }
 
 func desiredLinks(cfg *config.Config) ([]ownedLink, error) {
@@ -277,12 +281,16 @@ func desiredLinks(cfg *config.Config) ([]ownedLink, error) {
 	return result, nil
 }
 
-func (s *Subsystem) applyLink(ctx context.Context, item ownedLink, setting config.QoSWAN, ifbExists bool) error {
+func (s *Subsystem) applyLink(ctx context.Context, item ownedLink, setting config.QoSWAN, ifbExists bool) (bool, error) {
 	if !ifbExists {
 		if _, err := s.Runner.Run(ctx, "ip", "link", "add", "name", item.IFB, "type", "ifb"); err != nil {
-			return fmt.Errorf("создание %s: %w", item.IFB, err)
+			return !ifbExists, fmt.Errorf("создание %s: %w", item.IFB, err)
 		}
 	}
+	return !ifbExists, s.configureLink(ctx, item, setting)
+}
+
+func (s *Subsystem) configureLink(ctx context.Context, item ownedLink, setting config.QoSWAN) error {
 	if _, err := s.Runner.Run(ctx, "ip", "link", "set", "dev", item.IFB, "up"); err != nil {
 		return err
 	}

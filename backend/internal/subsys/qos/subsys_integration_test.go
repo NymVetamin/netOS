@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -30,7 +31,8 @@ func TestIntegrationCAKELifecycle(t *testing.T) {
 	const device = "nqos-test0"
 	const peer = "nqos-test1"
 	const ifb = "ifb-netos-91"
-	for _, name := range []string{device, peer, ifb} {
+	const secondIFB = "ifb-netos-92"
+	for _, name := range []string{device, peer, ifb, secondIFB} {
 		if _, err := runner.Run(ctx, "ip", "link", "show", "dev", name); err == nil {
 			t.Skipf("refusing to reuse existing interface %s", name)
 		}
@@ -44,6 +46,7 @@ func TestIntegrationCAKELifecycle(t *testing.T) {
 		_, _ = runner.Run(context.Background(), "tc", "qdisc", "del", "dev", device, "root")
 		_, _ = runner.Run(context.Background(), "tc", "qdisc", "del", "dev", device, "ingress")
 		_, _ = runner.Run(context.Background(), "ip", "link", "del", "dev", ifb)
+		_, _ = runner.Run(context.Background(), "ip", "link", "del", "dev", secondIFB)
 		_, _ = runner.Run(context.Background(), "ip", "link", "del", "dev", device)
 	})
 	if _, err := runner.Run(ctx, "ip", "link", "set", "dev", device, "up"); err != nil {
@@ -55,6 +58,9 @@ func TestIntegrationCAKELifecycle(t *testing.T) {
 	cfg.Interfaces = []config.Interface{{ID: "uplink", Name: device, Type: "physical", Enabled: true}}
 	cfg.WANs = []config.WAN{{ID: "test-wan", Index: 91, Interface: "uplink", Proto: "dhcp", Enabled: true}}
 	cfg.QoS = config.QoS{Enabled: true, WANs: []config.QoSWAN{{WAN: "test-wan", UploadKbit: 8000, DownloadKbit: 12000, Diffserv: "diffserv4"}}}
+	cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: "other", Name: peer, Type: "physical", Enabled: true})
+	cfg.WANs = append(cfg.WANs, config.WAN{ID: "test-wan2", Index: 92, Interface: "other", Proto: "dhcp", Enabled: true})
+	cfg.QoS.WANs = append(cfg.QoS.WANs, config.QoSWAN{WAN: "test-wan2", UploadKbit: 8000, DownloadKbit: 12000, Diffserv: "diffserv4"})
 	// Stored settings while disabled must neither ask for confirmation nor
 	// replace any live qdisc. Enabling below still exercises the full lifecycle.
 	disabled := *cfg
@@ -77,6 +83,19 @@ func TestIntegrationCAKELifecycle(t *testing.T) {
 	}
 	if actions, err := s.Plan(&disabled, cfg); err != nil || len(actions) != 1 || !actions[0].Disruptive {
 		t.Fatalf("enable plan=%+v err=%v", actions, err)
+	}
+	s.Runner = &partialApplyRunner{Runner: runner, failDevice: peer}
+	if err := s.Apply(ctx, cfg); !errors.Is(err, errSecondQueue) {
+		t.Fatalf("second WAN failure: %v", err)
+	}
+	s.Runner = runner
+	if err := s.Apply(ctx, &disabled); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{ifb, secondIFB} {
+		if _, err := runner.Run(ctx, "ip", "link", "show", "dev", name); err == nil {
+			t.Fatalf("IFB remained after rollback: %s", name)
+		}
 	}
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)

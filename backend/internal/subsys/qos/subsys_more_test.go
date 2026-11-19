@@ -342,7 +342,7 @@ func TestEveryApplyLinkCommandFailureIsReturned(t *testing.T) {
 	for _, tt := range commands {
 		t.Run(tt.command, func(t *testing.T) {
 			runner := &fakeRunner{links: map[string]bool{"eth9": true, "ifb-netos-3": tt.owned}, errors: map[string]error{tt.command: errors.New("injected")}}
-			err := New(runner, t.TempDir()).applyLink(context.Background(), item, setting, tt.owned)
+			_, err := New(runner, t.TempDir()).applyLink(context.Background(), item, setting, tt.owned)
 			if err == nil || !strings.Contains(err.Error(), "injected") {
 				t.Fatalf("error=%v", err)
 			}
