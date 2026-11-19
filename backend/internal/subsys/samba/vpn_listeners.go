@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -140,35 +141,55 @@ func (s *Subsystem) presentVPNAddresses(ctx context.Context, cfg *config.Config)
 	if err != nil {
 		return nil, fmt.Errorf("Samba VPN addresses: %w", err)
 	}
+	selectedIDs := make(map[string]bool, len(cfg.Samba.VPNs))
+	for _, id := range cfg.Samba.VPNs {
+		selectedIDs[id] = true
+	}
 	present := map[string]string{}
+	var byAddress map[netip.Addr][]string
 	for _, server := range cfg.VPNServers {
-		if !server.Enabled || server.Type == "xray" || !selected(cfg.Samba.VPNs, server.ID) {
+		if !server.Enabled || server.Type == "xray" || !selectedIDs[server.ID] {
 			continue
 		}
 		prefix, err := netip.ParsePrefix(server.Subnet)
 		if err != nil || !prefix.Addr().Is4() {
 			continue
 		}
-		iface := vpnservers.MatchInterfaceName(server)
-		for _, line := range strings.Split(addresses, "\n") {
-			fields := strings.Fields(line)
-			if len(fields) < 4 || fields[2] != "inet" {
-				continue
-			}
-			name := strings.TrimSuffix(fields[1], ":")
-			match := name == iface || (strings.HasSuffix(iface, "+") && strings.HasPrefix(name, strings.TrimSuffix(iface, "+")))
-			if !match {
-				continue
-			}
-			address, parseErr := netip.ParsePrefix(fields[3])
-			if parseErr == nil && address.Addr() == prefix.Addr() {
-				present[server.ID] = netip.AddrPortFrom(prefix.Addr(), 445).String()
-			} else if bare, bareErr := netip.ParseAddr(fields[3]); bareErr == nil && bare == prefix.Addr() {
-				present[server.ID] = netip.AddrPortFrom(bare, 445).String()
-			}
+		if byAddress == nil {
+			byAddress = ipv4InterfacesByAddress(addresses)
+		}
+		names := byAddress[prefix.Addr()]
+		base, wildcard := strings.CutSuffix(vpnservers.MatchInterfaceName(server), "+")
+		i, exact := slices.BinarySearch(names, base)
+		if exact || (wildcard && i < len(names) && strings.HasPrefix(names[i], base)) {
+			present[server.ID] = netip.AddrPortFrom(prefix.Addr(), 445).String()
 		}
 	}
 	return present, nil
+}
+
+func ipv4InterfacesByAddress(addresses string) map[netip.Addr][]string {
+	byAddress := make(map[netip.Addr][]string)
+	for line := range strings.SplitSeq(addresses, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[2] != "inet" {
+			continue
+		}
+		var addr netip.Addr
+		if strings.Contains(fields[3], "/") {
+			prefix, _ := netip.ParsePrefix(fields[3])
+			addr = prefix.Addr()
+		} else {
+			addr, _ = netip.ParseAddr(fields[3])
+		}
+		if addr.Is4() {
+			byAddress[addr] = append(byAddress[addr], strings.TrimSuffix(fields[1], ":"))
+		}
+	}
+	for _, names := range byAddress {
+		slices.Sort(names)
+	}
+	return byAddress
 }
 
 type listenerLogger interface{ Warnf(string, ...any) }

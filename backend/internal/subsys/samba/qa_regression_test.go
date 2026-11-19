@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,51 @@ func TestActiveSambaWithOnlyLoopbackIsRepaired(t *testing.T) {
 type vpnAddressRunner struct {
 	*fakeRunner
 	address string
+}
+
+func TestPresentVPNAddressesMatchesAddressAndInterface(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner(), address: "1: wg-srv1: inet 10.0.0.1/32\n2: vpns20 inet 10.0.0.1\n3: wg-srv30 inet 10.0.0.1/24\n4: wg-srv3 inet 10.0.0.1/99\n"}
+	s := New(r, t.TempDir())
+	c := config.Default()
+	for i, kind := range []string{"wireguard", "ocserv", "wireguard", "xray"} {
+		id := fmt.Sprint(i + 1)
+		c.VPNServers = append(c.VPNServers, config.VPNServer{ID: id, Index: i + 1, Type: kind, Enabled: true, Subnet: "10.0.0.1/24"})
+		c.Samba.VPNs = append(c.Samba.VPNs, id)
+	}
+	want := map[string]string{"1": "10.0.0.1:445", "2": "10.0.0.1:445"}
+	got, err := s.presentVPNAddresses(context.Background(), c)
+	if err != nil || !maps.Equal(got, want) {
+		t.Fatalf("present=%v err=%v", got, err)
+	}
+	r.address = "1: wg-srv3 inet 10.0.0.1\n"
+	got, err = s.presentVPNAddresses(context.Background(), c)
+	if err != nil || !maps.Equal(got, map[string]string{"3": "10.0.0.1:445"}) {
+		t.Fatalf("after address change: %v %v", got, err)
+	}
+}
+
+func BenchmarkPresentVPNAddresses(b *testing.B) {
+	for _, n := range []int{16, 128} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			c := config.Default()
+			var output strings.Builder
+			for i := 1; i <= n; i++ {
+				id := fmt.Sprint(i)
+				addr := fmt.Sprintf("10.0.%d.1/24", i)
+				c.VPNServers = append(c.VPNServers, config.VPNServer{ID: id, Index: i, Type: "wireguard", Subnet: addr, Enabled: true})
+				c.Samba.VPNs = append(c.Samba.VPNs, id)
+				fmt.Fprintf(&output, "%d: wg-srv%d inet %s scope global\n", i, i, addr)
+			}
+			r := &vpnAddressRunner{fakeRunner: newRunner(), address: output.String()}
+			s := New(r, b.TempDir())
+			b.ReportAllocs()
+			for b.Loop() {
+				if got, err := s.presentVPNAddresses(context.Background(), c); err != nil || len(got) != n {
+					b.Fatal(len(got), err)
+				}
+			}
+		})
+	}
 }
 
 func (r *vpnAddressRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
