@@ -15,12 +15,20 @@ type IPTV struct {
 }
 
 func (c *Config) IPTVUpstream() string {
-	for _, w := range c.WANs {
-		if w.ID == c.IPTV.Upstream && w.Enabled && (w.Proto == "dhcp" || w.Proto == "static") {
-			return c.InterfaceName(w.Interface)
-		}
+	if w := c.iptvUpstreamWAN(); w != nil {
+		return c.InterfaceName(w.Interface)
 	}
 	return ""
+}
+
+func (c *Config) iptvUpstreamWAN() *WAN {
+	for i := range c.WANs {
+		w := &c.WANs[i]
+		if w.ID == c.IPTV.Upstream && w.Enabled && (w.Proto == "dhcp" || w.Proto == "static") {
+			return w
+		}
+	}
+	return nil
 }
 
 func (c *Config) IPTVNetworks() []Network {
@@ -63,7 +71,18 @@ func (c *Config) validateIPTV(r *ValidationResult) {
 	if !c.HasComponent("igmpproxy") {
 		r.errf("iptv.enabled", "установите компонент IPTV")
 	}
-	up := c.IPTVUpstream()
+	// Match InterfaceByID's first occurrence even in a draft with duplicate IDs.
+	interfaces := make(map[string]*Interface, len(c.Interfaces))
+	for i := len(c.Interfaces) - 1; i >= 0; i-- {
+		iface := &c.Interfaces[i]
+		interfaces[iface.ID] = iface
+	}
+	var up string
+	if w := c.iptvUpstreamWAN(); w != nil {
+		if iface := interfaces[w.Interface]; iface != nil {
+			up = iface.Name
+		}
+	}
 	if up == "" {
 		r.errf("iptv.upstream", "выберите включённый аплинк DHCP или статический IPv4; для отдельного VLAN создайте аплинк на нём")
 	}
@@ -81,9 +100,9 @@ func (c *Config) validateIPTV(r *ValidationResult) {
 			if !wanted || !n.Enabled {
 				continue
 			}
-			iface, ok := c.InterfaceByID(n.Interface)
+			iface := interfaces[n.Interface]
 			prefix, err := netip.ParsePrefix(n.RouterAddress)
-			entry.eligible = ok && iface.Enabled && iface.Name != up && err == nil && prefix.Addr().Is4()
+			entry.eligible = iface != nil && iface.Enabled && iface.Name != up && err == nil && prefix.Addr().Is4()
 			selected[n.ID] = entry
 		}
 	}
@@ -97,7 +116,7 @@ func (c *Config) validateIPTV(r *ValidationResult) {
 	}
 	for _, w := range c.WANs {
 		if w.ID == c.IPTV.Upstream {
-			if iface, ok := c.InterfaceByID(w.Interface); !ok || !iface.Enabled {
+			if iface := interfaces[w.Interface]; iface == nil || !iface.Enabled {
 				r.errf("iptv.upstream", "интерфейс аплинка выключен или отсутствует")
 			}
 		}

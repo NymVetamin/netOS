@@ -81,6 +81,10 @@ func TestIPTVSelectionValidationTransitions(t *testing.T) {
 	c.Interfaces[1].Enabled = false
 	check(0, 1)
 	c.Interfaces[1].Enabled = true
+	// Invalid duplicate WANs still report each missing upstream interface.
+	c.WANs = append(c.WANs, WAN{ID: "up", Interface: "absent"}, WAN{ID: "up", Interface: "missing"})
+	check(0, 2)
+	c.WANs = c.WANs[:1]
 	check(0, 0)
 	c.IPTV.Networks = nil
 	check(1, 0)
