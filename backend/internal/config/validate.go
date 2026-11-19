@@ -914,6 +914,8 @@ func (c *Config) validateNetworks(r *ValidationResult) {
 		if prefix.Addr() == prefix.Masked().Addr() {
 			r.errf(path+".router_address",
 				"указан адрес сети, а не адрес роутера в ней — обычно это первый адрес, например 192.168.10.1/24")
+		} else if prefix.Bits() <= 30 && prefix.Addr() == ipv4Broadcast(prefix) {
+			r.errf(path+".router_address", "широковещательный адрес подсети нельзя назначить роутеру")
 		}
 
 		for _, s := range segs {

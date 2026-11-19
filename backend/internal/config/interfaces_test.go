@@ -265,3 +265,19 @@ func TestDanglingMemberIsReported(t *testing.T) {
 		t.Fatal("ссылка на несуществующий порт принята молча")
 	}
 }
+func TestLANRouterAddressBroadcast(t *testing.T) {
+	cfg := lanConfig()
+	for _, tc := range []struct {
+		address string
+		invalid bool
+	}{
+		{"192.168.10.255/24", true}, {"192.168.10.7/30", true},
+		{"192.168.10.255/23", false}, {"192.168.10.6/30", false},
+		{"192.168.10.7/31", false}, {"192.168.10.0/24", true},
+	} {
+		cfg.Networks[0].RouterAddress = tc.address
+		if got := problem(t, cfg, "networks[0].router_address", ""); got != tc.invalid {
+			t.Errorf("%s: invalid = %t, want %t", tc.address, got, tc.invalid)
+		}
+	}
+}
