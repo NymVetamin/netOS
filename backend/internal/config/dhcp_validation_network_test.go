@@ -1,9 +1,33 @@
 package config
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
 )
+
+func TestDHCPPoolGatewayUsableHost(t *testing.T) {
+	c := Default()
+	c.DHCP.Enabled = true
+	n := Network{DHCPPool: DefaultDHCPPool("192.0.2.80", "192.0.2.90")}
+	n.DHCPPool.Enabled = true
+	prefix := netip.MustParsePrefix("192.0.2.65/26")
+	for _, tc := range []struct {
+		gateway string
+		invalid bool
+	}{
+		{"192.0.2.64", true}, {"192.0.2.65", false},
+		{"192.0.2.127", true}, {"192.0.2.126", false},
+		{"192.0.2.128", true}, {"", false},
+	} {
+		n.DHCPPool.Gateway = tc.gateway
+		var result ValidationResult
+		c.validatePool(&result, "lan", n, prefix)
+		if result.HasErrors() != tc.invalid || (tc.invalid && result.Problems[0].Path != "lan.dhcp_pool.gateway") {
+			t.Errorf("gateway %q: %v", tc.gateway, result.Problems)
+		}
+	}
+}
 
 func TestDHCPReservationNetworkChecks(t *testing.T) {
 	for _, tc := range []struct{ name, address, ip, gateway, want string }{

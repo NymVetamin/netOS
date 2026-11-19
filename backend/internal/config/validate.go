@@ -986,6 +986,8 @@ func (c *Config) validatePool(r *ValidationResult, path string, n Network, prefi
 			r.errf(path+".dhcp_pool.gateway", "нужен корректный IPv4-адрес шлюза")
 		} else if !prefix.Contains(addr) {
 			r.errf(path+".dhcp_pool.gateway", "шлюз должен принадлежать подсети сегмента")
+		} else if prefix.Bits() <= 30 && (addr == network || addr == broadcast) {
+			r.errf(path+".dhcp_pool.gateway", "адрес сети и широковещательный адрес нельзя использовать как шлюз")
 		}
 	}
 	if p.Domain != "" && !validDNSName(p.Domain) {
