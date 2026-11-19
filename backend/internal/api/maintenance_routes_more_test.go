@@ -67,6 +67,15 @@ func TestPanelMaintenanceCreatesIsolatedRevisionAndSchedulesRollbackGuard(t *tes
 	if !strings.Contains(commands, want) {
 		t.Fatalf("schedule command missing %q:\n%s", want, commands)
 	}
+	h := s.Routes()
+	for _, action := range []string{"confirm", "rollback"} {
+		if got := serveAuthed(h, http.MethodPost, "/api/config/"+action, nil, cookie, csrf); got.Code != http.StatusConflict {
+			t.Fatalf("%s during panel activation: %d", action, got.Code)
+		}
+		if got := serveAuthed(h, http.MethodPost, "/api/maintenance/panel", []byte(body), cookie, csrf); got.Code != http.StatusConflict {
+			t.Fatalf("panel activation lock lost after %s: %d", action, got.Code)
+		}
+	}
 }
 
 func TestPanelMaintenanceRequiresAdminSessionAndCSRF(t *testing.T) {

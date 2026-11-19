@@ -1404,15 +1404,26 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) tryBeginDraftOperation() bool {
+	s.draftMu.Lock()
+	defer s.draftMu.Unlock()
+	if s.draftApplying {
+		return false
+	}
+	s.draftApplying = true
+	return true
+}
+
 func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	if !s.configOpMu.TryLock() {
 		writeError(w, 409, "операция применения уже выполняется")
 		return
 	}
 	defer s.configOpMu.Unlock()
-	s.draftMu.Lock()
-	s.draftApplying = true
-	s.draftMu.Unlock()
+	if !s.tryBeginDraftOperation() {
+		writeError(w, http.StatusConflict, "операция конфигурации уже выполняется")
+		return
+	}
 	defer func() { s.draftMu.Lock(); s.draftApplying = false; s.draftMu.Unlock() }()
 	if !s.ownsPending(r) {
 		writeError(w, 403, "нет права подтверждать чужое применение")
@@ -1444,9 +1455,10 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.configOpMu.Unlock()
-	s.draftMu.Lock()
-	s.draftApplying = true
-	s.draftMu.Unlock()
+	if !s.tryBeginDraftOperation() {
+		writeError(w, http.StatusConflict, "операция конфигурации уже выполняется")
+		return
+	}
 	defer func() { s.draftMu.Lock(); s.draftApplying = false; s.draftMu.Unlock() }()
 	if !s.ownsPending(r) {
 		writeError(w, 403, "нет права подтверждать чужое применение")
