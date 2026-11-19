@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/tlsutil"
 )
@@ -121,10 +125,11 @@ func TestWaitTCPPortReleasedKeepsLeakCheck(t *testing.T) {
 	}
 }
 
-func runTLSServer(t *testing.T, cfg *config.Config, tlsDir string) (*http.Response, string) {
+func runTLSServer(t *testing.T, cfg *config.Config, tlsDir string, manager *certificates.Manager) (*http.Response, string) {
 	t.Helper()
 	logger := &lifecycleLogger{}
 	s := New(nil, nil, nil, logger)
+	s.Certificates = manager
 	ready := make(chan struct{})
 	s.Ready = func() error {
 		close(ready)
@@ -192,7 +197,7 @@ func TestStartServesTLSAndShutsDown(t *testing.T) {
 	cfg := config.Default()
 	cfg.System.Panel.Port = freeTCPPort(t)
 	tlsDir := t.TempDir()
-	resp, logs := runTLSServer(t, cfg, tlsDir)
+	resp, logs := runTLSServer(t, cfg, tlsDir, nil)
 	if resp.Header.Get("Strict-Transport-Security") == "" || resp.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("security headers=%v", resp.Header)
 	}
@@ -203,6 +208,58 @@ func TestStartServesTLSAndShutsDown(t *testing.T) {
 	}
 	if !strings.Contains(logs, "отпечаток") || !strings.Contains(logs, "панель доступна") {
 		t.Fatalf("startup logs=%s", logs)
+	}
+}
+
+func TestStartRotatesIPv4OnlyPanelCertificateOnce(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("managed=%t", managed), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.System.Hostname = "router"
+			dir := t.TempDir()
+			cert, key, _, err := tlsutil.EnsureSelfSigned(dir, "router")
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys, err := tls.LoadX509KeyPair(cert, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaf, err := x509.ParseCertificate(keys.Certificate[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaf.IPAddresses = []net.IP{net.IPv4(127, 0, 0, 1)}
+			der, err := x509.CreateCertificate(cryptorand.Reader, leaf, leaf, leaf.PublicKey, keys.PrivateKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
+				t.Fatal(err)
+			}
+			old, err := tlsutil.ValidatePairForNames(cert, key, "router", "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, vpn, err := tlsutil.EnsureSelfSignedForNames(dir, "router"); err != nil || vpn != old {
+				t.Fatal("independent VPN certificate unexpectedly rotated", err)
+			}
+			var first string
+			for i := 0; i < 2; i++ {
+				var manager *certificates.Manager
+				if managed {
+					manager = certificates.New(dir, nil)
+				}
+				cfg.System.Panel.Port = freeTCPPort(t)
+				resp, _ := runTLSServer(t, cfg, dir, manager)
+				served := resp.TLS.PeerCertificates[0]
+				fp := tlsutil.Fingerprint(served)
+				if fp == old || served.VerifyHostname("::1") != nil || (i == 1 && fp != first) {
+					t.Fatal("unexpected certificate served on start", i+1)
+				}
+				first = fp
+			}
+		})
 	}
 }
 
@@ -219,7 +276,7 @@ func TestStartCustomTLSUsesAndReportsActualCertificate(t *testing.T) {
 	cfg := config.Default()
 	cfg.System.Panel.Port = freeTCPPort(t)
 	cfg.System.Panel.TLS = config.TLS{Mode: "custom", CertFile: cert, KeyFile: key}
-	_, logs := runTLSServer(t, cfg, blockedTLSDir)
+	_, logs := runTLSServer(t, cfg, blockedTLSDir, nil)
 	if !strings.Contains(logs, fingerprint) {
 		t.Fatalf("actual custom fingerprint %q absent from logs: %s", fingerprint, logs)
 	}

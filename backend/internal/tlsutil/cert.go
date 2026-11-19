@@ -25,12 +25,13 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-// EnsureSelfSigned создаёт сертификат и ключ, если их ещё нет или срок истёк.
+// EnsureSelfSigned создаёт или обновляет пару панели, в том числе если
+// старый сертификат выпущен без IPv6 loopback.
 // Возвращает пути к файлам и отпечаток, который установщик показывает
 // пользователю: по нему можно убедиться, что браузер соединился именно с
 // роутером, а не с кем-то посередине.
 func EnsureSelfSigned(dir, hostname string) (certPath, keyPath, fingerprint string, err error) {
-	return EnsureSelfSignedForNames(dir, hostname)
+	return EnsureSelfSignedForNames(dir, hostname, "::1")
 }
 
 // EnsureSelfSignedForNames additionally places public VPN endpoint names or
@@ -74,7 +75,9 @@ func EnsureSelfSignedForNames(dir, hostname string, names ...string) (certPath, 
 	}
 	for _, name := range names {
 		if ip := net.ParseIP(name); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
+			if !ip.Equal(net.IPv6loopback) { // localAddresses always includes ::1.
+				template.IPAddresses = append(template.IPAddresses, ip)
+			}
 		} else if name != "" {
 			template.DNSNames = append(template.DNSNames, name)
 		}

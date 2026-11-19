@@ -330,7 +330,7 @@ func (s *Subsystem) applyOcserv(ctx context.Context, cfg *config.Config, server 
 		if _, err := s.Certificates.VPN(ctx, cfg, server, paths.tls); err != nil {
 			return false, fmt.Errorf("сертификат OpenConnect: %w", err)
 		}
-	} else if _, _, _, err := tlsutil.EnsureSelfSigned(paths.tls, cfg.System.Hostname); err != nil {
+	} else if _, _, _, err := tlsutil.EnsureSelfSignedForNames(paths.tls, cfg.System.Hostname); err != nil {
 		return false, fmt.Errorf("сертификат: %w", err)
 	}
 	certAfter, _ := os.ReadFile(certPath)
