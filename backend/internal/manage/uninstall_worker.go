@@ -1,9 +1,9 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/netip"
 	"os"
 	"strings"
@@ -55,27 +55,41 @@ func (m *Manager) uninstallResult(start int64) string {
 		return ""
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err != nil || info.Size() < start {
+	info, err := f.Stat()
+	if err != nil || start < 0 {
+		return ""
+	}
+	size := info.Size()
+	if size < start {
 		start = 0
 	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return ""
-	}
-	// The worker's log is bounded by one uninstall; 4 MiB is far above it.
-	data, err := io.ReadAll(io.LimitReader(f, 4<<20))
-	if err != nil {
-		return ""
-	}
 	const marker = " Завершение удаления: "
-	i := strings.LastIndex(string(data), marker)
-	if i < 0 {
-		return ""
+	buf := make([]byte, min(size-start, 32<<10))
+	for end := size; end-start >= int64(len(marker)); {
+		offset := max(start, end-int64(len(buf)))
+		block := buf[:end-offset]
+		if _, err := f.ReadAt(block, offset); err != nil {
+			return ""
+		}
+		if i := bytes.LastIndex(block, []byte(marker)); i >= 0 {
+			reason := block[i+len(marker):]
+			if end != size {
+				from := offset + int64(i+len(marker))
+				reason = make([]byte, min(size-from, 4<<20))
+				if _, err := f.ReadAt(reason, from); err != nil {
+					return ""
+				}
+			}
+			reason = bytes.TrimSpace(reason)
+			if bytes.Equal(reason, []byte("<nil>")) {
+				return ""
+			}
+			return string(reason)
+		}
+		// Include a marker that straddles the left edge of this block.
+		end = offset + int64(len(marker)) - 1
 	}
-	reason := strings.TrimSpace(string(data[i+len(marker):]))
-	if reason == "<nil>" {
-		return ""
-	}
-	return reason
+	return ""
 }
 
 // DHCP can temporarily install an IPv4LL default with no gateway. It is not

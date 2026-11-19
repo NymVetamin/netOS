@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,6 +66,7 @@ func TestUninstallFailureShowsWorkerReason(t *testing.T) {
 	}{
 		{"reason", "", "2026-11-17T10:47:26Z Завершение удаления: причина\nЧто сделать: совет\n", "удаление не выполнено: причина\nЧто сделать: совет\nПодробности: "},
 		{"after earlier runs", "x Завершение удаления: старая причина\nx Завершение удаления: <nil>\n", "x Завершение удаления: новая причина\n", "удаление не выполнено: новая причина\n"},
+		{"large transcript", "x Завершение удаления: старая причина\n", strings.Repeat("x", 8<<20) + "\nx Завершение удаления: большая ошибка\nподробности\n", "удаление не выполнено: большая ошибка\nподробности\n"},
 		{"crashed worker", "x Завершение удаления: старая причина\n", "x > systemctl stop netosd\n", "запуск или выполнение удаления завершилось ошибкой"},
 		{"no log", "", "", "запуск или выполнение удаления завершилось ошибкой"},
 	} {
@@ -92,6 +94,54 @@ func TestUninstallFailureShowsWorkerReason(t *testing.T) {
 			}
 			if strings.Contains(out.String(), "netOS удалён") {
 				t.Fatal(out.String())
+			}
+		})
+	}
+}
+
+func TestUninstallResultLogBoundaries(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	path := m.sys(uninstallLogPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const marker = " Завершение удаления: "
+	for _, reason := range []string{"<nil>", strings.Repeat("x", 32760), strings.Repeat("y", 65540), strings.Repeat("z", (4<<20)+1)} {
+		data := "prefix" + marker + "earlier\nworker" + marker + reason + "\n"
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		want := reason[:min(len(reason), 4<<20)]
+		if want == "<nil>" {
+			want = ""
+		}
+		for _, start := range []int64{0, int64(len(data) + 1)} {
+			if got := m.uninstallResult(start); got != want {
+				t.Fatalf("start %d: got %d bytes, want %d", start, len(got), len(want))
+			}
+		}
+		if got := m.uninstallResult(int64(strings.LastIndex(data, marker) + 1)); got != "" {
+			t.Fatal("included a marker from before this run")
+		}
+	}
+}
+
+func BenchmarkUninstallResult(b *testing.B) {
+	for _, size := range []int{1024, 8 << 20} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			m := &Manager{Root: b.TempDir()}
+			path := m.sys(uninstallLogPath)
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				b.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(strings.Repeat("x", size)+"\nworker Завершение удаления: причина\n"), 0600); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				m.uninstallResult(0)
 			}
 		})
 	}
