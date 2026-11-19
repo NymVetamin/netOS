@@ -81,3 +81,29 @@ func TestGatewayWarningAfterChangingTable(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayThroughDirectHostRoute(t *testing.T) {
+	for _, gateway := range []string{"192.0.2.1", "2001:db8::1"} {
+		c := Default()
+		c.Routing.Static = []StaticRoute{
+			{Enabled: true, Destination: gateway, Interface: "eth0"},
+			{Enabled: true, Destination: "default", Gateway: gateway, Interface: "eth0"},
+		}
+		host := netip.MustParseAddr(gateway)
+		for _, tc := range []struct {
+			destination, iface string
+			warn               bool
+		}{
+			{gateway, "eth0", false}, {host.Next().String(), "eth0", true},
+			{gateway, "eth1", true}, {netip.PrefixFrom(host, host.BitLen()).String(), "eth0", false},
+			{gateway, "eth0", false},
+		} {
+			c.Routing.Static[0].Destination, c.Routing.Static[0].Interface = tc.destination, tc.iface
+			r := c.Validate()
+			p, found := problemAt(r, "routing.static[1].gateway")
+			if r.HasErrors() || found != tc.warn || (found && p.Severity != "warning") {
+				t.Fatalf("%+v: %v", tc, r.Problems)
+			}
+		}
+	}
+}
