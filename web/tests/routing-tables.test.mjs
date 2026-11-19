@@ -8,6 +8,19 @@ const exports = {};
 const source = readFileSync(new URL("../src/routingTables.ts", import.meta.url), "utf8");
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports });
 const { observedTables, tableDetails } = exports;
+test("priority selection stays within the owned range and reuses released slots", () => {
+  const next = exports.nextRulePriority;
+  assert.equal(next([]), 20100);
+  assert.equal(next([{priority: 20100}, {priority: 20100}]), 20110);
+  const spaced = Array.from({length: 990}, (_, i) => ({priority: 20100 + 10 * i}));
+  assert.equal(next(spaced), 20000);
+  spaced.splice(40, 1);
+  assert.equal(next(spaced), 20500);
+  const all = Array.from({length: 10000}, (_, i) => ({priority: 20000 + i}));
+  assert.equal(next(all), 20100);
+  all.pop();
+  assert.equal(next(all), 29999);
+});
 test("new tables have independent free names and numbers after edits and deletion", () => {
   const tables = [];
   for (let i = 0; i < 252; i++) tables.push(exports.nextRouteTable(tables));

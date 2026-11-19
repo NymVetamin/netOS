@@ -16,6 +16,19 @@ export function nextRouteTable(tables: {name: string; number: number}[]) {
   return null;
 }
 
+export function nextRulePriority(rules: {priority: number}[]): number {
+  const used = new Set<number>();
+  for (const rule of rules) used.add(rule.priority);
+  for (let priority = 20100; priority <= 29999; priority += 10) {
+    if (!used.has(priority)) return priority;
+  }
+  for (let priority = 20000; priority <= 29999; priority++) {
+    if (!used.has(priority)) return priority;
+  }
+  // Duplicate priorities are valid and produce a validation warning.
+  return 20100;
+}
+
 export function observedTables(routes: RouteEntry[], rules: string): string[] {
   const tables = new Set(routes.map(r => canonicalTable(r.table || "main")));
   for (const match of rules.matchAll(/\b(?:lookup|table)\s+(\S+)/g)) tables.add(canonicalTable(match[1]));

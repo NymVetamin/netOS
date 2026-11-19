@@ -2,7 +2,7 @@ import { interfaceDisplay, interfaceLabel } from "../interfaceDisplay";
 import { channelNATInterface } from "../channelNAT";
 import { useEffect, useMemo, useState } from "react";
 import { api, RouteEntry } from "../api";
-import { canonicalTable, nextRouteTable, observedTables, tableDetails } from "../routingTables";
+import { canonicalTable, nextRouteTable, nextRulePriority, observedTables, tableDetails } from "../routingTables";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
@@ -346,9 +346,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
             onClick={() =>
               patch((d) => {
                 d.routing.rules = d.routing.rules || [];
-                const used = d.routing.rules.map((r: any) => r.priority);
-                let priority = 20100;
-                while (used.includes(priority)) priority += 10;
+                const priority = nextRulePriority(d.routing.rules);
                 d.routing.rules.push({
                   id: openOnCreate(newID("rule")),
                   name: "Правило",
