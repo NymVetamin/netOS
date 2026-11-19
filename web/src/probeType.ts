@@ -31,7 +31,11 @@ export function changeProbeType(probe: Probe, type: string) {
     probe.tcp_request ||= converted.find(Boolean)?.request || "";
     probe.tcp_response ||= "HTTP/";
   } else if (type === "http") {
-    probe.targets = current.map((target) => /^https?:\/\//i.test(target) ? target : `http://${target}/`);
+    probe.targets = current.map(target => {
+      if (/^https?:\/\//i.test(target)) return target;
+      const host = probe.type === "icmp" && target.includes(":") ? `[${target}]` : target;
+      return `http://${host}/`;
+    });
   }
   probe.type = type;
 }

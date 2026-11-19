@@ -35,6 +35,15 @@ test("adds a port when replacing a legacy ICMP probe", () => {
   assert.equal(probe.tcp_response, "HTTP/");
 });
 
+test("converts legacy IPv6 and IPv4 ICMP addresses to usable HTTP URLs", () => {
+  const probe = { type: "icmp", targets: ["2001:db8::1", "192.0.2.1"] };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    changeProbeType(probe, "http");
+    assert.deepEqual([...probe.targets].map(target => new URL(target).hostname),
+      ["[2001:db8::1]", "192.0.2.1"]);
+  }
+});
+
 test("keeps a single pair of brackets around IPv6 probe targets", () => {
   const probe = { type: "http", targets: [
     "http://[2001:db8::1]:8080/check?q=1", "https://[::1]/", "http://[::1]/",
