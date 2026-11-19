@@ -303,36 +303,72 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
   const restoreObservedRunning = useRef(false);
   const restoreScheduledAt = useRef(0);
 
-  async function load(routerRequest = api.status()) {
-    const [list, live, router] = await Promise.all([api.backups(), api.maintenanceStatus(), routerRequest]);
-    setBackups(list.backups || []);
-    setStatus(live);
-    setInstalledVersion(router.version || "");
-    const running = live.state === "active" || live.state === "activating";
-    // Сообщение «операция запланирована» относится к ожиданию. Как только
-    // операция завершилась неудачей, оно вводит в заблуждение: рядом с
-    // отметкой об ошибке панель продолжала обещать, что всё идёт по плану.
-    if (!running && live.failed) setMessage("");
-    if (waitingForRestore && running) restoreObservedRunning.current = true;
-    if (waitingForRestore && !running && restoreObservedRunning.current) {
-      restoreObservedRunning.current = false;
-      setWaitingForRestore(false);
-      setRestoreName("");
-      setRestoreConfirm("");
-      setMessage("");
-      await onConfigReplaced();
-    }
-  }
+  const refreshAfterAction = useRef<(() => void) | null>(null);
   useEffect(() => {
-    const poll = (request: Promise<any>) => load(request).catch(() => {
-      // Restore restarts netosd. Losing the polling request after the
-      // scheduled unit had time to start is evidence that it is running.
-      if (waitingForRestore && Date.now() - restoreScheduledAt.current > 1500) {
-        restoreObservedRunning.current = true;
+    const pending = new Set<AbortController>();
+    let timer: number | undefined;
+    function cancelOlder(current?: AbortController) {
+      for (const previous of pending) {
+        if (previous === current) break;
+        previous.abort();
+        pending.delete(previous);
       }
-    });
-    return statusPolling.subscribe(waitingForRestore ? 1000 : 5000, false, request => { void poll(request); });
-  }, [waitingForRestore, statusPolling]);
+    }
+    async function poll(routerRequest?: Promise<any>) {
+      // A slow response can be overtaken by one fresh poll.
+      if (pending.size >= 2) return;
+      const controller = new AbortController();
+      const { signal } = controller;
+      pending.add(controller);
+      try {
+        const [list, live, router] = await Promise.all([
+          api.backups(signal), api.maintenanceStatus(signal), routerRequest ?? api.status(false, signal),
+        ]);
+        if (signal.aborted) return;
+        cancelOlder(controller);
+        setBackups(list.backups || []);
+        setStatus(live);
+        setInstalledVersion(router.version || "");
+        const running = live.state === "active" || live.state === "activating";
+        // Сообщение «операция запланирована» относится к ожиданию. Как только
+        // операция завершилась неудачей, оно вводит в заблуждение: рядом с
+        // отметкой об ошибке панель продолжала обещать, что всё идёт по плану.
+        if (!running && live.failed) setMessage("");
+        if (waitingForRestore && running) restoreObservedRunning.current = true;
+        if (waitingForRestore && !running && restoreObservedRunning.current) {
+          restoreObservedRunning.current = false;
+          setWaitingForRestore(false);
+          setRestoreName("");
+          setRestoreConfirm("");
+          setMessage("");
+          await onConfigReplaced();
+        }
+      } catch {
+        if (signal.aborted) return;
+        cancelOlder(controller);
+        controller.abort();
+        // Restore restarts netosd. Losing the polling request after the
+        // scheduled unit had time to start is evidence that it is running.
+        if (waitingForRestore && Date.now() - restoreScheduledAt.current > 1500) {
+          restoreObservedRunning.current = true;
+        }
+      } finally {
+        pending.delete(controller);
+      }
+    }
+    refreshAfterAction.current = () => {
+      cancelOlder();
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void poll(), 4000);
+    };
+    const unsubscribe = statusPolling.subscribe(waitingForRestore ? 1000 : 5000, false, request => { void poll(request); });
+    return () => {
+      unsubscribe();
+      cancelOlder();
+      window.clearTimeout(timer);
+      refreshAfterAction.current = null;
+    };
+  }, [waitingForRestore, statusPolling, onConfigReplaced]);
 
   async function action(run: () => Promise<any>, success: string) {
     setBusy(true);
@@ -342,7 +378,7 @@ function MaintenancePanel({ onConfigReplaced }: { onConfigReplaced: () => Promis
       const result = await run();
       if (result?.scheduled) setStatus({ state: "activating", failed: false });
       setMessage(success);
-      window.setTimeout(() => load().catch(() => {}), 4000);
+      refreshAfterAction.current?.();
     } catch (e: any) {
       setError(e.message || "Операция не выполнена");
     } finally {

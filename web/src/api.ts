@@ -375,7 +375,7 @@ export const api = {
   clientStatistics: (query: string, clients: string[], details: boolean, signal?: AbortSignal) => request<any>("GET", `/api/statistics/clients?${query}&clients=${encodeURIComponent(clients.join(","))}&details=${details?1:0}&points=0`, undefined, undefined, signal),
   statistics: (hours = 24, interfaces: string[] = []) =>
     request<any>("GET", `/api/statistics?hours=${hours}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
-  backups: () => request<{ backups: any[] }>("GET", "/api/backups"),
+  backups: (signal?: AbortSignal) => request<{ backups: any[] }>("GET", "/api/backups", undefined, undefined, signal),
   createBackup: () => request<{ scheduled: boolean }>("POST", "/api/backups"),
   deleteBackup: (name: string) => request<{ ok: boolean }>("DELETE", `/api/backups/${encodeURIComponent(name)}`),
   restoreBackup: (name: string, confirm: string) =>
@@ -387,7 +387,7 @@ export const api = {
     request<{ scheduled: boolean }>("POST", "/api/maintenance/update", { version, confirm, backup }),
   reconfigurePanel: (panel: any, confirm: string) =>
     request<{ scheduled: boolean; revision: number; port: number }>("POST", "/api/maintenance/panel", { panel, confirm }),
-  maintenanceStatus: () => request<any>("GET", "/api/maintenance/status"),
+  maintenanceStatus: (signal?: AbortSignal) => request<any>("GET", "/api/maintenance/status", undefined, undefined, signal),
   clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
   wakeClient: (mac: string, network: string, signal?: AbortSignal) => request<{interface: string}>("POST", "/api/clients/wake", {mac, network}, undefined, signal),
   vpnEndpoint: (signal?: AbortSignal) => request<{host: string; source: string}>("GET", "/api/vpn-endpoint", undefined, undefined, signal),
