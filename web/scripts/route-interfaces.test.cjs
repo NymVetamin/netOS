@@ -34,3 +34,19 @@ test('route inactivity follows the device owner when the draft changes',()=>{
  server.enabled=false;
  assert.deepEqual(states(),[undefined,'Неактивен: сервер выключен']);
 });
+
+test('route interface labels stay fresh and distinct names require linear work', () => {
+  let reads = 0;
+  const interfaces = Array.from({length: 128}, (_, i) => ({
+    get name() { reads++; return `eth${i}`; }, label: ` Port ${i} `,
+  }));
+  interfaces.push({name: 'eth0', label: 'duplicate'}, {name: '', label: 'unused'});
+  const config = {interfaces};
+  const options = routeInterfaceOptions(config);
+  assert.equal(options.length, 128);
+  assert.equal(options[0].label, 'Port 0 (eth0)');
+  assert.equal(options[127].name, 'eth127');
+  assert.ok(reads <= 4 * interfaces.length, `unexpected name reads: ${reads}`);
+  interfaces[0].label = 'eth0';
+  assert.equal(routeInterfaceOptions(config)[0].label, 'eth0');
+});

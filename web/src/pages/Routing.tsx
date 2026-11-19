@@ -1,4 +1,4 @@
-import { interfaceDisplay } from "../interfaceDisplay";
+import { interfaceDisplay, interfaceLabel } from "../interfaceDisplay";
 import { channelNATInterface } from "../channelNAT";
 import { useEffect, useState } from "react";
 import { api, RouteEntry } from "../api";
@@ -19,7 +19,7 @@ export function routeInterfaceOptions(config: any): RouteInterface[] {
   const add = (name: string, label: string, inactive?: string) => {
     if (name && !out.has(name)) out.set(name, { name, label, inactive });
   };
-  for (const i of config.interfaces || []) add(i.name, interfaceDisplay(config, i.name));
+  for (const { name, label } of config.interfaces || []) add(name, interfaceLabel(name, label));
   for (const w of config.wans || []) {
     if (w.proto === "pppoe" || w.proto === "l2tp") add(`ppp-${w.id}`, `ppp-${w.id} — сессия аплинка «${w.name || w.id}»`);
   }
