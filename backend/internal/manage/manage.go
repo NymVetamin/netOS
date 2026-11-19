@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -890,11 +891,16 @@ func (m *Manager) printCredentials(ctx context.Context) error {
 
 // backupEntry — резервная копия, найденная в каталоге.
 type backupEntry struct {
-	path string
-	name string
-	size int64
-	when time.Time
+	path     string
+	name     string
+	size     int64
+	when     time.Time
+	stamp    string
+	series   string
+	sequence string
 }
+
+var backupFilename = regexp.MustCompile(`^netos-(.+)-([0-9]{8}-[0-9]{6})(?:-([1-9][0-9]*))?\.tar\.gz$`)
 
 // listBackups перечисляет копии, новыми вперёд.
 func (m *Manager) listBackups() ([]backupEntry, error) {
@@ -902,26 +908,40 @@ func (m *Manager) listBackups() ([]backupEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	var entries []backupEntry
+	entries := make([]backupEntry, 0, len(paths))
 	for _, path := range paths {
 		info, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
-		entries = append(entries, backupEntry{
+		entry := backupEntry{
 			path: path, name: filepath.Base(path),
 			size: info.Size(), when: info.ModTime(),
-		})
-	}
-	// Имя копии содержит дату создания, и при совпадающем времени файла
-	// сортировка по имени даёт тот же порядок. Без запасного признака список
-	// на файловой системе с грубым разрешением времени менялся бы от запуска к
-	// запуску, а администратор выбирает копию по номеру в нём.
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].when.Equal(entries[j].when) {
-			return entries[i].name > entries[j].name
 		}
-		return entries[i].when.After(entries[j].when)
+		if parts := backupFilename.FindStringSubmatch(entry.name); parts != nil {
+			entry.series, entry.stamp, entry.sequence = parts[1], parts[2], parts[3]
+		}
+		entries = append(entries, entry)
+	}
+	// При равном mtime номер упорядочивает копии только внутри одной серии.
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := &entries[i], &entries[j]
+		if !a.when.Equal(b.when) {
+			return a.when.After(b.when)
+		}
+		if a.stamp != b.stamp {
+			return a.stamp > b.stamp
+		}
+		if a.series != b.series {
+			return a.series > b.series
+		}
+		if len(a.sequence) != len(b.sequence) {
+			return len(a.sequence) > len(b.sequence)
+		}
+		if a.sequence != b.sequence {
+			return a.sequence > b.sequence
+		}
+		return a.name > b.name
 	})
 	return entries, nil
 }

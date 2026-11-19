@@ -5,13 +5,79 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRestorePicksLatestBackupWithTiedMtimes(t *testing.T) {
+	m, out := testManager()
+	sandbox(t, m)
+	if err := os.MkdirAll(m.BackupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"netos-backup-20260102-000000-10.tar.gz", "netos-backup-20260102-000000-9.tar.gz",
+		"netos-backup-20260102-000000-2.tar.gz", "netos-backup-20260102-000000.tar.gz",
+		"netos-before-restore-20260101-000000.tar.gz", "netos-legacy.tar.gz",
+	}
+	same := time.Unix(1800000000, 0)
+	for _, name := range want {
+		path := filepath.Join(m.BackupDir, name)
+		if err := os.WriteFile(path, []byte("invalid archive"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, same, same); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		entries, err := m.listBackups()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, entry := range entries {
+			got = append(got, entry.name)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("ordered backups %v, want %v", got, want)
+		}
+	}
+	if err := m.Execute(context.Background(), []string{"restore", "--yes"}); err == nil || !strings.Contains(out.String(), "Беру самую свежую: "+want[0]) {
+		t.Fatalf("expected latest archive to be selected and rejected as invalid, err=%v", err)
+	}
+}
+
+func BenchmarkListBackups(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			m := &Manager{BackupDir: b.TempDir()}
+			stamp := time.Unix(1800000000, 0)
+			for i := 0; i < n; i++ {
+				path := filepath.Join(m.BackupDir, fmt.Sprintf("netos-backup-20260102-000000-%d.tar.gz", i+2))
+				if err := os.WriteFile(path, nil, 0600); err != nil {
+					b.Fatal(err)
+				}
+				if err := os.Chtimes(path, stamp, stamp); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if entries, err := m.listBackups(); err != nil || len(entries) != n {
+					b.Fatal(len(entries), err)
+				}
+			}
+		})
+	}
+}
 
 func writeTestBackup(t *testing.T, entries []tar.Header) string {
 	t.Helper()
