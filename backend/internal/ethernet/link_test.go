@@ -2,6 +2,7 @@ package ethernet
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,8 +38,17 @@ func driver(t *testing.T, path string, cur *Settings, writes *int, fail *bool) R
 			t.Fatalf("command %s", cmd)
 		}
 		if len(args) > 1 {
-			if _, err := os.Stat(path); err != nil {
+			data, err := os.ReadFile(path)
+			if err != nil {
 				t.Fatal("baseline missing before mutation", err)
+			}
+			var journal map[string]Settings
+			if err := json.Unmarshal(data, &journal); err != nil {
+				t.Fatal(err)
+			}
+			original, ok := journal[args[1]]
+			if !ok || (*writes == 0 && !same(original, *cur)) {
+				t.Fatal("missing original mode before driver change")
 			}
 			*writes++
 			if *fail {
@@ -142,4 +152,69 @@ func TestNoModesNeedsNoEttool(t *testing.T) {
 	}, filepath.Join(t.TempDir(), "absent"), nil); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestBatchUnchangedPortsPersistsPartialProgress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ports.json")
+	modes := map[string]string{"eth0": "100baseT/Full", "eth1": "100baseT/Full", "eth2": "100baseT/Full"}
+	raw := strings.Replace(sample, "Advertised link modes: 100baseT/Full 1000baseT/Full", "Advertised link modes: 100baseT/Full", 1)
+	readFailure := errors.New("port unavailable")
+	var visited []string
+	failAt := 3
+	run := func(_ context.Context, command string, args ...string) (string, error) {
+		if command != "ethtool" || len(args) != 1 {
+			t.Fatalf("unexpected driver command %s %v", command, args)
+		}
+		visited = append(visited, args[0])
+		if failAt == 3 && len(visited) == 2 {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("unchanged ports should share a journal write", err)
+			}
+		}
+		if len(visited) == failAt {
+			return "", readFailure
+		}
+		return raw, nil
+	}
+	check := func(want []string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved map[string]Settings
+		if err := json.Unmarshal(data, &saved); err != nil || len(saved) != len(want) {
+			t.Fatalf("journal %s, want %v: %v", data, want, err)
+		}
+		for _, name := range want {
+			if !same(saved[name], Parse(raw)) {
+				t.Fatalf("lost original settings for %s", name)
+			}
+		}
+	}
+	ctx := context.Background()
+	if err := Apply(ctx, run, path, modes); !errors.Is(err, readFailure) {
+		t.Fatal(err)
+	}
+	check(visited[:2])
+	visited, failAt = nil, 0
+	if err := Apply(ctx, run, path, modes); err != nil {
+		t.Fatal(err)
+	}
+	check([]string{"eth0", "eth1", "eth2"})
+	visited, failAt = nil, 2
+	if err := Apply(ctx, run, path, nil); !errors.Is(err, readFailure) {
+		t.Fatal(err)
+	}
+	delete(modes, visited[0])
+	var remaining []string
+	for name := range modes {
+		remaining = append(remaining, name)
+	}
+	check(remaining)
+	visited, failAt = nil, 0
+	if err := Apply(ctx, run, path, nil); err != nil {
+		t.Fatal(err)
+	}
+	check(nil)
 }

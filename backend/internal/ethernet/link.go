@@ -3,6 +3,7 @@ package ethernet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/netos-router/netos/internal/system"
 	"os"
@@ -104,9 +105,6 @@ func desired(current Settings, mode string) (Settings, error) {
 	return d, nil
 }
 func set(ctx context.Context, run Run, name string, current, want Settings) error {
-	if same(current, want) {
-		return nil
-	}
 	args := []string{"-s", name, "autoneg"}
 	if want.Autoneg {
 		args = append(args, "on", "advertise")
@@ -137,7 +135,7 @@ func set(ctx context.Context, run Run, name string, current, want Settings) erro
 
 // Apply preserves the exact original negotiation settings before any mutation.
 // Passing no modes restores all owned ports (rollback or uninstall).
-func Apply(ctx context.Context, run Run, path string, modes map[string]string) error {
+func Apply(ctx context.Context, run Run, path string, modes map[string]string) (result error) {
 	baseline := map[string]Settings{}
 	raw, err := os.ReadFile(path)
 	if err == nil {
@@ -150,7 +148,12 @@ func Apply(ctx context.Context, run Run, path string, modes map[string]string) e
 	if baseline == nil {
 		baseline = map[string]Settings{}
 	}
-	save := func() error {
+	dirty := false
+	flush := func() error {
+		if !dirty {
+			return nil
+		}
+		dirty = false
 		raw, err := json.Marshal(baseline)
 		if err != nil {
 			return err
@@ -158,6 +161,16 @@ func Apply(ctx context.Context, run Run, path string, modes map[string]string) e
 		_, err = system.WriteFileAtomicIfChanged(path, raw, 0600)
 		return err
 	}
+	// Commit completed no-op ports even if reading a later port fails.
+	defer func() {
+		if err := flush(); err != nil {
+			if result == nil {
+				result = err
+			} else {
+				result = errors.Join(result, err)
+			}
+		}
+	}()
 	for name, mode := range modes {
 		if mode == "" {
 			continue
@@ -175,9 +188,13 @@ func Apply(ctx context.Context, run Run, path string, modes map[string]string) e
 				return fmt.Errorf("%s: исходный режим не удалось определить, изменение отменено", name)
 			}
 			baseline[name] = cur
-			if err = save(); err != nil {
-				return err
-			}
+			dirty = true
+		}
+		if same(cur, want) {
+			continue
+		}
+		if err = flush(); err != nil {
+			return err
 		}
 		if err = set(ctx, run, name, cur, want); err != nil {
 			return err
@@ -191,12 +208,18 @@ func Apply(ctx context.Context, run Run, path string, modes map[string]string) e
 		if err != nil {
 			return err
 		}
-		if err = set(ctx, run, name, cur, original); err != nil {
-			return err
+		changed := !same(cur, original)
+		if changed {
+			if err = set(ctx, run, name, cur, original); err != nil {
+				return err
+			}
 		}
 		delete(baseline, name)
-		if err = save(); err != nil {
-			return err
+		dirty = true
+		if changed {
+			if err = flush(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
