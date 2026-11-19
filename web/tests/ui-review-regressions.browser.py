@@ -60,6 +60,15 @@ async def fixture(browser, session, config=None):
 async def service_tabs(browser, session, editable):
     page, state = await fixture(browser, session)
     await page.goto("http://netos.test/#services")
+    selected = page.get_by_role("tab", selected=True)
+    await expect(selected).to_be_visible()
+    other = page.get_by_role("tab", selected=False).first
+    for theme in ("light", "dark"):
+        await page.emulate_media(color_scheme=theme)
+        style = "(e) => {const s = getComputedStyle(e); return [s.backgroundColor, s.borderColor, s.boxShadow]}"
+        active_style, other_style = await selected.evaluate(style), await other.evaluate(style)
+        assert active_style[0] == other_style[0], (theme, active_style, other_style)
+        assert active_style[1:] != other_style[1:], (theme, active_style, other_style)
     for label in ["DNS", "DDNS", "SOCKS5", "IPTV", "DHCP", "DNS"]:
         tab = page.get_by_role("tab", name=label, exact=True)
         await tab.click()

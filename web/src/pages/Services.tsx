@@ -90,7 +90,7 @@ export function ServicesPage({ config, patch, problems }: { config: any; patch: 
               id={`service-tab-${item.id}`}
               aria-controls={`service-${item.id}`}
               aria-selected={tab === item.id}
-              className={`btn sm ${tab === item.id ? "primary" : ""}`}
+              className="btn sm"
             >
               {item.label}
               {warned && <span className="tab-dot" title="Есть предупреждение" />}
