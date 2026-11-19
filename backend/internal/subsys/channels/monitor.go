@@ -70,8 +70,9 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 	if time.Now().Before(s.pausedUntil) {
 		return
 	}
+	channels := enabledChannels(cfg)
 	wanted := map[string]bool{}
-	for _, ch := range enabledChannels(cfg) {
+	for _, ch := range channels {
 		// Recreating a TUN device removes its routes. Repair its own table
 		// even with probes disabled or while a fallback rule is selected.
 		if s.linkExists(InterfaceName(ch)) {
@@ -107,7 +108,7 @@ func (s *Subsystem) tick(ctx context.Context, cfg *config.Config) {
 	// A reserve can fail or recover while its parent stays down. Reconcile
 	// after all probes so routing follows the complete, current fallback chain.
 	var resolver *fallbackResolver
-	for _, ch := range enabledChannels(cfg) {
+	for _, ch := range channels {
 		if state := s.states[ch.ID]; state != nil && state.Down {
 			if resolver == nil {
 				resolver = newFallbackResolver(cfg, s.states)

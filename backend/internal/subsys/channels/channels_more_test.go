@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -469,5 +471,49 @@ func TestMonitorRunsProbesWithoutPageRequests(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal("background monitoring stopped without page requests")
 		}
+	}
+}
+
+func TestTickUsesCurrentChannelOrder(t *testing.T) {
+	s, _ := newTestSubsystem(t)
+	s.SysClassNet = t.TempDir()
+	var probes []string
+	s.Probe = func(_ context.Context, ch config.Channel, _ string) bool {
+		probes = append(probes, ch.ID)
+		return true
+	}
+	cfg := config.Default()
+	cfg.Channels = []config.Channel{
+		{ID: "later", Index: 5, Enabled: true, Type: "wireguard", Probe: config.Probe{Enabled: true}},
+		{ID: "first", Index: 1, Enabled: true, Type: "wireguard", Probe: config.Probe{Enabled: true}},
+	}
+	s.tick(context.Background(), cfg)
+	if !slices.Equal(probes, []string{"first", "later"}) {
+		t.Fatal(probes)
+	}
+	cfg.Channels[1].Enabled = false
+	cfg.Channels[0].Index = 1
+	cfg.Channels = append(cfg.Channels, config.Channel{ID: "new", Index: 3, Enabled: true, Type: "ikev2", Probe: config.Probe{Enabled: true}})
+	s.states["later"].Next = time.Time{}
+	probes = nil
+	s.tick(context.Background(), cfg)
+	if !slices.Equal(probes, []string{"later", "new"}) || s.states["first"] != nil {
+		t.Fatal(probes, s.states)
+	}
+}
+
+func BenchmarkChannelMonitorTick(b *testing.B) {
+	for _, n := range []int{16, 256} {
+		b.Run(strconv.Itoa(n), func(b *testing.B) {
+			cfg := config.Default()
+			for i := n; i > 0; i-- {
+				cfg.Channels = append(cfg.Channels, config.Channel{ID: strconv.Itoa(i), Index: i, Enabled: true, Type: "wireguard"})
+			}
+			s := &Subsystem{SysClassNet: b.TempDir()}
+			b.ReportAllocs()
+			for b.Loop() {
+				s.tick(context.Background(), cfg)
+			}
+		})
 	}
 }
