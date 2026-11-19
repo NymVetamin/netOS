@@ -9,6 +9,51 @@ import (
 	"time"
 )
 
+func TestAllCursorOverflowMatchesFreshSnapshot(t *testing.T) {
+	l := New()
+	l.Add(time.Unix(3000, 0), System, Info, "test", "newest before pause")
+	first, _, _ := l.Since("all", "", 0)
+	for i := 0; i < Size; i++ {
+		l.Add(time.Unix(10, 0), DNS, Info, "test", "equal timestamps")
+	}
+	delta, _, _ := l.Since("all", first.Epoch, first.Latest)
+	if delta.Reset || len(delta.Events) != Size || delta.Events[0].Seq != delta.Latest {
+		t.Fatal("exactly one page of new events should remain incremental")
+	}
+	l.Add(time.Unix(20, 0), Access, Info, "test", "after pause")
+	resumed, _, _ := l.Since("all", first.Epoch, first.Latest)
+	fresh, _, _ := l.Since("all", "", 0)
+	if !resumed.Reset || resumed.Latest != fresh.Latest || !slices.Equal(resumed.Events, fresh.Events) ||
+		len(resumed.Events) != Size || resumed.Events[0].Message != "newest before pause" {
+		t.Fatal("overflow did not return the current snapshot")
+	}
+	next, _, _ := l.Since("all", resumed.Epoch, resumed.Latest)
+	if next.Reset || len(next.Events) != 0 {
+		t.Fatal("unexpected events after reset")
+	}
+	one, _, _ := l.Since(Access, first.Epoch, first.Latest)
+	if one.Reset || len(one.Events) != 1 {
+		t.Fatal("unrelated topics reset the filtered log")
+	}
+}
+
+func BenchmarkAllCursorContinuation(b *testing.B) {
+	for _, n := range []int{32, Size + 1, Size * len(Topics)} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			l := New()
+			l.Add(time.Unix(3000, 0), System, Info, "test", "initial")
+			first, _, _ := l.Since("all", "", 0)
+			for i := 0; i < n; i++ {
+				l.Add(time.Unix(int64(i%23), 0), Topics[i%len(Topics)], Info, "test", "sample")
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				l.Since("all", first.Epoch, first.Latest)
+			}
+		})
+	}
+}
+
 func TestRefillCursorBoundaryAndEqualTimeOrder(t *testing.T) {
 	for _, laterTime := range []int64{100000000, 40000000} {
 		t.Run(fmt.Sprint(laterTime), func(t *testing.T) {

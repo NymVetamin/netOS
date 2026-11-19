@@ -189,7 +189,10 @@ func (l *Log) Since(topic, epoch string, after uint64) (Page, <-chan struct{}, b
 	if topic != "all" && l.rings[topic] == nil {
 		return Page{}, nil, false
 	}
-	reset := epoch != l.epoch || after > l.seq || (after == 0 && l.seq > 0)
+	// Only the all-topics cursor counts every event. If the delta cannot
+	// fit, build a full time-ordered snapshot, including older sequences.
+	reset := epoch != l.epoch || after > l.seq || (after == 0 && l.seq > 0) ||
+		(topic == "all" && l.seq-after > Size)
 	if reset {
 		after = 0
 	}
@@ -219,7 +222,7 @@ func (l *Log) Since(topic, epoch string, after uint64) (Page, <-chan struct{}, b
 		slices.SortFunc(p.Events, func(a, b Event) int { return cmp.Compare(b.Seq, a.Seq) })
 	}
 	if len(p.Events) > Size {
-		p.Events, p.Reset = p.Events[:Size], true
+		p.Events = p.Events[:Size]
 	}
 	return p, l.changed, true
 }
