@@ -334,12 +334,12 @@ func (m *Manager) Panel(ctx context.Context, cfg *config.Config) (string, error)
 	m.op.Lock()
 	defer m.op.Unlock()
 	pair, err := m.panel(ctx, cfg)
-	m.record("panel", pair, err)
-	if err != nil {
-		return "", err
+	var file string
+	if err == nil {
+		file = filepath.Join(m.Dir, "panel-managed.pem")
+		_, err = writePair(file, pair)
 	}
-	file := filepath.Join(m.Dir, "panel-managed.pem")
-	_, err = writePair(file, pair)
+	m.record("panel", pair, err)
 	return file, err
 }
 

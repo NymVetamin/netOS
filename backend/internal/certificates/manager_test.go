@@ -118,6 +118,45 @@ func TestSharedCertificateRenewalAndFailure(t *testing.T) {
 	}
 }
 
+func TestPanelStatusTracksPublishedCertificate(t *testing.T) {
+	ctx := context.Background()
+	m := New(t.TempDir(), nil)
+	cfg := config.Default()
+	file := filepath.Join(m.Dir, "panel-managed.pem")
+	var last Status
+	for _, host := range []string{"first", "second"} {
+		cfg.System.Hostname = host
+		if err := os.Mkdir(file, 0700); err != nil {
+			t.Fatal(err)
+		}
+		path, err := m.Panel(ctx, cfg)
+		state := m.Status()
+		if path != file || err == nil || len(state) != 1 || state[0].Error != err.Error() ||
+			state[0].Fingerprint != last.Fingerprint || !state[0].Expires.Equal(last.Expires) {
+			t.Fatalf("failed publication: path=%q status=%+v err=%v", path, state, err)
+		}
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Panel(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		pair, err := ReadPair(file, file, host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state = m.Status()
+		if len(state) != 1 || state[0].Error != "" || state[0].Fingerprint == last.Fingerprint ||
+			state[0].Fingerprint != tlsutil.Fingerprint(pair.Leaf) || !state[0].Expires.Equal(pair.Leaf.NotAfter) {
+			t.Fatalf("status does not match published certificate: %+v", state)
+		}
+		last = state[0]
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestChallengeRoutingAndIndependentVPN(t *testing.T) {
 	calls := map[string]int{}
 	m := New(t.TempDir(), func(_, domain, _ string) (ACME, error) { calls[domain]++; return makeIssuer(t, domain), nil })
