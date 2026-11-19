@@ -97,7 +97,7 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
       <div className="multiwan-enable">
           <Switch
             checked={!!config.multiwan?.enabled}
-            disabled={enabledWANs < 2}
+            disabled={!config.multiwan?.enabled && enabledWANs < 2}
             onChange={(enabled) => patch((draft) => {
               draft.multiwan = draft.multiwan || { mode: "failover", sticky_connections: true };
               if (enabled) assignMissingWANIndexes(draft.wans || []);

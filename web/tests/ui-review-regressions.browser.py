@@ -136,6 +136,42 @@ async def resolver_guidance(browser):
     print("DNS provider guidance PASS")
 
 
+async def multiwan_shortage(browser):
+    config = copy.deepcopy(CONFIG)
+    config["multiwan"] = {"enabled": True, "mode": "balance", "sticky_connections": False}
+    config["wans"] = [{"id": name, "name": name, "proto": "dhcp", "enabled": True, "index": index}
+                      for name, index in [("WAN-A", 3), ("WAN-B", 8)]]
+    page, state = await fixture(browser, {"role": "admin"}, config)
+    await page.goto("http://netos.test/#network")
+    multi = page.get_by_role("checkbox", name="Включить Multi-WAN", exact=True)
+
+    async def toggle(checkbox):
+        async with page.expect_response(lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"):
+            await checkbox.locator("..").click()
+
+    for remaining in (1, 0):
+        for wan in config["wans"][remaining:]:
+            await toggle(page.get_by_role("checkbox", name=wan["name"], exact=True))
+            wan["enabled"] = False
+        await expect(multi).to_be_checked()
+        await expect(multi).to_be_enabled()
+        await toggle(multi)
+        config["multiwan"]["enabled"] = False
+        assert state["config"] == config
+        await page.reload()
+        await expect(multi).not_to_be_checked()
+        await expect(multi).to_be_disabled()
+        for wan in config["wans"][remaining:]:
+            await toggle(page.get_by_role("checkbox", name=wan["name"], exact=True))
+            wan["enabled"] = True
+        await toggle(multi)
+        config["multiwan"]["enabled"] = True
+        assert state["config"] == config
+    assert state["writes"] == ["/api/config"] * 10 and not state["errors"], state
+    await page.close()
+    print("Multi-WAN disable and restore with one or zero uplinks PASS")
+
+
 async def segment_status(browser):
     config = copy.deepcopy(CONFIG)
     config["interfaces"][0]["label"] = "Local bridge"
@@ -214,6 +250,7 @@ async def main():
             await service_tabs(browser, session, editable)
             await missing_service_providers(browser, session, editable)
         await resolver_guidance(browser)
+        await multiwan_shortage(browser)
         await segment_status(browser)
         for level in ("none", "view", "manage", "admin"):
             await component_access(browser, level)
