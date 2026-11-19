@@ -2,7 +2,7 @@ import { TrafficMonitor } from "./TrafficMonitor";
 import { useStatusPolling } from "../StatusPollingContext";
 import { DashboardHealth } from "./DashboardHealth";
 import { linkSpeed } from "./PortLinkSettings";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatBytes, formatUptime } from "../api";
 import { Badge, Card, Empty, Notice, Tile, TableWrap } from "../ui";
 import { Icon } from "../icons";
@@ -14,6 +14,13 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
   const statusPolling = useStatusPolling();
   const [status, setStatus] = useState<any>(null);
   const [statusError, setStatusError] = useState(false);
+  const labelsByName = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const { name, label } of config.interfaces || []) {
+      if (!labels.has(name)) labels.set(name, label);
+    }
+    return labels;
+  }, [config.interfaces]);
 
   const wanInterfaces = (config.wans || [])
     .filter((w: any) => w.enabled)
@@ -152,11 +159,12 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
               </tr>
             </thead>
             <tbody>
-              {interfaces.map((i) => (
-                <tr key={i.name}>
+              {interfaces.map((i) => {
+                const label = labelsByName.get(i.name);
+                return <tr key={i.name}>
                   <td>
                     <span className="mono">{i.name}</span>
-                    {(config.interfaces || []).find((p:any)=>p.name===i.name)?.label && <div>{(config.interfaces || []).find((p:any)=>p.name===i.name).label}</div>}
+                    {label && <div>{label}</div>}
                     {i.name.startsWith("ifb-netos-") && (
                       <div className="faint" style={{ fontSize: 12 }}>Служебный интерфейс QoS: входящий трафик</div>
                     )}
@@ -178,8 +186,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
                       <span className="faint">0</span>
                     )}
                   </td>
-                </tr>
-              ))}
+                </tr>;
+              })}
             </tbody>
           </table>
         </TableWrap>

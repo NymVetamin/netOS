@@ -30,6 +30,12 @@ async def main():
                       {"unit":"netos-samba.service","state":"inactive","substate":"dead"},
                       {"unit":"netos-xray-srv3.service","title":"Xray · VPN server","state":"activating","substate":"start"}]}
         cfg={"system":{"hostname":"router"},"interfaces":[],"networks":[],"channels":[],"wans":[],"vpn_servers":[],"policies":[]}
+        cfg["interfaces"] = [
+            {"name":"lan0","label":"Первый порт"}, {"name":"lan0","label":"Дубликат"},
+            {"name":"lan1","label":""}, {"name":"lan1","label":"Поздняя подпись"},
+        ]
+        status["interfaces"] = [{"name":name,"up":True,"rx_bytes":0,"tx_bytes":0}
+                                for name in ("lan1","unknown0","lan0")]
         async def route_request(route):
             parsed=urlparse(route.request.url)
             path=parsed.path
@@ -50,6 +56,8 @@ async def main():
         await page.route("**/*",route_request)
         await page.goto("http://netos-ui.test/#dashboard")
         await expect(page.get_by_text("3 / 12",exact=True)).to_be_visible()
+        cells = page.locator("table tbody tr td:first-child").filter(has=page.locator("span.mono"))
+        await expect(cells).to_have_text(["lan1", "unknown0", "lan0Первый порт"])
         await expect(page.get_by_text("12.5 %",exact=True)).to_be_visible()
         await expect(page.get_by_text("25.0 %",exact=True)).to_be_visible()
         await expect(page.get_by_text("49.0 °C",exact=True)).to_be_visible()
