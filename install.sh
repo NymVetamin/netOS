@@ -324,8 +324,10 @@ if [ ! -f "$PACKAGE_STATE/initial.txt" ]; then
     cp "$PACKAGE_STATE/before.txt" "$PACKAGE_STATE/initial.txt"
     # Only fresh installations can record true pre-netOS component state.
     # Never adopt already modified component files on an upgrade.
-    : > "$PACKAGE_STATE/restore-components"
-    chmod 0600 "$PACKAGE_STATE/restore-components"
+    if [ "$UPGRADE" = 0 ]; then
+        : > "$PACKAGE_STATE/restore-components"
+        chmod 0600 "$PACKAGE_STATE/restore-components"
+    fi
 fi
 [ -f "$PACKAGE_STATE/owned.txt" ] || : > "$PACKAGE_STATE/owned.txt"
 : > "$PACKAGE_STATE/pending"

@@ -4,6 +4,24 @@ installer=$(cd "$(dirname "$0")/../.." && pwd)/install.sh
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 
+for initial_upgrade in 0 1; do
+    PACKAGE_STATE="$root/packages-$initial_upgrade"
+    mkdir "$PACKAGE_STATE"
+    UPGRADE=$initial_upgrade
+    echo first > "$PACKAGE_STATE/before.txt"
+    for attempt in 1 2; do
+        source <(sed -n '/^if \[ ! -f "\$PACKAGE_STATE\/initial.txt" \]; then$/,/^fi$/p' "$installer")
+        [[ $(cat "$PACKAGE_STATE/initial.txt") == first ]]
+        if [[ $initial_upgrade == 0 ]]; then
+            [[ -f "$PACKAGE_STATE/restore-components" ]]
+        else
+            [[ ! -e "$PACKAGE_STATE/restore-components" ]]
+        fi
+        UPGRADE=1
+        echo changed > "$PACKAGE_STATE/before.txt"
+    done
+done
+
 # Run the production rollback functions against a temporary filesystem tree.
 # Prefix only the literal OS paths. Variable paths below already live in root.
 source <(sed -n -e '/^restore_path() {/,/^}/p' -e '/^rollback_and_cleanup() {/,/^}/p' "$installer" |
