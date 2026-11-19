@@ -3,6 +3,7 @@ package certificates
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -56,18 +57,34 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 			continue
 		}
 		dir := filepath.Join(generated, fmt.Sprintf("%s-srv%d-tls", server.Type, server.Index))
-		changed, err := func() (bool, error) {
-			m.op.Lock()
-			defer m.op.Unlock()
-			return m.vpnLocked(ctx, cfg, server, dir, spec, endpoint)
-		}()
-		// Xray hot-reloads these files hourly without interrupting sessions.
-		if err == nil && changed && server.Type == "ocserv" {
-			_, err = runner.Run(ctx, "systemctl", "kill", "--kill-whom=main", "--signal=HUP", fmt.Sprintf("netos-ocserv-srv%d.service", server.Index))
-		}
+		err = m.refreshVPN(ctx, cfg, server, dir, spec, endpoint, runner)
 		if err != nil && first == nil {
 			first = err
 		}
 	}
 	return first
+}
+
+func (m *Manager) refreshVPN(ctx context.Context, cfg *config.Config, server config.VPNServer, dir string, spec *config.VPNServerTLS, endpoint string, runner system.Runner) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	var marker string
+	if server.Type == "ocserv" {
+		marker = filepath.Join(dir, "reload-pending")
+	}
+	changed, err := m.vpnLocked(ctx, cfg, server, dir, spec, endpoint, marker)
+	if err != nil || marker == "" {
+		return err
+	}
+	if !changed {
+		if _, err := os.Lstat(marker); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
+	if _, err := runner.Run(ctx, "systemctl", "kill", "--kill-whom=main", "--signal=HUP", fmt.Sprintf("netos-ocserv-srv%d.service", server.Index)); err != nil {
+		return err
+	}
+	return os.Remove(marker)
 }

@@ -2,6 +2,7 @@ package certificates
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,67 @@ type refreshCommands struct{ calls []string }
 func (r *refreshCommands) Run(_ context.Context, name string, args ...string) (string, error) {
 	r.calls = append(r.calls, name+" "+strings.Join(args, " "))
 	return "", nil
+}
+
+type failingReload struct {
+	refreshCommands
+	err error
+}
+
+func (r *failingReload) Run(ctx context.Context, name string, args ...string) (string, error) {
+	r.refreshCommands.Run(ctx, name, args...)
+	return "", r.err
+}
+
+func TestRefreshRetriesUnfinishedReload(t *testing.T) {
+	root := t.TempDir()
+	managerDir := filepath.Join(root, "manager")
+	generated := filepath.Join(root, "generated")
+	m := New(managerDir, nil)
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.System.Hostname = "old"
+	server := config.VPNServer{Type: "ocserv", ID: "vpn", Index: 1, Enabled: true, Config: map[string]any{
+		"public_endpoint": "old:443", "tls": map[string]any{"mode": "panel"},
+	}}
+	cfg.VPNServers = []config.VPNServer{server}
+	r := &failingReload{}
+	if err := m.Refresh(ctx, cfg, generated, r); err != nil || len(r.calls) != 1 {
+		t.Fatal("initial reload", err, r.calls)
+	}
+	cfg.System.Hostname = "new"
+	server.Config["public_endpoint"] = "new:443"
+	dir := filepath.Join(generated, "ocserv-srv1-tls")
+	pub := filepath.Join(dir, "panel.crt")
+	if err := os.Remove(pub); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(pub, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Refresh(ctx, cfg, generated, r); err == nil || len(r.calls) != 1 {
+		t.Fatal("reload before public export", err, r.calls)
+	}
+	bundle := filepath.Join(dir, "server.pem")
+	if _, err := ReadPair(bundle, bundle, "new"); err != nil {
+		t.Fatal("new bundle must already be on disk", err)
+	}
+	if err := os.Remove(pub); err != nil {
+		t.Fatal(err)
+	}
+	r.err = errors.New("HUP failed")
+	for i := 0; i < 2; i++ {
+		m = New(managerDir, nil)
+		if err := m.Refresh(ctx, cfg, generated, r); !errors.Is(err, r.err) || len(r.calls) != 2+i {
+			t.Fatal("missing retry after restart", err, r.calls)
+		}
+	}
+	r.err = nil
+	for i := 0; i < 2; i++ {
+		if err := m.Refresh(ctx, cfg, generated, r); err != nil || len(r.calls) != 4 {
+			t.Fatal("expected one successful retry", err, r.calls)
+		}
+	}
 }
 func (r *refreshCommands) RunInput(context.Context, string, string, ...string) (string, error) {
 	return "", fmt.Errorf("unexpected input command")

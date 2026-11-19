@@ -172,10 +172,17 @@ func ReadPair(certFile, keyFile, name string) (*Pair, error) {
 // for both paths, avoiding a half-written certificate/key pair on disk.
 func (p *Pair) Bundle() []byte { return append(append([]byte{}, p.Certificate...), p.Key...) }
 
-func writePair(file string, pair *Pair) (bool, error) {
+func writePair(file string, pair *Pair, reloadMarker string) (bool, error) {
 	data := pair.Bundle()
 	if old, err := os.ReadFile(file); err == nil && string(old) == string(data) {
 		return false, nil
+	}
+	// Record the pending reload before replacing the bundle, so a failed
+	// public export or a daemon restart cannot lose the notification.
+	if reloadMarker != "" {
+		if err := system.WriteFileAtomic(reloadMarker, nil, 0600); err != nil {
+			return false, err
+		}
 	}
 	return true, system.WriteFileAtomic(file, data, 0o600)
 }
@@ -337,7 +344,7 @@ func (m *Manager) Panel(ctx context.Context, cfg *config.Config) (string, error)
 	var file string
 	if err == nil {
 		file = filepath.Join(m.Dir, "panel-managed.pem")
-		_, err = writePair(file, pair)
+		_, err = writePair(file, pair, "")
 	}
 	m.record("panel", pair, err)
 	return file, err
@@ -350,11 +357,11 @@ func (m *Manager) VPN(ctx context.Context, cfg *config.Config, server config.VPN
 	if err != nil {
 		return false, err
 	}
-	return m.vpnLocked(ctx, cfg, server, dir, spec, endpoint)
+	return m.vpnLocked(ctx, cfg, server, dir, spec, endpoint, "")
 }
 
 // vpnLocked publishes an already decoded specification while m.op is held.
-func (m *Manager) vpnLocked(ctx context.Context, cfg *config.Config, server config.VPNServer, dir string, spec *config.VPNServerTLS, endpoint string) (bool, error) {
+func (m *Manager) vpnLocked(ctx context.Context, cfg *config.Config, server config.VPNServer, dir string, spec *config.VPNServerTLS, endpoint, reloadMarker string) (bool, error) {
 	host, _, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		return false, fmt.Errorf("укажите публичный адрес VPN в формате домен:порт")
@@ -384,7 +391,7 @@ func (m *Manager) vpnLocked(ctx context.Context, cfg *config.Config, server conf
 	if err != nil {
 		return false, err
 	}
-	changed, err := writePair(filepath.Join(dir, "server.pem"), pair)
+	changed, err := writePair(filepath.Join(dir, "server.pem"), pair, reloadMarker)
 	if err != nil {
 		return false, err
 	}
