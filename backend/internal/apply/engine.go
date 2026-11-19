@@ -22,6 +22,7 @@ import (
 // Subsystem — часть системы, которую netosd приводит в соответствие конфигу.
 // Все реализации обязаны быть идемпотентными: повторный Apply с тем же
 // конфигом не должен ничего менять и не должен рвать существующий трафик.
+// Plan, Apply и Health читают общий снимок конфигурации транзакции.
 type Subsystem interface {
 	Name() string
 	// Plan возвращает человекочитаемый список изменений. Используется для
@@ -343,12 +344,15 @@ func (e *Engine) PlanFrom(old, new *config.Config) ([]Action, error) {
 }
 
 func (e *Engine) PlanFromContext(ctx context.Context, old, new *config.Config) ([]Action, error) {
-	ctx = system.WithPlanUnitReads(ctx)
-	if err := validateLiveTransition(old, new); err != nil {
+	old, new, err := prepareRuntimeTransition(old, new)
+	if err != nil {
 		return nil, err
 	}
+	return e.planRuntime(ctx, old, new)
+}
 
-	old, new = old.RuntimeNetworkConfig(), new.RuntimeNetworkConfig()
+func (e *Engine) planRuntime(ctx context.Context, old, new *config.Config) ([]Action, error) {
+	ctx = system.WithPlanUnitReads(ctx)
 	var actions []Action
 	for _, name := range Order {
 		s, ok := e.subsystems[name]
@@ -376,17 +380,20 @@ func (e *Engine) PlanFromContext(ctx context.Context, old, new *config.Config) (
 	return actions, nil
 }
 
-func validateLiveTransition(old, new *config.Config) error {
-	if old == nil || new == nil {
-		return nil
+func prepareRuntimeTransition(old, next *config.Config) (*config.Config, *config.Config, error) {
+	if old == next {
+		runtime := next.RuntimeNetworkConfig()
+		return runtime, runtime, nil
 	}
-	if old.System.Panel.Port != new.System.Panel.Port {
-		return fmt.Errorf("порт панели нельзя менять без перезапуска netosd")
+	if old != nil && next != nil {
+		if old.System.Panel.Port != next.System.Panel.Port {
+			return nil, nil, fmt.Errorf("порт панели нельзя менять без перезапуска netosd")
+		}
+		if old.System.Panel.TLS != next.System.Panel.TLS {
+			return nil, nil, fmt.Errorf("параметры TLS панели нельзя менять без перезапуска netosd")
+		}
 	}
-	if old.System.Panel.TLS != new.System.Panel.TLS {
-		return fmt.Errorf("параметры TLS панели нельзя менять без перезапуска netosd")
-	}
-	return nil
+	return old.RuntimeNetworkConfig(), next.RuntimeNetworkConfig(), nil
 }
 
 // Result описывает исход применения.
@@ -437,27 +444,31 @@ func (e *Engine) ApplyWithCommit(ctx context.Context, cfg *config.Config, revisi
 	previous := e.current
 	e.mu.Unlock()
 
-	actions, err := e.PlanContext(ctx, cfg)
+	oldRuntime, nextRuntime, err := prepareRuntimeTransition(previous, cfg)
+	if err != nil {
+		return nil, err
+	}
+	actions, err := e.planRuntime(ctx, oldRuntime, nextRuntime)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.run(ctx, cfg); err != nil {
+	if err := e.runRuntime(ctx, nextRuntime); err != nil {
 		// Применение упало на середине — система в промежуточном состоянии,
 		// немедленно возвращаемся к предыдущему конфигу.
 		e.log.Errorf("применение не удалось: %v", err)
-		return nil, e.restoreAfterFailure(previous, err)
+		return nil, e.restoreAfterFailure(oldRuntime, err)
 	}
 
-	if err := e.health(ctx, cfg); err != nil {
+	if err := e.healthRuntime(ctx, nextRuntime); err != nil {
 		e.log.Errorf("проверка после применения не прошла: %v", err)
-		return nil, e.restoreAfterFailure(previous, fmt.Errorf("проверка после применения не прошла: %w", err))
+		return nil, e.restoreAfterFailure(oldRuntime, fmt.Errorf("проверка после применения не прошла: %w", err))
 	}
 
 	waitForConfirm := needConfirm && previous != nil && NeedsConfirmation(actions)
 	if !waitForConfirm && commit != nil {
 		if err := commit(revision); err != nil {
-			return nil, e.restoreAfterFailure(previous, fmt.Errorf("фиксация ревизии %d: %w", revision, err))
+			return nil, e.restoreAfterFailure(oldRuntime, fmt.Errorf("фиксация ревизии %d: %w", revision, err))
 		}
 	}
 
@@ -596,7 +607,7 @@ func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, detai
 	}
 	e.mu.Unlock()
 
-	if err := e.restore(ctx, p.previous); err != nil {
+	if err := e.restoreRuntime(ctx, p.previous.RuntimeNetworkConfig()); err != nil {
 		return err
 	}
 
@@ -623,31 +634,30 @@ func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, detai
 	return nil
 }
 
-func (e *Engine) restore(ctx context.Context, cfg *config.Config) error {
-	if err := e.run(ctx, cfg); err != nil {
+func (e *Engine) restoreRuntime(ctx context.Context, cfg *config.Config) error {
+	if err := e.runRuntime(ctx, cfg); err != nil {
 		return err
 	}
-	if err := e.health(ctx, cfg); err != nil {
+	if err := e.healthRuntime(ctx, cfg); err != nil {
 		return fmt.Errorf("проверка после отката: %w", err)
 	}
 	return nil
 }
 
-func (e *Engine) restoreAfterFailure(previous *config.Config, cause error) error {
-	if previous == nil {
+func (e *Engine) restoreAfterFailure(previousRuntime *config.Config, cause error) error {
+	if previousRuntime == nil {
 		return cause
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := e.restore(ctx, previous); err != nil {
+	if err := e.restoreRuntime(ctx, previousRuntime); err != nil {
 		return fmt.Errorf("%w; откат не удался: %v", cause, err)
 	}
 	e.log.Warnf("выполнен откат к предыдущей конфигурации")
 	return fmt.Errorf("%w; %w", cause, ErrRestored)
 }
 
-func (e *Engine) run(ctx context.Context, cfg *config.Config) error {
-	cfg = cfg.RuntimeNetworkConfig()
+func (e *Engine) runRuntime(ctx context.Context, cfg *config.Config) error {
 	for _, name := range Order {
 		s, ok := e.subsystems[name]
 		if !ok {
@@ -666,8 +676,7 @@ func (e *Engine) run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func (e *Engine) health(ctx context.Context, cfg *config.Config) error {
-	cfg = cfg.RuntimeNetworkConfig()
+func (e *Engine) healthRuntime(ctx context.Context, cfg *config.Config) error {
 	if e.dryRun {
 		return nil
 	}
