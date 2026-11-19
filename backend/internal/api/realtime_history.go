@@ -194,17 +194,18 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 	tail := append([]realtimeSnapshot(nil), h.tail...)
 	h.mu.Unlock()
 	raw := to-from <= 1800
-	column := "summary"
+	// Fetch compressed seconds only when a minute straddles the requested range.
+	columns := "start < ?1 OR finish > ?2, CASE WHEN start < ?1 OR finish > ?2 THEN data ELSE summary END"
 	step := int(math.Max(1, math.Ceil((to-from)/1440/60))) * 60
 	if raw {
-		column = "data"
+		columns = "1, data"
 		step = 1
 	}
 	end := to
-	if len(tail) > 0 && tail[0].At < end {
-		end = tail[0].At - 0.000001
+	if len(tail) > 0 && tail[0].At <= end {
+		end = math.Nextafter(tail[0].At, math.Inf(-1))
 	}
-	rows, err := h.reader.QueryContext(ctx, `SELECT `+column+` FROM seconds WHERE finish>=? AND start<=? ORDER BY start`, from, end)
+	rows, err := h.reader.QueryContext(ctx, `SELECT `+columns+` FROM seconds WHERE finish>=?1 AND start<=?3 ORDER BY start`, from, to, end)
 	if err != nil {
 		return nil, step, err
 	}
@@ -232,13 +233,31 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 		}
 		bucket = append(bucket, frame)
 	}
+	addBlock := func(block []realtimeSnapshot) {
+		if raw {
+			for _, frame := range block {
+				add(frame)
+			}
+			return
+		}
+		for len(block) > 0 && block[0].At < from {
+			block = block[1:]
+		}
+		for len(block) > 0 && block[len(block)-1].At > to {
+			block = block[:len(block)-1]
+		}
+		if len(block) > 0 {
+			add(summarize(block))
+		}
+	}
+	var compressed bool
 	for rows.Next() {
 		var data []byte
-		if err = rows.Scan(&data); err != nil {
+		if err = rows.Scan(&compressed, &data); err != nil {
 			rows.Close()
 			return nil, step, err
 		}
-		if raw {
+		if compressed {
 			gz, e := gzip.NewReader(bytes.NewReader(data))
 			if e != nil {
 				rows.Close()
@@ -251,9 +270,7 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 				rows.Close()
 				return nil, step, e
 			}
-			for _, frame := range block {
-				add(frame)
-			}
+			addBlock(block)
 		} else {
 			var frame realtimeSnapshot
 			if err = json.Unmarshal(data, &frame); err != nil {
@@ -268,13 +285,7 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 	if err != nil {
 		return nil, step, err
 	}
-	if raw {
-		for _, frame := range tail {
-			add(frame)
-		}
-	} else if len(tail) > 0 {
-		add(summarize(tail))
-	}
+	addBlock(tail)
 	flush()
 	return out, step, nil
 }

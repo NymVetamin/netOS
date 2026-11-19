@@ -156,6 +156,57 @@ func TestSecondHistoryWindowCancellation(t *testing.T) {
 	}
 }
 
+func TestSecondHistoryClipsMinuteAtWindowEdges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "seconds.sqlite")
+	h, err := openSecondHistory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if h != nil {
+			h.close()
+		}
+	})
+	const start = 10000
+	for i := 0; i < 60; i++ {
+		rate := 0.0
+		if i >= 30 {
+			rate = 1000
+		}
+		if err := h.append(historyFrame(start+float64(i), rate)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, phase := range []string{"memory", "reopened"} {
+		if phase == "reopened" {
+			if err := h.close(); err != nil {
+				t.Fatal(err)
+			}
+			h, err = openSecondHistory(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, tc := range []struct {
+			from, to, at, rate, seconds float64
+		}{
+			{-3600, 29, 0, 0, 30},
+			{30, 3600, 30, 1000, 30},
+			{-1, 0, 0, 0, 0}, // raw, exactly one sample
+		} {
+			rows, _, err := h.window(context.Background(), start+tc.from, start+tc.to)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("%s [%g,%g]: frames=%d err=%v", phase, tc.from, tc.to, len(rows), err)
+			}
+			v := rows[0].Values[0]
+			if rows[0].At != start+tc.at || *v.RXBPS != tc.rate || v.Seconds != tc.seconds ||
+				(tc.seconds > 0 && (v.RXPeak == nil || *v.RXPeak != tc.rate)) {
+				t.Fatalf("%s [%g,%g]: at=%g rate=%g seconds=%g peak=%v", phase, tc.from, tc.to, rows[0].At, *v.RXBPS, v.Seconds, v.RXPeak)
+			}
+		}
+	}
+}
+
 func TestSecondHistoryReaderDoesNotBlockSampler(t *testing.T) {
 	h, err := openSecondHistory(filepath.Join(t.TempDir(), "seconds.sqlite"))
 	if err != nil {
