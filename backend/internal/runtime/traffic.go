@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,10 +36,11 @@ type TrafficHistory struct {
 	Collect  func() ([]InterfaceStat, error)
 	Now      func() time.Time
 
-	mu          sync.RWMutex
-	points      []TrafficPoint
-	last        *TrafficPoint
-	lastCompact time.Time
+	mu                 sync.RWMutex
+	points             []TrafficPoint
+	last               *TrafficPoint
+	lastCompact        time.Time
+	persistenceBlocked bool
 }
 
 const maxTrafficHistoryBytes = 64 << 20
@@ -50,7 +53,11 @@ func NewTrafficHistory(path string, collector *Collector) *TrafficHistory {
 }
 
 func (h *TrafficHistory) Run(ctx context.Context) {
-	_ = h.load()
+	err := h.load()
+	h.persistenceBlocked = err != nil
+	if err != nil {
+		log.Printf("история трафика: запись приостановлена до перезапуска: %v", err)
+	}
 	h.sample()
 	ticker := time.NewTicker(h.Interval)
 	defer ticker.Stop()
@@ -89,6 +96,9 @@ func (h *TrafficHistory) sample() {
 	h.points = append(h.points, point)
 	h.last = &point
 	h.pruneLocked(now.Add(-h.Retain))
+	if h.persistenceBlocked {
+		return
+	}
 	if h.lastCompact.IsZero() || now.Sub(h.lastCompact) >= 24*time.Hour {
 		_ = h.compactLocked(now)
 	} else {
@@ -206,42 +216,70 @@ func (h *TrafficHistory) pruneLocked(before time.Time) {
 }
 
 func (h *TrafficHistory) load() error {
-	info, err := os.Stat(h.Path)
+	file, err := os.Open(h.Path)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if info.Size() > maxTrafficHistoryBytes {
-		return fmt.Errorf("история трафика слишком велика: %d байт", info.Size())
-	}
-	data, err := os.ReadFile(h.Path)
-	if err != nil {
-		return err
+	defer file.Close()
+	reader := bufio.NewReader(file)
+	var legacy bool
+	for {
+		first, err := reader.ReadByte()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if first != ' ' && first != '\t' && first != '\r' && first != '\n' {
+			legacy = first == '['
+			if err := reader.UnreadByte(); err != nil {
+				return err
+			}
+			break
+		}
 	}
 	var points []TrafficPoint
-	legacy := len(bytes.TrimSpace(data)) > 0 && bytes.TrimSpace(data)[0] == '['
+	cutoff := h.Now().UTC().Add(-h.Retain)
+	var lastExpired *TrafficPoint
 	if legacy {
-		// Compatibility with the original JSON-array persistence format.
+		data, err := io.ReadAll(io.LimitReader(reader, maxTrafficHistoryBytes+1))
+		if err != nil {
+			return err
+		}
+		if len(data) > maxTrafficHistoryBytes {
+			return fmt.Errorf("старый массив истории трафика превышает %d байт", maxTrafficHistoryBytes)
+		}
 		if err := json.Unmarshal(data, &points); err != nil {
 			return fmt.Errorf("разбор истории трафика: %w", err)
 		}
 	} else {
 		// An interrupted append can leave a fragment after the last newline.
 		// The first successful sample atomically rewrites the recovered points.
-		tail := bytes.LastIndexByte(data, '\n') + 1
-		if tail < len(data) && !json.Valid(data[tail:]) {
-			data = data[:tail]
-		}
-		scanner := bufio.NewScanner(bytes.NewReader(data))
+		scanner := bufio.NewScanner(reader)
+		scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+			if atEOF && bytes.IndexByte(data, '\n') < 0 && !json.Valid(data) {
+				return len(data), nil, nil
+			}
+			return bufio.ScanLines(data, atEOF)
+		})
 		scanner.Buffer(make([]byte, 64<<10), 4<<20)
 		for scanner.Scan() {
 			var point TrafficPoint
 			if err := json.Unmarshal(scanner.Bytes(), &point); err != nil {
 				return fmt.Errorf("разбор истории трафика: %w", err)
 			}
-			points = append(points, point)
+			if !point.At.Before(cutoff) {
+				points = append(points, point)
+			} else if lastExpired == nil || !point.At.Before(lastExpired.At) {
+				if lastExpired == nil {
+					lastExpired = new(TrafficPoint)
+				}
+				*lastExpired = point
+			}
 		}
 		if err := scanner.Err(); err != nil {
 			return fmt.Errorf("чтение истории трафика: %w", err)
@@ -250,11 +288,12 @@ func (h *TrafficHistory) load() error {
 	sort.Slice(points, func(i, j int) bool { return points[i].At.Before(points[j].At) })
 	h.mu.Lock()
 	h.points = points
+	h.last = lastExpired
 	if len(points) > 0 {
 		last := points[len(points)-1]
 		h.last = &last
 	}
-	h.pruneLocked(h.Now().UTC().Add(-h.Retain))
+	h.pruneLocked(cutoff)
 	h.mu.Unlock()
 	return nil
 }

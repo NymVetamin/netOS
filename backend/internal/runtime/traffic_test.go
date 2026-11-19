@@ -88,6 +88,58 @@ func BenchmarkTrafficRestart(b *testing.B) {
 	}
 }
 
+func TestTrafficRestartReadsLargeJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history")
+	now := time.Now().UTC()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point := TrafficPoint{At: now, Interfaces: map[string]TrafficRate{"lan": {RXBytes: 12}}}
+	record, err := json.Marshal(point)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := append(append(record, bytes.Repeat([]byte(" "), 1<<20)...), '\n')
+	for i := 0; i < 65; i++ {
+		if _, err := file.Write(line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		h := NewTrafficHistory(path, &Collector{})
+		h.Now = func() time.Time { return now }
+		h.Collect = func() ([]InterfaceStat, error) { return nil, nil }
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		h.Run(ctx)
+		if len(h.points) != 66+attempt || !reflect.DeepEqual(h.points[0], point) {
+			t.Fatalf("restart %d: retained %d points", attempt, len(h.points))
+		}
+	}
+}
+
+func TestTrafficLoadFailurePreservesJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history")
+	original := []byte("invalid complete record\n")
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewTrafficHistory(path, &Collector{})
+	h.Collect = func() ([]InterfaceStat, error) { return nil, nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.Run(ctx)
+	h.sample()
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, original) || len(h.points) != 2 {
+		t.Fatalf("after failed load: data=%q samples=%d err=%v", data, len(h.points), err)
+	}
+}
+
 func TestTrafficHistoryRatesResetAndPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic.json")
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
