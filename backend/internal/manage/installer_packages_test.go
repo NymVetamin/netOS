@@ -54,6 +54,7 @@ func TestInstallerTracksAptPackagesAcrossRetries(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		dir := t.TempDir()
 		script := `set -eu
+UPGRADE=0
 PACKAGES="iptables"
 AUTO_PACKAGES=""
 die() { echo "$*" >&2; exit 1; }
