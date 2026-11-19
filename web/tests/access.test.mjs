@@ -93,6 +93,28 @@ test("SSH from the Internet makes the router partially reachable", () => {
   assert.ok(c.exceptions.some((e) => e.includes("Доступ по SSH") && e.includes("TCP 22")));
 });
 
+test("only the first terminating rule with the same selectors decides new traffic", () => {
+  const deny = { name: "first", enabled: true, zone: "wan", flow: "in", protocol: "tcp", dst_port: "8443", action: "drop" };
+  const allow = { ...deny, name: "second", action: "accept", log: true };
+  const cfg = config();
+  const result = (...rules) => {
+    cfg.firewall.rules = rules;
+    return cell(cfg, "Интернет", "Роутер");
+  };
+  assert.equal(result(deny, allow).verdict, "n");
+  assert.equal(result(allow, deny).verdict, "p");
+  assert.equal(result(allow, { ...deny, zone: "global", flow: "any" }).verdict, "n");
+  assert.equal(result({ ...deny, action: "continue" }, allow).verdict, "p");
+  for (const condition of [
+    { enabled: false }, { zone: "lan" }, { flow: "forward" }, { dst_port: "8444" },
+    { src_ip: "203.0.113.1" }, { src_port: "5000" }, { protocol: "udp" },
+    { conn_state: "established" }, { schedule: { time_start: "08:00", time_stop: "10:00" } },
+  ]) {
+    assert.equal(result({ ...deny, ...condition }, allow).verdict, "p", JSON.stringify(condition));
+  }
+  assert.equal(result({ ...deny, conn_state: "new" }, allow).verdict, "n");
+});
+
 test("a port forward opens a segment partially", () => {
   const cfg = config([], {});
   cfg.firewall.nat = [{ name: "NAS", enabled: true, direction: "destination", protocol: "tcp", ext_port: "5001", dest_ip: "192.168.10.20" }];

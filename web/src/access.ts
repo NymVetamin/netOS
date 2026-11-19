@@ -41,6 +41,21 @@ type ParsedAddresses = Map<string, { nets: Subnet[]; ranges: AddressRange[] } | 
 
 type RuleGroups = { in: any[]; forward: any[] };
 
+// The caller has already selected the chain and the NEW connection state.
+// Logging, counters and rule names do not affect which packets terminate here.
+function firstMatchingRules(rules: any[], seen: Set<string>, global?: Set<string>): any[] {
+  return rules.filter(r => {
+    const key = JSON.stringify([
+      r.interface || "", r.out_interface || "", r.dst_zone || "", r.protocol || "any",
+      r.src_ip || "", r.dst_ip || "", r.src_ipset || "", r.dst_ipset || "",
+      r.src_mac || "", r.src_port || "", r.dst_port || "", r.schedule || null,
+    ]);
+    if (seen.has(key) || global?.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 type Subnet = { net: number; bits: number };
 
 export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>): Matrix {
@@ -76,15 +91,23 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
   const globalRules: RuleGroups = { in: [], forward: [] };
   const zoneRules = new Map<any, RuleGroups>();
   if (sources.length && config.firewall?.enabled) for (const r of config.firewall.rules || []) {
-    if (!r.enabled || !appliesToNew(r)) continue;
+    if (!r.enabled || r.action === "continue" || !appliesToNew(r)) continue;
     if (r.zone === "global") {
       if (r.flow === "in" || r.flow === "any") globalRules.in.push(r);
       if (r.flow === "forward" || r.flow === "any") globalRules.forward.push(r);
+      continue;
     }
     if (r.flow !== "in" && r.flow !== "forward") continue;
     let group = zoneRules.get(r.zone);
     if (!group) { group = { in: [], forward: [] }; zoneRules.set(r.zone, group); }
     group[r.flow as "in" | "forward"].push(r);
+  }
+  for (const flow of ["in", "forward"] as const) {
+    const global = new Set<string>();
+    globalRules[flow] = firstMatchingRules(globalRules[flow], global);
+    for (const group of zoneRules.values()) {
+      group[flow] = firstMatchingRules(group[flow], new Set(), global);
+    }
   }
   const parsedAddresses: ParsedAddresses = new Map();
   const setSpecs = new Map<string, string | undefined>();
@@ -121,7 +144,6 @@ function evaluate(config: any, src: Entity, dst: Entity, segments: Entity[], glo
   // Правило решает целиком, частично или не касается пары вовсе.
   const walk = (list: any[]): Access | null => {
     for (const r of list) {
-      if (r.action === "continue") continue;
       const match = matchRule(r, src, dst, flow, segments, setSpec, parsedAddresses);
       if (match === "none") continue;
       const accept = r.action === "accept";
