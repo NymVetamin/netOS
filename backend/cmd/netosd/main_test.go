@@ -123,6 +123,18 @@ func TestEnsureAdminCreatesPrivateCredentialsOnce(t *testing.T) {
 	t.Cleanup(func() { credentialsPath = oldPath })
 	logger := &testLogger{}
 	cfg := config.Default()
+	if err := os.Mkdir(credentialsPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureAdmin(st, cfg, logger); err == nil {
+		t.Fatal("accepted unwritable credentials path")
+	}
+	if count, err := st.CountUsers(); err != nil || count != 0 {
+		t.Fatalf("after failed bootstrap: users=%d err=%v", count, err)
+	}
+	if err := os.Remove(credentialsPath); err != nil {
+		t.Fatal(err)
+	}
 	output := captureStdout(t, func() {
 		if err := ensureAdmin(st, cfg, logger); err != nil {
 			t.Fatal(err)

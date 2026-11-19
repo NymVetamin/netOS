@@ -420,13 +420,12 @@ func ensureAdmin(st *store.Store, cfg *config.Config, logger apply.Logger) error
 	if err != nil {
 		return err
 	}
-	if _, err := st.CreateUser("admin", hash, "admin"); err != nil {
-		return err
-	}
-
 	addrs := panelAddresses(cfg)
-	if err := writeCredentials(addrs, cfg.System.Panel.Port, password); err != nil {
-		logger.Warnf("не удалось сохранить файл с учётными данными: %v", err)
+	created, err := st.CreateInitialAdmin(hash, func() error {
+		return writeCredentials(addrs, cfg.System.Panel.Port, password)
+	})
+	if err != nil || !created {
+		return err
 	}
 	printReady(os.Stdout, addrs, cfg.System.Panel.Port)
 

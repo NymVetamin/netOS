@@ -619,7 +619,7 @@ else
         sed 's/^/  /' "$CREDS_FILE"
     else
         warn "файл с учётными данными не найден"
-        info "посмотрите их командой: journalctl -u netosd | grep -A6 netOS"
+        info "проверьте ошибки запуска командой: journalctl -u netosd"
     fi
     echo
     echo "  ${D}Сертификат самоподписанный — браузер предупредит об этом.${R}"

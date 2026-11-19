@@ -393,6 +393,31 @@ func (s *Store) CreateUser(username, passwordHash, role string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// CreateInitialAdmin publishes the first account only after its credentials are saved.
+func (s *Store) CreateInitialAdmin(hash string, saveCredentials func() error) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`INSERT INTO users (username, password_hash, role, created_at)
+		SELECT 'admin', ?, 'admin', ? WHERE NOT EXISTS (SELECT 1 FROM users)`, hash, time.Now().Unix())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+	if err := saveCredentials(); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) UserByName(username string) (*User, error) {
 	row := s.db.QueryRow(
 		`SELECT u.id, u.username, u.password_hash, u.role, u.totp_secret, u.created_at, u.last_login,
