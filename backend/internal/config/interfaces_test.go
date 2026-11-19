@@ -1,9 +1,64 @@
 package config
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestSegmentInterfaceWarningsFollowTopology(t *testing.T) {
+	cfg := Default()
+	cfg.Interfaces = []Interface{
+		{ID: "port", Name: "eth0", Type: "physical"},
+		{ID: "tag", Name: "eth0.7", Type: "vlan", VLANID: 7, Parent: "port", Enabled: true},
+		{ID: "port", Name: "duplicate", Type: "physical", Enabled: true},
+	}
+	for i, id := range []string{"port", "tag", "gone", "tag"} {
+		cfg.Networks = append(cfg.Networks, Network{ID: fmt.Sprint(i), Name: fmt.Sprint(i), Interface: id, Enabled: i != 3})
+	}
+	for _, parent := range []string{"port", "port", "gone", "tag", "port"} {
+		cfg.Interfaces[1].Parent = parent
+		var got, want []string
+		for i, n := range cfg.Networks {
+			if _, known := cfg.InterfaceByID(n.Interface); known && n.Enabled && !cfg.InterfaceEnabled(n.Interface) {
+				want = append(want, fmt.Sprintf("networks[%d].interface", i))
+			}
+		}
+		for _, p := range cfg.Validate().Problems {
+			if p.Severity == "warning" && strings.Contains(p.Message, "передача через сегмент") {
+				got = append(got, p.Path)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("parent %q: warnings %v, want %v", parent, got, want)
+		}
+		cfg.Interfaces[0].Enabled = !cfg.Interfaces[0].Enabled
+	}
+}
+
+func BenchmarkValidateSegments(b *testing.B) {
+	for _, n := range []int{32, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := Default()
+			for i := 0; i < n; i++ {
+				id := fmt.Sprintf("eth%d", i)
+				cfg.Interfaces = append(cfg.Interfaces, Interface{ID: id, Name: id, Type: "physical", Enabled: true})
+				cfg.Networks = append(cfg.Networks, Network{ID: id, Name: id, Interface: id, Enabled: true, Zone: "lan",
+					RouterAddress: fmt.Sprintf("10.%d.%d.1/24", i/256, i%256)})
+			}
+			cfg.Normalize()
+			if v := cfg.Validate(); v.HasErrors() {
+				b.Fatal(v)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cfg.Validate()
+			}
+		})
+	}
+}
 
 func problem(t *testing.T, cfg *Config, pathPart, textPart string) bool {
 	t.Helper()

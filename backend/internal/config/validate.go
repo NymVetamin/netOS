@@ -831,6 +831,7 @@ func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]stri
 		}
 	}
 
+	var interfaceStates map[string]bool
 	for i, n := range c.Networks {
 		path := fmt.Sprintf("networks[%d]", i)
 		iface, ok := byID[n.Interface]
@@ -843,7 +844,10 @@ func (c *Config) validateInterfaceUse(r *ValidationResult, owner map[string]stri
 				iface.Name, own)
 		}
 		if n.Enabled {
-			if !c.InterfaceEnabled(iface.ID) {
+			if interfaceStates == nil {
+				interfaceStates = c.InterfaceStates()
+			}
+			if !interfaceStates[iface.ID] {
 				r.warnf(path+".interface", "интерфейс %q выключен: передача через сегмент %q приостановлена, настройки сохранены", iface.Name, n.Name)
 			}
 			claim(path, n.Interface, use{"network", "сегмент «" + n.Name + "»"})
