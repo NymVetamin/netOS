@@ -38,3 +38,52 @@ rm "$root/bin"
 mkdir "$root/bin"
 if rollback > "$root/second.log" 2>&1; then exit 1; fi
 [[ $(cat "$BIN_PATH") == previous && ! -e "$INSTALL_TXN" ]]
+
+# Test rollback after a first install using the actual saved files. Use an
+# equivalent path to the executable so readlink -f also works on Git Bash.
+UPGRADE=0
+CLI_PATH="$root/bin/../bin/netosd"
+for scenario in early late success copy-error; do
+    mkdir -p "$INSTALL_TXN" "$BASELINE_DIR"
+    for label in cli binary unit completion completion-lazy aptconf state-dir conf-dir log-dir; do
+        touch "$INSTALL_TXN/$label.absent"
+    done
+    if [[ "$scenario" == late ]]; then
+        mkdir "$INSTALL_TXN/baseline-dir"
+        echo previous > "$INSTALL_TXN/baseline-dir/state.json"
+    else
+        touch "$INSTALL_TXN/baseline-dir.absent"
+    fi
+    echo captured > "$BASELINE_DIR/state.json"
+    cat > "$BIN_PATH" <<'EOF'
+#!/bin/bash
+[[ "$*" == 'uninstall --keep-data --yes' ]] || exit 2
+echo called > "$call_log"
+if [[ "$scenario" == late ]]; then rm -rf "$BASELINE_DIR"; fi
+[[ "$scenario" == success ]] || exit 42
+EOF
+    chmod +x "$BIN_PATH"
+    call_log="$root/$scenario.called"
+    export scenario BASELINE_DIR call_log
+    cp() {
+        if [[ "$scenario" == copy-error && " $* " == *" $BASELINE_DIR "* ]]; then return 1; fi
+        command cp "$@"
+    }
+    if rollback > "$root/$scenario.log" 2>&1; then exit 1; fi
+    [[ -f "$call_log" ]]
+    if [[ "$scenario" == copy-error ]]; then
+        [[ $(cat "$BASELINE_DIR/state.json") == captured ]]
+    fi
+    if [[ "$scenario" == success ]]; then
+        [[ ! -e "$INSTALL_TXN" && ! -e "$BASELINE_DIR" ]]
+    else
+        grep -F "$INSTALL_TXN" "$root/$scenario.log" >/dev/null
+        if [[ "$scenario" != copy-error ]]; then
+            [[ $(cat "$INSTALL_TXN/captured-baseline/state.json") == captured ]]
+        fi
+        if [[ "$scenario" == late ]]; then
+            [[ $(cat "$BASELINE_DIR/state.json") == previous ]]
+        fi
+    fi
+    rm -rf -- "$INSTALL_TXN" "$BASELINE_DIR"
+done

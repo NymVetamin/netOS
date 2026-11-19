@@ -142,6 +142,7 @@ wait_netosd_ready() {
 rollback_and_cleanup() {
     status=$?
     restore_failed=0
+    keep_live_baseline=0
     trap - EXIT
     set +e
     if [ -n "$SRC" ] && [ "$SRC" != "/" ]; then rm -rf -- "$SRC"; fi
@@ -153,10 +154,23 @@ rollback_and_cleanup() {
         # штатный uninstall возвращает сохранённый системный baseline. Данные
         # пока сохраняются, чтобы rollback ниже сам удалил только новые dirs.
         if [ "$UPGRADE" = "0" ] && [ -x "$BIN_PATH" ] && [ "$(readlink -f "$CLI_PATH" 2>/dev/null)" = "$BIN_PATH" ]; then
+            # uninstall can consume the captured baseline before a later step
+            # fails. The pre-install snapshot may only contain an absent marker.
+            if [ -d "$BASELINE_DIR" ] && ! cp -a -- "$BASELINE_DIR" "$INSTALL_TXN/captured-baseline"; then
+                keep_live_baseline=1
+                warn "не удалось скопировать $BASELINE_DIR; выполняю штатный возврат сети и служб"
+            fi
             if "$CLI_PATH" uninstall --keep-data --yes >/dev/null 2>&1; then
+                keep_live_baseline=0
                 warn "исходное состояние сети и служб восстановлено"
             else
+                restore_failed=1
                 warn "автоматический возврат системного baseline не удался; проверьте журнал и состояние сети"
+                if [ "$keep_live_baseline" = "1" ]; then
+                    warn "проверьте оставшиеся данные в $BASELINE_DIR"
+                elif [ -d "$INSTALL_TXN/captured-baseline" ]; then
+                    warn "исходные настройки системы сохранены в $INSTALL_TXN/captured-baseline"
+                fi
             fi
         fi
         systemctl stop netosd >/dev/null 2>&1
@@ -169,7 +183,9 @@ rollback_and_cleanup() {
         restore_path "$STATE_DIR" state-dir
         restore_path "$CONF_DIR" conf-dir
         restore_path "$LOG_DIR" log-dir
-        restore_path "$BASELINE_DIR" baseline-dir
+        if [ "$keep_live_baseline" = "0" ]; then
+            restore_path "$BASELINE_DIR" baseline-dir
+        fi
         systemctl daemon-reload >/dev/null 2>&1
         if [ "$PREVIOUS_ENABLED" = "1" ]; then
             systemctl enable netosd >/dev/null 2>&1
@@ -184,7 +200,7 @@ rollback_and_cleanup() {
         fi
     fi
     if [ "$restore_failed" = "1" ]; then
-        warn "восстановление файлов не завершено; снимок сохранён в $INSTALL_TXN"
+        warn "восстановление не завершено; снимок сохранён в $INSTALL_TXN"
     elif [ -n "$INSTALL_TXN" ] && [ "$INSTALL_TXN" != "/" ]; then
         rm -rf -- "$INSTALL_TXN"
     fi
