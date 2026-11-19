@@ -40,3 +40,43 @@
     options: (selected: string): any[] => interfaces.filter(iface => iface.id === selected || !masters.has(iface.id)),
   };
 }
+
+export function vlanParents(config: any, exceptID?: string): any[] {
+  const interfaces = config.interfaces || [];
+  const members = new Set<string>();
+  for (const iface of interfaces) {
+    if (iface.type === "bridge" || iface.type === "bond") {
+      for (const id of iface.members || []) members.add(id);
+    }
+  }
+  return interfaces.filter((iface: any) =>
+    iface.id !== exceptID && iface.type !== "vlan" && !members.has(iface.id));
+}
+
+type VlanChoice = { parent: any; vlanID: number } | { reason: "no-parent" | "full" };
+
+export function nextVlan(config: any): VlanChoice {
+  const parents = vlanParents(config);
+  if (!parents.length) return { reason: "no-parent" };
+
+  const used = new Map<string, Set<number>>();
+  for (const iface of config.interfaces) {
+    if (iface.type !== "vlan") continue;
+    let ids = used.get(iface.parent);
+    if (!ids) {
+      ids = new Set();
+      used.set(iface.parent, ids);
+    }
+    ids.add(iface.vlan_id);
+  }
+  for (const parent of parents) {
+    const ids = used.get(parent.id);
+    for (let vlanID = 100; vlanID <= 4094; vlanID++) {
+      if (!ids?.has(vlanID)) return { parent, vlanID };
+    }
+    for (let vlanID = 1; vlanID < 100; vlanID++) {
+      if (!ids?.has(vlanID)) return { parent, vlanID };
+    }
+  }
+  return { reason: "full" };
+}

@@ -55,3 +55,27 @@ require('node:test')('system names are separate from labels and use the first ma
  assert.equal(next.name('lan'),'br-new');assert.equal(next.displayName('lan'),'br-new');assert.equal(view.name('lan'),'br-lan');
  assert.equal(networkInterfaceView({}).name('lan'),undefined);
 });
+
+require('node:test')('VLAN creation uses valid IDs on eligible parents and recognizes exhaustion', () => {
+  const { nextVlan } = load(fs.readFileSync(path.join(__dirname, '../src/networkInterfaceView.ts'), 'utf8'));
+  const p = {id: 'p', name: 'eth0', type: 'physical'};
+  const q = {id: 'q', name: 'eth1', type: 'physical'};
+  const tag = (vlan_id, parent = p.id) => ({type: 'vlan', parent, vlan_id, id: parent + '.' + vlan_id, enabled: false});
+  const interfaces = [p, q];
+  const next = () => nextVlan({interfaces});
+  assert.deepEqual(next(), {parent: p, vlanID: 100});
+  for (let i = 100; i < 4094; i++) interfaces.push(tag(i));
+  assert.deepEqual(next(), {parent: p, vlanID: 4094});
+  interfaces.push(tag(4094));
+  assert.deepEqual(next(), {parent: p, vlanID: 1});
+  for (let i = 1; i <= 99; i++) interfaces.push(tag(i));
+  interfaces.push(tag(100, q.id));
+  assert.deepEqual(next(), {parent: q, vlanID: 101});
+  interfaces.splice(1, 1);
+  assert.deepEqual(next(), {reason: 'full'});
+  interfaces.splice(interfaces.findIndex(i => i.vlan_id === 42), 1);
+  assert.deepEqual(next(), {parent: p, vlanID: 42});
+  const bridge = {id: 'br', type: 'bridge', members: [p.id]};
+  assert.deepEqual(nextVlan({interfaces: [p, bridge, tag(100, 'br')]}), {parent: bridge, vlanID: 101});
+  assert.deepEqual(nextVlan({interfaces: [tag(1)]}), {reason: 'no-parent'});
+});

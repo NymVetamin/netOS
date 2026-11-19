@@ -1,4 +1,4 @@
-import { networkInterfaceView } from "../networkInterfaceView";
+import { networkInterfaceView, nextVlan, vlanParents } from "../networkInterfaceView";
 import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { interfaceDisplay } from "../interfaceDisplay";
@@ -729,6 +729,7 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
     }
     return byName;
   }, [liveInterfaces]);
+  const vlanChoice = useMemo(() => nextVlan({ interfaces: config.interfaces }), [config.interfaces]);
   const configuredNames = new Set(interfaces.map((i: any) => i.name));
   const discovered = liveInterfaces.filter(
     (i: any) => i.physical && !configuredNames.has(i.name),
@@ -771,23 +772,22 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                 label: "VLAN",
                 ariaLabel: "Добавить VLAN",
                 icon: "layers",
-                // Нет интерфейса, над которым можно поднять VLAN: все порты отданы мостам или агрегациям.
-                disabled: vlanParents(config).length === 0,
-                note: vlanParents(config).length === 0 ? "все порты заняты мостами" : undefined,
+                disabled: "reason" in vlanChoice,
+                note: "reason" in vlanChoice
+                  ? vlanChoice.reason === "full" ? "на всех доступных интерфейсах заняты номера VLAN 1–4094" : "нет доступного родительского интерфейса"
+                  : undefined,
                 onSelect: () => patch((d) => {
-                d.interfaces = d.interfaces || [];
-                const parent = vlanParents(d)[0];
-                if (!parent) return;
-                const vid = freeVlanID(d, parent.id);
-                d.interfaces.push({
-                  id: openOnCreate(newID("vl")),
-                  name: vlanName(parent.name, vid),
-                  type: "vlan",
-                  parent: parent.id,
-                  vlan_id: vid,
-                  enabled: true,
-                });
-              }),
+                  const choice = nextVlan(d);
+                  if ("reason" in choice) return;
+                  d.interfaces.push({
+                    id: openOnCreate(newID("vl")),
+                    name: vlanName(choice.parent.name, choice.vlanID),
+                    type: "vlan",
+                    parent: choice.parent.id,
+                    vlan_id: choice.vlanID,
+                    enabled: true,
+                  });
+                }),
               },
             ]}
           />
@@ -1119,16 +1119,6 @@ function whyUnavailable(config: any, candidate: any, target: any): string {
   return "";
 }
 
-// vlanParents — интерфейсы, над которыми VLAN действительно заработает.
-// Подчинённый мосту порт отдаёт туда весь трафик, включая тегированный, и
-// VLAN над ним остался бы пустым. VLAN поверх VLAN netOS не настраивает.
-function vlanParents(config: any, exceptID?: string): any[] {
-  return (config.interfaces || []).filter(
-    (i: any) =>
-      i.id !== exceptID && i.type !== "vlan" && !masterOf(config, i.id),
-  );
-}
-
 // vlanName строит имя так, как его принято записывать в Linux: имя родителя,
 // точка, номер. Длину режем сами: ядро обрежет молча, а на имя ссылаются зоны
 // файрволла.
@@ -1136,19 +1126,6 @@ function vlanName(parentName: string, vlanID: number): string {
   const suffix = "." + vlanID;
   const keep = Math.max(1, MAX_IFACE_NAME - suffix.length);
   return parentName.slice(0, keep) + suffix;
-}
-
-// freeVlanID подбирает номер, не занятый на этом же родителе: два интерфейса с
-// одним номером на одном родителе ядро не создаст.
-function freeVlanID(config: any, parentID: string): number {
-  const taken = new Set(
-    (config.interfaces || [])
-      .filter((i: any) => i.type === "vlan" && i.parent === parentID)
-      .map((i: any) => i.vlan_id),
-  );
-  let id = 100;
-  while (taken.has(id) && id < 4095) id++;
-  return id;
 }
 
 function freeName(interfaces: any[], prefix: string): string {
