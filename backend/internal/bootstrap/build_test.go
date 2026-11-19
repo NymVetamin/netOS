@@ -117,7 +117,10 @@ func (r addressRunner) RunInput(ctx context.Context, _ string, name string, args
 }
 
 func TestBuildInitialWithoutInterfacesKeepsSafeDefaults(t *testing.T) {
-	cfg := BuildInitial(&Detected{})
+	cfg, err := BuildInitial(&Detected{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cfg.Interfaces) != 0 || len(cfg.WANs) != 0 || len(cfg.Networks) != 0 {
 		t.Fatalf("empty detection created network objects: interfaces=%v wans=%v networks=%v",
 			cfg.Interfaces, cfg.WANs, cfg.Networks)
@@ -137,7 +140,10 @@ func TestBuildInitialCreatesDHCPOrStaticWAN(t *testing.T) {
 		{name: "incomplete remains dhcp", address: "192.0.2.5/24", wantProto: "dhcp"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := BuildInitial(&Detected{WANInterface: "eth0", WANAddress: tc.address, WANGateway: tc.gateway})
+			cfg, err := BuildInitial(&Detected{WANInterface: "eth0", WANAddress: tc.address, WANGateway: tc.gateway})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(cfg.Interfaces) != 1 || cfg.Interfaces[0].Name != "eth0" || len(cfg.WANs) != 1 {
 				t.Fatalf("unexpected WAN objects: interfaces=%v wans=%v", cfg.Interfaces, cfg.WANs)
 			}
@@ -169,7 +175,10 @@ func TestBuildInitialCreatesDisabledLANPoolAndAvoidsAllOccupiedSubnets(t *testin
 			"192.168.10.0/24", "192.168.20.0/24", "192.168.30.0/24",
 		},
 	}
-	cfg := BuildInitial(d)
+	cfg, err := BuildInitial(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cfg.Networks) != 1 || cfg.Networks[0].RouterAddress != "192.168.40.1/24" {
 		t.Fatalf("LAN did not avoid occupied subnets: %#v", cfg.Networks)
 	}
@@ -187,7 +196,10 @@ func TestPickFreeSubnetUsesFallbackWhenPrivateCandidatesAreOccupied(t *testing.T
 	d := &Detected{OccupiedCIDRs: []string{
 		"192.168.10.0/24", "192.168.20.0/24", "192.168.30.0/24", "192.168.40.0/24", "192.168.50.0/24",
 	}}
-	got := pickFreeSubnet(d)
+	got, err := pickFreeSubnet(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.routerAddr != "10.77.0.1/24" || got.poolStart != "10.77.0.100" || got.poolEnd != "10.77.0.200" {
 		t.Fatalf("fallback subnet = %#v", got)
 	}
@@ -203,5 +215,28 @@ func TestAddressesOfParsesAllIPv4AddressesAndPropagatesFailure(t *testing.T) {
 	wantErr := errors.New("ip failed")
 	if _, err := addressesOf(context.Background(), addressRunner{err: wantErr}, "eth0"); !errors.Is(err, wantErr) {
 		t.Fatalf("addressesOf() error = %v", err)
+	}
+}
+
+func TestInitialLANPrefixOverlap(t *testing.T) {
+	for _, tc := range []struct{ occupied, management, want string }{
+		{"192.168.0.0/16", "", "10.77.0.1/24"},
+		{"", "192.168.10.128/25", "192.168.20.1/24"},
+		{"192.168.9.255/32", "", "192.168.10.1/24"},
+		{"10.77.0.99/32", "192.168.0.0/16", ""},
+	} {
+		d := &Detected{OccupiedCIDRs: []string{tc.occupied}, ManagementCIDR: tc.management, LANCandidates: []string{"eth1"}}
+		for range 2 {
+			cfg, err := BuildInitial(d)
+			if tc.want == "" {
+				if err == nil || cfg != nil {
+					t.Fatalf("occupied fallback: cfg=%v err=%v", cfg, err)
+				}
+				continue
+			}
+			if err != nil || len(cfg.Networks) != 1 || cfg.Networks[0].RouterAddress != tc.want {
+				t.Fatalf("%+v: cfg=%v err=%v", tc, cfg, err)
+			}
+		}
 	}
 }

@@ -103,7 +103,7 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 // на dummy-интерфейсе. Роутер в таком виде полноценно работает как VPN-шлюз
 // для входящих подключений, а физический LAN добавляется, когда появится
 // вторая карта.
-func BuildInitial(d *Detected) *config.Config {
+func BuildInitial(d *Detected) (*config.Config, error) {
 	cfg := config.Default()
 
 	if hostname, err := os.Hostname(); err == nil && hostname != "" {
@@ -162,7 +162,7 @@ func BuildInitial(d *Detected) *config.Config {
 	// доступен по тому адресу, который у него уже есть.
 	if len(d.LANCandidates) == 0 {
 		cfg.Normalize()
-		return cfg
+		return cfg, nil
 	}
 
 	lanIface := ""
@@ -183,7 +183,10 @@ func BuildInitial(d *Detected) *config.Config {
 		})
 	}
 
-	subnet := pickFreeSubnet(d)
+	subnet, err := pickFreeSubnet(d)
+	if err != nil {
+		return nil, err
+	}
 	pool := config.DefaultDHCPPool(subnet.poolStart, subnet.poolEnd)
 	// Пул подготовлен, но выключен: раздавать адреса роутер начнёт только
 	// после того, как администратор установит компонент DHCP и включит его.
@@ -200,7 +203,7 @@ func BuildInitial(d *Detected) *config.Config {
 	})
 
 	cfg.Normalize()
-	return cfg
+	return cfg, nil
 }
 
 type subnetChoice struct {
@@ -211,32 +214,34 @@ type subnetChoice struct {
 
 // pickFreeSubnet выбирает подсеть для LAN, избегая той, в которой находится
 // сам администратор: совпадение сетей означало бы мгновенную потерю доступа.
-func pickFreeSubnet(d *Detected) subnetChoice {
-	candidates := []struct{ third int }{{10}, {20}, {30}, {40}, {50}}
-	occupied := make(map[string]bool, len(d.OccupiedCIDRs)+1)
-	for _, cidr := range d.OccupiedCIDRs {
-		occupied[cidr] = true
+func pickFreeSubnet(d *Detected) (subnetChoice, error) {
+	candidates := [...]string{"192.168.10.", "192.168.20.", "192.168.30.", "192.168.40.", "192.168.50.", "10.77.0."}
+	var prefixes [len(candidates)]netip.Prefix
+	for i, base := range candidates {
+		prefixes[i] = netip.MustParsePrefix(base + "0/24")
 	}
-	if d.ManagementCIDR != "" {
-		occupied[d.ManagementCIDR] = true
-	}
-
-	for _, c := range candidates {
-		base := fmt.Sprintf("192.168.%d.", c.third)
-		if occupied[base+"0/24"] {
-			continue
+	exclude := func(raw string) {
+		occupied, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return
 		}
-		return subnetChoice{
-			routerAddr: base + "1/24",
-			poolStart:  base + "100",
-			poolEnd:    base + "200",
+		for i, prefix := range prefixes {
+			if prefix.Overlaps(occupied) {
+				prefixes[i] = netip.Prefix{}
+			}
 		}
 	}
-	return subnetChoice{
-		routerAddr: "10.77.0.1/24",
-		poolStart:  "10.77.0.100",
-		poolEnd:    "10.77.0.200",
+	exclude(d.ManagementCIDR)
+	for _, raw := range d.OccupiedCIDRs {
+		exclude(raw)
 	}
+	for i, prefix := range prefixes {
+		if prefix.IsValid() {
+			base := candidates[i]
+			return subnetChoice{routerAddr: base + "1/24", poolStart: base + "100", poolEnd: base + "200"}, nil
+		}
+	}
+	return subnetChoice{}, fmt.Errorf("все стартовые подсети LAN заняты")
 }
 
 // ---------------------------------------------------------------------------

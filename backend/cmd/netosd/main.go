@@ -538,7 +538,10 @@ func loadOrBootstrap(ctx context.Context, st *store.Store, runner system.Runner,
 	logger.Infof("аплинк: %s (%s), свободные интерфейсы: %v",
 		detected.WANInterface, detected.WANAddress, detected.LANCandidates)
 
-	cfg := bootstrap.BuildInitial(detected)
+	cfg, err := bootstrap.BuildInitial(detected)
+	if err != nil {
+		return nil, 0, err
+	}
 	if value := strings.TrimSpace(os.Getenv("NETOS_INITIAL_PORT")); value != "" {
 		port, err := strconv.Atoi(value)
 		if err != nil || port < 1 || port > 65535 || port == cfg.DNS.Port {
