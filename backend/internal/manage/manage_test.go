@@ -469,10 +469,39 @@ func TestUninstallProceedsWhenUnitIsNotLoaded(t *testing.T) {
 
 func TestStopDaemonReportsRealFailure(t *testing.T) {
 	m, _ := testManager()
-	m.Run = func(context.Context, command) error { return errors.New("job failed") }
-	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
-	if err := m.stopDaemon(context.Background()); err == nil {
-		t.Fatal("остановка работающей службы провалилась, но ошибка потеряна")
+	stopErr := errors.New("job failed")
+	m.Run = func(context.Context, command) error { return stopErr }
+	for _, tc := range []struct {
+		state     string
+		statusErr error
+		stopped   bool
+	}{
+		{"active\n", nil, false}, {"deactivating\n", nil, false},
+		{"", errors.New("bus unavailable"), false}, {"\n", nil, false},
+		{"inactive\n", errors.New("exit status 3"), true}, {"failed\n", errors.New("exit status 3"), true},
+		{"unknown\n", errors.New("exit status 4"), true},
+	} {
+		m.Output = func(context.Context, string, ...string) (string, error) { return tc.state, tc.statusErr }
+		err := m.stopDaemon(context.Background())
+		if (err == nil) != tc.stopped || err != nil && !errors.Is(err, stopErr) {
+			t.Fatalf("state %q, status error %v: stop returned %v", tc.state, tc.statusErr, err)
+		}
+	}
+}
+
+func TestBackupStopsBeforeCopyWhenSystemctlIsMissing(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	t.Setenv("PATH", t.TempDir())
+	m.Run, m.Output = m.runOS, m.outputOS
+	for i := 0; i < 2; i++ {
+		err := m.backupNow(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "systemctl") {
+			t.Fatalf("missing systemctl: %v", err)
+		}
+		if _, err := os.Stat(m.BackupDir); !os.IsNotExist(err) {
+			t.Fatalf("backup directory touched after failed stop: %v", err)
+		}
 	}
 }
 

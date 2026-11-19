@@ -2002,7 +2002,7 @@ func (m *Manager) stopDaemon(ctx context.Context) error {
 	}
 	state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
 	switch strings.TrimSpace(state) {
-	case "inactive", "failed", "unknown", "":
+	case "inactive", "failed", "unknown":
 		return nil
 	}
 	return stopErr
