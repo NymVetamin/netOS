@@ -73,7 +73,7 @@ func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Conf
 		if err != nil || strings.TrimSpace(legacy) != "" {
 			return false
 		}
-		wanted := map[string]config.StaticRoute{}
+		wanted := map[routeIdentity]config.StaticRoute{}
 		for _, route := range routes {
 			if routeFamily(route) == family {
 				wanted[staticRouteKey(route)] = route
@@ -83,7 +83,7 @@ func (s *Subsystem) unusedTablesOnly(ctx context.Context, old, next *config.Conf
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
-			key := routeLineKey(line)
+			key := routeLineKey(line).configuredKey(wanted)
 			route, ok := wanted[key]
 			if !ok || !staticRouteAlreadyApplied(line, route) {
 				return false

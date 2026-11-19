@@ -326,9 +326,9 @@ func TestRouteKeysAndParsing(t *testing.T) {
 	want := routeKey("", "10.0.0.0/8", "unicast", "192.0.2.1", "eth0", 7)
 	got := routeLineKey("10.0.0.0/8 via 192.0.2.1 dev eth0 metric 7 table main proto static")
 	if got != want {
-		t.Fatalf("routeLineKey = %q, want %q", got, want)
+		t.Fatalf("routeLineKey = %+v, want %+v", got, want)
 	}
-	if routeLineKey("") != "" {
+	if routeLineKey("") != (routeIdentity{}) {
 		t.Fatal("empty route line must have empty key")
 	}
 	blackhole := config.StaticRoute{Destination: "10.0.0.0/8", Type: "blackhole", Table: "200"}

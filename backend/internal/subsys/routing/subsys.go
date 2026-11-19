@@ -177,12 +177,12 @@ func writeRegistry(path string, data []byte) error {
 // При очистке учитываются proto static и прежний netos-static (202).
 // Маршруты аплинков с proto 201, а также DHCP и маршруты ядра не затрагиваются.
 func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
-	wanted := map[string]map[string]bool{"-4": {}, "-6": {}}
-	live := map[string]map[string]string{"-4": {}, "-6": {}}
+	wanted := map[string]map[routeIdentity]config.StaticRoute{"-4": {}, "-6": {}}
+	live := map[string]map[routeIdentity]string{"-4": {}, "-6": {}}
 	base, tunnels := splitRoutes(cfg, true)
 	for _, routes := range [][]config.StaticRoute{base, tunnels} {
 		for _, r := range routes {
-			wanted[routeFamily(r)][staticRouteKey(r)] = true
+			wanted[routeFamily(r)][staticRouteKey(r)] = r
 		}
 	}
 
@@ -198,11 +198,12 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 				if line == "" {
 					continue
 				}
-				key := routeLineKey(line)
-				if protocol == "static" {
-					live[family][key] = line
-				}
-				if wanted[family][key] {
+				key := routeLineKey(line).configuredKey(wanted[family])
+				if _, keep := wanted[family][key]; keep {
+					if protocol == "static" {
+						live[family][key] = line
+						delete(wanted[family], key)
+					}
 					continue
 				}
 				args := append([]string{family, "route", "del"}, strings.Fields(line)...)
@@ -216,7 +217,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 	return s.installRoutes(ctx, base, live)
 }
 
-func (s *Subsystem) installRoutes(ctx context.Context, routes []config.StaticRoute, live map[string]map[string]string) error {
+func (s *Subsystem) installRoutes(ctx context.Context, routes []config.StaticRoute, live map[string]map[routeIdentity]string) error {
 	for _, r := range routes {
 		if staticRouteAlreadyApplied(live[routeFamily(r)][staticRouteKey(r)], r) {
 			continue
@@ -262,7 +263,23 @@ func routeFamily(r config.StaticRoute) string {
 	return "-4"
 }
 
-func routeKey(table, destination, routeType, gateway, iface string, metric int) string {
+type routeIdentity struct {
+	table, destination, routeType, gateway, iface string
+	metric                                        int
+}
+
+func (key routeIdentity) configuredKey(wanted map[routeIdentity]config.StaticRoute) routeIdentity {
+	if key.gateway != "" && key.iface != "" {
+		implicit := key
+		implicit.iface = ""
+		if _, ok := wanted[implicit]; ok {
+			return implicit
+		}
+	}
+	return key
+}
+
+func routeKey(table, destination, routeType, gateway, iface string, metric int) routeIdentity {
 	// IPv6 reject routes report the kernel's synthetic loopback device.
 	// No device is passed when creating these routes.
 	if routeType == "blackhole" || routeType == "unreachable" || routeType == "prohibit" {
@@ -291,10 +308,10 @@ func routeKey(table, destination, routeType, gateway, iface string, metric int) 
 	if routeType == "" {
 		routeType = "unicast"
 	}
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d", table, destination, routeType, gateway, iface, metric)
+	return routeIdentity{table, destination, routeType, gateway, iface, metric}
 }
 
-func staticRouteKey(r config.StaticRoute) string {
+func staticRouteKey(r config.StaticRoute) routeIdentity {
 	metric := r.Metric
 	// Linux assigns metric 1024 to IPv6 routes without an explicit metric.
 	if metric == 0 && routeFamily(r) == "-6" {
@@ -303,10 +320,10 @@ func staticRouteKey(r config.StaticRoute) string {
 	return routeKey(r.Table, r.Destination, r.Type, r.Gateway, r.Interface, metric)
 }
 
-func routeLineKey(line string) string {
+func routeLineKey(line string) routeIdentity {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
-		return ""
+		return routeIdentity{}
 	}
 	destination := fields[0]
 	routeType := "unicast"

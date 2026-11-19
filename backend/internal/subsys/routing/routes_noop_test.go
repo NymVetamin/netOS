@@ -20,6 +20,15 @@ func TestUnchangedStaticRouteDoesNotReplace(t *testing.T) {
 }
 
 func TestStaticRouteDifferencesKeepRepair(t *testing.T) {
+	via := config.StaticRoute{Destination: "203.0.113.0/24", Gateway: "192.0.2.1"}
+	const resolved = "203.0.113.0/24 via 192.0.2.1 dev eth0"
+	if !staticRouteAlreadyApplied(resolved, via) || staticRouteAlreadyApplied(resolved+" mtu 1300", via) {
+		t.Fatal("implicit device must preserve checks of extra route attributes")
+	}
+	via.Interface = "eth1"
+	if staticRouteAlreadyApplied(resolved, via) {
+		t.Fatal("a configured device must match the live device")
+	}
 	if !staticRouteAlreadyApplied("unreachable 2001:db8:77::/48 dev lo table 200 metric 9 pref medium", config.StaticRoute{Destination: "2001:db8:77::/48", Type: "unreachable", Table: "200", Metric: 9}) {
 		t.Fatal("kernel synthetic device prevented match")
 	}

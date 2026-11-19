@@ -7,7 +7,11 @@ import (
 )
 
 func staticRouteAlreadyApplied(line string, route config.StaticRoute) bool {
-	if routeLineKey(line) != staticRouteKey(route) {
+	key := routeLineKey(line)
+	if route.Interface == "" && route.Gateway != "" {
+		key.iface = ""
+	}
+	if key != staticRouteKey(route) {
 		return false
 	}
 	fields := strings.Fields(line)

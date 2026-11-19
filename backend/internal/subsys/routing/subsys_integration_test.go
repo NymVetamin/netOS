@@ -54,12 +54,16 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 	_ = exec.Command("ip", "netns", "del", routingTestNS).Run()
 	mustRoutingHost(t, "ip", "netns", "add", routingTestNS)
 	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", routingTestNS).Run() })
+	mustRoutingNS(t, "ip", "link", "add", "lan0", "type", "dummy")
+	mustRoutingNS(t, "ip", "addr", "add", "192.0.2.254/24", "dev", "lan0")
+	mustRoutingNS(t, "ip", "link", "set", "lan0", "up")
 
 	s := New(routingNamespaceRunner{})
 	cfg := config.Default()
 	cfg.Routing.Static = []config.StaticRoute{
 		{Enabled: true, Destination: "10.77.0.0/16", Type: "blackhole", Table: "200", Metric: 7},
 		{Enabled: true, Destination: "2001:db8:77::/48", Type: "unreachable", Table: "200", Metric: 9},
+		{Enabled: true, Destination: "203.0.113.0/24", Gateway: "192.0.2.1"},
 	}
 	cfg.Routing.Rules = []config.RouteRule{{Enabled: true, Name: "qa", Priority: 20123, From: "192.0.2.0/24", Table: "200"}}
 	if err := s.applyRoutes(context.Background(), cfg); err != nil {

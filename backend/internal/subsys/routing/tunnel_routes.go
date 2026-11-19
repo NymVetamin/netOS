@@ -75,8 +75,8 @@ func (t *TunnelRoutes) Health(ctx context.Context, cfg *config.Config) error {
 	}
 	return nil
 }
-func (t *TunnelRoutes) snapshot(ctx context.Context, routes []config.StaticRoute) (map[string]map[string]string, error) {
-	live := map[string]map[string]string{}
+func (t *TunnelRoutes) snapshot(ctx context.Context, routes []config.StaticRoute) (map[string]map[routeIdentity]string, error) {
+	live := map[string]map[routeIdentity]string{}
 	for _, r := range routes {
 		family := routeFamily(r)
 		if live[family] != nil {
@@ -86,7 +86,7 @@ func (t *TunnelRoutes) snapshot(ctx context.Context, routes []config.StaticRoute
 		if err != nil {
 			return nil, fmt.Errorf("чтение статических маршрутов (%s): %w", family, err)
 		}
-		lines := map[string]string{}
+		lines := map[routeIdentity]string{}
 		for _, line := range strings.Split(out, "\n") {
 			if strings.TrimSpace(line) != "" {
 				lines[routeLineKey(line)] = line
