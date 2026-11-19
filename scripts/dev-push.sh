@@ -90,6 +90,7 @@ set -u
 BIN_PATH=/usr/local/bin/netosd
 CLI_PATH=/usr/local/bin/netos
 COMPLETION_PATH=/etc/bash_completion.d/netos
+LAZY_COMPLETION_PATH=/usr/share/bash-completion/completions/netos
 READY_PATH=/run/netosd.ready
 EXPECTED_SHA=${NETOS_EXPECTED_SHA:?candidate SHA-256 is required}
 TXN=$(mktemp -d) || { echo "не удалось создать deploy transaction" >&2; exit 1; }
@@ -164,7 +165,8 @@ verify_plan() {
 
 if ! snapshot_path "$BIN_PATH" binary \
     || ! snapshot_path "$CLI_PATH" cli \
-    || ! snapshot_path "$COMPLETION_PATH" completion
+    || ! snapshot_path "$COMPLETION_PATH" completion \
+    || ! snapshot_path "$LAZY_COMPLETION_PATH" completion-lazy
 then
     echo "не удалось сохранить предыдущие deploy-файлы" >&2
     exit 1
@@ -177,6 +179,8 @@ chmod 0755 "$BIN_PATH.new" \
     && "$CLI_PATH" completion bash > "$COMPLETION_PATH.new" \
     && chmod 0644 "$COMPLETION_PATH.new" \
     && mv -f "$COMPLETION_PATH.new" "$COMPLETION_PATH" \
+    && install -D -m 0644 "$COMPLETION_PATH" "$LAZY_COMPLETION_PATH.new" \
+    && mv -f "$LAZY_COMPLETION_PATH.new" "$LAZY_COMPLETION_PATH" \
     && rm -f "$READY_PATH" \
     && verify_binary \
     && systemctl reset-failed netosd \
@@ -199,7 +203,8 @@ RESTORE_OK=1
 restore_path "$BIN_PATH" binary || RESTORE_OK=0
 restore_path "$CLI_PATH" cli || RESTORE_OK=0
 restore_path "$COMPLETION_PATH" completion || RESTORE_OK=0
-rm -f "$COMPLETION_PATH.new" "$READY_PATH"
+restore_path "$LAZY_COMPLETION_PATH" completion-lazy || RESTORE_OK=0
+rm -f "$COMPLETION_PATH.new" "$LAZY_COMPLETION_PATH.new" "$READY_PATH"
 systemctl reset-failed netosd >/dev/null 2>&1 || true
 if [ "$RESTORE_OK" != "1" ]; then
     echo "   не удалось восстановить предыдущие файлы" >&2
