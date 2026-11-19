@@ -9,6 +9,7 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 	rt "github.com/netos-router/netos/internal/runtime"
+	"github.com/netos-router/netos/internal/subsys/monitor"
 	"github.com/netos-router/netos/internal/subsys/vpnservers"
 )
 
@@ -42,6 +43,7 @@ type realtimeMonitor struct {
 	// Below owned by the single sampler goroutine only.
 	identities   map[string]rt.ClientCounter
 	identitiesAt time.Time
+	scope        monitor.ClientScope
 	cfg          *config.Config
 	previous     map[string]rt.ClientCounter
 }
@@ -179,10 +181,14 @@ func (s *Server) collectRealtime(ctx context.Context) realtimeSnapshot {
 		values = append(values, v)
 	}
 	if cfg != nil && cfg.TrafficMonitor.Enabled && s.ClientHistory != nil {
-		if cfg != m.cfg || time.Since(m.identitiesAt) > 30*time.Second {
+		configChanged := cfg != m.cfg
+		if configChanged {
+			m.scope = monitor.NewClientScope(cfg)
+			m.cfg = cfg
+		}
+		if configChanged || time.Since(m.identitiesAt) > 30*time.Second {
 			m.identities = s.ClientHistory.RealtimeIdentities(ctx, cfg)
 			m.identitiesAt = time.Now()
-			m.cfg = cfg
 		}
 		counters, err := s.ClientHistory.RealtimeCounters(ctx)
 		at = time.Now()
@@ -190,6 +196,9 @@ func (s *Server) collectRealtime(ctx context.Context) realtimeSnapshot {
 			result.Problems = append(result.Problems, "Не удалось прочитать счётчики LAN")
 		}
 		for addr, v := range counters {
+			if !m.scope.Contains(addr) {
+				continue
+			}
 			identity, ok := m.identities[addr]
 			if !ok {
 				identity = rt.ClientCounter{ID: "ip:" + addr, Name: addr}
