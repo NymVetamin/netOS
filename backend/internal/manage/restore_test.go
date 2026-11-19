@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -424,6 +425,7 @@ func TestRestoreUnpacksChosenBackup(t *testing.T) {
 func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	seedBackupDatabase(t, m)
 	var auditedBackup string
 	m.RecordRestoreAudit = func(backup string) error {
 		auditedBackup = backup
@@ -440,12 +442,6 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 	if err := os.WriteFile(backup, valid, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Архивировать нечего, если каталогов состояния нет: tar в этом случае не
-	// запускается вовсе, и проверять было бы нечего.
-	if err := os.MkdirAll(m.StateDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
 	resolver := m.sys("/etc/resolv.conf")
 	if err := os.MkdirAll(filepath.Dir(resolver), 0o755); err != nil {
 		t.Fatal(err)
@@ -597,6 +593,87 @@ func TestRestoreRemovesCurrentRuntimeBeforeReplacingOwnership(t *testing.T) {
 	}
 	if cleanupAt < 0 || extractAt < 0 || cleanupAt >= extractAt {
 		t.Fatalf("runtime was not removed before backup extraction: cleanup=%d extract=%d commands=%#v", cleanupAt, extractAt, commands)
+	}
+}
+
+func TestRestoreWithoutCurrentDatabaseWithRealTar(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GNU tar and Linux archive paths")
+	}
+	m, _ := testManager()
+	sandbox(t, m)
+	seedBackupDatabase(t, m)
+	m.Now = func() time.Time { return time.Unix(1800000000, 0) }
+	dbPath := filepath.Join(m.StateDir, "netos.db")
+	original, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Run the real archive commands relative to the temporary router root.
+	failExtract := false
+	m.Run = func(ctx context.Context, cmd command) error {
+		if cmd.name == "tar" {
+			args := slices.Clone(cmd.args)
+			args[1] = m.Root
+			for i := 4; i < len(args); i++ {
+				args[i] = strings.Replace(args[i], strings.TrimPrefix(m.Root, "/")+"/", "", 1)
+			}
+			if failExtract && args[2] == "-xzf" {
+				failExtract = false
+				return fmt.Errorf("target extraction failed")
+			}
+			return exec.CommandContext(ctx, "tar", args...).Run()
+		}
+		if cmd.name == "systemctl" && cmd.args[0] == "start" {
+			ready := m.sys(runtimeReadyPath)
+			if err := os.MkdirAll(filepath.Dir(ready), 0755); err != nil {
+				return err
+			}
+			return os.WriteFile(ready, nil, 0600)
+		}
+		return nil
+	}
+	archive, err := m.backup(context.Background(), "backup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBackupArchive(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(m.StateDir, "existing-note")
+	if err := os.WriteFile(leftover, []byte("keep on rollback"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	failExtract = true
+	if err := m.Execute(context.Background(), []string{"restore", "--yes"}); err == nil || !strings.Contains(err.Error(), "автоматически восстановлено") {
+		t.Fatalf("expected rollback, got %v", err)
+	}
+	if data, err := os.ReadFile(leftover); err != nil || string(data) != "keep on rollback" {
+		t.Fatal("previous files lost on rollback", err)
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Fatal("rollback did not restore the missing-database state", err)
+	}
+	if err := m.Execute(context.Background(), []string{"restore", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(dbPath); err != nil || !bytes.Equal(data, original) {
+		t.Fatal("database differs from original", err)
+	}
+	if entries, err := m.listBackups(); err != nil || len(entries) != 1 || entries[0].path != archive {
+		t.Fatalf("selectable backups after retry: %v, %v", entries, err)
+	}
+	second, err := m.backup(context.Background(), "backup")
+	if err != nil || !strings.HasSuffix(second, "-2.tar.gz") {
+		t.Fatalf("second backup in same second: %q %v", second, err)
+	}
+	for _, path := range []string{archive, second} {
+		if err := validateBackupArchive(path); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

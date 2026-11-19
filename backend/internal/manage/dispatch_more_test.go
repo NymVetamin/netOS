@@ -122,49 +122,48 @@ func TestHelpVersionAndCompletionAliases(t *testing.T) {
 	}
 }
 
-func TestBackupNowCreatesRealEmptyArchiveAndRestartsDaemon(t *testing.T) {
-	m, out := testManager()
-	sandbox(t, m)
-	m.Now = func() time.Time { return time.Date(2026, 9, 1, 12, 34, 56, 0, time.UTC) }
-	var calls []string
-	m.Run = func(_ context.Context, cmd command) error {
-		calls = append(calls, cmd.name+" "+strings.Join(cmd.args, " "))
-		if cmd.name == "systemctl" && len(cmd.args) > 0 && cmd.args[0] == "start" {
-			if err := os.MkdirAll(filepath.Dir(m.sys(m.ReadyFile)), 0o755); err != nil {
-				return err
+func TestCommandsRejectMissingBackupDatabase(t *testing.T) {
+	for _, args := range [][]string{{"backup"}, {"reset", "--yes", "--backup"}, {"uninstall", "--yes", "--backup"}} {
+		t.Run(args[0], func(t *testing.T) {
+			m, out := testManager()
+			sandbox(t, m)
+			var starts int
+			m.Run = func(_ context.Context, cmd command) error {
+				if cmd.name == "tar" || cmd.name == "iptables-restore" {
+					t.Fatalf("unexpected command %s", cmd.name)
+				}
+				if cmd.name == "systemctl" && cmd.args[0] == "start" {
+					starts++
+				}
+				return nil
 			}
-			return os.WriteFile(m.sys(m.ReadyFile), []byte("ready\n"), 0o644)
-		}
-		return nil
-	}
-	if err := m.Execute(context.Background(), []string{"backup"}); err != nil {
-		t.Fatal(err)
-	}
-	archive := filepath.Join(m.BackupDir, "netos-backup-20260901-123456.tar.gz")
-	if _, err := os.Stat(archive); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateBackupArchive(archive); err == nil {
-		t.Fatal("empty test backup must not be accepted for restoration")
-	}
-	if err := m.Execute(context.Background(), []string{"backup"}); err != nil {
-		t.Fatal(err)
-	}
-	second := filepath.Join(m.BackupDir, "netos-backup-20260901-123456-2.tar.gz")
-	if _, err := os.Stat(second); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateBackupArchive(second); err == nil {
-		t.Fatal("second empty test backup must not be accepted for restoration")
-	}
-	if !strings.Contains(out.String(), archive) || !strings.Contains(out.String(), second) || strings.Join(calls, "\n") != "systemctl stop netosd\nsystemctl start netosd\nsystemctl stop netosd\nsystemctl start netosd" {
-		t.Fatalf("output=%q calls=%v", out.String(), calls)
+			for i := 0; i < 2; i++ {
+				if i == 1 {
+					if err := os.MkdirAll(m.StateDir, 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(m.StateDir, "netos.db"), nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := m.Execute(context.Background(), args); err == nil || !strings.Contains(err.Error(), "netos.db") {
+					t.Fatalf("expected database error, got %v", err)
+				}
+				if entries, err := m.listBackups(); err != nil || len(entries) != 0 || starts != i+1 {
+					t.Fatalf("backups=%v, err=%v, restart count=%d", entries, err, starts)
+				}
+			}
+			if strings.Contains(out.String(), "Резервная копия создана:") {
+				t.Fatal(out.String())
+			}
+		})
 	}
 }
 
 func TestBackupNowWaitsForFreshDaemonReadiness(t *testing.T) {
 	m, out := testManager()
 	sandbox(t, m)
+	seedBackupDatabase(t, m)
 	ready := m.sys(m.ReadyFile)
 	if err := os.MkdirAll(filepath.Dir(ready), 0o755); err != nil {
 		t.Fatal(err)
@@ -174,6 +173,9 @@ func TestBackupNowWaitsForFreshDaemonReadiness(t *testing.T) {
 	}
 	started := false
 	m.Run = func(_ context.Context, cmd command) error {
+		if cmd.name == "tar" {
+			return os.WriteFile(cmd.args[3], []byte("archive"), 0600)
+		}
 		if cmd.name == "systemctl" && len(cmd.args) > 0 && cmd.args[0] == "start" {
 			started = true
 			if _, err := os.Stat(ready); !os.IsNotExist(err) {

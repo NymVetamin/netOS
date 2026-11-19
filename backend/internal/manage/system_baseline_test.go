@@ -143,6 +143,7 @@ func TestCaptureSystemBaselineIsCompleteAndIdempotent(t *testing.T) {
 func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	seedBackupDatabase(t, m)
 	for _, name := range []string{"br-netos", "wg-ch7", "ifb-netos-3", "br-foreign", "bond-user", "d-container"} {
 		if err := os.MkdirAll(filepath.Join(m.Root, "sys/class/net", name), 0o755); err != nil {
 			t.Fatal(err)

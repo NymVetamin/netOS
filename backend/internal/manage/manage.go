@@ -1715,10 +1715,23 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 }
 
 func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
+	prefix := "netos-" + reason
+	dbPath := filepath.Join(m.StateDir, "netos.db")
+	db, err := os.Lstat(dbPath)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("проверка базы перед копированием: %w", err)
+	}
+	if os.IsNotExist(err) || !db.Mode().IsRegular() || db.Size() == 0 {
+		if reason != "before-restore" {
+			return "", fmt.Errorf("резервная копия не создана: для восстановления нужен непустой файл %s", dbPath)
+		}
+		// Preserve even an incomplete installation for rollback, outside the restore list.
+		prefix = "rollback-before-restore"
+	}
 	if err := os.MkdirAll(m.BackupDir, 0o700); err != nil {
 		return "", err
 	}
-	stem := fmt.Sprintf("netos-%s-%s", reason, m.Now().Format("20060102-150405"))
+	stem := prefix + "-" + m.Now().Format("20060102-150405")
 	path := filepath.Join(m.BackupDir, stem+".tar.gz")
 	for sequence := 2; ; sequence++ {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -1730,9 +1743,12 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 	}
 	var sources []string
 	for _, source := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
-		if _, err := os.Stat(source); err == nil {
-			sources = append(sources, strings.TrimPrefix(filepath.Clean(source), string(filepath.Separator)))
+		if _, err := os.Stat(source); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return "", err
 		}
+		sources = append(sources, strings.TrimPrefix(filepath.Clean(source), string(filepath.Separator)))
 	}
 	if len(sources) == 0 {
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)

@@ -49,6 +49,17 @@ func sandbox(t *testing.T, m *Manager) {
 	m.Unit = filepath.Join(root, "etc/systemd/system/netosd.service")
 }
 
+func seedBackupDatabase(t *testing.T, m *Manager) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(m.StateDir, "netos.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHelpUsesPublicNetosCommands(t *testing.T) {
 	m, out := testManager()
 	if err := m.Execute(context.Background(), []string{"help"}); err != nil {
@@ -545,6 +556,13 @@ func TestUninstallRemovesKeaLeaseDataUnlessKept(t *testing.T) {
 		t.Run(fmt.Sprintf("keep=%v", keepData), func(t *testing.T) {
 			m, _ := testManager()
 			sandbox(t, m)
+			seedBackupDatabase(t, m)
+			m.Run = func(_ context.Context, cmd command) error {
+				if cmd.name == "tar" {
+					return os.WriteFile(cmd.args[3], []byte("archive"), 0600)
+				}
+				return nil
+			}
 			lease := m.sys("/var/lib/kea/netos-leases4.csv")
 			if err := os.MkdirAll(filepath.Dir(lease), 0o700); err != nil {
 				t.Fatal(err)
@@ -1017,9 +1035,7 @@ func TestResetFailsClosedWhenCleanupIsIncomplete(t *testing.T) {
 func TestUpdateBackupFailurePreventsInstallation(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
-	if err := os.MkdirAll(m.StateDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	seedBackupDatabase(t, m)
 	installed, restarted := false, false
 	m.Run = func(_ context.Context, c command) error {
 		if c.name == "tar" {
@@ -1049,8 +1065,12 @@ func TestUpdateRejectsDowngradeEvenWithForce(t *testing.T) {
 func TestUpdateWithBackupArchivesBeforeInstaller(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
+	seedBackupDatabase(t, m)
 	started := false
 	m.Run = func(_ context.Context, c command) error {
+		if c.name == "tar" {
+			return os.WriteFile(c.args[3], []byte("archive"), 0600)
+		}
 		if c.name == "systemctl" && strings.Join(c.args, " ") == "start netosd" {
 			if err := os.MkdirAll(filepath.Dir(m.sys(m.ReadyFile)), 0700); err != nil {
 				return err

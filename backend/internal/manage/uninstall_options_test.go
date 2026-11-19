@@ -31,9 +31,7 @@ func TestUninstallBackupChoice(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, out := testManager()
 			sandbox(t, m)
-			if err := os.MkdirAll(m.StateDir, 0700); err != nil {
-				t.Fatal(err)
-			}
+			seedBackupDatabase(t, m)
 			m.In = strings.NewReader(tc.input)
 			backups, mutations := 0, 0
 			m.Run = func(_ context.Context, c command) error {
@@ -88,9 +86,7 @@ func TestUninstallBackupChoice(t *testing.T) {
 func TestUninstallBackupFailureKeepsData(t *testing.T) {
 	m, out := testManager()
 	sandbox(t, m)
-	if err := os.MkdirAll(m.StateDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	seedBackupDatabase(t, m)
 	want := errors.New("backup failed")
 	restarted := false
 	m.Run = func(_ context.Context, c command) error {
