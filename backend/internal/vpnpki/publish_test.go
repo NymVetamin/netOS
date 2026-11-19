@@ -79,6 +79,25 @@ func TestPublishAllowlistAndFailedWriteRecovery(t *testing.T) {
 	}
 	check("netos-good\nnetos-good\n")
 	checkCRL()
+	stamp := time.Unix(1700000000, 0)
+	paths := []string{allowedPath, filepath.Join(s.Dir(server.ID), "ca.crt")}
+	for _, path := range paths {
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	number := st.CRLNumber
+	check("netos-good\nnetos-good\n")
+	checkCRL()
+	if st.CRLNumber != number+1 {
+		t.Fatal("repeat did not refresh CRL")
+	}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil || !info.ModTime().Equal(stamp) {
+			t.Fatalf("unchanged %s was replaced: %v", filepath.Base(path), err)
+		}
+	}
 	server.Enabled = false
 	check("\n")
 	server.Enabled = true

@@ -264,7 +264,7 @@ func (s *Store) publish(st *state, server config.VPNServer) error {
 		return err
 	}
 	dir := s.Dir(st.ServerID)
-	if err := system.WriteFileAtomic(filepath.Join(dir, "ca.crt"), st.CA, 0o644); err != nil {
+	if err := publishStaticFile(filepath.Join(dir, "ca.crt"), st.CA, 0o644); err != nil {
 		return err
 	}
 	if err := system.WriteFileAtomic(filepath.Join(dir, "revoked.crl"), pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}), 0o644); err != nil {
@@ -285,7 +285,16 @@ func (s *Store) publish(st *state, server config.VPNServer) error {
 		}
 	}
 	sort.Strings(allowed)
-	return system.WriteFileAtomic(filepath.Join(dir, "allowed"), []byte(strings.Join(allowed, "\n")+"\n"), 0o600)
+	return publishStaticFile(filepath.Join(dir, "allowed"), []byte(strings.Join(allowed, "\n")+"\n"), 0o600)
+}
+
+func publishStaticFile(path string, data []byte, perm os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode().IsRegular() && info.Size() == int64(len(data)) &&
+		matchesPublishedMetadata(info, perm) && !system.FileChanged(path, data) {
+		return nil
+	}
+	return system.WriteFileAtomic(path, data, perm)
 }
 
 func (s *Store) Sync(ctx context.Context, server config.VPNServer) error {
