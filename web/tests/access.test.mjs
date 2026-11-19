@@ -275,3 +275,14 @@ test("the WG exit switch leaves LAN access to explicit rules", () => {
   cfg.firewall.rules.pop();
   assert.equal(verdict(), "n");
 });
+
+test("a set covers the segment when its adjacent prefixes leave no gap", () => {
+  const cfg = config([{name: "allow", enabled: true, zone: "global", flow: "forward", action: "accept", dst_ipset: "set"}]);
+  const set = {id: "set", entries: ["192.168.10.128/25", "192.168.10.0/26", "192.168.10.0/26", "192.168.10.64/26"]};
+  cfg.firewall.ipsets = [set];
+  assert.equal(cell(cfg, "Интернет", "Офис").verdict, "y");
+  set.entries.pop();
+  assert.equal(cell(cfg, "Интернет", "Офис").verdict, "p");
+  set.entries = ["192.168.9.255", "192.168.11.0"];
+  assert.equal(cell(cfg, "Интернет", "Офис").verdict, "n");
+});

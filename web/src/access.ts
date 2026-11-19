@@ -36,7 +36,8 @@ export type Matrix = {
   cells: (Access | null)[][];
 };
 
-type ParsedAddresses = Map<string, (Subnet | undefined)[]>;
+type AddressRange = { first: number; last: number };
+type ParsedAddresses = Map<string, { nets: Subnet[]; ranges: AddressRange[] } | null>;
 
 type RuleGroups = { in: any[]; forward: any[] };
 
@@ -211,16 +212,29 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
 function side(spec: string, entity: Entity, segments: Entity[], parsedAddresses: ParsedAddresses): "full" | "part" | "none" {
   if (!spec) return "full";
   const key = String(spec);
-  let nets = parsedAddresses.get(key);
-  if (!nets) { nets = key.split(",").map((s) => parseCIDR(s.trim())); parsedAddresses.set(key, nets); }
-  if (nets.some((n) => !n)) return "part";
+  let parsed = parsedAddresses.get(key);
+  if (parsed === undefined) {
+    parsed = parseAddressList(key);
+    parsedAddresses.set(key, parsed);
+  }
+  if (!parsed) return "part";
   if (entity.subnet) {
-    if (nets.some((n) => within(entity.subnet!, n!))) return "full";
-    if (nets.some((n) => overlaps(entity.subnet!, n!))) return "part";
-    return "none";
+    const { net, bits } = entity.subnet;
+    const last = net + 2 ** (32 - bits) - 1;
+    const ranges = parsed.ranges;
+    // First range whose end reaches the start of the segment.
+    let lo = 0, hi = ranges.length;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (ranges[mid].last < net) lo = mid + 1;
+      else hi = mid;
+    }
+    const range = ranges[lo];
+    if (!range || range.first > last) return "none";
+    return range.first <= net && range.last >= last ? "full" : "part";
   }
   // Адрес внутри одного из сегментов в интернет или VPN не ведёт.
-  if (nets.every((n) => segments.some((s) => s.subnet && within(n!, s.subnet)))) return "none";
+  if (parsed.nets.every(n => segments.some(s => s.subnet && within(n, s.subnet)))) return "none";
   return "part";
 }
 
@@ -259,6 +273,20 @@ function within(a: Subnet, b: Subnet): boolean {
   return a.bits >= b.bits && ((a.net & mask(b.bits)) >>> 0) === b.net;
 }
 
-function overlaps(a: Subnet, b: Subnet): boolean {
-  return within(a, b) || within(b, a);
+function parseAddressList(spec: string) {
+  const nets: Subnet[] = [];
+  for (const item of spec.split(",")) {
+    const subnet = parseCIDR(item.trim());
+    if (!subnet) return null;
+    nets.push(subnet);
+  }
+  nets.sort((a, b) => a.net - b.net);
+  const ranges: AddressRange[] = [];
+  for (const { net, bits } of nets) {
+    const last = net + 2 ** (32 - bits) - 1;
+    const previous = ranges[ranges.length - 1];
+    if (previous && net <= previous.last + 1) previous.last = Math.max(previous.last, last);
+    else ranges.push({ first: net, last });
+  }
+  return { nets, ranges };
 }
