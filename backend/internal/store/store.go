@@ -707,14 +707,24 @@ func (s *Store) PruneAudit(keep int) error {
 	return err
 }
 
-func (s *Store) ListAudit(limit int) ([]AuditEntry, error) {
+func auditLimit(limit int) int {
 	if limit <= 0 {
-		limit = 100
-	} else if limit > 1000 {
-		limit = 1000
+		return 100
 	}
-	rows, err := s.db.Query(
-		`SELECT id, at, user, action, target, detail, source_ip, success FROM audit ORDER BY id DESC LIMIT ?`, limit)
+	return min(limit, 1000)
+}
+
+const auditSelect = `SELECT id, at, user, action, target, detail, source_ip, success FROM audit`
+
+func (s *Store) ListAudit(limit int) ([]AuditEntry, error) {
+	return scanAudit(s.db.Query(auditSelect+" ORDER BY id DESC LIMIT ?", auditLimit(limit)))
+}
+
+func (s *Store) ListAuditAfter(ctx context.Context, id int64, limit int) ([]AuditEntry, error) {
+	return scanAudit(s.db.QueryContext(ctx, auditSelect+" WHERE id > ? ORDER BY id LIMIT ?", id, auditLimit(limit)))
+}
+
+func scanAudit(rows *sql.Rows, err error) ([]AuditEntry, error) {
 	if err != nil {
 		return nil, err
 	}

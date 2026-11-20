@@ -41,7 +41,8 @@ func (m *Manager) auditLogs(ctx context.Context, follow bool) error {
 		}
 		return nil
 	}
-	entries, err := st.ListAudit(100)
+	const pageSize = 100
+	entries, err := st.ListAudit(pageSize)
 	if err != nil {
 		return fmt.Errorf("чтение журнала действий: %w", err)
 	}
@@ -62,19 +63,20 @@ func (m *Manager) auditLogs(ctx context.Context, follow bool) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			entries, err := st.ListAudit(100)
-			if err != nil {
-				return fmt.Errorf("чтение журнала действий: %w", err)
-			}
-			for i := len(entries) - 1; i >= 0; i-- {
-				if entries[i].ID > lastID {
-					if err := printEntries(entries[i : i+1]); err != nil {
-						return err
-					}
+			for {
+				entries, err := st.ListAuditAfter(ctx, lastID, pageSize)
+				if err != nil {
+					return fmt.Errorf("чтение журнала действий: %w", err)
 				}
-			}
-			if len(entries) > 0 && entries[0].ID > lastID {
-				lastID = entries[0].ID
+				if err := printEntries(entries); err != nil {
+					return err
+				}
+				if len(entries) > 0 {
+					lastID = entries[len(entries)-1].ID
+				}
+				if len(entries) < pageSize {
+					break
+				}
 			}
 		}
 	}
