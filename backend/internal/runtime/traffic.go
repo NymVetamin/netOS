@@ -77,7 +77,12 @@ func (h *TrafficHistory) sample() {
 	if err != nil {
 		return
 	}
-	now := h.Now().UTC()
+	if err := h.record(stats, h.Now().UTC()); err != nil {
+		log.Printf("история трафика: ошибка записи, повтор при следующем сборе: %v", err)
+	}
+}
+
+func (h *TrafficHistory) record(stats []InterfaceStat, now time.Time) error {
 	point := TrafficPoint{At: now, Interfaces: map[string]TrafficRate{}}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -102,13 +107,19 @@ func (h *TrafficHistory) sample() {
 	h.last = &point
 	pruned := h.pruneLocked(now.Add(-h.Retain))
 	if h.persistenceBlocked {
-		return
+		return nil
 	}
+	var err error
 	if h.lastCompact.IsZero() || now.Sub(h.lastCompact) >= 24*time.Hour {
-		_ = h.compactLocked(now, index-pruned)
+		err = h.compactLocked(now, index-pruned)
 	} else {
-		_ = h.appendLocked(point)
+		err = h.appendLocked(point)
 	}
+	if err != nil {
+		// The append may have left a partial line. Rebuild from retained samples.
+		h.lastCompact = time.Time{}
+	}
+	return err
 }
 
 func (h *TrafficHistory) Points(since time.Time, names []string) []TrafficPoint {

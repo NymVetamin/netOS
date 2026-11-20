@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -119,6 +120,60 @@ func TestTrafficRestartReadsLargeJournal(t *testing.T) {
 		if len(h.points) != 66+attempt || !reflect.DeepEqual(h.points[0], point) {
 			t.Fatalf("restart %d: retained %d points", attempt, len(h.points))
 		}
+	}
+}
+
+func TestTrafficRetriesFailedWrite(t *testing.T) {
+	for _, operation := range []string{"append", "compact"} {
+		t.Run(operation, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "history")
+			h := NewTrafficHistory(path, &Collector{})
+			now := time.Now().UTC()
+			h.Now = func() time.Time { return now }
+			h.Collect = func() ([]InterfaceStat, error) { return nil, nil }
+			h.sample()
+			if operation == "compact" {
+				now = now.Add(24 * time.Hour)
+			}
+			h.Path = t.TempDir() // A directory cannot be appended to or replaced by a file.
+			var messages bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&messages)
+			t.Cleanup(func() { log.SetOutput(previous) })
+			for i := 0; i < 2; i++ {
+				now = now.Add(h.Interval)
+				h.sample()
+			}
+			h.Path = path
+			if !bytes.Contains(messages.Bytes(), []byte("ошибка записи")) {
+				t.Fatalf("write error was not logged: %s", messages.String())
+			}
+			if operation == "append" {
+				file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := file.WriteString(`{"at":`); err != nil {
+					t.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := 0; i < 2; i++ {
+				now = now.Add(h.Interval)
+				h.sample()
+			}
+			reloaded := NewTrafficHistory(path, &Collector{})
+			reloaded.Now = h.Now
+			if err := reloaded.load(); err != nil {
+				t.Fatal(err)
+			}
+			want := h.Points(time.Time{}, nil)
+			if got := reloaded.Points(time.Time{}, nil); len(want) != 5 || !reflect.DeepEqual(got, want) {
+				t.Fatalf("recovered %d samples, want %d", len(got), len(want))
+			}
+		})
 	}
 }
 
