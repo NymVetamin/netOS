@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 )
@@ -238,6 +239,68 @@ func TestDNSBlocklistUsesCacheOnFetchFailure(t *testing.T) {
 	status := statuses[cfg.DNS.Blocklists[0].URL]
 	if status.Source != "cache" || !strings.Contains(status.Error, "network down") {
 		t.Fatalf("source status=%+v", status)
+	}
+}
+
+func TestBlocklistRewritesOnlyChangedCacheAndStatus(t *testing.T) {
+	useProviderPaths(t)
+	cfg := blocklistTestConfig("dnsmasq")
+	first := cfg.DNS.Blocklists[0].URL
+	second := "https://lists.example/second"
+	cfg.DNS.Blocklists = append(cfg.DNS.Blocklists, config.Blocklist{URL: second, Enabled: true})
+	m := NewBlocklistManager()
+	content := "ads.example\n"
+	var fetchErr error
+	m.Fetch = func(_ context.Context, url, _ string) ([]byte, error) {
+		if url == first {
+			return []byte(content), fetchErr
+		}
+		return []byte("second.example\n"), nil
+	}
+	apply := func() {
+		t.Helper()
+		if _, _, err := m.Apply(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply()
+	paths := []string{blocklistCachePath(first), blocklistCachePath(second), blocklistStatusPath()}
+	stamp := time.Unix(1000000000, 0)
+	check := func(written ...bool) {
+		t.Helper()
+		for _, path := range paths {
+			if err := os.Chtimes(path, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		apply()
+		for i, path := range paths {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := !info.ModTime().Equal(stamp); got != written[i] {
+				t.Errorf("%s: written=%v, want %v", filepath.Base(path), got, written[i])
+			}
+		}
+	}
+	check(false, false, false)
+	content = "new.example\n"
+	check(true, false, false)
+	fetchErr = errors.New("offline")
+	check(false, false, true)
+	check(false, false, false)
+	fetchErr = nil
+	check(false, false, true)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(paths[0], 0o644); err != nil {
+			t.Fatal(err)
+		}
+		check(true, false, false)
+		info, err := os.Stat(paths[0])
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("cache permissions: %v, %v", info, err)
+		}
 	}
 }
 

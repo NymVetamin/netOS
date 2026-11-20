@@ -295,7 +295,7 @@ func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) 
 			}
 			statuses[item.URL] = BlocklistSourceStatus{Source: "cache", Error: cause.Error()}
 		} else {
-			if err := system.WriteFileAtomic(cachePath, canonicalDomainFile(domains), 0o600); err != nil {
+			if _, err := system.WriteFileAtomicIfChanged(cachePath, canonicalDomainFile(domains), 0o600); err != nil {
 				return nil, fmt.Errorf("кэш списка %q: %w", item.Name, err)
 			}
 			statuses[item.URL] = BlocklistSourceStatus{Source: "fetched"}
@@ -316,7 +316,7 @@ func (m *BlocklistManager) loadDomains(ctx context.Context, cfg *config.Config) 
 	if err != nil {
 		return nil, err
 	}
-	if err := system.WriteFileAtomic(blocklistStatusPath(), encoded, 0o600); err != nil {
+	if _, err := system.WriteFileAtomicIfChanged(blocklistStatusPath(), encoded, 0o600); err != nil {
 		return nil, fmt.Errorf("статус DNS blocklist: %w", err)
 	}
 	return out, nil
