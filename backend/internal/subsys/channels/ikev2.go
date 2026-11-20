@@ -219,8 +219,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 	}
 	conf, daemon, ca, unit := renderIKEv2Client(ch, ike), renderIKEv2ClientDaemon(ch), []byte(ike.CACert), renderIKEv2ClientUnit(ch, p)
 	helper := renderIKEv2DNSUpdate(ch)
-	changed := system.FileChanged(p.conf, conf) || system.FileChanged(p.daemon, daemon) || system.FileChanged(p.ca, ca) || system.FileChanged(p.unit, unit) || system.FileChanged(dnsUpdate, helper)
-	restart := system.FileChanged(p.conf, conf) || system.FileChanged(p.daemon, daemon) || system.FileChanged(p.ca, ca) || system.UnitRuntimeChanged(p.unit, unit) || system.FileChanged(dnsUpdate, helper)
+	var changed, restart bool
 	for _, file := range []struct {
 		path string
 		data []byte
@@ -229,8 +228,13 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 		{p.conf, conf, 0o600}, {p.daemon, daemon, 0o600}, {p.ca, ca, 0o644}, {p.unit, unit, 0o644},
 		{dnsUpdate, helper, 0o700},
 	} {
-		if err := writeFileIfChanged(file.path, file.data, file.mode); err != nil {
+		before, written, err := updateChannelFile(file.path, file.data, file.mode)
+		if err != nil {
 			return created, err
+		}
+		if written {
+			changed = true
+			restart = restart || file.path != p.unit || system.UnitRuntimeContentChanged(before, file.data)
 		}
 		mutated = true
 	}

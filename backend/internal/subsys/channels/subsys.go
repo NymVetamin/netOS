@@ -2,6 +2,7 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1184,11 +1185,20 @@ func (s *Subsystem) writeOwned(owned []ownedChannel) error {
 }
 
 func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
-	if system.FileChanged(path, data) {
-		return system.WriteFileAtomic(path, data, perm)
+	_, _, err := updateChannelFile(path, data, perm)
+	return err
+}
+
+func updateChannelFile(path string, data []byte, perm os.FileMode) ([]byte, bool, error) {
+	before, err := os.ReadFile(path)
+	if err != nil {
+		before = nil // Partial reads cannot establish a description-only unit change.
+	}
+	if err != nil || !bytes.Equal(before, data) {
+		return before, true, system.WriteFileAtomic(path, data, perm)
 	}
 	// Секретный файл мог быть создан старой версией с более широкими правами.
-	return os.Chmod(path, perm)
+	return before, false, os.Chmod(path, perm)
 }
 
 func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {

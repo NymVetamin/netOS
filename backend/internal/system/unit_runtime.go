@@ -12,9 +12,11 @@ import (
 // when the unit file itself changes.
 func UnitRuntimeChanged(path string, wanted []byte) bool {
 	before, err := os.ReadFile(path)
-	if err != nil {
-		return true
-	}
+	return err != nil || UnitRuntimeContentChanged(before, wanted)
+}
+
+// UnitRuntimeContentChanged compares a unit already read by the caller.
+func UnitRuntimeContentChanged(before, wanted []byte) bool {
 	if bytes.Equal(before, wanted) {
 		return false
 	}

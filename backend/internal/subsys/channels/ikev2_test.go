@@ -76,6 +76,73 @@ func TestRemoveOwnedIKEv2Unit(t *testing.T) {
 	}
 }
 
+func TestIKEv2ApplyReloadAndRestart(t *testing.T) {
+	s, r := newTestSubsystem(t)
+	ch := config.Channel{Index: 3, Type: "ikev2", Name: "office", Config: map[string]any{"ca_cert": "first"}}
+	p := s.ikev2Paths(ch)
+	drift := false
+	s.Runner = channelRunnerFunc(func(ctx context.Context, name string, args ...string) (string, error) {
+		switch name + " " + strings.Join(args, " ") {
+		case "ip link set dev " + InterfaceName(ch) + " mtu 1200 up":
+			if drift {
+				drift = false
+				if err := os.WriteFile(p.ca, []byte("external change"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case "ip -j -4 addr show dev " + InterfaceName(ch):
+			return `[{"flags":["UP"],"addr_info":[{"family":"inet","local":"192.0.2.1"}]}]`, nil
+		case "systemctl is-active " + ikev2UnitName(ch):
+			return "active", nil
+		}
+		return r.Run(ctx, name, args...)
+	})
+	apply := func(wantReload, wantRestart bool) {
+		t.Helper()
+		r.commands = nil
+		if _, err := s.applyIKEv2(context.Background(), ch, true, false); err != nil {
+			t.Fatal(err)
+		}
+		cmds := strings.Join(r.commands, "\n")
+		if strings.Contains(cmds, "systemctl daemon-reload") != wantReload ||
+			strings.Contains(cmds, "systemctl restart "+ikev2UnitName(ch)) != wantRestart {
+			t.Fatal(cmds)
+		}
+	}
+	apply(true, true)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(p.conf, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.Stat(p.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(false, false)
+	after, err := os.Stat(p.conf)
+	if err != nil || !os.SameFile(before, after) || (runtime.GOOS != "windows" && after.Mode().Perm() != 0o600) {
+		t.Fatalf("permission-only repair: %v, %v", after, err)
+	}
+	ch.Name = "renamed"
+	apply(true, false)
+	drift = true
+	apply(true, true)
+	if data, err := os.ReadFile(p.ca); err != nil || string(data) != "first" {
+		t.Fatalf("CA after repair: %q, %v", data, err)
+	}
+	ch.Config["ca_cert"] = "second"
+	r.failOnce = "systemctl restart"
+	if _, err := s.applyIKEv2(context.Background(), ch, true, false); err == nil {
+		t.Fatal("restart failure was lost")
+	}
+	if data, err := os.ReadFile(p.ca); err != nil || string(data) != "first" {
+		t.Fatalf("CA after rollback: %q, %v", data, err)
+	}
+	apply(true, true)
+	apply(false, false)
+}
+
 func TestIKEv2ClientRendersIsolatedXFRMAndEAP(t *testing.T) {
 	ch := config.Channel{Index: 3, Name: "office", Type: "ikev2"}
 	ike := config.IKEv2ChannelConfig{Server: "vpn.example.com", ServerIdentity: "vpn.example.com", Username: "alice", Password: "secret-password"}
