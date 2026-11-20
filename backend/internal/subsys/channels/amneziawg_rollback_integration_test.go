@@ -117,14 +117,14 @@ func TestIntegrationAmneziaWGRollback(t *testing.T) {
 	}
 	s.AppArmorDir, s.AppArmorProfiles = filepath.Join(root, "apparmor"), filepath.Join(root, "no-profiles")
 	ctx := context.Background()
-	if _, err := s.applyWireGuard(ctx, old, false, true); err != nil {
+	if _, err := s.applyWireGuard(ctx, old, false, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	ping := func() { t.Helper(); run("ping", "-n", "-c", "2", "-W", "5", "-I", "wg-ch1", "10.44.0.1") }
 	ping()
 	params["i1"] = "<b 0xc0ffee>"
 	r.fail = true
-	if _, err := s.applyWireGuard(ctx, old, true, true); err == nil || !strings.Contains(err.Error(), "injected MTU failure") {
+	if _, err := s.applyWireGuard(ctx, old, true, true, nil); err == nil || !strings.Contains(err.Error(), "injected MTU failure") {
 		t.Fatalf("missing injected failure: %v", err)
 	}
 	assertCleared := func() {
@@ -139,19 +139,19 @@ func TestIntegrationAmneziaWGRollback(t *testing.T) {
 	}
 	assertCleared()
 	delete(params, "i1")
-	if _, err := s.applyWireGuard(ctx, old, true, true); err != nil {
+	if _, err := s.applyWireGuard(ctx, old, true, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertCleared()
 	indexBefore := run("cat", "/sys/class/net/wg-ch1/ifindex")
-	if _, err := s.applyWireGuard(ctx, old, true, true); err != nil {
+	if _, err := s.applyWireGuard(ctx, old, true, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if indexAfter := run("cat", "/sys/class/net/wg-ch1/ifindex"); indexAfter != indexBefore {
 		t.Fatal("unchanged settings recreated link")
 	}
 	params["i1"] = "<b 0xc0ffee>"
-	if _, err := s.applyWireGuard(ctx, old, true, true); err != nil {
+	if _, err := s.applyWireGuard(ctx, old, true, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if out := run("awg", "showconf", "wg-ch1"); !strings.Contains(out, "c0ffee") {
@@ -160,11 +160,11 @@ func TestIntegrationAmneziaWGRollback(t *testing.T) {
 	ping()
 	params["i1"] = "<b 0xcafe>"
 	r.fail, r.failDelete, r.afterFailure = true, true, false
-	if _, err := s.applyWireGuard(ctx, old, true, true); err == nil || !strings.Contains(err.Error(), "injected rollback delete failure") {
+	if _, err := s.applyWireGuard(ctx, old, true, true, nil); err == nil || !strings.Contains(err.Error(), "injected rollback delete failure") {
 		t.Fatalf("missing rollback delete failure: %v", err)
 	}
 	params["i1"] = "<b 0xc0ffee>"
-	if _, err := s.applyWireGuard(ctx, old, true, true); err != nil {
+	if _, err := s.applyWireGuard(ctx, old, true, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if out := run("awg", "showconf", "wg-ch1"); !strings.Contains(out, "c0ffee") || strings.Contains(out, "cafe") {

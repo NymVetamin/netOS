@@ -378,7 +378,11 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 		return err
 	}
 	hasIKE, hadIKE := false, false
+	wireGuards := 0
 	for _, ch := range wanted {
+		if ch.Type == "wireguard" {
+			wireGuards++
+		}
 		hasIKE = hasIKE || ch.Type == "ikev2" || ch.UsesL2TPIPsec()
 	}
 	for _, ch := range owned {
@@ -459,6 +463,13 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 	}
 	var nextOwned []ownedChannel
 	var created []ownedChannel
+	var rules *ruleBatch
+	if wireGuards > 1 {
+		if watch, ok := watchIPv4Rules(); ok {
+			defer watch.close()
+			rules = &ruleBatch{watch: watch}
+		}
+	}
 	for _, ch := range wanted {
 		name := InterfaceName(ch)
 		var createdNow bool
@@ -468,11 +479,11 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) (retErr error
 			if ch.WireGuardPeer != nil {
 				_, err = s.Runner.Run(ctx, "ip", "-4", "route", "replace", "blackhole", "default", "metric", "1000", "table", fmt.Sprint(TableNumber(ch)), "proto", fmt.Sprint(config.RouteProto))
 				if err == nil {
-					err = s.ensureRule(ctx, ch)
+					err = s.ensureRuleFromBatch(ctx, ch, TableNumber(ch), rules)
 				}
 				createdNow = !retained[name]
 			} else {
-				createdNow, err = s.applyWireGuard(ctx, ch, retained[name], cfg.IPv6.Mode == "off")
+				createdNow, err = s.applyWireGuard(ctx, ch, retained[name], cfg.IPv6.Mode == "off", rules)
 			}
 		case "openconnect":
 			unit = openConnectUnitName(ch)
@@ -577,7 +588,7 @@ func presharedKeyOrZero(key string) string {
 	return key
 }
 
-func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) (created bool, retErr error) {
+func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool, rules *ruleBatch) (created bool, retErr error) {
 	name := InterfaceName(ch)
 	existedBefore := s.linkExists(InterfaceName(ch))
 	confPath := filepath.Join(s.StateDir, name+".conf")
@@ -587,7 +598,7 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 	}
 	oldAddresses, _ := s.Runner.Run(ctx, "ip", "-o", "-4", "addr", "show", "dev", name)
 	oldLink, _ := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", name)
-	retErr = s.applyWireGuardInner(ctx, ch, wasOwned, disableIPv6)
+	retErr = s.applyWireGuardInner(ctx, ch, wasOwned, disableIPv6, rules)
 	created = !existedBefore && s.linkExists(name)
 	if retErr == nil {
 		return created, nil
@@ -684,7 +695,7 @@ func linkMTU(output string) string {
 	return ""
 }
 
-func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool) error {
+func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, wasOwned, disableIPv6 bool, rules *ruleBatch) error {
 	name := InterfaceName(ch)
 	wg, err := ch.WireGuardConfig()
 	if err != nil {
@@ -748,7 +759,7 @@ func (s *Subsystem) applyWireGuardInner(ctx context.Context, ch config.Channel, 
 	if err := s.ensureRoutes(ctx, ch, name); err != nil {
 		return err
 	}
-	return s.ensureRule(ctx, ch)
+	return s.ensureRuleFromBatch(ctx, ch, TableNumber(ch), rules)
 }
 
 func (s *Subsystem) ensureAddress(ctx context.Context, name, address string) error {
@@ -850,20 +861,30 @@ func (s *Subsystem) ensureRule(ctx context.Context, ch config.Channel) error {
 }
 
 func (s *Subsystem) ensureRuleTable(ctx context.Context, ch config.Channel, lookup int) error {
+	return s.ensureRuleFromBatch(ctx, ch, lookup, nil)
+}
+
+func (s *Subsystem) ensureRuleFromBatch(ctx context.Context, ch config.Channel, lookup int, batch *ruleBatch) error {
 	priority := fmt.Sprint(Priority(ch))
 	table := fmt.Sprint(lookup)
 	mark := fmt.Sprintf("0x%x", Mark(ch))
 	tableName := "netos-ch" + fmt.Sprint(lookup-tableBase)
-	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
+	lines, err := batch.lines(ctx, s, priority)
 	if err != nil {
 		return fmt.Errorf("чтение правил: %w", err)
 	}
-	for _, line := range strings.Split(out, "\n") {
+	occupied := false
+	for _, line := range lines {
 		if hasChannelRuleLine(line, priority, mark, table, tableName) {
 			return s.refreshChannelUDP(ctx, ch, false)
 		}
+		occupied = occupied || strings.HasPrefix(strings.TrimSpace(line), priority+":")
 	}
-	if hasRulePriority(out, priority) {
+	if batch != nil {
+		batch.disabled = true
+		batch.byPriority = nil
+	}
+	if occupied {
 		if _, err := s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", priority); err != nil {
 			return fmt.Errorf("удаление старого правила канала: %w", err)
 		}
