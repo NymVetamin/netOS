@@ -90,10 +90,14 @@ export function Clients({
   const [vpnError, setVPNError] = useState(false);
   const vpnIDs = JSON.stringify((config.vpn_servers || []).map((s: any) => s.id));
   useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
     const ids: string[] = JSON.parse(vpnIDs);
     setVPNTelemetry({});
+    if (ids.length === 0) {
+      setVPNError(false);
+      return;
+    }
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
     async function load() {
       const results = await Promise.allSettled(ids.map(id => api.vpnClientStatus(id, controller.signal)));
       if (controller.signal.aborted) return;

@@ -27,6 +27,15 @@ async def scenario(browser, mode):
     cfg["channels"]=[{"id":"direct","name":"Напрямую","enabled":True},{"id":"exit","name":"Xray Riga","enabled":True},{"id":"off","name":"Disabled exit","enabled":False}]
     cfg["networks"][0]["default_channel"]="exit"
     telemetry_error=mode=="error"
+    if mode=="no-vpn":
+        # The fixture has no component operations. Only VPN telemetry would
+        # schedule a five-second poll on this page.
+        await page.add_init_script("""const schedule = window.setTimeout;
+          window.fiveSecondPolls = 0;
+          window.setTimeout = (callback, delay, ...args) => {
+            if (delay === 5000) window.fiveSecondPolls++;
+            return schedule(callback, delay, ...args);
+          };""")
     async def route_request(route):
         req,path=route.request,urlparse(route.request.url).path
         if not path.startswith("/api/"):
@@ -54,6 +63,8 @@ async def scenario(browser, mode):
     await expect(page.get_by_text("Закреплённые адреса",exact=True)).to_have_count(0)
     await expect(page.get_by_text("Закрепить адрес",exact=True)).to_have_count(0)
     await expect(page.get_by_role("button",name="Добавить по MAC",exact=True)).to_be_visible()
+    if mode=="no-vpn":
+        assert await page.evaluate("window.fiveSecondPolls") == 0
     if mode!="no-vpn":
         await expect(page.get_by_text("Phone",exact=True)).to_be_visible()
         await expect(page.get_by_text("VPN · VPN server · WireGuard",exact=True)).to_have_count(3)
