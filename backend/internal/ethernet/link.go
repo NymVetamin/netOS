@@ -8,6 +8,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -107,13 +108,16 @@ func desired(current Settings, mode string) (Settings, error) {
 func set(ctx context.Context, run Run, name string, current, want Settings) error {
 	args := []string{"-s", name, "autoneg"}
 	if want.Autoneg {
+		args = slices.Grow(args, 2+2*len(current.Supported))
 		args = append(args, "on", "advertise")
+		advertised := make(map[string]bool, len(want.Advertised))
+		for _, mode := range want.Advertised {
+			advertised[mode] = true
+		}
 		for _, m := range current.Supported {
 			value := "off"
-			for _, v := range want.Advertised {
-				if m == v {
-					value = "on"
-				}
+			if advertised[m] {
+				value = "on"
 			}
 			args = append(args, m, value)
 		}

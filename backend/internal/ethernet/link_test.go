@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,22 @@ func TestParse(t *testing.T) {
 	s := Parse(sample)
 	if len(s.Supported) != 4 || len(s.Advertised) != 2 || !s.Autoneg || !s.CanAutoneg || s.Speed != 1000 || s.Duplex != "full" {
 		t.Fatalf("%+v", s)
+	}
+}
+
+func TestSetAdvertisesInDriverOrder(t *testing.T) {
+	current := Settings{Supported: []string{"1000baseX/Full", "100baseT/Half", "1000baseT/Full", "1000baseX/Full"}}
+	want := Settings{Autoneg: true, Advertised: []string{"1000baseT/Full", "1000baseX/Full", "1000baseT/Full", "unsupported"}}
+	expected := []string{"-s", "eth0", "autoneg", "on", "advertise", "1000baseX/Full", "on", "100baseT/Half", "off", "1000baseT/Full", "on", "1000baseX/Full", "on"}
+	failure := errors.New("set rejected")
+	run := func(_ context.Context, cmd string, args ...string) (string, error) {
+		if cmd != "ethtool" || !slices.Equal(args, expected) {
+			t.Fatalf("unexpected command %s %q", cmd, args)
+		}
+		return "", failure
+	}
+	if err := set(context.Background(), run, "eth0", current, want); !errors.Is(err, failure) {
+		t.Fatal(err)
 	}
 }
 
