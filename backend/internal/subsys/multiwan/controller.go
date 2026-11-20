@@ -686,8 +686,24 @@ func (c *Controller) captureBalanceKernel(ctx context.Context, indices map[int]b
 		ordered = append(ordered, index)
 	}
 	sort.Ints(ordered)
+	groupByPriority := make(map[string]int, len(ordered))
+	for i, index := range ordered {
+		groupByPriority[strconv.Itoa(priorityBase+index)] = i
+	}
+	groups := make([]strings.Builder, len(ordered))
+	for line := range strings.SplitSeq(rules, "\n") {
+		line = strings.TrimSpace(line)
+		priority, _, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		if i, ok := groupByPriority[priority]; ok {
+			groups[i].WriteString(line)
+			groups[i].WriteByte('\n')
+		}
+	}
 	snapshots := make([]balanceKernelSnapshot, 0, len(ordered))
-	for _, index := range ordered {
+	for i, index := range ordered {
 		routes, err := c.Runner.Run(ctx, "ip", "-4", "route", "show", "table", fmt.Sprint(tableBase+index))
 		if err != nil {
 			if !missingFIBTable(err) {
@@ -699,14 +715,7 @@ func (c *Controller) captureBalanceKernel(ctx context.Context, indices map[int]b
 			// первое же включение балансировки откатывалось целиком.
 			routes = ""
 		}
-		snapshot := balanceKernelSnapshot{index: index, routes: routes}
-		prefix := fmt.Sprint(priorityBase+index) + ":"
-		for _, line := range strings.Split(rules, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-				snapshot.rule += strings.TrimSpace(line) + "\n"
-			}
-		}
-		snapshots = append(snapshots, snapshot)
+		snapshots = append(snapshots, balanceKernelSnapshot{index: index, routes: routes, rule: groups[i].String()})
 	}
 	return snapshots, nil
 }
