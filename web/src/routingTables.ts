@@ -44,11 +44,26 @@ export function canonicalTable(name: string): string {
   }
 }
 
-export function tableDetails(name: string, config: any) {
-  const manual = (config.routing?.tables || []).find((t: any) => t.name === name || String(t.number) === name);
-  if (manual) return { number: String(manual.number), owner: manual.comment || "Пользовательская таблица", manual: true };
-  const channel = (config.channels || []).find((c: any) => c.type !== "direct" &&
-    (name === `netos-ch${c.index}` || name === String(1000 + c.index)));
-  if (channel) return { number: String(1000 + channel.index), owner: `Интернет-канал: ${channel.name} (${channel.type})`, manual: false };
-  return { number: /^\d+$/.test(name) ? name : "—", owner: "Таблица ОС", manual: false };
+export function automaticTables(names: string[], tables: {name: string; number: number}[] = [],
+  channels: {index: number; name: string; type: string}[] = []) {
+  if (!names.length) return [];
+  const excluded = new Set(["main", "local", "default"]);
+  for (const table of tables) {
+    excluded.add(table.name);
+    excluded.add(String(table.number));
+  }
+  const visible = names.filter(name => !excluded.has(name));
+  if (!visible.length) return [];
+  const byName = new Map<string, (typeof channels)[number]>();
+  for (const channel of channels) {
+    if (channel.type === "direct") continue;
+    for (const key of [`netos-ch${channel.index}`, String(1000 + channel.index)]) {
+      if (!byName.has(key)) byName.set(key, channel);
+    }
+  }
+  return visible.map(name => {
+    const channel = byName.get(name);
+    if (channel) return { name, number: String(1000 + channel.index), owner: `Интернет-канал: ${channel.name} (${channel.type})` };
+    return { name, number: /^\d+$/.test(name) ? name : "—", owner: "Таблица ОС" };
+  });
 }

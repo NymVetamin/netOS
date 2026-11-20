@@ -7,7 +7,7 @@ import ts from "typescript";
 const exports = {};
 const source = readFileSync(new URL("../src/routingTables.ts", import.meta.url), "utf8");
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports });
-const { observedTables, tableDetails } = exports;
+const { observedTables, automaticTables } = exports;
 test("priority selection stays within the owned range and reuses released slots", () => {
   const next = exports.nextRulePriority;
   assert.equal(next([]), 20100);
@@ -43,11 +43,31 @@ test("observes channel routes, empty rule tables and canonical system names", ()
 test("channel labels and configured tables do not create draft tables", () => {
   const config = { channels: [{ index: 1, type: "xray", name: "VPN" }], routing: { tables: [{name:"office",number:101}] } };
   const before = JSON.stringify(config);
-  assert.equal(tableDetails("netos-ch1",config).owner,"Интернет-канал: VPN (xray)");
-  assert.equal(tableDetails("1001",config).number,"1001");
-  assert.equal(tableDetails("101",config).manual,true);
-  assert.equal(tableDetails("4000",config).owner,"Таблица ОС");
+  const names = ["netos-ch1", "1001", "office", "101", "main", "4000", "constructor"];
+  const rows = automaticTables(names, config.routing.tables, config.channels);
+  assert.deepEqual(Array.from(rows, row => row.name), ["netos-ch1", "1001", "4000", "constructor"]);
+  assert.equal(rows[0].owner,"Интернет-канал: VPN (xray)");
+  assert.equal(rows[1].number,"1001");
+  assert.equal(rows[2].owner,"Таблица ОС");
+  assert.equal(rows[3].number,"—");
   assert.equal(JSON.stringify(config),before);
+});
+
+test("automatic table owners follow configuration changes and first matching channel", () => {
+  const names = ["netos-ch2", "1002", "netos-ch4"];
+  const channels = [
+    {index: 2, type: "direct", name: "Direct"},
+    {index: 2, type: "xray", name: "First"},
+    {index: 2, type: "wireguard", name: "Second"},
+  ];
+  const rows = automaticTables(names, [{name: "netos-ch4", number: 1002}], channels);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].owner, "Интернет-канал: First (xray)");
+  const changed = automaticTables(names, [], channels.slice(2));
+  assert.equal(changed.length, 3);
+  assert.equal(changed[1].owner, "Интернет-канал: Second (wireguard)");
+  assert.equal(changed[2].owner, "Таблица ОС");
+  assert.equal(automaticTables([], [], channels).length, 0);
 });
 
 test("ordinary table names survive canonicalization and sorting", () => {

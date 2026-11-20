@@ -2,7 +2,7 @@ import { interfaceDisplay, interfaceLabel } from "../interfaceDisplay";
 import { channelNATInterface } from "../channelNAT";
 import { useEffect, useMemo, useState } from "react";
 import { api, RouteEntry } from "../api";
-import { canonicalTable, nextRouteTable, nextRulePriority, observedTables, tableDetails } from "../routingTables";
+import { automaticTables, canonicalTable, nextRouteTable, nextRulePriority, observedTables } from "../routingTables";
 import { newID } from "../id";
 import { Badge, Cap, Card, Empty, Notice, openOnCreate, Row, Rows, Switch, TableWrap } from "../ui";
 import { Icon } from "../icons";
@@ -78,8 +78,9 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   const tablesFull = useMemo(() => routing.tables?.length >= 252 && !nextRouteTable(routing.tables), [routing.tables]);
   const tableNames = ["main", ...(routing.tables || []).map((t: any) => t.name)];
 
-  const observed = observedTables(live?.parsed || [], live?.rules || "");
-  const automatic = observed.filter(name => !["main", "local", "default"].includes(name) && !tableDetails(name, config).manual);
+  const observed = useMemo(() => observedTables(live?.parsed || [], live?.rules || ""), [live]);
+  const automatic = useMemo(() => automaticTables(observed, routing.tables || [], config.channels || []),
+    [observed, routing.tables, config.channels]);
   const displayedRoutes = (live?.parsed || []).filter(r => selectedTable === "all" || canonicalTable(r.table || "main") === selectedTable);
   const ifaces = routeInterfaceOptions(config);
   const ifaceByName = new Map(ifaces.map(o => [o.name, o]));
@@ -323,11 +324,10 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
           <TableWrap>
             <table aria-label="Автоматические таблицы маршрутизации">
               <thead><tr><th>Действующая таблица</th><th>Номер</th><th>Назначение</th><th /></tr></thead>
-              <tbody>{automatic.map(name => {
-                const details = tableDetails(name, config);
-                return <tr key={name}><td className="mono">{name}</td><td className="mono">{details.number}</td><td>{details.owner}</td>
-                  <td><button className="btn sm" onClick={() => setSelectedTable(name)}>Показать маршруты</button></td></tr>;
-              })}</tbody>
+              <tbody>{automatic.map(({ name, number, owner }) => (
+                <tr key={name}><td className="mono">{name}</td><td className="mono">{number}</td><td>{owner}</td>
+                  <td><button className="btn sm" onClick={() => setSelectedTable(name)}>Показать маршруты</button></td></tr>
+              ))}</tbody>
             </table>
           </TableWrap>
         )}
