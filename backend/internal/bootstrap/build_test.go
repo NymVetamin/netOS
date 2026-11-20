@@ -84,6 +84,27 @@ func TestDetectUsesPreferredDefaultAndAllPhysicalSubnets(t *testing.T) {
 	}
 }
 
+func TestDetectRefusesExistingBridgeOnlyOnPreferredRoute(t *testing.T) {
+	old := sysClassNet
+	sysClassNet = t.TempDir()
+	t.Cleanup(func() { sysClassNet = old })
+	if err := os.MkdirAll(filepath.Join(sysClassNet, "brwan", "bridge"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const bridge = "default via 192.0.2.1 dev brwan"
+	const port = "default via 198.51.100.1 dev eth0"
+	for attempt := 0; attempt < 2; attempt++ {
+		d, err := Detect(context.Background(), detectRunner{routes: bridge + "\n" + port})
+		if d != nil || err == nil || !strings.Contains(err.Error(), "мост brwan") {
+			t.Fatalf("bridge bootstrap returned %+v, %v", d, err)
+		}
+	}
+	d, err := Detect(context.Background(), detectRunner{routes: port + "\n" + bridge})
+	if err != nil || d.WANInterface != "eth0" {
+		t.Fatalf("physical uplink returned %+v, %v", d, err)
+	}
+}
+
 func TestDetectFailsWithoutSysfsAndToleratesRouteAddressFailures(t *testing.T) {
 	oldRoot := sysClassNet
 	sysClassNet = filepath.Join(t.TempDir(), "missing")

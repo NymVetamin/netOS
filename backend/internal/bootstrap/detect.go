@@ -63,6 +63,11 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 				}
 			}
 			if iface != "" {
+				if _, err := os.Stat(filepath.Join(sysClassNet, iface, "bridge")); err == nil {
+					return nil, fmt.Errorf("маршрут по умолчанию проходит через мост %s. Подготовьте отдельный доступ к машине, перенесите аплинк с моста и повторите установку. Затем воссоздайте мост в netOS", iface)
+				} else if !os.IsNotExist(err) {
+					return nil, err
+				}
 				d.WANInterface, d.WANGateway = iface, gateway
 				break
 			}
