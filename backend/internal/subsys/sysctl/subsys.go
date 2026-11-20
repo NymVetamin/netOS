@@ -472,11 +472,19 @@ func checkValues(values map[string]string) error {
 	return nil
 }
 
-// writeSysctl переводит имя параметра в путь внутри /proc/sys и записывает
-// значение.
+func sysctlPath(key string) string {
+	// net.ipv6.conf.<интерфейс>.<параметр>: точки внутри имени, например
+	// eth0.100, принадлежат одному каталогу procfs.
+	if rest, ok := strings.CutPrefix(key, "net.ipv6.conf."); ok {
+		if sep := strings.LastIndexByte(rest, '.'); sep >= 0 {
+			return filepath.Join(procSysPath, "net", "ipv6", "conf", rest[:sep], rest[sep+1:])
+		}
+	}
+	return filepath.Join(procSysPath, strings.ReplaceAll(key, ".", "/"))
+}
+
 func writeSysctl(key, value string) error {
-	path := filepath.Join(procSysPath, filepath.Join(strings.Split(key, ".")...))
-	err := os.WriteFile(path, []byte(value), 0o644)
+	err := os.WriteFile(sysctlPath(key), []byte(value), 0o644)
 	switch {
 	case err == nil:
 		return nil
@@ -494,8 +502,7 @@ func writeSysctl(key, value string) error {
 
 // readSysctl читает значение параметра из /proc/sys.
 func readSysctl(key string) (string, error) {
-	path := filepath.Join(procSysPath, filepath.Join(strings.Split(key, ".")...))
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(sysctlPath(key))
 	if err != nil {
 		return "", err
 	}

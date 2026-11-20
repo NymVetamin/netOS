@@ -197,6 +197,48 @@ func TestIPv6OffReapplyPreservesGlobalSwitchAndRepairsInterfaceDrift(t *testing.
 	}
 }
 
+func TestIPv6DottedInterface(t *testing.T) {
+	withSysctlPaths(t)
+	const name = "eth0.100"
+	if err := os.MkdirAll(filepath.Join(netClassPath, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(procSysPath, "net", "ipv6", "conf", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ra := filepath.Join(dir, "accept_ra")
+	s := NewIPv6(&sysctlRunner{})
+	cfg := config.Default()
+	ctx := context.Background()
+	for _, mode := range []string{"off", "passthrough"} {
+		cfg.IPv6.Mode = mode
+		seedSysctls(t, s.values(cfg))
+		if err := os.WriteFile(ra, []byte("1"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		want := s.values(cfg)["net.ipv6.conf.default.accept_ra"]
+		if data, err := os.ReadFile(ra); err != nil || string(data) != want {
+			t.Errorf("%s: accept_ra = %q, %v; want %s", mode, data, err, want)
+		}
+		if err := os.WriteFile(ra, []byte("1"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, cfg); err == nil || !strings.Contains(err.Error(), name+".accept_ra") {
+			t.Errorf("%s: undetected drift: %v", mode, err)
+		}
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestIPv6ReturnsConfigProcAndInterfaceErrors(t *testing.T) {
 	withSysctlPaths(t)
 	cfg := config.Default()
