@@ -199,7 +199,7 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 		}
 		rollbackCtx := context.Background()
 		if !wasOwned {
-			s.cleanupIKEv2(rollbackCtx, ch)
+			s.cleanupIKEv2(rollbackCtx, ch, "")
 			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(Priority(ch)))
 			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "route", "flush", "table", fmt.Sprint(TableNumber(ch)))
 			return
@@ -273,10 +273,12 @@ func (s *Subsystem) applyIKEv2(ctx context.Context, ch config.Channel, wasOwned,
 	return created, nil
 }
 
-func (s *Subsystem) cleanupIKEv2(ctx context.Context, ch config.Channel) {
+func (s *Subsystem) cleanupIKEv2(ctx context.Context, ch config.Channel, deactivatedUnit string) {
 	unit := ikev2UnitName(ch)
-	_, _ = s.Runner.Run(ctx, "systemctl", "disable", unit)
-	_, _ = s.Runner.Run(ctx, "systemctl", "stop", unit)
+	if unit != deactivatedUnit {
+		_, _ = s.Runner.Run(ctx, "systemctl", "disable", unit)
+		_, _ = s.Runner.Run(ctx, "systemctl", "stop", unit)
+	}
 	p := s.ikev2Paths(ch)
 	_ = os.Remove(p.unit)
 	_ = os.RemoveAll(p.root)

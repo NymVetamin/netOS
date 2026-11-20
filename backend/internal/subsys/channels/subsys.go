@@ -1192,9 +1192,13 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
 }
 
 func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
+	var deactivatedUnit string
 	if ch.Unit != "" && ch.Type != "openconnect" && ch.Type != "xray" {
-		_, _ = s.Runner.Run(ctx, "systemctl", "disable", ch.Unit)
-		_, _ = s.Runner.Run(ctx, "systemctl", "stop", ch.Unit)
+		_, disableErr := s.Runner.Run(ctx, "systemctl", "disable", ch.Unit)
+		_, stopErr := s.Runner.Run(ctx, "systemctl", "stop", ch.Unit)
+		if disableErr == nil && stopErr == nil {
+			deactivatedUnit = ch.Unit
+		}
 	}
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(priorityBase+ch.Index))
 	_, _ = s.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprint(tableBase+ch.Index))
@@ -1218,7 +1222,7 @@ func (s *Subsystem) removeChannel(ctx context.Context, ch ownedChannel) error {
 	}
 	if ch.Type == "ikev2" {
 		placeholder := config.Channel{Index: ch.Index, Type: "ikev2"}
-		s.cleanupIKEv2(ctx, placeholder)
+		s.cleanupIKEv2(ctx, placeholder, deactivatedUnit)
 	}
 	if ch.Unit != "" {
 		active, _ := s.Runner.Run(ctx, "systemctl", "is-active", ch.Unit)

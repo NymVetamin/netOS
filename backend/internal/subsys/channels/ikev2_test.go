@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,70 @@ import (
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func TestRemoveOwnedIKEv2Unit(t *testing.T) {
+	ch := config.Channel{Type: "ikev2", Index: 3}
+	unit := ikev2UnitName(ch)
+	for _, tc := range []struct {
+		name, recorded, failOnce string
+		wantPairs                int
+	}{
+		{"recorded", unit, "", 1},
+		{"without recorded unit", "", "", 1},
+		{"legacy unit", "legacy-ike.service", "", 1},
+		{"retry stop", unit, "systemctl stop " + unit, 2},
+		{"retry disable", unit, "systemctl disable " + unit, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, r := newTestSubsystem(t)
+			r.failOnce = tc.failOnce
+			if err := s.writeOwned([]ownedChannel{{Name: InterfaceName(ch), Index: ch.Index, Type: ch.Type, Unit: tc.recorded}}); err != nil {
+				t.Fatal(err)
+			}
+			p := s.ikev2Paths(ch)
+			for _, file := range []string{p.conf, p.unit} {
+				if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte("fixture"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			apply := func() {
+				t.Helper()
+				if err := s.Apply(context.Background(), &config.Config{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			apply()
+			counts := make(map[string]int)
+			for _, cmd := range r.commands {
+				counts[cmd]++
+			}
+			for _, verb := range []string{"disable", "stop"} {
+				cmd := "systemctl " + verb + " "
+				if counts[cmd+unit] != tc.wantPairs {
+					t.Errorf("%s%s: got %d, want %d", cmd, unit, counts[cmd+unit], tc.wantPairs)
+				}
+				if tc.recorded != "" && tc.recorded != unit && counts[cmd+tc.recorded] != 1 {
+					t.Errorf("missing cleanup of %s", tc.recorded)
+				}
+			}
+			for _, file := range []string{p.unit, p.root} {
+				if _, err := os.Stat(file); !os.IsNotExist(err) {
+					t.Fatalf("%s remains: %v", file, err)
+				}
+			}
+			r.commands = nil
+			apply()
+			for _, cmd := range r.commands {
+				if strings.Contains(cmd, unit) {
+					t.Fatalf("repeated removal: %s", cmd)
+				}
+			}
+		})
+	}
+}
 
 func TestIKEv2ClientRendersIsolatedXFRMAndEAP(t *testing.T) {
 	ch := config.Channel{Index: 3, Name: "office", Type: "ikev2"}
