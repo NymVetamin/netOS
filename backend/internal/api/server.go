@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -353,7 +354,11 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		}
 		fingerprint = tlsutil.Fingerprint(pair.Leaf)
 		tlsConfig.GetCertificate = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			pair, err := tls.LoadX509KeyPair(bundle, bundle)
+			data, err := os.ReadFile(bundle)
+			if err != nil {
+				return nil, err
+			}
+			pair, err := tls.X509KeyPair(data, data)
 			return &pair, err
 		}
 	} else {

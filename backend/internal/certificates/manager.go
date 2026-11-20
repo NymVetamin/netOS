@@ -161,6 +161,9 @@ func ReadPair(certFile, keyFile, name string) (*Pair, error) {
 	if err != nil {
 		return nil, err
 	}
+	if keyFile == certFile {
+		return ParsePair(cert, cert, name)
+	}
 	key, err := os.ReadFile(keyFile)
 	if err != nil {
 		return nil, err
