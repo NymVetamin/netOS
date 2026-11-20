@@ -188,7 +188,7 @@ func TestRestoreRetainsPhysicalManagementUplinkUntilDaemonIsReady(t *testing.T) 
 		if c.name == "tar" && contains(c.args, "-czf") {
 			for i, arg := range c.args {
 				if arg == "-czf" && i+1 < len(c.args) {
-					return os.WriteFile(c.args[i+1], []byte("mock archive"), 0600)
+					return writeMockBackup(t, c.args[i+1])
 				}
 			}
 		}

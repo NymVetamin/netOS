@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -81,6 +82,20 @@ func BenchmarkListBackups(b *testing.B) {
 
 func writeTestBackup(t *testing.T, entries []tar.Header) string {
 	t.Helper()
+	name := filepath.Join(t.TempDir(), "backup.tar.gz")
+	if err := writeTestArchive(t, name, entries); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func writeMockBackup(t *testing.T, name string) error {
+	t.Helper()
+	return writeTestArchive(t, name, []tar.Header{{Name: "var/lib/netos/netos.db", Mode: 0600, Size: 4, Typeflag: tar.TypeReg}})
+}
+
+func writeTestArchive(t *testing.T, name string, entries []tar.Header) error {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
@@ -101,11 +116,62 @@ func writeTestBackup(t *testing.T, entries []tar.Header) string {
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	name := filepath.Join(t.TempDir(), "backup.tar.gz")
-	if err := os.WriteFile(name, buf.Bytes(), 0o600); err != nil {
+	return os.WriteFile(name, buf.Bytes(), 0o600)
+}
+
+func TestOversizedBackupIsOnlyAvailableForInternalRollback(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	seedBackupDatabase(t, m)
+	var archive bytes.Buffer
+	z := gzip.NewWriter(&archive)
+	w := tar.NewWriter(z)
+	if err := w.WriteHeader(&tar.Header{Name: "var/lib/netos/netos.db", Size: 1, Mode: 0600}); err != nil {
 		t.Fatal(err)
 	}
-	return name
+	if _, err := w.Write([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxBackupEntries; i++ {
+		if err := w.WriteHeader(&tar.Header{Name: fmt.Sprintf("var/lib/netos/%d", i), Mode: 0600}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := errors.Join(w.Close(), z.Close()); err != nil {
+		t.Fatal(err)
+	}
+	m.Run = func(_ context.Context, cmd command) error {
+		path := cmd.args[3]
+		if listed, err := m.listBackups(); err != nil || len(listed) != 0 {
+			t.Fatalf("unfinished archive listed: %v %v", listed, err)
+		}
+		return os.WriteFile(path, archive.Bytes(), 0600)
+	}
+	ctx := context.Background()
+	if path, err := m.backup(ctx, "backup"); !errors.Is(err, errBackupEntries) || path != "" {
+		t.Fatalf("oversized backup: %q %v", path, err)
+	}
+	if files, err := os.ReadDir(m.BackupDir); err != nil || len(files) != 0 {
+		t.Fatalf("failed backup left files: %v %v", files, err)
+	}
+	path, err := m.backup(ctx, "before-restore")
+	if err != nil || !strings.HasPrefix(filepath.Base(path), "rollback-before-restore-") {
+		t.Fatalf("internal rollback: %q %v", path, err)
+	}
+	if files, err := m.listBackups(); err != nil || len(files) != 0 {
+		t.Fatalf("internal rollback listed: %v %v", files, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, archive.Bytes()) {
+		t.Fatalf("internal rollback archive changed: %v", err)
+	}
+	m.Run = func(_ context.Context, cmd command) error { return writeMockBackup(t, cmd.args[3]) }
+	path, err = m.backup(ctx, "backup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBackupArchive(path); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRestoreExplicitArchiveInLiteralDirectory(t *testing.T) {
@@ -508,7 +574,7 @@ func TestRestoreSavesStateBeforeUnpacking(t *testing.T) {
 			order = append(order, "backup")
 			for i, arg := range spec.args {
 				if arg == "-czf" && i+1 < len(spec.args) {
-					if err := os.WriteFile(spec.args[i+1], []byte("mock archive"), 0o666); err != nil {
+					if err := writeMockBackup(t, spec.args[i+1]); err != nil {
 						return err
 					}
 				}
@@ -586,7 +652,7 @@ func TestRestoreRemovesCurrentRuntimeBeforeReplacingOwnership(t *testing.T) {
 		if spec.name == "tar" && contains(spec.args, "-czf") {
 			for i, arg := range spec.args {
 				if arg == "-czf" && i+1 < len(spec.args) {
-					return os.WriteFile(spec.args[i+1], []byte("mock archive"), 0o600)
+					return writeMockBackup(t, spec.args[i+1])
 				}
 			}
 		}

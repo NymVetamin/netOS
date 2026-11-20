@@ -202,7 +202,7 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 		if spec.name == "tar" {
 			for i, arg := range spec.args {
 				if arg == "-czf" && i+1 < len(spec.args) {
-					return os.WriteFile(spec.args[i+1], nil, 0o600)
+					return writeMockBackup(t, spec.args[i+1])
 				}
 			}
 		}

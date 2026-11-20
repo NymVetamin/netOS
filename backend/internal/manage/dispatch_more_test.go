@@ -174,7 +174,7 @@ func TestBackupNowWaitsForFreshDaemonReadiness(t *testing.T) {
 	started := false
 	m.Run = func(_ context.Context, cmd command) error {
 		if cmd.name == "tar" {
-			return os.WriteFile(cmd.args[3], []byte("archive"), 0600)
+			return writeMockBackup(t, cmd.args[3])
 		}
 		if cmd.name == "systemctl" && len(cmd.args) > 0 && cmd.args[0] == "start" {
 			started = true
@@ -240,7 +240,7 @@ func TestBackupReportsArchiveAndRestartFailures(t *testing.T) {
 					if tc.archive {
 						return archiveErr
 					}
-					return os.WriteFile(cmd.args[3], []byte("archive"), 0600)
+					return writeMockBackup(t, cmd.args[3])
 				}
 				if cmd.name == "systemctl" && cmd.args[0] == "start" {
 					starts++
@@ -282,7 +282,7 @@ func TestBackupIncludesExistingDataAndUsesPrivateMode(t *testing.T) {
 		tarArgs = append([]string(nil), cmd.args...)
 		for i, arg := range cmd.args {
 			if arg == "-czf" && i+1 < len(cmd.args) {
-				return os.WriteFile(cmd.args[i+1], []byte("archive"), 0o666)
+				return writeMockBackup(t, cmd.args[i+1])
 			}
 		}
 		return errors.New("archive path missing")
@@ -314,7 +314,13 @@ func TestBackupLeavesOutStatisticsWithRealTar(t *testing.T) {
 	}
 	m, _ := testManager()
 	sandbox(t, m)
-	m.Run = m.runOS
+	m.Run = func(ctx context.Context, cmd command) error {
+		cmd.args[1] = m.Root
+		for i := 4; i < len(cmd.args); i++ {
+			cmd.args[i] = strings.Replace(cmd.args[i], strings.TrimPrefix(m.Root, "/")+"/", "", 1)
+		}
+		return m.runOS(ctx, cmd)
+	}
 	files := map[string]bool{ // name -> expected in the copy
 		"netos.db": true, "netos.db-wal": true, "netos.db-shm": true, "generated/dnsmasq.conf": true,
 		"second-history.sqlite": false, "second-history.sqlite-wal": false, "second-history.sqlite-shm": false,
@@ -342,7 +348,7 @@ func TestBackupLeavesOutStatisticsWithRealTar(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]bool{}
-	state := strings.TrimPrefix(filepath.Clean(m.StateDir), "/") + "/"
+	state := "var/lib/netos/"
 	for r := tar.NewReader(gz); ; {
 		h, err := r.Next()
 		if err == io.EOF {
@@ -389,13 +395,13 @@ func TestRestoreFailureAutomaticallyRestoresSafetyBackup(t *testing.T) {
 	if err := os.WriteFile(dbPath, []byte("old-state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var safety string
+	var safetyDir string
 	m.Run = func(_ context.Context, cmd command) error {
 		if cmd.name == "tar" && contains(cmd.args, "-czf") {
 			for i, arg := range cmd.args {
 				if arg == "-czf" && i+1 < len(cmd.args) {
-					safety = cmd.args[i+1]
-					return os.WriteFile(safety, []byte("safety"), 0o600)
+					safetyDir = filepath.Dir(cmd.args[i+1])
+					return writeMockBackup(t, cmd.args[i+1])
 				}
 			}
 		}
@@ -404,7 +410,7 @@ func TestRestoreFailureAutomaticallyRestoresSafetyBackup(t *testing.T) {
 			if cmd.stdinFile != nil && cmd.stdinFile.Name() == target {
 				return errors.New("target extraction failed")
 			}
-			if archive == safety {
+			if filepath.Dir(archive) == safetyDir && strings.Contains(filepath.Base(archive), "before-restore-") {
 				if err := os.MkdirAll(m.StateDir, 0o700); err != nil {
 					return err
 				}

@@ -40,7 +40,7 @@ func TestUninstallBackupChoice(t *testing.T) {
 					backups++
 					for i, arg := range c.args {
 						if arg == "-czf" {
-							return os.WriteFile(c.args[i+1], nil, 0600)
+							return writeMockBackup(t, c.args[i+1])
 						}
 					}
 				}

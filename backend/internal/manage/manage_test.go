@@ -612,7 +612,7 @@ func TestUninstallRemovesKeaLeaseDataUnlessKept(t *testing.T) {
 			seedBackupDatabase(t, m)
 			m.Run = func(_ context.Context, cmd command) error {
 				if cmd.name == "tar" {
-					return os.WriteFile(cmd.args[3], []byte("archive"), 0600)
+					return writeMockBackup(t, cmd.args[3])
 				}
 				return nil
 			}
@@ -1122,7 +1122,7 @@ func TestUpdateWithBackupArchivesBeforeInstaller(t *testing.T) {
 	started := false
 	m.Run = func(_ context.Context, c command) error {
 		if c.name == "tar" {
-			return os.WriteFile(c.args[3], []byte("archive"), 0600)
+			return writeMockBackup(t, c.args[3])
 		}
 		if c.name == "systemctl" && strings.Join(c.args, " ") == "start netosd" {
 			if err := os.MkdirAll(filepath.Dir(m.sys(m.ReadyFile)), 0700); err != nil {

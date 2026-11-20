@@ -1182,6 +1182,11 @@ const (
 	runtimeReadyPath = "/run/netosd.ready"
 )
 
+var (
+	errBackupEntries = errors.New("слишком много файлов")
+	errBackupBytes   = errors.New("распакованный объём превышает предел")
+)
+
 // validateBackupContents ensures that root extraction cannot escape the three
 // directories owned by netOS. Links and special files are intentionally
 // rejected: they are unnecessary in a netOS backup and can redirect later tar
@@ -1207,7 +1212,7 @@ func validateBackupContents(archive io.Reader) error {
 		}
 		entries++
 		if entries > maxBackupEntries {
-			return fmt.Errorf("слишком много файлов")
+			return errBackupEntries
 		}
 		name := strings.TrimPrefix(h.Name, "./")
 		// GNU tar (которым backup и создаётся) завершает имена каталогов
@@ -1222,7 +1227,7 @@ func validateBackupContents(archive io.Reader) error {
 		switch h.Typeflag {
 		case tar.TypeReg, tar.TypeRegA:
 			if h.Size < 0 || total > maxBackupBytes-h.Size {
-				return fmt.Errorf("распакованный объём превышает предел")
+				return errBackupBytes
 			}
 			total += h.Size
 			if clean == "var/lib/netos/netos.db" {
@@ -1728,16 +1733,7 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 	if err := os.MkdirAll(m.BackupDir, 0o700); err != nil {
 		return "", err
 	}
-	stem := prefix + "-" + m.Now().Format("20060102-150405")
-	path := filepath.Join(m.BackupDir, stem+".tar.gz")
-	for sequence := 2; ; sequence++ {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			break
-		} else if err != nil {
-			return "", err
-		}
-		path = filepath.Join(m.BackupDir, fmt.Sprintf("%s-%d.tar.gz", stem, sequence))
-	}
+	stamp := m.Now().Format("20060102-150405")
 	var sources []string
 	for _, source := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
 		if _, err := os.Stat(source); os.IsNotExist(err) {
@@ -1747,30 +1743,30 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 		}
 		sources = append(sources, strings.TrimPrefix(filepath.Clean(source), string(filepath.Separator)))
 	}
+	file, err := os.CreateTemp(m.BackupDir, ".backup-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmp := file.Name()
+	defer os.Remove(tmp)
 	if len(sources) == 0 {
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			return "", err
-		}
 		gzipWriter := gzip.NewWriter(file)
 		tarWriter := tar.NewWriter(gzipWriter)
 		if err := tarWriter.Close(); err != nil {
 			_ = gzipWriter.Close()
 			_ = file.Close()
-			_ = os.Remove(path)
 			return "", err
 		}
 		if err := gzipWriter.Close(); err != nil {
 			_ = file.Close()
-			_ = os.Remove(path)
 			return "", err
 		}
-		if err := file.Close(); err != nil {
-			_ = os.Remove(path)
-			return "", err
-		}
-	} else {
-		args := []string{"-C", string(filepath.Separator), "-czf", path}
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	if len(sources) != 0 {
+		args := []string{"-C", string(filepath.Separator), "-czf", tmp}
 		// Statistics are not settings; netosd recreates them empty after restore.
 		// netos.db-wal stays: after a crash it may hold committed changes.
 		// Excludes precede the sources; "*" also takes -wal/-shm/-journal.
@@ -1779,15 +1775,47 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 		}
 		args = append(args, sources...)
 		if err := m.run(ctx, "tar", args...); err != nil {
-			_ = os.Remove(path)
 			return "", fmt.Errorf("резервное копирование: %w", err)
 		}
 	}
 	// Архив содержит базу с хэшами паролей, bearer-сессиями и секретами
 	// сетей. Права каталога уже 0700, но сам файл также должен оставаться
 	// закрытым при переносе или ошибочном изменении прав родителя.
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(tmp, 0o600); err != nil {
 		return "", fmt.Errorf("права резервной копии: %w", err)
+	}
+	if prefix != "rollback-before-restore" {
+		archive, err := os.Open(tmp)
+		if err != nil {
+			return "", err
+		}
+		err = validateBackupContents(archive)
+		closeErr := archive.Close()
+		if closeErr != nil {
+			return "", closeErr
+		}
+		if err != nil {
+			if reason != "before-restore" || (!errors.Is(err, errBackupEntries) && !errors.Is(err, errBackupBytes)) {
+				return "", fmt.Errorf("проверка созданной резервной копии: %w", err)
+			}
+			prefix = "rollback-before-restore"
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	stem := prefix + "-" + stamp
+	path := filepath.Join(m.BackupDir, stem+".tar.gz")
+	for sequence := 2; ; sequence++ {
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			return "", err
+		}
+		path = filepath.Join(m.BackupDir, fmt.Sprintf("%s-%d.tar.gz", stem, sequence))
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return "", err
 	}
 	return path, nil
 }
