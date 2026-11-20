@@ -419,6 +419,13 @@ func (tx *blocklistTransaction) Rollback() error {
 	return nil
 }
 
+func (tx *blocklistTransaction) rollbackAfter(cause error) error {
+	if err := tx.Rollback(); err != nil {
+		return fmt.Errorf("%w; %w", cause, err)
+	}
+	return cause
+}
+
 func blocklistProviderFile(cfg *config.Config, domains []string) (string, []byte) {
 	if !hasEnabledBlocklists(cfg) {
 		return "", nil
@@ -450,12 +457,10 @@ func (m *BlocklistManager) Apply(ctx context.Context, cfg *config.Config) (bool,
 	if hasEnabledBlocklists(cfg) {
 		domains, err = m.loadDomains(ctx, cfg)
 		if err != nil {
-			_ = tx.Rollback()
-			return false, nil, err
+			return false, nil, tx.rollbackAfter(err)
 		}
 	} else if err := os.Remove(blocklistStatusPath()); err != nil && !os.IsNotExist(err) {
-		_ = tx.Rollback()
-		return false, nil, err
+		return false, nil, tx.rollbackAfter(err)
 	}
 	target, content := blocklistProviderFile(cfg, domains)
 	changed := false
@@ -463,14 +468,12 @@ func (m *BlocklistManager) Apply(ctx context.Context, cfg *config.Config) (bool,
 		if path == target {
 			changed = system.FileChanged(path, content)
 			if _, err := writeManagedFile(path, content, 0o644); err != nil {
-				_ = tx.Rollback()
-				return false, nil, err
+				return false, nil, tx.rollbackAfter(err)
 			}
 			continue
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			_ = tx.Rollback()
-			return false, nil, err
+			return false, nil, tx.rollbackAfter(err)
 		}
 	}
 	return changed, tx, nil

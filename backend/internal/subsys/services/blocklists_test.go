@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -264,6 +265,58 @@ func TestDNSBlocklistFailureRestoresProviderAndCacheBytes(t *testing.T) {
 	cacheAfter, _ := os.ReadFile(cachePath)
 	if string(providerAfter) != string(providerBefore) || string(cacheAfter) != string(cacheBefore) {
 		t.Fatalf("rollback mismatch provider=%q/%q cache=%q/%q", providerBefore, providerAfter, cacheBefore, cacheAfter)
+	}
+}
+
+func TestDNSBlocklistApplyReportsFailedFileRollback(t *testing.T) {
+	useProviderPaths(t)
+	cfg := blocklistTestConfig("dnsmasq")
+	m := NewManager(newProviderRunner())
+	m.Resolv.Root = t.TempDir()
+	dns := NewDNS(m)
+	m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) {
+		return []byte("old.example\n"), nil
+	}
+	ctx := context.Background()
+	if err := dns.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	obstacle := filepath.Join(unboundBlocklistPath, "keep")
+	m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) {
+		if err := os.MkdirAll(unboundBlocklistPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(obstacle, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return []byte("new.example\n"), nil
+	}
+	err := dns.Apply(ctx, cfg)
+	var cause *os.PathError
+	if !errors.As(err, &cause) || cause.Path != unboundBlocklistPath ||
+		!strings.Contains(err.Error(), "возврат файлов blocklist: "+unboundBlocklistPath) {
+		t.Fatalf("expected removal and rollback failures, got %v", err)
+	}
+	for _, path := range []string{dnsmasqBlocklistPath, blocklistCachePath(cfg.DNS.Blocklists[0].URL)} {
+		data, err := os.ReadFile(path)
+		if err != nil || !bytes.Contains(data, []byte("old.example")) || bytes.Contains(data, []byte("new.example")) {
+			t.Fatalf("incomplete restore of %s: %q, %v", path, data, err)
+		}
+	}
+	for _, path := range []string{obstacle, unboundBlocklistPath} {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) {
+		return []byte("new.example\n"), nil
+	}
+	if err := dns.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dnsmasqBlocklistPath)
+	if err != nil || !bytes.Contains(data, []byte("new.example")) {
+		t.Fatalf("retry: %q, %v", data, err)
 	}
 }
 
