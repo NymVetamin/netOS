@@ -33,14 +33,29 @@ type Access struct {
 	IPsec             bool
 }
 
+func selectedIDs(ids []string) map[string]bool {
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+func interfaceNames(interfaces []config.Interface) map[string]string {
+	names := make(map[string]string, len(interfaces))
+	for _, iface := range interfaces {
+		if _, exists := names[iface.ID]; !exists {
+			names[iface.ID] = iface.Name
+		}
+	}
+	return names
+}
+
 func lanAccesses(c *config.Config) []Access {
 	if len(c.Samba.Networks) == 0 || len(c.Networks) == 0 {
 		return nil
 	}
-	selectedLANs := make(map[string]bool, len(c.Samba.Networks))
-	for _, id := range c.Samba.Networks {
-		selectedLANs[id] = true
-	}
+	selectedLANs := selectedIDs(c.Samba.Networks)
 
 	var names map[string]string
 	var out []Access
@@ -53,12 +68,7 @@ func lanAccesses(c *config.Config) []Access {
 			continue
 		}
 		if names == nil {
-			names = make(map[string]string, len(c.Interfaces))
-			for _, iface := range c.Interfaces {
-				if _, exists := names[iface.ID]; !exists {
-					names[iface.ID] = iface.Name
-				}
-			}
+			names = interfaceNames(c.Interfaces)
 		}
 		out = append(out, Access{Interface: names[n.Interface], Subnet: subnet.String()})
 	}
@@ -66,9 +76,13 @@ func lanAccesses(c *config.Config) []Access {
 }
 
 func Accesses(c *config.Config) []Access {
+	return accesses(c, selectedIDs(c.Samba.VPNs))
+}
+
+func accesses(c *config.Config, selectedVPNs map[string]bool) []Access {
 	out := lanAccesses(c)
 	for _, v := range c.VPNServers {
-		if v.Enabled && v.Type != "xray" && selected(c.Samba.VPNs, v.ID) {
+		if v.Enabled && v.Type != "xray" && selectedVPNs[v.ID] {
 			_, sub, e := net.ParseCIDR(v.Subnet)
 			if e == nil {
 				out = append(out, Access{Interface: vpnservers.MatchInterfaceName(v), Subnet: sub.String(), IPsec: v.Type == "ikev2"})
@@ -92,14 +106,15 @@ func render(c *config.Config, dir string, present map[string]string) (string, er
 	}
 	interfaces := []string{"lo"}
 	hosts := []string{"127.0.0.1"}
-	for _, a := range Accesses(c) {
+	selectedVPNs := selectedIDs(c.Samba.VPNs)
+	for _, a := range accesses(c, selectedVPNs) {
 		interfaces = append(interfaces, `"`+strings.ReplaceAll(a.Interface, "+", "*")+`;options=dynamic"`)
 		hosts = append(hosts, a.Subnet)
 	}
 	// Samba ignores non-broadcast VPN interfaces when selected by name.
 	// Explicit address/mask entries also describe point-to-point transports.
 	for _, v := range c.VPNServers {
-		if v.Enabled && v.Type != "xray" && selected(c.Samba.VPNs, v.ID) {
+		if v.Enabled && v.Type != "xray" && selectedVPNs[v.ID] {
 			if v.Type == "l2tp" && present != nil && present[v.ID] == "" {
 				continue
 			}
@@ -181,9 +196,17 @@ func discoveryUnit(c *config.Config) string {
 	// group if any child exits. Never run the daemon on "any" or enable LLMNR.
 	var commands []string
 	seen := map[string]bool{}
+	selectedLANs := selectedIDs(c.Samba.Networks)
+	var names map[string]string
 	for _, n := range c.Networks {
-		iface := c.InterfaceName(n.Interface)
-		if n.Enabled && selected(c.Samba.Networks, n.ID) && !seen[iface] {
+		if !n.Enabled || !selectedLANs[n.ID] {
+			continue
+		}
+		if names == nil {
+			names = interfaceNames(c.Interfaces)
+		}
+		iface := names[n.Interface]
+		if !seen[iface] {
 			seen[iface] = true
 			commands = append(commands, "/usr/sbin/wsdd2 -4 -w -i "+iface+" -H "+c.System.Hostname+" -N "+c.System.Hostname+" -G "+workgroup+" &")
 		}

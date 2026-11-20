@@ -495,3 +495,34 @@ func BenchmarkRenderShareVolumes(b *testing.B) {
 		})
 	}
 }
+
+func TestDiscoverySelectionTracksInterfaceEdits(t *testing.T) {
+	c := config.Default()
+	c.Samba.Networks = []string{"b", "a", "a", "disabled", "duplicate", "unresolved"}
+	c.Interfaces = []config.Interface{{ID: "one", Name: "eth1"}, {ID: "one", Name: "ignored"}, {ID: "two", Name: "eth2"}}
+	c.Networks = []config.Network{
+		{ID: "a", Interface: "one", Enabled: true}, {ID: "disabled", Interface: "two"},
+		{ID: "duplicate", Interface: "one", Enabled: true}, {ID: "b", Interface: "two", Enabled: true},
+		{ID: "unresolved", Interface: "absent", Enabled: true},
+	}
+	check := func(want []string) {
+		t.Helper()
+		var got []string
+		for _, command := range strings.Split(discoveryUnit(c), "/usr/sbin/wsdd2 -4 -w -i ")[1:] {
+			name, _, ok := strings.Cut(command, " -H ")
+			if !ok {
+				t.Fatal(command)
+			}
+			got = append(got, name)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("discovery interfaces %q, want %q", got, want)
+		}
+	}
+	check([]string{"eth1", "eth2", ""})
+	c.Interfaces[0].Name = "renamed"
+	c.Networks[3].Enabled = false
+	check([]string{"renamed", ""})
+	c.Samba.Networks = nil
+	check(nil)
+}
