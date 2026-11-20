@@ -46,6 +46,10 @@ type clientBaseline struct {
 	ClientCounter
 	At time.Time
 }
+type historyObservation struct {
+	at     time.Time
+	values []ClientCounter
+}
 type DNSCount struct {
 	Source string `json:"source,omitempty"`
 	Client string `json:"client"`
@@ -76,6 +80,8 @@ type ClientHistory struct {
 	dnsCancel           context.CancelFunc
 	lastPrune           time.Time
 	lastPersist         time.Time
+	pendingTraffic      []historyObservation // owned by the sampling loop
+	pendingTrafficSize  int
 	liveUntil           time.Time
 	liveBaseline        map[string]clientBaseline
 	liveSnapshot        ClientLive
@@ -300,6 +306,8 @@ func (h *ClientHistory) sample(parent context.Context) {
 		h.liveSnapshot = ClientLive{}
 		h.liveUntil = time.Time{}
 		h.lastPersist = time.Time{}
+		h.pendingTraffic = nil
+		h.pendingTrafficSize = 0
 		h.dns = map[string]*DNSCount{}
 		h.resources = map[string]*DNSCount{}
 		h.addresses = map[string]ClientCounter{}
@@ -364,14 +372,65 @@ func (h *ClientHistory) sample(parent context.Context) {
 		return
 	}
 	h.lastPersist = now
-	if err = h.persist(now, samples); err != nil {
+	if err = h.persistObservations(now, samples); err != nil {
 		h.setProblem("Не удалось сохранить историю: " + err.Error())
 	} else {
 		h.setProblem("")
 	}
 }
 func (h *ClientHistory) setProblem(s string) { h.mu.Lock(); h.problem = s; h.mu.Unlock() }
+
+func (h *ClientHistory) popObservation() {
+	h.pendingTrafficSize -= max(1, len(h.pendingTraffic[0].values))
+	h.pendingTraffic[0] = historyObservation{}
+	h.pendingTraffic = h.pendingTraffic[1:]
+	if len(h.pendingTraffic) == 0 {
+		h.pendingTraffic = nil
+	}
+}
+
+func (h *ClientHistory) persistObservations(now time.Time, values []ClientCounter) error {
+	for len(h.pendingTraffic) > 0 && h.pendingTraffic[0].at.Before(now.Add(-7*24*time.Hour)) {
+		h.popObservation()
+	}
+	var err error
+	for len(h.pendingTraffic) > 0 {
+		first := h.pendingTraffic[0]
+		if err = h.persistBatch(first.at, first.values, false); err != nil {
+			break
+		}
+		h.popObservation()
+	}
+	if err == nil {
+		err = h.persist(now, values)
+	}
+	if err == nil {
+		return nil
+	}
+	// The caller transfers this sample's slice. Even an empty observation
+	// resets missing identities, so it occupies one slot in the retry budget.
+	size := max(1, len(values))
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if size > maxCachedTrafficRows {
+		h.noteLimitLocked("traffic", now.Unix(), now.Unix())
+		return err
+	}
+	for h.pendingTrafficSize+size > maxCachedTrafficRows {
+		lost := h.pendingTraffic[0].at.Unix()
+		h.noteLimitLocked("traffic", lost, lost)
+		h.popObservation()
+	}
+	h.pendingTraffic = append(h.pendingTraffic, historyObservation{now, values})
+	h.pendingTrafficSize += size
+	return err
+}
+
 func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
+	return h.persistBatch(now, values, true)
+}
+
+func (h *ClientHistory) persistBatch(now time.Time, values []ClientCounter, current bool) error {
 	h.trafficMu.Lock()
 	defer h.trafficMu.Unlock()
 	h.mu.Lock()
@@ -469,30 +528,19 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 			return err
 		}
 	}
-	for _, d := range h.dns {
-		if strings.HasPrefix(d.Client, "ip:") {
-			if owner, ok := h.addresses[strings.TrimPrefix(d.Client, "ip:")]; ok {
-				d.Client = owner.ID
-			}
-		}
-		if _, err = tx.Exec("INSERT INTO domains VALUES(?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Count, d.First, d.Last); err != nil {
+	if current {
+		if err = h.writeHistoryMetadata(tx, now); err != nil {
 			return err
 		}
-	}
-
-	for _, d := range h.resources {
-		if _, err = tx.Exec("INSERT INTO resources VALUES(?,?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Source, d.Count, d.First, d.Last); err != nil {
-			return err
-		}
-	}
-
-	if err = writeHistoryLimits(tx, h.pendingLimits); err != nil {
-		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	h.pendingLimits = nil
+	if current {
+		h.pendingLimits = nil
+		h.dns = map[string]*DNSCount{}
+		h.resources = map[string]*DNSCount{}
+	}
 	if h.trafficCache != nil {
 		for _, d := range deltas {
 			h.trafficCache.add(now.Unix(), d.ClientCounter, d.Seconds)
@@ -503,9 +551,28 @@ func (h *ClientHistory) persist(now time.Time, values []ClientCounter) error {
 		}
 	}
 	h.baseline = next
-	h.dns = map[string]*DNSCount{}
-	h.resources = map[string]*DNSCount{}
 	return nil
+}
+
+func (h *ClientHistory) writeHistoryMetadata(tx *sql.Tx, now time.Time) error {
+	for _, d := range h.dns {
+		if strings.HasPrefix(d.Client, "ip:") {
+			if owner, ok := h.addresses[strings.TrimPrefix(d.Client, "ip:")]; ok {
+				d.Client = owner.ID
+			}
+		}
+		if _, err := tx.Exec("INSERT INTO domains VALUES(?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Count, d.First, d.Last); err != nil {
+			return err
+		}
+	}
+
+	for _, d := range h.resources {
+		if _, err := tx.Exec("INSERT INTO resources VALUES(?,?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Source, d.Count, d.First, d.Last); err != nil {
+			return err
+		}
+	}
+
+	return writeHistoryLimits(tx, h.pendingLimits)
 }
 func (h *ClientHistory) AddDNS(at time.Time, addr, domain string) {
 	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
