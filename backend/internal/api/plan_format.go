@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/configdiff"
@@ -58,19 +59,35 @@ func formatPlanValue(value configdiff.Value, field planField, cfg *config.Config
 			return "Да"
 		}
 		return "Нет"
-	case float64:
+	case json.Number:
 		if field.Format == "mbit" {
-			if v == 0 {
+			if v == "0" {
 				return "Без ограничения"
 			}
-			v /= 1000
+			// Bandwidth is stored in whole kbit/s. Move the decimal point
+			// without rounding the original integer through float64.
+			digits := strings.TrimPrefix(v.String(), "-")
+			if len(digits) < 4 {
+				digits = strings.Repeat("0", 4-len(digits)) + digits
+			}
+			point := len(digits) - 3
+			result := strings.TrimRight(strings.TrimRight(digits[:point]+"."+digits[point:], "0"), ".")
+			if v[0] == '-' {
+				return "-" + result
+			}
+			return result
 		}
-		return strconv.FormatFloat(v, 'f', -1, 64)
+		if strings.ContainsAny(v.String(), "eE") {
+			if f, err := v.Float64(); err == nil {
+				return strconv.FormatFloat(f, 'f', -1, 64)
+			}
+		}
+		return v.String()
 	case []any:
 		// Never serialize a whole object: its children may have secret fields.
 		for _, item := range v {
 			switch item.(type) {
-			case string, float64, bool, nil:
+			case string, json.Number, bool, nil:
 			default:
 				return "Список: " + strconv.Itoa(len(v)) + " элементов"
 			}

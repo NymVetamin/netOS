@@ -1,14 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/configdiff"
 	"github.com/netos-router/netos/internal/store"
 )
 
@@ -167,6 +170,53 @@ func TestPlanKnownProviderAndWireGuardProfile(t *testing.T) {
 	raw, _ := json.Marshal(changes)
 	if len(changes) != 2 || !strings.Contains(string(raw), "new.example:4321") || !strings.Contains(string(raw), "Использовать DNS роутера") {
 		t.Fatal(string(raw))
+	}
+}
+
+func TestPlanNumericDisplay(t *testing.T) {
+	for input, want := range map[string]string{
+		"0": "Без ограничения", "1": "0.001", "1500": "1.5", "10000": "10",
+		"-20": "-0.02", "9007199254740993": "9007199254740.993",
+	} {
+		value := configdiff.Value{Present: true, Data: json.Number(input)}
+		if got := formatPlanValue(value, planField{Format: "mbit"}, nil); got != want {
+			t.Errorf("%s kbit: got %q, want %q", input, got, want)
+		}
+	}
+	value := configdiff.Value{Present: true, Data: []any{json.Number("9007199254740993"), true}}
+	if got := formatPlanValue(value, planField{}, nil); got != "[9007199254740993,true]" {
+		t.Fatal(got)
+	}
+}
+
+func TestPlanLargePriority(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("priority is a machine-sized int")
+	}
+	first := int64(1) << 53
+	old, next := config.Default(), config.Default()
+	old.Policies = []config.Policy{{ID: "p", Priority: int(first)}}
+	next.Policies = []config.Policy{{ID: "p", Priority: int(first + 1)}}
+	for _, role := range []string{"", "admin", "limited", "hidden"} {
+		r := httptest.NewRequest("POST", "/api/config/plan", nil)
+		ctx := context.WithValue(r.Context(), ctxRole, role)
+		if role == "limited" {
+			ctx = context.WithValue(ctx, accessContextKey{}, store.PanelAccess{Permissions: map[string]string{"channels": "view"}})
+		}
+		plan, err := describePlan(r.WithContext(ctx), old, next, nil, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if role == "hidden" {
+			if len(plan.Changes) != 0 {
+				t.Fatal("hidden priority exposed", plan.Changes)
+			}
+			continue
+		}
+		if len(plan.Changes) != 1 || plan.Changes[0].Path != "/policies/p/priority" ||
+			plan.Changes[0].Before != "9007199254740992" || plan.Changes[0].After != "9007199254740993" {
+			t.Errorf("role %q: %+v", role, plan.Changes)
+		}
 	}
 }
 

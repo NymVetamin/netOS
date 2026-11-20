@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,7 +23,9 @@ var rootSections = map[string][]string{
 func configObject(cfg *config.Config) map[string]any {
 	b, _ := json.Marshal(cfg)
 	var m map[string]any
-	_ = json.Unmarshal(b, &m)
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.UseNumber()
+	_ = decoder.Decode(&m)
 	return m
 }
 

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"reflect"
 	"strings"
@@ -49,10 +48,7 @@ func configurationChanges(old, next *config.Config) []planChange {
 		if c == nil {
 			return nil
 		}
-		raw, _ := json.Marshal(comparisonValue(reflect.ValueOf(c)).Interface())
-		var value any
-		_ = json.Unmarshal(raw, &value)
-		return value
+		return configObject(comparisonValue(reflect.ValueOf(c)).Interface().(*config.Config))
 	}
 	a, b := object(old), object(next)
 	var resolver planResolver
