@@ -954,14 +954,8 @@ func (m *Manager) listBackups() ([]backupEntry, error) {
 // в соответствие обычным путём — восстановленную конфигурацию применяет netosd
 // при запуске.
 func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
-	entries, err := m.listBackups()
-	if err != nil {
-		return err
-	}
-
 	var selected string
-	switch {
-	case choice != "":
+	if choice != "" {
 		// Принимаем и полный путь, и одно имя файла: в списке видно имя, и
 		// набирать каталог целиком незачем.
 		selected = choice
@@ -971,9 +965,14 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 		if _, err := os.Stat(selected); err != nil {
 			return fmt.Errorf("резервная копия %s не найдена", choice)
 		}
-	case len(entries) == 0:
-		return fmt.Errorf("в %s нет ни одной резервной копии", m.BackupDir)
-	default:
+	} else {
+		entries, err := m.listBackups()
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			return fmt.Errorf("в %s нет ни одной резервной копии", m.BackupDir)
+		}
 		fmt.Fprintf(m.Out, "Резервные копии в %s:\n\n", m.BackupDir)
 		for i, e := range entries {
 			fmt.Fprintf(m.Out, "  %2d) %s   %s, %s\n",

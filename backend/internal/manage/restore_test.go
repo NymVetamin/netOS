@@ -109,6 +109,29 @@ func writeTestBackup(t *testing.T, entries []tar.Header) string {
 	return name
 }
 
+func TestRestoreExplicitArchiveInLiteralDirectory(t *testing.T) {
+	m, out := testManager()
+	sandbox(t, m)
+	m.BackupDir = filepath.Join(m.BackupDir, "[archives")
+	if err := os.MkdirAll(m.BackupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	archive := writeTestBackup(t, []tar.Header{{Name: "var/lib/netos/netos.db", Mode: 0600, Size: 4, Typeflag: tar.TypeReg}})
+	path := filepath.Join(m.BackupDir, "netos-selected.tar.gz")
+	if err := os.Rename(archive, path); err != nil {
+		t.Fatal(err)
+	}
+	for _, choice := range []string{path, filepath.Base(path)} {
+		out.Reset()
+		if err := m.Execute(context.Background(), []string{"restore", choice}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "netos-selected.tar.gz. Продолжить?") || !strings.Contains(out.String(), "Отменено.") {
+			t.Fatal(out.String())
+		}
+	}
+}
+
 func TestBackupArchiveValidationRejectsTraversalAndLinks(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
