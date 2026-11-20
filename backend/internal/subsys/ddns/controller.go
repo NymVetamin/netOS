@@ -183,15 +183,18 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 		err = c.update(ctx, cfg.DDNS, address)
 	}
 	suspend := false
+	next = now.Add(interval)
 	var providerFailure *providerError
 	if errors.As(err, &providerFailure) {
 		suspend = providerFailure.suspend
-		if providerFailure.retryAfter > interval {
-			interval = providerFailure.retryAfter
+		if providerFailure.retryAfter > 0 {
+			if earliest := c.Now().Add(providerFailure.retryAfter); earliest.After(next) {
+				next = earliest
+			}
 		}
 	}
 	status := Status{
-		Enabled: true, LastRun: now, NextRun: now.Add(interval), Address: address,
+		Enabled: true, LastRun: now, NextRun: next, Address: address,
 		Success: err == nil, Provider: cfg.DDNS.Provider, Hostname: cfg.DDNS.Hostname,
 	}
 	if err != nil {

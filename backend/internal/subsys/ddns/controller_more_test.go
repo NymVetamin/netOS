@@ -505,23 +505,27 @@ func TestNoIPTemporaryFailuresBackOffThirtyMinutes(t *testing.T) {
 			defer server.Close()
 			c := New(nil)
 			c.NoIPEndpoint = server.URL
-			c.ResolveAddress = func(context.Context, *config.Config) (string, error) { return "192.0.2.1", nil }
 			now := time.Date(2026, 9, 1, 7, 0, 0, 0, time.UTC)
+			start := now
+			c.ResolveAddress = func(context.Context, *config.Config) (string, error) {
+				now = now.Add(12 * time.Second)
+				return "192.0.2.1", nil
+			}
 			c.Now = func() time.Time { return now }
 			cfg := baseConfig("noip")
 			if err := c.Apply(context.Background(), cfg); err != nil {
 				t.Fatal(err)
 			}
 			c.tick(context.Background(), cfg)
-			if got := c.Status(); !got.NextRun.Equal(now.Add(30 * time.Minute)) {
+			if got := c.Status(); !got.LastRun.Equal(start) || !got.NextRun.Equal(now.Add(30*time.Minute)) {
 				t.Fatalf("status=%+v", got)
 			}
-			now = now.Add(29 * time.Minute)
+			now = now.Add(30*time.Minute - time.Second)
 			c.tick(context.Background(), cfg)
 			if calls != 1 {
 				t.Fatalf("retried too early: %d", calls)
 			}
-			now = now.Add(time.Minute)
+			now = now.Add(time.Second)
 			c.tick(context.Background(), cfg)
 			if calls != 2 {
 				t.Fatalf("did not retry after backoff: %d", calls)
