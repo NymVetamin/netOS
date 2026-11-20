@@ -65,6 +65,11 @@ func TestInterfaceStatsReadsEveryFieldAndSkipsLoopback(t *testing.T) {
 		t.Fatalf("stat=%+v want=%+v", stats[0], want)
 	}
 
+	writeRuntimeFile(t, filepath.Join(base, "flags"), "0x0\n")
+	stats, err = collector.InterfaceStats()
+	if err != nil || len(stats) != 1 || stats[0].AdminUp || stats[0].Up {
+		t.Fatalf("changed flags with unknown operstate: %+v, %v", stats, err)
+	}
 	collector.SysClassNet = filepath.Join(root, "missing")
 	if _, err := collector.InterfaceStats(); err == nil {
 		t.Fatal("missing sysfs root accepted")

@@ -328,13 +328,14 @@ func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
 		if !pathExists(filepath.Join(base, "ifindex")) {
 			continue
 		}
+		flags := readString(base + "/flags")
 		stat := InterfaceStat{
 			Name:      name,
 			Physical:  pathExists(filepath.Join(base, "device")),
-			AdminUp:   interfaceAdminUp(readString(base + "/flags")),
+			AdminUp:   interfaceAdminUp(flags),
 			MAC:       readString(base + "/address"),
 			MTU:       int(readInt(base + "/mtu")),
-			Up:        interfaceIsUp(readString(base+"/operstate"), readString(base+"/flags")),
+			Up:        interfaceIsUp(readString(base+"/operstate"), flags),
 			RXBytes:   readInt(base + "/statistics/rx_bytes"),
 			TXBytes:   readInt(base + "/statistics/tx_bytes"),
 			RXPackets: readInt(base + "/statistics/rx_packets"),
