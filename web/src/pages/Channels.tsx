@@ -706,6 +706,27 @@ function WireGuardEditor({
 
 function Policies({ config, patch, policies }: Props & { policies: any[] }) {
   const choices = [...enabledChannels(config), { id: "block", name: "Блокировать" }];
+  const sourceNames = useMemo(() => {
+    const networks = new Map<string, string>();
+    const servers = new Map<string, { name: string; peers: Map<string, string> }>();
+    for (const network of config.networks || []) networks.set(network.id, network.name || network.id);
+    for (const server of config.vpn_servers || []) {
+      const peers = new Map<string, string>();
+      for (const peer of server.peers || []) peers.set(peer.id, peer.name || peer.id);
+      servers.set(server.id, { name: server.name || server.id, peers });
+    }
+    return { networks, servers };
+  }, [config.networks, config.vpn_servers]);
+
+  function sourceCell(policy: any) {
+    const server = sourceNames.servers.get(policy.vpn_server);
+    const parts = [policy.src_ip, policy.src_mac];
+    if (policy.network) parts.push(`Сегмент ${sourceNames.networks.get(policy.network) || policy.network}`);
+    if (policy.vpn_server) parts.push(`VPN ${server?.name || policy.vpn_server}`);
+    if (policy.vpn_peer) parts.push(`Пир ${server?.peers.get(policy.vpn_peer) || policy.vpn_peer}`);
+    const text = parts.filter(Boolean).join(", ");
+    return text ? <span className="mono">{text}</span> : <span className="dim">любой</span>;
+  }
 
   return (
     <Card tight title="Политики" subtitle="Меньшее число — более высокий приоритет"
@@ -721,7 +742,7 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
                 key={policy.id}
                 id={policy.id}
                 cells={[<strong>{policy.name || "без названия"}</strong>,
-                  policy.src_ip ? <span className="mono">{policy.src_ip}</span> : <span className="dim">любой</span>,
+                  sourceCell(policy),
                   policy.dst_ip || policy.dst_port || (policy.domains || []).length
                     ? <span className="mono">{[policy.dst_ip, policy.dst_port && `порт ${policy.dst_port}`, (policy.domains || []).length ? `доменов: ${policy.domains.length}` : ""].filter(Boolean).join(", ")}</span>
                     : <span className="dim">любое</span>,
