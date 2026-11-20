@@ -26,6 +26,10 @@ type acmeCertificateManager interface {
 
 type acmeManagerFactory func(cacheDir, domain, email string) (acmeCertificateManager, error)
 
+func newACMEClient() *acme.Client {
+	return &acme.Client{HTTPClient: &http.Client{Transport: &acmeOrderTransport{base: http.DefaultTransport}}}
+}
+
 func newProductionACMEManager(cacheDir, domain, email string) (acmeCertificateManager, error) {
 	if err := secureACMECacheDir(cacheDir); err != nil {
 		return nil, err
@@ -33,7 +37,7 @@ func newProductionACMEManager(cacheDir, domain, email string) (acmeCertificateMa
 	domain = strings.TrimSuffix(strings.ToLower(domain), ".")
 	whitelist := autocert.HostWhitelist(domain)
 	return &autocert.Manager{
-		Client: &acme.Client{HTTPClient: &http.Client{Transport: &acmeOrderTransport{base: http.DefaultTransport}}},
+		Client: newACMEClient(),
 		Prompt: autocert.AcceptTOS,
 		Cache:  autocert.DirCache(cacheDir),
 		HostPolicy: func(ctx context.Context, host string) error {
@@ -170,6 +174,6 @@ func waitForACMEDNS(ctx context.Context, domain string) error {
 // NewCertificateManager reuses the existing ACME transport and account cache.
 func NewCertificateManager(dir string) *certificates.Manager {
 	return certificates.New(dir, func(cache, domain, email string) (certificates.ACME, error) {
-		return newProductionACMEManager(cache, domain, email)
+		return newManagedIssuer(cache, domain, email)
 	})
 }

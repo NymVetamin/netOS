@@ -45,6 +45,10 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 		return nil
 	}
 	var first error
+	active := make(map[string]bool)
+	if spec := cfg.System.Panel.TLS; spec.Mode == "acme" {
+		active[hostname(spec.Domain)] = true
+	}
 	if _, err := m.Panel(ctx, cfg); err != nil {
 		first = err
 	}
@@ -56,13 +60,34 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 		if err != nil || !spec.Managed() {
 			continue
 		}
+		if spec.Mode == "acme" {
+			active[hostname(spec.Domain)] = true
+		}
 		dir := filepath.Join(generated, fmt.Sprintf("%s-srv%d-tls", server.Type, server.Index))
 		err = m.refreshVPN(ctx, cfg, server, dir, spec, endpoint, runner)
 		if err != nil && first == nil {
 			first = err
 		}
 	}
+	m.closeUnusedIssuers(active)
 	return first
+}
+
+func (m *Manager) closeUnusedIssuers(active map[string]bool) {
+	m.op.Lock()
+	defer m.op.Unlock()
+	m.mu.Lock()
+	var retired []ACME
+	for domain, issuer := range m.issuers {
+		if !active[domain] {
+			delete(m.issuers, domain)
+			retired = append(retired, issuer.client)
+		}
+	}
+	m.mu.Unlock()
+	for _, client := range retired {
+		client.Close()
+	}
 }
 
 func (m *Manager) refreshVPN(ctx context.Context, cfg *config.Config, server config.VPNServer, dir string, spec *config.VPNServerTLS, endpoint string, runner system.Runner) error {
