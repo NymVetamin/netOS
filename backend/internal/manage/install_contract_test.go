@@ -98,7 +98,7 @@ func TestDevPushWaitsForAppliedStateAndRollsBack(t *testing.T) {
 		}
 		return index
 	}
-	if !(order(`snapshot_path "$BIN_PATH" binary`) < order(`mv -f "$BIN_PATH.new" "$BIN_PATH"`) &&
+	if !(order(`snapshot_path "$BIN_PATH" binary`) < order(`mv -f "$NETOS_CANDIDATE" "$BIN_PATH"`) &&
 		order(`rm -f "$READY_PATH"`) < order(`systemctl restart netosd`) &&
 		order(`systemctl restart netosd`) < strings.Index(source[order(`systemctl restart netosd`):], `wait_ready`)+order(`systemctl restart netosd`) &&
 		strings.LastIndex(source, `restore_path "$BIN_PATH" binary`) > order(`НОВАЯ ВЕРСИЯ НЕ ПОДТВЕРДИЛА ГОТОВНОСТЬ`)) {

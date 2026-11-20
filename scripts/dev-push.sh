@@ -35,7 +35,14 @@ done
 cd "$REPO"
 
 BINARY="$(mktemp -t netosd.XXXXXX)"
-trap 'rm -f "$BINARY"' EXIT
+TMPDIR_ART=
+REMOTE_CANDIDATE=
+cleanup_local() {
+    rm -f -- "$BINARY"
+    if [ -n "$TMPDIR_ART" ]; then rm -rf -- "$TMPDIR_ART"; fi
+    if [ -n "$REMOTE_CANDIDATE" ]; then ssh "$HOST" "rm -f -- '$REMOTE_CANDIDATE'" || true; fi
+}
+trap cleanup_local EXIT
 
 if [ -n "${NETOS_BINARY_FILE:-}" ]; then
     [ -f "$NETOS_BINARY_FILE" ] || {
@@ -67,7 +74,6 @@ else
         exit 1; }
 
     TMPDIR_ART="$(mktemp -d)"
-    trap 'rm -f "$BINARY"; rm -rf "$TMPDIR_ART"' EXIT
     gh run download "$RUN" --name "netosd-linux-$ARCH" --dir "$TMPDIR_ART" >/dev/null || {
         echo "   в сборке $RUN нет артефакта netosd-linux-$ARCH" >&2; exit 1; }
     cp "$TMPDIR_ART/netosd-linux-$ARCH" "$BINARY"
@@ -82,9 +88,16 @@ fi
 echo "→ заливаю на $HOST"
 # Исполняемый файл нельзя перезаписывать на месте: ядро вернёт ETXTBSY на
 # работающем демоне. Кладём рядом и переименовываем.
-scp -q "$BINARY" "$HOST:/usr/local/bin/netosd.new"
+candidate_prefix=/usr/local/bin/.netosd-upload.
+staged=$(ssh "$HOST" "mktemp '${candidate_prefix}XXXXXXXXXX'")
+if [[ $staged != "$candidate_prefix"* || ! ${staged#"$candidate_prefix"} =~ ^[A-Za-z0-9]{10}$ ]]; then
+    echo "   неожиданный путь временного бинарника" >&2
+    exit 1
+fi
+REMOTE_CANDIDATE=$staged
+scp -q "$BINARY" "$HOST:$REMOTE_CANDIDATE"
 echo "→ проверяю службу"
-ssh "$HOST" "NETOS_EXPECTED_SHA=$CANDIDATE_SHA bash -s" <<'REMOTE_DEPLOY'
+ssh "$HOST" "NETOS_EXPECTED_SHA=$CANDIDATE_SHA NETOS_CANDIDATE='$REMOTE_CANDIDATE' flock -o /run/lock/netos-dev-push.lock bash -s" <<'REMOTE_DEPLOY'
 set -u
 
 BIN_PATH=/usr/local/bin/netosd
@@ -98,7 +111,7 @@ DEPLOY_OK=0
 KEEP_SNAPSHOT=0
 
 cleanup() {
-    rm -f -- "$BIN_PATH.new"
+    rm -f -- "$NETOS_CANDIDATE"
     if [ "$KEEP_SNAPSHOT" = 1 ]; then
         echo "   снимок для восстановления сохранён в $TXN" >&2
     else
@@ -173,8 +186,8 @@ then
 fi
 
 KEEP_SNAPSHOT=1
-chmod 0755 "$BIN_PATH.new" \
-    && mv -f "$BIN_PATH.new" "$BIN_PATH" \
+chmod 0755 "$NETOS_CANDIDATE" \
+    && mv -f "$NETOS_CANDIDATE" "$BIN_PATH" \
     && ln -sfn "$BIN_PATH" "$CLI_PATH" \
     && "$CLI_PATH" completion bash > "$COMPLETION_PATH.new" \
     && chmod 0644 "$COMPLETION_PATH.new" \
@@ -219,6 +232,7 @@ else
 fi
 exit 1
 REMOTE_DEPLOY
+REMOTE_CANDIDATE=
 
 ssh "$HOST" 'systemctl --failed --no-legend --plain; echo "   ready revision: $(cat /run/netosd.ready)"'
 

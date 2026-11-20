@@ -29,7 +29,13 @@ scp() {
     fi
     return 1
 }
-ssh() { return 1; }
+ssh() {
+    case "$2" in
+        "mktemp "*) echo /usr/local/bin/.netosd-upload.0123456789 ;;
+        "rm -f "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 export -f command gh npm scp ssh
 for EXACT_BUILD in no yes yes; do
     export EXACT_BUILD

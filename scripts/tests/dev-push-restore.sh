@@ -9,6 +9,7 @@ sed -n "/^set -u$/,/^REMOTE_DEPLOY$/p" scripts/dev-push.sh | sed '$d' |
     sed -e 's|=/usr/local/bin/|="$root"/bin/|' -e 's|=/etc/bash_completion.d/|="$root"/|' \
         -e 's|=/usr/share/bash-completion/completions/|="$root"/lazy/|' -e 's|=/run/|="$root"/|' > "$root/deploy"
 export root NETOS_EXPECTED_SHA=unused TMPDIR="$root/snapshots"
+export NETOS_CANDIDATE="$root/bin/candidate"
 mkdir "$root/bin" "$TMPDIR"
 printf 'original' > "$root/bin/netosd"
 systemctl() { return 1; }
@@ -47,7 +48,7 @@ for result in fail success; do
     export result
     printf old-eager > "$root/netos"
     printf old-lazy > "$root/lazy/netos"
-    cat > "$root/bin/netosd.new" <<'EOF'
+    cat > "$NETOS_CANDIDATE" <<'EOF'
 #!/bin/bash
 case "$1" in
     completion) echo new-completion ;;
@@ -55,7 +56,7 @@ case "$1" in
     plan) [[ $result == success ]] && echo 'Живая система соответствует конфигурации: применять нечего.' ;;
 esac
 EOF
-    NETOS_EXPECTED_SHA=$(sha256sum "$root/bin/netosd.new" | awk '{print $1}')
+    NETOS_EXPECTED_SHA=$(sha256sum "$NETOS_CANDIDATE" | awk '{print $1}')
     if [[ $result == fail ]]; then
         if bash "$root/deploy" > "$root/log" 2>&1; then exit 1; fi
         [[ $(cat "$root/netos") == old-eager && $(cat "$root/lazy/netos") == old-lazy ]]
