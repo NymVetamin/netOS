@@ -53,6 +53,12 @@ ip route add default via 198.51.100.1 dev ordinary metric 10
 check 78
 PATH="$root/minimal" check 78
 ip route del default via 198.51.100.1 dev ordinary
+for first in brwan ordinary; do
+    if [[ $first == brwan ]]; then second=ordinary; else second=brwan; fi
+    ip route replace default metric 10 nexthop dev "$first" weight 1 nexthop dev "$second" weight 1
+    check 1
+done
+ip route del default metric 10
 touch /usr/local/bin/netosd
 chmod +x /usr/local/bin/netosd
 check 1

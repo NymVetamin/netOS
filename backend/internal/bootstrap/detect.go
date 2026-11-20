@@ -55,19 +55,22 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 			fields := strings.Fields(line)
 			var iface, gateway string
 			for i, f := range fields {
+				if f == "nexthop" {
+					gateway = ""
+				}
 				if f == "dev" && i+1 < len(fields) {
 					iface = fields[i+1]
+					if _, err := os.Stat(filepath.Join(sysClassNet, iface, "bridge")); err == nil {
+						return nil, fmt.Errorf("маршрут по умолчанию проходит через мост %s. Подготовьте отдельный доступ к машине, перенесите аплинк с моста и повторите установку. Затем воссоздайте мост в netOS", iface)
+					} else if !os.IsNotExist(err) {
+						return nil, err
+					}
 				}
 				if f == "via" && i+1 < len(fields) {
 					gateway = fields[i+1]
 				}
 			}
 			if iface != "" {
-				if _, err := os.Stat(filepath.Join(sysClassNet, iface, "bridge")); err == nil {
-					return nil, fmt.Errorf("маршрут по умолчанию проходит через мост %s. Подготовьте отдельный доступ к машине, перенесите аплинк с моста и повторите установку. Затем воссоздайте мост в netOS", iface)
-				} else if !os.IsNotExist(err) {
-					return nil, err
-				}
 				d.WANInterface, d.WANGateway = iface, gateway
 				break
 			}

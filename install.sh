@@ -278,20 +278,25 @@ if [ "$NIC_COUNT" -lt 2 ]; then
     warn "для автоматической настройки локального сегмента нужен свободный проводной интерфейс"
 fi
 
-if [ ! -s "$STATE_DIR/netos.db" ]; then
+check_bootstrap_wan() {
+    local default_route wan_devs wan_dev member
     # A fresh bootstrap can only configure the WAN directly. Check before apt,
     # snapshots or systemd changes, while the administrator still has access.
     if command -v ip >/dev/null 2>&1; then
         default_route=$(ip -4 -o route show default) || die "не удалось определить маршрут по умолчанию"
-        wan_dev=$(awk '{for (i=1; i<NF; i++) if ($i=="dev") {print $(i+1); exit}}' <<< "$default_route")
+        wan_devs=$(awk '{
+            for (i=1; i<NF; i++) if ($i=="dev") {print $(i+1); found=1}
+            if (found) exit
+        }' <<< "$default_route")
     else
         # iproute2 is installed later on minimal systems. The kernel table
         # exposes destination/mask in hex and metric in decimal.
-        wan_dev=$(awk '$2=="00000000" && $8=="00000000" && (!found || $7+0<metric) {
+        wan_devs=$(awk '$2=="00000000" && $8=="00000000" && (!found || $7+0<metric) {
             dev=$1; metric=$7+0; found=1
         } END {print dev}' /proc/net/route) || die "не удалось прочитать таблицу маршрутов"
     fi
-    if [ -n "$wan_dev" ] && [ -d "/sys/class/net/$wan_dev/bridge" ]; then
+    while IFS= read -r wan_dev; do
+        [[ -n $wan_dev && -d /sys/class/net/$wan_dev/bridge ]] || continue
         if command -v ip >/dev/null 2>&1; then
             printf '%s\n' "$default_route" >&2
             ip -4 -o addr show dev "$wan_dev" >&2 || warn "не удалось прочитать адрес моста $wan_dev"
@@ -300,7 +305,13 @@ if [ ! -s "$STATE_DIR/netos.db" ]; then
             [ ! -e "$member" ] || printf 'Порт моста: %s\n' "${member##*/}" >&2
         done
         die "маршрут по умолчанию проходит через мост $wan_dev. Подготовьте отдельный доступ к машине, перенесите аплинк с моста и повторите установку. Затем воссоздайте мост в netOS."
-    fi
+    done <<< "$wan_devs"
+}
+
+recheck_bootstrap_wan=0
+if [ ! -s "$STATE_DIR/netos.db" ]; then
+    command -v ip >/dev/null 2>&1 || recheck_bootstrap_wan=1
+    check_bootstrap_wan
 fi
 
 # Пока готовится бинарник, из файлов для отката меняется только политика apt.
@@ -417,6 +428,11 @@ else
 fi
 
 # --- бинарник ----------------------------------------------------------------
+
+# /proc/net/route can expose just one leg of a multipath default.
+if [ "$recheck_bootstrap_wan" = 1 ]; then
+    check_bootstrap_wan
+fi
 
 step "Разворачиваю netOS"
 

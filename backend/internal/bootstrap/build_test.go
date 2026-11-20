@@ -103,6 +103,17 @@ func TestDetectRefusesExistingBridgeOnlyOnPreferredRoute(t *testing.T) {
 	if err != nil || d.WANInterface != "eth0" {
 		t.Fatalf("physical uplink returned %+v, %v", d, err)
 	}
+	const bridgeHop = "nexthop via 192.0.2.1 dev brwan weight 1"
+	const portHop = "nexthop via 198.51.100.1 dev eth0 weight 1"
+	for _, route := range []string{bridgeHop + " " + portHop, portHop + " " + bridgeHop} {
+		if _, err := Detect(context.Background(), detectRunner{routes: "default " + route}); err == nil || !strings.Contains(err.Error(), "мост brwan") {
+			t.Fatalf("multipath default %q: %v", route, err)
+		}
+	}
+	d, err = Detect(context.Background(), detectRunner{routes: "default " + portHop + " nexthop dev eth1 weight 1"})
+	if err != nil || d.WANInterface != "eth1" || d.WANGateway != "" {
+		t.Fatalf("device-only nexthop returned %+v, %v", d, err)
+	}
 }
 
 func TestDetectFailsWithoutSysfsAndToleratesRouteAddressFailures(t *testing.T) {
