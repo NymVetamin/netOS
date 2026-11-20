@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [master]
+    branches: [master, qa/ci-webdist-fce19fa]
   pull_request:
 
 permissions:
