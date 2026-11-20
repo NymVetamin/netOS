@@ -116,6 +116,39 @@ func TestCheckUpdatesBatchesAndPreservesSourceErrors(t *testing.T) {
 		}
 	}
 }
+func TestHeldPackageRemainsVisibleAndCannotUsePreviousUpdateToken(t *testing.T) {
+	ctx := context.Background()
+	r := &updateTestRunner{}
+	s := New(r, testLogger{})
+	rows, err := s.CheckUpdates(ctx, "unbound")
+	if err != nil || !rows["unbound"].UpdateAvailable {
+		t.Fatalf("initial versions: %v %v", rows, err)
+	}
+	token := rows["unbound"].Token
+	r.inventory = "unbound\thi \t1.0\nunbound-anchor\tii \t1.0\n"
+	rows, err = s.CheckUpdates(ctx, "unbound")
+	row := rows["unbound"]
+	if err != nil || row.Error != "" || row.UpdateAvailable || row.Token == token || len(row.Packages) != 2 {
+		t.Fatalf("hold: %+v %v", row, err)
+	}
+	if row.Installed != "1.0" || row.Available != "1.1" || row.Packages[0].UpdateAvailable {
+		t.Fatalf("held version: %+v", row)
+	}
+	if err := s.Upgrade(ctx, "unbound", token); err == nil {
+		t.Fatal("accepted update after hold")
+	}
+	for _, cmd := range r.calls {
+		if strings.Contains(cmd, " install ") {
+			t.Fatal("attempted to install held package")
+		}
+	}
+	r.inventory = "unbound\thiR\t1.0\nunbound-anchor\tii \t1.0\n"
+	rows, err = s.CheckUpdates(ctx, "unbound")
+	if _, listed := rows["unbound"]; err != nil || listed {
+		t.Fatalf("broken package: %+v %v", rows, err)
+	}
+}
+
 func TestReadinessDoesNotResolveOrDowngrade(t *testing.T) {
 	rel := externalReleases["xray"]
 	rel.Target = filepath.Join(t.TempDir(), "xray")

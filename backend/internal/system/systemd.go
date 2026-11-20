@@ -261,7 +261,7 @@ func (p *Packages) Installed(ctx context.Context, pkg string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(out, "install ok installed")
+	return strings.Contains(out, "install ok installed") || strings.Contains(out, "hold ok installed")
 }
 
 // InstalledPackages snapshots dpkg once for the entire component catalog.
@@ -285,7 +285,8 @@ func (p *Packages) InstalledPackages(ctx context.Context, packages []string) (ma
 		if len(fields) < 4 || !wanted[fields[0]] {
 			continue
 		}
-		result[fields[0]] = strings.Join(fields[1:4], " ") == "install ok installed"
+		result[fields[0]] = (fields[1] == "install" || fields[1] == "hold") &&
+			fields[2] == "ok" && fields[3] == "installed"
 	}
 	return result, nil
 }

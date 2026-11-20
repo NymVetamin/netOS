@@ -273,7 +273,7 @@ func (r *snapshotRunner) Run(_ context.Context, name string, args ...string) (st
 	joined := strings.Join(args, " ")
 	switch {
 	case name == "dpkg-query":
-		return "dnsmasq\tinstall ok installed\nunbound\tdeinstall ok config-files\n", nil
+		return "dnsmasq\tinstall ok installed\nunbound\tdeinstall ok config-files\nheld\thold ok installed\nbroken\thold reinstreq installed\n", nil
 	case strings.HasPrefix(joined, "list-units"):
 		return "dnsmasq.service loaded inactive dead DNS\nunbound.service loaded active running DNS\n", nil
 	case strings.HasPrefix(joined, "list-unit-files"):
@@ -288,8 +288,8 @@ func (r *snapshotRunner) RunInput(ctx context.Context, _ string, name string, ar
 
 func TestCatalogStateUsesBatchedPackageAndUnitSnapshots(t *testing.T) {
 	r := &snapshotRunner{}
-	packages, err := NewPackages(r).InstalledPackages(context.Background(), []string{"dnsmasq", "unbound", "missing"})
-	if err != nil || !packages["dnsmasq"] || packages["unbound"] || packages["missing"] {
+	packages, err := NewPackages(r).InstalledPackages(context.Background(), []string{"dnsmasq", "unbound", "held", "broken", "missing"})
+	if err != nil || !packages["dnsmasq"] || !packages["held"] || packages["broken"] || packages["unbound"] || packages["missing"] {
 		t.Fatalf("packages=%v err=%v", packages, err)
 	}
 	disabled, err := NewSystemd(r).DisabledUnits(context.Background(), []string{"dnsmasq.service", "unbound.service", "missing.service"})
@@ -355,6 +355,9 @@ func (r *packageRunner) Run(_ context.Context, name string, args ...string) (str
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
 	if name == "dpkg-query" {
 		pkg := args[len(args)-1]
+		if pkg == "held" {
+			return "hold ok installed", nil
+		}
 		if r.installed[pkg] {
 			return "install ok installed", nil
 		}
@@ -408,7 +411,7 @@ func TestPackagesInstalledEnsureAndPolicyCleanup(t *testing.T) {
 	}
 
 	r.commands = nil
-	if got, err := p.Ensure(context.Background(), "present"); err != nil || got != nil {
+	if got, err := p.Ensure(context.Background(), "present", "held"); err != nil || got != nil {
 		t.Fatalf("all-present result=%v err=%v", got, err)
 	}
 	for _, command := range r.commands {

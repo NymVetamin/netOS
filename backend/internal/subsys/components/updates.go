@@ -54,11 +54,24 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 	if err != nil {
 		return nil, err
 	}
-	installed := map[string]string{}
+	type packageState struct {
+		version string
+		held    bool
+	}
+	installed := map[string]packageState{}
+	for _, info := range config.Catalog {
+		if selected(info.ID) && !info.External {
+			for _, p := range info.Packages {
+				installed[p] = packageState{}
+			}
+		}
+	}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) == 3 && f[1] == "ii" {
-			installed[f[0]] = f[2]
+		if len(f) == 3 && (f[1] == "ii" || f[1] == "hi") {
+			if previous, wanted := installed[f[0]]; wanted {
+				installed[f[0]] = packageState{version: f[2], held: previous.held || f[1] == "hi"}
+			}
 		}
 	}
 	packages := map[string]bool{}
@@ -67,7 +80,7 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 		if selected(info.ID) && !info.External && len(info.Packages) > 0 {
 			all := true
 			for _, p := range info.Packages {
-				if installed[p] == "" {
+				if installed[p].version == "" {
 					all = false
 					break
 				}
@@ -134,7 +147,8 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 				continue
 			}
 			for _, p := range info.Packages {
-				v := installed[p]
+				state := installed[p]
+				v := state.version
 				if v == "" {
 					continue
 				}
@@ -143,7 +157,7 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 					row.Error = fmt.Sprintf("нет доступной версии пакета %s в репозитории", p)
 				}
 				pkg := PackageUpdate{Name: p, Installed: v, Available: candidate}
-				if candidate != "" && candidate != v {
+				if candidate != "" && candidate != v && !state.held {
 					cmp, checked := comparisons[p]
 					if !checked {
 						_, e := s.Runner.Run(ctx, "dpkg", "--compare-versions", candidate, "gt", v)
