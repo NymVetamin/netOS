@@ -141,6 +141,13 @@ jobs:
         working-directory: web
         run: npm test
 
+      - name: редактирование строк в браузере
+        run: |
+          python3 -m venv "$RUNNER_TEMP/rows-venv"
+          "$RUNNER_TEMP/rows-venv/bin/pip" install playwright==1.49.1
+          export PLAYWRIGHT_CHROMIUM_EXECUTABLE="$(command -v google-chrome)"
+          "$RUNNER_TEMP/rows-venv/bin/python" web/tests/rows.browser.py
+
       # Сборка фронтенда кладёт файлы в backend/internal/api/webdist. Если она
       # оставила репозиторий грязным сверх ожидаемого, значит что-то пишется не
       # туда, куда думает .gitignore.
