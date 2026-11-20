@@ -241,6 +241,47 @@ func TestDNSBlocklistUsesCacheOnFetchFailure(t *testing.T) {
 	}
 }
 
+func TestBlocklistProviderChangeAfterSnapshot(t *testing.T) {
+	useProviderPaths(t)
+	m := NewBlocklistManager()
+	cfg := blocklistTestConfig("dnsmasq")
+	content := []byte("ads.example\n")
+	m.Fetch = func(context.Context, string, string) ([]byte, error) { return content, nil }
+	apply := func(wantChanged bool) {
+		t.Helper()
+		changed, _, err := m.Apply(context.Background(), cfg)
+		if err != nil || changed != wantChanged {
+			t.Fatalf("changed=%v, want %v, error=%v", changed, wantChanged, err)
+		}
+	}
+	apply(true)
+	m.Fetch = func(context.Context, string, string) ([]byte, error) {
+		if err := os.WriteFile(dnsmasqBlocklistPath, []byte("drift"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return content, nil
+	}
+	apply(true)
+	m.Fetch = func(context.Context, string, string) ([]byte, error) { return content, nil }
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(dnsmasqBlocklistPath, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.Stat(dnsmasqBlocklistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(false)
+	after, err := os.Stat(dnsmasqBlocklistPath)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("unchanged provider file replaced: %v", err)
+	}
+	if err := m.Health(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDNSBlocklistFailureRestoresProviderAndCacheBytes(t *testing.T) {
 	useProviderPaths(t)
 	r := newProviderRunner()

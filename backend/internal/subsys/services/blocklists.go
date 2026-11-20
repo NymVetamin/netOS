@@ -466,8 +466,8 @@ func (m *BlocklistManager) Apply(ctx context.Context, cfg *config.Config) (bool,
 	changed := false
 	for _, path := range []string{dnsmasqBlocklistPath, unboundBlocklistPath, dnsproxyBlocklistPath} {
 		if path == target {
-			changed = system.FileChanged(path, content)
-			if _, err := writeManagedFile(path, content, 0o644); err != nil {
+			changed, err = writeManagedFile(path, content, 0o644)
+			if err != nil {
 				return false, nil, tx.rollbackAfter(err)
 			}
 			continue
