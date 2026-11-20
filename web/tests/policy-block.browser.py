@@ -28,6 +28,8 @@ async def main():
   await expect(source("Deny")).to_have_text("любой")
   for name,_,want in cases:
    await expect(source(name)).to_have_text(want)
+  card=page.locator("section.card").filter(has=page.get_by_role("heading",name="Политики",exact=True))
+  await expect(card.locator("option")).to_have_count(0)
   await page.get_by_text("Deny",exact=True).click()
   field=page.get_by_label("Канал политики Deny",exact=True)
   await field.select_option("block")
@@ -38,8 +40,18 @@ async def main():
   ip=page.get_by_label("IP источника политики Deny",exact=True)
   await ip.fill("192.0.2.55")
   await expect(source("Deny")).to_have_text("192.0.2.55")
+  await page.get_by_text("Deny",exact=True).click()
+  await expect(ip).to_be_hidden()
+  await page.get_by_text("Deny",exact=True).click()
+  await expect(ip).to_have_value("192.0.2.55")
   await ip.fill("")
   await expect(source("Deny")).to_have_text("любой")
+  await card.get_by_role("button",name="Добавить",exact=True).click()
+  added=card.locator("details.xd").last
+  await expect(added).to_have_attribute("open","")
+  await expect(added.get_by_label("Название политики",exact=True)).to_be_visible()
+  await added.get_by_role("button",name="Убрать").click()
+  await expect(card.locator("details.xd")).to_have_count(len(cfg["policies"]))
   assert not state["errors"],state["errors"]
   await browser.close()
   print("policy block/direct selection and destination preservation PASS")

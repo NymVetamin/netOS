@@ -2,7 +2,7 @@ import { SectionLink } from "../permissions";
 import { useStatusPolling } from "../StatusPollingContext";
 import { channelReferences, channelReferenceLookup, replacementChannelIDs } from "../channelReferences";
 import { secretInput } from "../secrets";
-import { createContext, Fragment, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, Fragment, memo, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { channelComponents, channelComponentReady, channelKind, channelAWGServers } from "../channelComponents";
 import { newID } from "../id";
@@ -705,7 +705,14 @@ function WireGuardEditor({
 }
 
 function Policies({ config, patch, policies }: Props & { policies: any[] }) {
-  const choices = [...enabledChannels(config), { id: "block", name: "Блокировать" }];
+  const { choices, channelNames } = useMemo(() => {
+    const choices = [...enabledChannels(config), { id: "block", name: "Блокировать" }];
+    const channelNames = new Map<string, string>();
+    for (const item of choices) {
+      if (!channelNames.has(item.id)) channelNames.set(item.id, item.name);
+    }
+    return { choices, channelNames };
+  }, [config.channels]);
   const sourceNames = useMemo(() => {
     const networks = new Map<string, string>();
     const servers = new Map<string, { name: string; peers: Map<string, string> }>();
@@ -740,75 +747,18 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
           {policies.map((policy: any) => (
               <Row
                 key={policy.id}
+                lazyBody
                 id={policy.id}
                 cells={[<strong>{policy.name || "без названия"}</strong>,
                   sourceCell(policy),
                   policy.dst_ip || policy.dst_port || (policy.domains || []).length
                     ? <span className="mono">{[policy.dst_ip, policy.dst_port && `порт ${policy.dst_port}`, (policy.domains || []).length ? `доменов: ${policy.domains.length}` : ""].filter(Boolean).join(", ")}</span>
                     : <span className="dim">любое</span>,
-                  choices.find((item: any) => item.id === policy.channel)?.name || policy.channel,
+                  channelNames.get(policy.channel) || policy.channel,
                   <span className="mono">{policy.priority || 0}</span>]}
                 toggle={<Switch checked={!!policy.enabled} label="" ariaLabel={`Политика ${policy.name || policy.id} включена`} onChange={(enabled) => updatePolicy(patch, policy.id, "enabled", enabled)} />}
               >
-                <div className="form-grid">
-                  <Cap label="Приоритет"><input aria-label={`Приоритет политики ${policy.name || policy.id}`} type="number" value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></Cap>
-                  <Cap label="Название"><input aria-label="Название политики" value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></Cap>
-                  <Cap label="Источник"><input aria-label={`IP источника политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.src_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_ip", e.target.value)} /></Cap>
-                  <Cap label="Назначение"><input aria-label={`IP назначения политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.dst_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_ip", e.target.value)} /></Cap>
-                  <Cap label="Протокол"><select aria-label={`Протокол политики ${policy.name || policy.id}`} value={policy.protocol || "any"} onChange={(e) => updatePolicy(patch, policy.id, "protocol", e.target.value)}><option value="any">any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></Cap>
-                  <Cap label="Порт назначения"><input aria-label={`Порт назначения политики ${policy.name || policy.id}`} className="mono" placeholder="порт" value={policy.dst_port || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_port", e.target.value)} /></Cap>
-                  <Cap label="Канал"><select aria-label={`Канал политики ${policy.name || policy.id}`} value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Cap>
-                </div>
-                <details className="advanced">
-                      <summary>Все условия и служебные поля</summary>
-                      <div className="form-grid" style={{ marginTop: ".8rem" }}>
-                        <Field label="MAC источника">
-                          <input className="mono" value={policy.src_mac || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_mac", e.target.value)} />
-                        </Field>
-                        <Field label="Сегмент-источник">
-                          <select value={policy.network || ""} onChange={(e) => updatePolicy(patch, policy.id, "network", e.target.value)}>
-                            <option value="">Любой сегмент</option>
-                            {(config.networks || []).map((network: any) => <option key={network.id} value={network.id}>{network.name || network.id}</option>)}
-                          </select>
-                        </Field>
-                        <Field label="Входящий VPN-сервер">
-                          <select value={policy.vpn_server || ""} onChange={(e) => {
-                            updatePolicy(patch, policy.id, "vpn_server", e.target.value);
-                            updatePolicy(patch, policy.id, "vpn_peer", "");
-                          }}>
-                            <option value="">Любой / не VPN</option>
-                            {(config.vpn_servers || []).map((server: any) => <option key={server.id} value={server.id}>{server.name || server.id}</option>)}
-                          </select>
-                        </Field>
-                        <Field label="VPN-пир">
-                          <select disabled={!policy.vpn_server} value={policy.vpn_peer || ""} onChange={(e) => updatePolicy(patch, policy.id, "vpn_peer", e.target.value)}>
-                            <option value="">Любой пир</option>
-                            {((config.vpn_servers || []).find((server: any) => server.id === policy.vpn_server)?.peers || []).map((peer: any) => <option key={peer.id} value={peer.id}>{peer.name || peer.id}</option>)}
-                          </select>
-                        </Field>
-                        <Field label="Домены политики" hint="По одному домену в строке. DNS-ответы обновляют маршрут автоматически; время жизни записи — до 5 минут.">
-                          <ListTextarea aria-label={`Домены политики ${policy.name || policy.id}`} className="mono" placeholder={"example.com\nsub.example.org"} values={policy.domains || []} onValuesChange={(items) => updatePolicy(patch, policy.id, "domains", items)} />
-                        </Field>
-                        <Field label="Комментарий">
-                          <input value={policy.comment || ""} onChange={(e) => updatePolicy(patch, policy.id, "comment", e.target.value)} />
-                        </Field>
-                      </div>
-                      <div style={{ marginTop: ".8rem" }}>
-                        <Switch checked={!!policy.schedule} label="Ограничить расписанием" onChange={(enabled) => updatePolicy(patch, policy.id, "schedule", enabled ? { days: [], time_start: "", time_stop: "" } : null)} />
-                      </div>
-                      {policy.schedule && <div className="form-grid" style={{ marginTop: ".8rem" }}>
-                        <Field label="Дни недели" hint="Пусто — каждый день">
-                          <div className="row wrap">
-                            {POLICY_DAYS.map(([day, title]) => <label key={day} className="row" style={{ gap: ".25rem" }}>
-                              <input type="checkbox" aria-label={title} checked={(policy.schedule.days || []).includes(day)} onChange={(e) => updatePolicyDay(patch, policy.id, day, e.target.checked)} /> {title}
-                            </label>)}
-                          </div>
-                        </Field>
-                        <Field label="Начало (UTC)"><input type="time" value={policy.schedule.time_start || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_start", e.target.value)} /></Field>
-                        <Field label="Окончание (UTC)"><input type="time" value={policy.schedule.time_stop || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_stop", e.target.value)} /></Field>
-                      </div>}
-                    </details>
-                <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((draft) => { draft.policies = draft.policies.filter((item: any) => item.id !== policy.id); })}>Убрать</button></div>
+                <PolicyEditor policy={policy} config={config} choices={choices} patch={patch} />
               </Row>
           ))}
         </Rows>
@@ -816,6 +766,70 @@ function Policies({ config, patch, policies }: Props & { policies: any[] }) {
     </Card>
   );
 }
+
+const PolicyEditor = memo(function PolicyEditor({ policy, config, choices, patch }: Props & { policy: any; choices: any[] }) {
+  return <>
+    <div className="form-grid">
+      <Cap label="Приоритет"><input aria-label={`Приоритет политики ${policy.name || policy.id}`} type="number" value={policy.priority || 0} onChange={(e) => updatePolicy(patch, policy.id, "priority", Number(e.target.value))} /></Cap>
+      <Cap label="Название"><input aria-label="Название политики" value={policy.name || ""} onChange={(e) => updatePolicy(patch, policy.id, "name", e.target.value)} /></Cap>
+      <Cap label="Источник"><input aria-label={`IP источника политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.src_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_ip", e.target.value)} /></Cap>
+      <Cap label="Назначение"><input aria-label={`IP назначения политики ${policy.name || policy.id}`} className="mono" placeholder="IP/CIDR" value={policy.dst_ip || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_ip", e.target.value)} /></Cap>
+      <Cap label="Протокол"><select aria-label={`Протокол политики ${policy.name || policy.id}`} value={policy.protocol || "any"} onChange={(e) => updatePolicy(patch, policy.id, "protocol", e.target.value)}><option value="any">any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></Cap>
+      <Cap label="Порт назначения"><input aria-label={`Порт назначения политики ${policy.name || policy.id}`} className="mono" placeholder="порт" value={policy.dst_port || ""} onChange={(e) => updatePolicy(patch, policy.id, "dst_port", e.target.value)} /></Cap>
+      <Cap label="Канал"><select aria-label={`Канал политики ${policy.name || policy.id}`} value={policy.channel} onChange={(e) => updatePolicy(patch, policy.id, "channel", e.target.value)}>{choices.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Cap>
+    </div>
+    <details className="advanced">
+      <summary>Все условия и служебные поля</summary>
+      <div className="form-grid" style={{ marginTop: ".8rem" }}>
+        <Field label="MAC источника">
+          <input className="mono" value={policy.src_mac || ""} onChange={(e) => updatePolicy(patch, policy.id, "src_mac", e.target.value)} />
+        </Field>
+        <Field label="Сегмент-источник">
+          <select value={policy.network || ""} onChange={(e) => updatePolicy(patch, policy.id, "network", e.target.value)}>
+            <option value="">Любой сегмент</option>
+            {(config.networks || []).map((network: any) => <option key={network.id} value={network.id}>{network.name || network.id}</option>)}
+          </select>
+        </Field>
+        <Field label="Входящий VPN-сервер">
+          <select value={policy.vpn_server || ""} onChange={(e) => {
+            updatePolicy(patch, policy.id, "vpn_server", e.target.value);
+            updatePolicy(patch, policy.id, "vpn_peer", "");
+          }}>
+            <option value="">Любой / не VPN</option>
+            {(config.vpn_servers || []).map((server: any) => <option key={server.id} value={server.id}>{server.name || server.id}</option>)}
+          </select>
+        </Field>
+        <Field label="VPN-пир">
+          <select disabled={!policy.vpn_server} value={policy.vpn_peer || ""} onChange={(e) => updatePolicy(patch, policy.id, "vpn_peer", e.target.value)}>
+            <option value="">Любой пир</option>
+            {((config.vpn_servers || []).find((server: any) => server.id === policy.vpn_server)?.peers || []).map((peer: any) => <option key={peer.id} value={peer.id}>{peer.name || peer.id}</option>)}
+          </select>
+        </Field>
+        <Field label="Домены политики" hint="По одному домену в строке. DNS-ответы обновляют маршрут автоматически; время жизни записи — до 5 минут.">
+          <ListTextarea aria-label={`Домены политики ${policy.name || policy.id}`} className="mono" placeholder={"example.com\nsub.example.org"} values={policy.domains || []} onValuesChange={(items) => updatePolicy(patch, policy.id, "domains", items)} />
+        </Field>
+        <Field label="Комментарий">
+          <input value={policy.comment || ""} onChange={(e) => updatePolicy(patch, policy.id, "comment", e.target.value)} />
+        </Field>
+      </div>
+      <div style={{ marginTop: ".8rem" }}>
+        <Switch checked={!!policy.schedule} label="Ограничить расписанием" onChange={(enabled) => updatePolicy(patch, policy.id, "schedule", enabled ? { days: [], time_start: "", time_stop: "" } : null)} />
+      </div>
+      {policy.schedule && <div className="form-grid" style={{ marginTop: ".8rem" }}>
+        <Field label="Дни недели" hint="Пусто — каждый день">
+          <div className="row wrap">
+            {POLICY_DAYS.map(([day, title]) => <label key={day} className="row" style={{ gap: ".25rem" }}>
+              <input type="checkbox" aria-label={title} checked={(policy.schedule.days || []).includes(day)} onChange={(e) => updatePolicyDay(patch, policy.id, day, e.target.checked)} /> {title}
+            </label>)}
+          </div>
+        </Field>
+        <Field label="Начало (UTC)"><input type="time" value={policy.schedule.time_start || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_start", e.target.value)} /></Field>
+        <Field label="Окончание (UTC)"><input type="time" value={policy.schedule.time_stop || ""} onChange={(e) => updatePolicySchedule(patch, policy.id, "time_stop", e.target.value)} /></Field>
+      </div>}
+    </details>
+    <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((draft) => { draft.policies = draft.policies.filter((item: any) => item.id !== policy.id); })}>Убрать</button></div>
+  </>;
+});
 
 function updatePolicy(patch: Props["patch"], id: string, key: string, value: unknown) {
   patch((draft) => { draft.policies.find((policy: any) => policy.id === id)[key] = value; });
