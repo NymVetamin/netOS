@@ -24,7 +24,12 @@ func testManager() (*Manager, *bytes.Buffer) {
 	m.Out, m.Err = out, out
 	m.EUID = func() int { return 0 }
 	m.Run = func(context.Context, command) error { return nil }
-	m.Output = func(context.Context, string, ...string) (string, error) { return "", nil }
+	m.Output = func(_ context.Context, name string, args ...string) (string, error) {
+		if name == "systemctl" && strings.Join(args, " ") == "is-active netosd" {
+			return "active\n", nil
+		}
+		return "", nil
+	}
 	m.RecordRestoreAudit = func(string) error { return nil }
 	m.AcquireMaintenance = func() (func(), error) { return func() {}, nil }
 	// Ожидание дефолтного маршрута опрашивает таблицу раз в секунду. С живым
@@ -129,6 +134,48 @@ func TestWaitRuntimeReadyRequiresApplyMarker(t *testing.T) {
 	m.Output = func(context.Context, string, ...string) (string, error) { return "active\n", nil }
 	if err := m.waitRuntimeReady(context.Background(), 1); err != nil {
 		t.Fatalf("готовый runtime не распознан: %v", err)
+	}
+}
+
+func TestWaitRuntimeReadyChecksServiceWithMarker(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	m.ReadyFile = "/ready"
+	if err := os.WriteFile(m.sys(m.ReadyFile), []byte("42\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	probeErr := errors.New("systemctl unavailable")
+	for _, tc := range []struct {
+		state string
+		err   error
+	}{
+		{"", probeErr}, {"active", probeErr}, {"deactivating", nil}, {"activating", nil}, {"", nil},
+	} {
+		m.Output = func(context.Context, string, ...string) (string, error) { return tc.state, tc.err }
+		err := m.waitRuntimeReady(context.Background(), 0)
+		if err == nil || (tc.err != nil && !errors.Is(err, tc.err)) {
+			t.Fatalf("state=%q probe=%v: got %v", tc.state, tc.err, err)
+		}
+	}
+	calls := 0
+	m.Output = func(context.Context, string, ...string) (string, error) {
+		calls++
+		switch calls {
+		case 1:
+			return "", probeErr
+		case 2:
+			return "activating", nil
+		default:
+			return "active", nil
+		}
+	}
+	if err := m.waitRuntimeReady(context.Background(), 2); err != nil || calls != 3 {
+		t.Fatalf("retry: calls=%d err=%v", calls, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.waitRuntimeReady(ctx, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: %v", err)
 	}
 }
 

@@ -1150,32 +1150,29 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error,
 
 func (m *Manager) waitRuntimeReady(ctx context.Context, attempts int) error {
 	for i := 0; ; i++ {
-		if _, err := os.Stat(m.sys(m.ReadyFile)); err == nil {
-			state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
-			switch strings.TrimSpace(state) {
-			case "inactive", "failed", "unknown":
-				return fmt.Errorf("netosd перешёл в состояние %s", strings.TrimSpace(state))
-			default:
-				return nil
-			}
-		} else if !os.IsNotExist(err) {
+		_, err := os.Stat(m.sys(m.ReadyFile))
+		marker := err == nil
+		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
-
-		state, _ := m.Output(ctx, "systemctl", "is-active", "netosd")
-		switch strings.TrimSpace(state) {
-		case "inactive", "failed":
-			return fmt.Errorf("netosd перешёл в состояние %s до окончания применения", strings.TrimSpace(state))
+		state, probeErr := m.Output(ctx, "systemctl", "is-active", "netosd")
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		state = strings.TrimSpace(state)
+		if marker && state == "active" && probeErr == nil {
+			return nil
+		}
+		if state == "inactive" || state == "failed" || (marker && (state == "unknown" || state == "deactivating")) {
+			return fmt.Errorf("netosd перешёл в состояние %s до окончания применения", state)
 		}
 		if i >= attempts {
+			if probeErr != nil {
+				return fmt.Errorf("проверка состояния netosd: %w", probeErr)
+			}
 			return fmt.Errorf("netosd не завершил стартовое применение за %s", time.Duration(attempts)*500*time.Millisecond)
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			m.Sleep(500 * time.Millisecond)
-		}
+		m.Sleep(500 * time.Millisecond)
 	}
 }
 
