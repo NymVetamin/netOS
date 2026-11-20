@@ -45,3 +45,28 @@ check go 1 ci,run,go,go
 check mirror 0 ci,run,go,go
 check success 0 ci,run,go
 check success 0 ci,run,go
+
+# Ветка с именем тега указывает на более новый коммит, чем релиз.
+sed -n '/^fetch_release_source() {$/,/^}$/p' "$installer" > "$SRC/fetch.sh"
+source "$SRC/fetch.sh"
+REPO=fixture/netos
+origin="$SRC/origin"
+git init -q "$origin"
+commit() { git -C "$origin" -c user.name=test -c user.email=test@localhost commit -qm "$1" --allow-empty; }
+commit release
+git -C "$origin" tag v1
+release=$(git -C "$origin" rev-parse HEAD)
+commit development
+git -C "$origin" branch v1
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$origin.insteadOf" GIT_CONFIG_VALUE_0="https://github.com/$REPO.git"
+curl() { echo lookup >> "$SRC/lookups"; echo "$redirect"; }
+redirect="https://github.com/$REPO/releases/tag/v1"
+for VERSION in latest v1; do
+    fetch_release_source "$SRC/$VERSION"
+    [[ $BUILD_VERSION == v1 && $(git -C "$SRC/$VERSION" rev-parse HEAD) == "$release" ]]
+done
+[[ $(wc -l < "$SRC/lookups") == 1 ]]
+VERSION=latest
+for redirect in "https://github.com/$REPO/releases" "https://github.com/$REPO/releases/tag/absent"; do
+    if (fetch_release_source "$SRC/missing") 2>/dev/null; then exit 1; fi
+done

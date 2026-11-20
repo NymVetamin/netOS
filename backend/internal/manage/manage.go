@@ -580,7 +580,7 @@ func (m *Manager) resetPasswordFromStdin(username string) error {
 func (m *Manager) install(ctx context.Context, version string, force bool, backup ...bool) error {
 	fromSource := os.Getenv("NETOS_FROM_SOURCE") == "1"
 	resolvedVersion := version
-	if !fromSource && (resolvedVersion == "" || resolvedVersion == "latest") {
+	if resolvedVersion == "" || resolvedVersion == "latest" {
 		resolvedVersion = m.latestVersion(ctx)
 		if resolvedVersion == "" {
 			return fmt.Errorf("не удалось определить тег последнего релиза; повторите позже или укажите версию явно")
@@ -590,9 +590,6 @@ func (m *Manager) install(ctx context.Context, version string, force bool, backu
 		return fmt.Errorf("установка старой версии доступна только после удаления netOS")
 	}
 	name := resolvedVersion
-	if name == "" {
-		name = "latest"
-	}
 
 	// Обновление до версии, которая уже стоит, — это несколько минут загрузки,
 	// перезапуск службы и разрыв связности ради нулевого результата. Проверяем
@@ -656,9 +653,7 @@ func (m *Manager) install(ctx context.Context, version string, force bool, backu
 	}
 
 	var env []string
-	if resolvedVersion != "" {
-		env = append(env, "NETOS_VERSION="+resolvedVersion)
-	}
+	env = append(env, "NETOS_VERSION="+resolvedVersion)
 	if fromSource {
 		env = append(env, "NETOS_FROM_SOURCE=1")
 	}
@@ -670,7 +665,7 @@ func (m *Manager) install(ctx context.Context, version string, force bool, backu
 // Через редирект, а не через api.github.com: у API есть лимит на анонимные
 // запросы, и на роутере за общим NAT он вполне достижим — обновление начало бы
 // молча считать, что версия устарела. Пустая строка означает «выяснить не
-// удалось»: это не повод отказывать в обновлении.
+// удалось»: в этом случае установщик не запускается.
 func (m *Manager) latestVersion(ctx context.Context) string {
 	out, err := m.Output(ctx, "curl", "-4", "-fsSLI", "-o", "/dev/null",
 		"-w", "%{url_effective}", "--retry", "2",

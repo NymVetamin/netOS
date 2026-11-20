@@ -361,7 +361,13 @@ func TestUpdateRefusesMissingReleaseInsteadOfBuildingFromSource(t *testing.T) {
 func TestUpdateBuildsFromSourceWhenAskedExplicitly(t *testing.T) {
 	t.Setenv("NETOS_FROM_SOURCE", "1")
 	m, _ := testManager()
-	m.Output = func(context.Context, string, ...string) (string, error) {
+	m.Output = func(_ context.Context, _ string, args ...string) (string, error) {
+		if strings.HasSuffix(args[len(args)-1], "/releases/latest") {
+			return "https://github.com/NymVetamin/netOS/releases/tag/v1.2.4", nil
+		}
+		if !strings.Contains(args[len(args)-1], "/download/v1.2.4/") {
+			t.Fatalf("проверен другой релиз: %v", args)
+		}
 		return "HTTP/2 404\r\n", errors.New("curl: (22) HTTP 404")
 	}
 	var installer command
@@ -374,7 +380,7 @@ func TestUpdateBuildsFromSourceWhenAskedExplicitly(t *testing.T) {
 	if err := m.Execute(context.Background(), []string{"update"}); err != nil {
 		t.Fatal(err)
 	}
-	if !contains(installer.env, "NETOS_FROM_SOURCE=1") {
+	if !contains(installer.env, "NETOS_FROM_SOURCE=1") || !contains(installer.env, "NETOS_VERSION=v1.2.4") {
 		t.Fatalf("сборка из исходников не включена: %#v", installer.env)
 	}
 }

@@ -58,6 +58,25 @@ ok()    { echo "    ${GREEN}✓${R} $*"; }
 warn()  { echo "    ${YELLOW}!${R} $*"; }
 die()   { echo "${RED}Ошибка:${R} $*" >&2; exit 1; }
 
+fetch_release_source() {
+    local dest=$1 prefix="https://github.com/$REPO/releases/tag/" url
+    if [ "$VERSION" = latest ]; then
+        url=$(curl -4 -fsSLI --retry 2 -o /dev/null -w '%{url_effective}' \
+            "https://github.com/$REPO/releases/latest") || die "не удалось определить последний релиз"
+        BUILD_VERSION=${url#"$prefix"}
+        [ "$url" != "$BUILD_VERSION" ] || die "неожиданный адрес последнего релиза"
+        case "$BUILD_VERSION" in
+            ''|*[!A-Za-z0-9._+-]*) die "не удалось определить тег последнего релиза" ;;
+        esac
+    else
+        BUILD_VERSION=$VERSION
+    fi
+    git init -q "$dest" &&
+        git -C "$dest" fetch -q --depth 1 "https://github.com/$REPO.git" "refs/tags/$BUILD_VERSION" &&
+        git -C "$dest" checkout -q --detach FETCH_HEAD ||
+        die "не удалось получить исходники релиза $BUILD_VERSION"
+}
+
 SRC=""
 TMP=""
 INSTALL_TXN=""
@@ -403,6 +422,7 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     # Go/npm temporary files into the same transaction-owned directory.
     SRC=$(mktemp -d /var/tmp/netos-source.XXXXXX)
     install -d -m 0700 "$SRC/tmp"
+    fetch_release_source "$SRC/netos"
     GO_VERSION="1.27.0"
     GO_ARCHIVE="$SRC/go.tar.gz"
     GO_URL="https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz"
@@ -423,17 +443,6 @@ if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
         || die "контрольная сумма Go не совпадает"
     tar -C "$SRC" -xzf "$GO_ARCHIVE" || die "не удалось распаковать Go"
 
-    if [ "$VERSION" = "latest" ]; then
-        git clone --depth 1 "https://github.com/$REPO.git" "$SRC/netos" >/dev/null 2>&1 \
-            || die "не удалось получить исходники"
-    else
-        git clone --depth 1 --branch "$VERSION" "https://github.com/$REPO.git" "$SRC/netos" >/dev/null 2>&1 \
-            || die "не удалось получить исходники версии $VERSION"
-    fi
-    BUILD_VERSION="$VERSION"
-    if [ "$BUILD_VERSION" = "latest" ]; then
-        BUILD_VERSION=$(git -C "$SRC/netos" describe --tags --always --dirty 2>/dev/null || echo dev)
-    fi
     CANDIDATE="$SRC/netosd"
     (
         export TMPDIR="$SRC/tmp"
