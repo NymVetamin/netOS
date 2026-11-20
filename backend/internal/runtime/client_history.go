@@ -123,8 +123,11 @@ func (h *ClientHistory) Run(ctx context.Context) {
 	for {
 		current := h.Current()
 		due := sampled.Add(h.sampleInterval(time.Now()))
-		if !h.lastPersist.IsZero() && h.lastPersist.Add(HistoryInterval).Before(due) {
-			due = h.lastPersist.Add(HistoryInterval)
+		// A failed counter read leaves lastPersist unchanged. Once a sample
+		// has tried that deadline, retry at the normal live or idle interval.
+		persistDue := h.lastPersist.Add(HistoryInterval)
+		if persistDue.After(sampled) && persistDue.Before(due) {
+			due = persistDue
 		}
 		if current != last || (current != nil && current.TrafficMonitor.Enabled && !time.Now().Add(50*time.Millisecond).Before(due)) {
 			sampled = time.Now()

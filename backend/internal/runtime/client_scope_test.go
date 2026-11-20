@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
@@ -77,4 +78,65 @@ func TestClientSampleRejectsStaleExitCounters(t *testing.T) {
 	if r.calls != 8 {
 		t.Fatal("unexpected commands", r.calls)
 	}
+}
+
+func TestClientHistoryRetryCadence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := &config.Config{
+			Interfaces: []config.Interface{{ID: "lan", Name: "lan0", Enabled: true}},
+			Networks:   []config.Network{{Interface: "lan", Enabled: true, RouterAddress: "192.0.2.1/24"}},
+		}
+		cfg.TrafficMonitor.Enabled = true
+		r := &scopeCountersRunner{bytes: 100}
+		dir := t.TempDir()
+		h, err := NewClientHistory(filepath.Join(dir, "history.db"), r, NewCollector(r, filepath.Join(dir, "leases")), func() *config.Config { return cfg })
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		h.dnsCancel = func() {}
+		ctx, stop := context.WithCancel(context.Background())
+		defer func() { stop(); synctest.Wait() }()
+		go h.Run(ctx)
+		synctest.Wait()
+		start := h.lastPersist
+		r.fail = true
+		time.Sleep(2*HistoryInterval - time.Second)
+		synctest.Wait()
+		if r.calls != 4 || h.problem == "" || !h.lastPersist.Equal(start) {
+			t.Errorf("idle outage: commands=%d, problem=%q, last write=%v", r.calls, h.problem, h.lastPersist)
+		}
+		r.fail = false
+		r.bytes = 250
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if h.problem != "" || !h.lastPersist.Equal(start.Add(2*HistoryInterval)) {
+			t.Fatalf("did not recover on next interval: %q, %v", h.problem, h.lastPersist)
+		}
+		var delta int
+		if err := h.db.QueryRow("SELECT tx FROM traffic WHERE address='192.0.2.2'").Scan(&delta); err != nil || delta != 150 {
+			t.Fatalf("recovered traffic=%d err=%v", delta, err)
+		}
+		h.Live()
+		r.fail = true
+		before := r.calls
+		time.Sleep(2 * ClientLiveInterval)
+		synctest.Wait()
+		if r.calls-before != 4 {
+			t.Fatalf("live retry: %d commands", r.calls-before)
+		}
+		// Once the lease expires, the next history deadline still takes precedence.
+		before = r.calls
+		time.Sleep(HistoryInterval - 2*ClientLiveInterval)
+		synctest.Wait()
+		if r.calls-before != 2 {
+			t.Fatalf("history deadline after live lease: %d commands", r.calls-before)
+		}
+		before = r.calls
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		if r.calls-before != 40 {
+			t.Errorf("ten-minute outage: %d commands, want 40", r.calls-before)
+		}
+	})
 }
