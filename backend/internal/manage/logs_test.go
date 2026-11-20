@@ -31,8 +31,11 @@ func TestLogsFollowPrintsEveryNewEntry(t *testing.T) {
 	}
 	appendEntry("older")
 	appendEntry("newer")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	const followTimeout = 10 * time.Second
+	timer := time.AfterFunc(followTimeout, cancel)
+	defer timer.Stop()
 	const burst = 201
 	var details []string
 	m.Out = auditLineWriter(func(p []byte) (int, error) {
@@ -40,9 +43,12 @@ func TestLogsFollowPrintsEveryNewEntry(t *testing.T) {
 		detail := fields[len(fields)-1]
 		details = append(details, detail)
 		if detail == "older" {
+			// The reader cannot poll while this writer prepares the test data.
+			timer.Stop()
 			for i := 1; i <= burst; i++ {
 				appendEntry(fmt.Sprint(i))
 			}
+			timer.Reset(followTimeout)
 		}
 		if detail == fmt.Sprint(burst) {
 			cancel()
