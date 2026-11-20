@@ -289,6 +289,18 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	if counted.qdiscDeletes != 0 {
 		t.Fatal("upload retry rebuilt queues")
 	}
+	if _, err := r.Run(ctx, "tc", "filter", "replace", "dev", "qos-repair0", "parent", "ffff:", "protocol", "all", "pref", "100", "handle", "1", "flower", "src_mac", cfg.Clients[0].MAC, "action", "police", "rate", "2000kbit", "burst", "64k", "mtu", "64k", "conform-exceed", "pass"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err == nil {
+		t.Fatal("upload policer accepted excess traffic")
+	}
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
 	cfg.Clients = nil
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)

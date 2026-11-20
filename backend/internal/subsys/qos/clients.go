@@ -241,7 +241,7 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 			expectedMACs := make([]string, 0, len(item.Upload))
 			for index, client := range item.Upload {
 				expectedMACs = append(expectedMACs, strings.ToLower(client.MAC))
-				if !filterBlocks.hasTokens("pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "mtu=64kb") {
+				if !filterBlocks.hasTokens("pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "mtu=64kb", "action=drop") {
 					return fmt.Errorf("лимит отдачи клиента %s на %s не соответствует конфигурации", client.MAC, item.Name)
 				}
 			}
