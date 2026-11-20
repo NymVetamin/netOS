@@ -1021,7 +1021,9 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 	table := fmt.Sprint(Table(wan))
 	priority := fmt.Sprint(Priority(wan))
 	mark := fmt.Sprintf("0x%x", Mark(wan))
-	_, _ = c.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table)
+	if _, err := c.Runner.Run(ctx, "ip", "-4", "route", "flush", "table", table); err != nil && !missingFIBTable(err) {
+		return fmt.Errorf("очистка таблицы %s аплинка %s: %w", table, wan.Name, err)
+	}
 	// A policy table is selected before the main table. It therefore needs the
 	// main table's connected routes both to reach its own DHCP gateway and to
 	// return traffic from a WAN address to a directly connected LAN/VPN client.

@@ -135,6 +135,21 @@ func TestIntegrationPPPHistoryAfterInterfaceRecreation(t *testing.T) {
 	}
 }
 
+// Run one flush without CAP_NET_ADMIN inside the test namespace. Snapshot
+// reads, the rollback and the retry still use the normal privileged runner.
+type deniedFlushRunner struct {
+	namespaceRunner
+	denied bool
+}
+
+func (r *deniedFlushRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if !r.denied && name == "ip" && strings.Join(args, " ") == "-4 route flush table 3002" {
+		r.denied = true
+		return r.namespaceRunner.Run(ctx, "setpriv", append([]string{"--bounding-set=-net_admin", "ip"}, args...)...)
+	}
+	return r.namespaceRunner.Run(ctx, name, args...)
+}
+
 func TestIntegrationBalanceBuildsRealTablesAndRules(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
 		t.Skip("NETOS_INTEGRATION=1 и root")
@@ -167,6 +182,28 @@ func TestIntegrationBalanceBuildsRealTablesAndRules(t *testing.T) {
 	for _, want := range []string{"30001:", "fwmark 0x3001", "30002:", "fwmark 0x3002"} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("нет %s:\n%s", want, rules)
+		}
+	}
+	// First-table edits must roll back if the kernel refuses to clear the second.
+	for _, table := range []string{"3001", "3002"} {
+		mustNS(t, "ip", "route", "add", "blackhole", "203.0.113.0/24", "table", table)
+	}
+	denied := &deniedFlushRunner{}
+	c.Runner = denied
+	if err := c.reconcileBalance(context.Background(), cfg); err == nil || !strings.Contains(strings.ToLower(err.Error()), "operation not permitted") {
+		t.Fatalf("expected kernel flush refusal, got %v", err)
+	}
+	for _, table := range []string{"3001", "3002"} {
+		if out := mustNS(t, "ip", "route", "show", "table", table); !strings.Contains(out, "blackhole 203.0.113.0/24") {
+			t.Fatalf("rollback lost original route in table %s: %s", table, out)
+		}
+	}
+	if err := c.reconcileBalance(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"3001", "3002"} {
+		if out := mustNS(t, "ip", "route", "show", "table", table); strings.Contains(out, "203.0.113.0/24") {
+			t.Fatalf("retry left stale route in table %s: %s", table, out)
 		}
 	}
 	// A health-only failure keeps the selected table's original route for

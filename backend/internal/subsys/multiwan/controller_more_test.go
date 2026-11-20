@@ -729,3 +729,23 @@ func TestTickRetriesFailedBalanceReconcileWithoutAnotherStateTransition(t *testi
 		t.Fatalf("retry did not persist balance ownership: %q err=%v", data, err)
 	}
 }
+
+func TestBalanceRefusesFailedFlush(t *testing.T) {
+	r := &balanceStateRunner{
+		routes: map[string]string{"3001": "blackhole default metric 32767\n"},
+		rules:  map[string]string{}, failOnce: "route flush table 3001",
+	}
+	c := New(r, t.TempDir(), nil)
+	if err := c.reconcileBalance(context.Background(), balanceConfig()); err == nil || !strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("expected flush failure, got %v", err)
+	}
+	if _, err := os.Stat(c.balanceOwnedPath()); !os.IsNotExist(err) {
+		t.Fatalf("unexpected ownership after failure: %v", err)
+	}
+	if err := c.reconcileBalance(context.Background(), balanceConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(c.balanceOwnedPath()); err != nil {
+		t.Fatal(err)
+	}
+}
