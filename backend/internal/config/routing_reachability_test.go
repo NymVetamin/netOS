@@ -1,9 +1,55 @@
 package config
 
 import (
+	"fmt"
 	"net/netip"
 	"testing"
 )
+
+func BenchmarkSharedStaticGateway(b *testing.B) {
+	for _, count := range []int{8, 1024} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			c := Default()
+			for i := 0; i < count; i++ {
+				c.Routing.Static = append(c.Routing.Static, StaticRoute{
+					Enabled: true, Destination: fmt.Sprintf("10.%d.%d.0/24", i/256, i%256), Gateway: "192.0.2.1",
+				})
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				result := c.Validate()
+				if len(result.Problems) < count {
+					b.Fatal("missing gateway warnings")
+				}
+			}
+		})
+	}
+}
+
+func TestSharedGatewayWarningsKeepRouteOrderAndScope(t *testing.T) {
+	c := Default()
+	c.Routing.Static = []StaticRoute{
+		{Enabled: true, Destination: "192.0.2.1", Interface: "eth0"},
+		{Enabled: true, Destination: "10.1.0.0/16", Interface: "eth0", Gateway: "192.0.2.1"},
+		{Enabled: true, Destination: "10.2.0.0/16", Interface: "eth1", Gateway: "192.0.2.1"},
+		{Enabled: true, Destination: "10.3.0.0/16", Interface: "eth0", Gateway: "192.0.2.1", Table: "local"},
+		{Enabled: true, Destination: "10.4.0.0/16", Interface: "eth1", Gateway: "192.0.2.1", Table: "main"},
+	}
+	for _, warnings := range [][]int{{2, 3, 4}, {1, 2, 3, 4}} {
+		var result ValidationResult
+		c.validateRouting(&result)
+		if len(result.Problems) != len(warnings) {
+			t.Fatalf("unexpected problems: %+v", result.Problems)
+		}
+		for i, route := range warnings {
+			p := result.Problems[i]
+			if p.Path != fmt.Sprintf("routing.static[%d].gateway", route) || p.Severity != "warning" {
+				t.Fatalf("unexpected problem: %+v", p)
+			}
+		}
+		c.Routing.Static[0].Enabled = false
+	}
+}
 
 func TestStaticGatewayConnectedSourcesAndInterfaces(t *testing.T) {
 	c := Default()

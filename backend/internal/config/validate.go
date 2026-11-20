@@ -1258,6 +1258,21 @@ func (c *Config) validateRouting(r *ValidationResult) {
 	// routeKeys — уже занятые сочетания «назначение + таблица + метрика».
 	routeKeys := map[string]string{}
 	interfaceNames := map[string]string{}
+	type gatewayKey struct {
+		address netip.Addr
+		iface   string
+		table   string
+	}
+	reachability := make(map[gatewayKey]bool)
+	gatewayConnected := func(route StaticRoute, address netip.Addr) bool {
+		key := gatewayKey{address, route.Interface, staticTableKey(route.Table)}
+		if connected, ok := reachability[key]; ok {
+			return connected
+		}
+		connected := c.staticGatewayConnected(route, address, interfaceNames)
+		reachability[key] = connected
+		return connected
+	}
 	for i, route := range c.Routing.Static {
 		path := fmt.Sprintf("routing.static[%d]", i)
 		switch route.Type {
@@ -1278,7 +1293,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 				r.errf(path+".gateway", "некорректный адрес шлюза")
 			} else if destinationFamily, ok := routeDestinationFamily(route.Destination); ok && destinationFamily != gateway.Is6() {
 				r.errf(path+".gateway", "семейство адреса шлюза должно совпадать с назначением маршрута")
-			} else if route.Enabled && !c.staticGatewayConnected(route, gateway, interfaceNames) {
+			} else if route.Enabled && !gatewayConnected(route, gateway) {
 				r.warnf(path+".gateway", "достижимость шлюза %s не подтверждается настроенными подсетями: проверьте адрес и интерфейс; без динамического или прямого маршрута ядро может отклонить применение", route.Gateway)
 			}
 		}
