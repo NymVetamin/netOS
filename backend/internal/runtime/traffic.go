@@ -226,8 +226,16 @@ func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) [
 
 func (h *TrafficHistory) pruneLocked(before time.Time) int {
 	index := sort.Search(len(h.points), func(i int) bool { return !h.points[i].At.Before(before) })
-	if index > 0 {
-		h.points = append([]TrafficPoint(nil), h.points[index:]...)
+	if index == 0 {
+		return 0
+	}
+	remaining := h.points[index:]
+	if index >= len(remaining) {
+		// After a large time jump, release the old backing array.
+		h.points = append([]TrafficPoint(nil), remaining...)
+	} else {
+		clear(h.points[:index])
+		h.points = remaining
 	}
 	return index
 }

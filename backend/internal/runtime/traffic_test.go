@@ -342,10 +342,55 @@ func TestTrafficClockRollback(t *testing.T) {
 
 func TestTrafficHistoryPrunesOldPoints(t *testing.T) {
 	now := time.Now().UTC()
-	h := &TrafficHistory{Retain: time.Hour, points: []TrafficPoint{{At: now.Add(-2 * time.Hour)}, {At: now.Add(-30 * time.Minute)}}}
-	h.pruneLocked(now.Add(-time.Hour))
-	if len(h.points) != 1 || !h.points[0].At.Equal(now.Add(-30*time.Minute)) {
-		t.Fatalf("old points were not pruned: %+v", h.points)
+	points := []TrafficPoint{
+		{At: now.Add(-time.Minute), Interfaces: map[string]TrafficRate{"expired": {}}},
+		{At: now, Interfaces: map[string]TrafficRate{"first": {}}},
+		{At: now, Interfaces: map[string]TrafficRate{"second": {}}},
+		{At: now.Add(time.Minute)},
+	}
+	h := &TrafficHistory{points: points}
+	want := append([]TrafficPoint(nil), points[1:]...)
+	if n := h.pruneLocked(now); n != 1 || !reflect.DeepEqual(h.points, want) {
+		t.Fatalf("boundary or duplicate order changed: %d, %+v", n, h.points)
+	}
+	if points[0].Interfaces != nil {
+		t.Fatal("expired interface map retained in backing array")
+	}
+	if n := h.pruneLocked(now); n != 0 {
+		t.Fatalf("repeat removed %d samples", n)
+	}
+	if n := h.pruneLocked(now.Add(time.Minute)); n != 2 || len(h.points) != 1 || !h.points[0].At.Equal(now.Add(time.Minute)) {
+		t.Fatalf("bulk prune: %d, %+v", n, h.points)
+	}
+	if n := h.pruneLocked(now.Add(time.Hour)); n != 1 || h.points != nil {
+		t.Fatalf("expired history retained: %d, %+v", n, h.points)
+	}
+}
+
+func BenchmarkTrafficRollingHistory(b *testing.B) {
+	for _, n := range []int{100, 20160} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			now := time.Unix(1800000000, 0).UTC()
+			const interval = 30 * time.Second
+			h := TrafficHistory{
+				Retain: time.Duration(n-1) * interval, points: make([]TrafficPoint, n),
+				persistenceBlocked: true,
+			}
+			for i := range h.points {
+				h.points[i].At = now.Add(time.Duration(i-n+1) * interval)
+			}
+			stats := []InterfaceStat{{Name: "lan", RXBytes: 1024}}
+			b.ReportAllocs()
+			for b.Loop() {
+				now = now.Add(interval)
+				if err := h.record(stats, now); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if len(h.points) != n || !h.points[0].At.Equal(now.Add(-h.Retain)) {
+				b.Fatal("incorrect retention window")
+			}
+		})
 	}
 }
 
