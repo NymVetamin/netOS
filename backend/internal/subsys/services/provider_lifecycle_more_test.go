@@ -694,8 +694,10 @@ func TestKeaRejectsLastUnusablePoolBeforeChangingService(t *testing.T) {
 			cfg.Networks[0].RouterAddress = "invalid"
 		}
 		r.commands = nil
-		for _, apply := range []func(context.Context, *config.Config) error{m.Kea.Apply, m.preflightDHCP} {
-			if err := apply(ctx, cfg); err == nil || !strings.Contains(err.Error(), "нет включённых пулов") {
+		applyErr := m.Kea.Apply(ctx, cfg)
+		_, preflightErr := m.preflightDHCP(ctx, cfg)
+		for _, err := range []error{applyErr, preflightErr} {
+			if err == nil || !strings.Contains(err.Error(), "нет включённых пулов") {
 				t.Fatalf("%s: expected a pool error, got %v", reason, err)
 			}
 		}
@@ -712,5 +714,28 @@ func TestKeaRejectsLastUnusablePoolBeforeChangingService(t *testing.T) {
 	cfg.Networks[0] = network
 	if err := m.Kea.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestKeaValidatesOncePerDHCPApply(t *testing.T) {
+	useProviderPaths(t)
+	r := newProviderRunner()
+	m := NewManager(r)
+	cfg := providerTestConfig()
+	cfg.DHCP.Provider = "kea"
+	cfg.DNS.Enabled = false
+	for _, domain := range []string{"first.example", "second.example", "second.example"} {
+		cfg.Networks[0].DHCPPool.Domain = domain
+		r.commands = nil
+		if err := NewDHCP(m).Apply(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Count(strings.Join(r.commands, "\n"), "kea-dhcp4 -t "); got != 1 {
+			t.Fatalf("expected one candidate check, got %d", got)
+		}
+		data, err := os.ReadFile(keaConfPath)
+		if err != nil || string(data) != m.Kea.Render(cfg) {
+			t.Fatalf("active config differs after %s: %v", domain, err)
+		}
 	}
 }

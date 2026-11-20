@@ -138,14 +138,14 @@ func blocklistNeededForDnsmasq(cfg *config.Config) bool {
 	return hasEnabledBlocklists(cfg) && cfg.DNS.Enabled && cfg.DNS.Provider == "dnsmasq"
 }
 
-func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
+func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) ([]byte, error) {
 	if !cfg.DHCP.Enabled {
-		return nil
+		return nil, nil
 	}
 	switch cfg.DHCP.Provider {
 	case "dnsmasq":
 		content := []byte(m.Dnsmasq.Render(cfg))
-		return validateManagedContent(dnsmasqConfPath, content, 0o644, func(path string) error {
+		return nil, validateManagedContent(dnsmasqConfPath, content, 0o644, func(path string) error {
 			if _, err := m.Dnsmasq.Runner.Run(ctx, "dnsmasq", "--test", "--conf-file="+path); err != nil {
 				return fmt.Errorf("проверка конфигурации dnsmasq: %w", err)
 			}
@@ -153,13 +153,13 @@ func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
 		})
 	case "isc-dhcp-server":
 		if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, m.ISC.Runner.Run); err != nil {
-			return err
+			return nil, err
 		}
 		if len(m.ISC.interfaces(cfg)) == 0 {
-			return fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")
+			return nil, fmt.Errorf("ISC DHCP: нет включённых пулов на доступных интерфейсах")
 		}
 		content := []byte(m.ISC.Render(cfg))
-		return validateManagedContent(iscConfPath, content, 0o644, func(path string) error {
+		return nil, validateManagedContent(iscConfPath, content, 0o644, func(path string) error {
 			lease, err := os.CreateTemp(filepath.Dir(path), ".netos-dhcpd-leases-*")
 			if err != nil {
 				return err
@@ -173,22 +173,9 @@ func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
 			return nil
 		})
 	case "kea":
-		rendered, err := m.Kea.render(cfg, true)
-		if err != nil {
-			return err
-		}
-		if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, m.Kea.Runner.Run); err != nil {
-			return err
-		}
-		content := []byte(rendered)
-		return validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
-			if _, err := m.Kea.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {
-				return fmt.Errorf("проверка конфигурации Kea DHCP: %w", err)
-			}
-			return nil
-		})
+		return m.Kea.prepare(ctx, cfg)
 	}
-	return nil
+	return nil, nil
 }
 
 func (m *Manager) preflightDNS(ctx context.Context, cfg *config.Config) error {
@@ -365,7 +352,8 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 			}
 		}()
 	}
-	if err := s.M.preflightDHCP(ctx, cfg); err != nil {
+	keaContent, err := s.M.preflightDHCP(ctx, cfg)
+	if err != nil {
 		return err
 	}
 	if err := s.M.stopUnused(ctx, cfg); err != nil {
@@ -391,6 +379,9 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	case "isc-dhcp-server":
 		return s.M.ISC.Apply(ctx, cfg)
 	case "kea":
+		if keaContent != nil {
+			return s.M.Kea.applyValidated(ctx, keaContent)
+		}
 		return s.M.Kea.Apply(ctx, cfg)
 	}
 	// Во всех остальных случаях решение принимает сам dnsmasq: он знает, нужен

@@ -172,12 +172,20 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		return removeGenerated(keaConfPath)
 	}
-	rendered, err := d.render(cfg, true)
+	content, err := d.prepare(ctx, cfg)
 	if err != nil {
 		return err
 	}
+	return d.applyValidated(ctx, content)
+}
+
+func (d *KeaDHCP) prepare(ctx context.Context, cfg *config.Config) ([]byte, error) {
+	rendered, err := d.render(cfg, true)
+	if err != nil {
+		return nil, err
+	}
 	if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, d.Runner.Run); err != nil {
-		return err
+		return nil, err
 	}
 	content := []byte(rendered)
 	if err := validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
@@ -186,8 +194,12 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		return nil
 	}); err != nil {
-		return err
+		return nil, err
 	}
+	return content, nil
+}
+
+func (d *KeaDHCP) applyValidated(ctx context.Context, content []byte) error {
 	changed, err := writeManagedFile(keaConfPath, content, 0o644)
 	if err != nil {
 		return err
