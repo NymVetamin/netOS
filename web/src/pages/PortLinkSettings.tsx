@@ -12,7 +12,7 @@ function modeTitle(mode:string):string {
  const match=mode.match(/^(\d+)base[^/]+\/(Full|Half)$/);
  if(!match)return mode;
  const speed=Number(match[1]);
- return `${speed>=1000 ? `${speed/1000} Гбит/с` : `${speed} Мбит/с`} · ${match[2]==="Full"?"полный дуплекс":"полудуплекс"}`;
+ return `${speed>=1000 ? `${speed/1000} Гбит/с` : `${speed} Мбит/с`} · ${match[2]==="Full"?"полный дуплекс":"полудуплекс"} (${mode})`;
 }
 export function PortLinkSettings({iface,onChange}:{iface:any;onChange:(v:string)=>void}){
  const [data,setData]=useState<any>(null),[error,setError]=useState(""),[loading,setLoading]=useState(false);

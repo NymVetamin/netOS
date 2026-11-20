@@ -21,7 +21,7 @@ async def main():
     body={'config':state['cfg'],'dirty':False,'draft_version':1,'problems':[]}
    elif path=='/api/session':body={'username':'admin','role':'admin','csrf_token':'qa'}
    elif path=='/api/interfaces':body={'interfaces':interfaces}
-   elif path=='/api/interfaces/eth0/modes':body={'supported':['100baseT/Full','1000baseT/Full'],'advertised':['100baseT/Full','1000baseT/Full'],'can_autoneg':True,'autoneg':True}
+   elif path=='/api/interfaces/eth0/modes':body={'supported':['100baseT/Full','1000baseT/Full','1000baseX/Full'],'advertised':['1000baseT/Full','1000baseX/Full'],'can_autoneg':True,'autoneg':True}
    elif path=='/api/status':body={'interfaces':interfaces,'channels':[],'uptime_seconds':1}
    elif path.endswith('/clients') or path=='/api/render':body=[]
    await r.fulfill(json=body)
@@ -33,13 +33,16 @@ async def main():
   await page.get_by_role('button',name='Проверить режимы порта',exact=True).click()
   mode=page.get_by_label('Режим порта eth0',exact=True)
   await expect(mode).to_be_enabled()
-  await mode.select_option('100baseT/Full')
-  await expect(mode).to_have_value('100baseT/Full')
+  copper=await mode.locator('option[value="1000baseT/Full"]').inner_text()
+  fiber=await mode.locator('option[value="1000baseX/Full"]').inner_text()
+  assert copper != fiber,(copper,fiber)
+  await mode.select_option(label=fiber)
+  await expect(mode).to_have_value('1000baseX/Full')
   for _ in range(50):
-   if state['cfg']['interfaces'][0].get('link_mode')=='100baseT/Full':break
+   if state['cfg']['interfaces'][0].get('link_mode')=='1000baseX/Full':break
    await asyncio.sleep(.1)
   assert state['cfg']['interfaces'][0]['label']=='Кабинет'
-  assert state['cfg']['interfaces'][0]['link_mode']=='100baseT/Full'
+  assert state['cfg']['interfaces'][0]['link_mode']=='1000baseX/Full'
   assert state['cfg']['interfaces'][0]['name']=='eth0' and state['cfg']['interfaces'][0]['id']=='port1'
   await page.locator('summary.xsum').filter(has_text='br-lan').click()
   await page.get_by_label('Имя порта br-lan',exact=True).fill('Офис')
@@ -49,7 +52,7 @@ async def main():
   await expect(page.locator('summary.xsum').filter(has_text='Кабинет')).to_be_visible()
   await expect(page.locator('summary.xsum').filter(has_text='Офис')).to_be_visible()
   await page.locator('summary.xsum').filter(has_text='Кабинет').click()
-  await expect(page.get_by_label('Режим порта eth0',exact=True)).to_have_value('100baseT/Full')
+  await expect(page.get_by_label('Режим порта eth0',exact=True)).to_have_value('1000baseX/Full')
   Path('output/playwright').mkdir(parents=True,exist_ok=True)
   await page.screenshot(path='output/playwright/port-links-network.png',full_page=True)
   await page.goto('https://netos-ui.test/#dashboard')
