@@ -6,7 +6,21 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
+	"strconv"
 )
+
+var torchIPProtocolNames = func() [256]string {
+	names := [256]string{
+		1: "ICMP", 6: "TCP", 17: "UDP", 47: "GRE", 50: "ESP",
+		58: "ICMPv6", 89: "OSPF", 132: "SCTP",
+	}
+	for number, name := range names {
+		if name == "" {
+			names[number] = "IP " + strconv.Itoa(number)
+		}
+	}
+	return names
+}()
 
 type torchFlow struct {
 	Source          string  `json:"source"`
@@ -148,23 +162,9 @@ func (t *torchReader) packet(p []byte, wire uint32) {
 	f := t.flows[k]
 	if f == nil {
 
-		protocol := "IP"
+		protocol := torchIPProtocolNames[k.protocol]
 		if k.family == 0x806 {
 			protocol = "ARP"
-		}
-		switch k.protocol {
-		case 6:
-			protocol = "TCP"
-		case 17:
-			protocol = "UDP"
-		case 1:
-			protocol = "ICMP"
-		case 58:
-			protocol = "ICMPv6"
-		case 47:
-			protocol = "GRE"
-		case 50:
-			protocol = "ESP"
 		}
 		f = &torchFlow{Source: k.source.String(), Destination: k.destination.String(), Protocol: protocol, SourcePort: k.sourcePort, DestinationPort: k.destinationPort}
 		t.flows[k] = f

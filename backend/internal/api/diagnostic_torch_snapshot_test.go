@@ -54,6 +54,45 @@ func snapshotFixture(n int) *torchReader {
 	return t
 }
 
+func TestTorchDistinctIPProtocolsAcrossPages(t *testing.T) {
+	r := newTorchReader()
+	r.link = 101
+	packet := make([]byte, 20)
+	packet[0] = 0x45
+	for source := byte(1); source <= 2; source++ {
+		packet[15] = source
+		for protocol := 0; protocol < 256; protocol++ {
+			packet[9] = byte(protocol)
+			r.packet(packet, 60)
+			r.packet(packet, 60)
+		}
+	}
+	full := r.snapshot(2)["flows"].([]torchFlow)
+	if len(full) != 512 {
+		t.Fatalf("got %d flows", len(full))
+	}
+	seen := make(map[string]bool)
+	for _, row := range full[:256] {
+		if seen[row.Protocol] || row.Packets != 2 || row.Bytes != 120 || row.Bitrate != 480 {
+			t.Fatalf("duplicate label or incorrect counters: %+v", row)
+		}
+		seen[row.Protocol] = true
+	}
+	for _, name := range []string{"TCP", "UDP", "ICMP", "ICMPv6", "ESP", "GRE", "OSPF", "SCTP", "IP 253"} {
+		if !seen[name] {
+			t.Errorf("missing protocol %q", name)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		for start := 0; start < len(full); start += 100 {
+			page := r.snapshot(2, start/100)["flows"].([]torchFlow)
+			if !reflect.DeepEqual(page, full[start:min(start+100, len(full))]) {
+				t.Fatalf("page %d differs from full snapshot", start/100)
+			}
+		}
+	}
+}
+
 func TestTorchSnapshotPagesEquivalent(t *testing.T) {
 	for _, n := range []int{0, 1, 25, 100, 401, 1000, 10000} {
 		r := snapshotFixture(n)
