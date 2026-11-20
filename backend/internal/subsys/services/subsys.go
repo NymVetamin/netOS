@@ -173,10 +173,14 @@ func (m *Manager) preflightDHCP(ctx context.Context, cfg *config.Config) error {
 			return nil
 		})
 	case "kea":
+		rendered, err := m.Kea.render(cfg, true)
+		if err != nil {
+			return err
+		}
 		if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, m.Kea.Runner.Run); err != nil {
 			return err
 		}
-		content := []byte(m.Kea.Render(cfg))
+		content := []byte(rendered)
 		return validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
 			if _, err := m.Kea.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {
 				return fmt.Errorf("проверка конфигурации Kea DHCP: %w", err)

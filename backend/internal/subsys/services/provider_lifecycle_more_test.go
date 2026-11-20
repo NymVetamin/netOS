@@ -670,3 +670,47 @@ func TestKeaApplyCreatesLeaseDirectory(t *testing.T) {
 		t.Fatal("путь базы аренд не каталог")
 	}
 }
+
+func TestKeaRejectsLastUnusablePoolBeforeChangingService(t *testing.T) {
+	useProviderPaths(t)
+	ctx := context.Background()
+	r := newProviderRunner()
+	m := NewManager(r)
+	cfg := providerTestConfig()
+	cfg.DHCP.Provider = "kea"
+	if err := m.Kea.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	original := m.Kea.Render(cfg)
+	network := cfg.Networks[0]
+	for _, reason := range []string{"disabled", "unknown interface", "invalid prefix"} {
+		cfg.Networks[0] = network
+		switch reason {
+		case "disabled":
+			cfg.Networks[0].DHCPPool.Enabled = false
+		case "unknown interface":
+			cfg.Networks[0].Interface = "absent"
+		case "invalid prefix":
+			cfg.Networks[0].RouterAddress = "invalid"
+		}
+		r.commands = nil
+		for _, apply := range []func(context.Context, *config.Config) error{m.Kea.Apply, m.preflightDHCP} {
+			if err := apply(ctx, cfg); err == nil || !strings.Contains(err.Error(), "нет включённых пулов") {
+				t.Fatalf("%s: expected a pool error, got %v", reason, err)
+			}
+		}
+		if len(r.commands) != 0 || !r.active[keaUnit] {
+			t.Fatalf("%s: changed service: %v", reason, r.commands)
+		}
+		if data, err := os.ReadFile(keaConfPath); err != nil || string(data) != original {
+			t.Fatalf("%s: changed active configuration: %v", reason, err)
+		}
+		if !strings.Contains(m.Kea.Render(cfg), `"subnet4": []`) {
+			t.Fatalf("%s: expected empty subnet array", reason)
+		}
+	}
+	cfg.Networks[0] = network
+	if err := m.Kea.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -35,13 +35,18 @@ func (d *KeaDHCP) Needed(cfg *config.Config) bool {
 }
 
 func (d *KeaDHCP) Render(cfg *config.Config) string {
+	content, _ := d.render(cfg, false)
+	return content
+}
+
+func (d *KeaDHCP) render(cfg *config.Config, requirePools bool) (string, error) {
 	byID := map[string]string{}
 	for _, i := range cfg.Interfaces {
 		byID[i.ID] = i.Name
 	}
 	ifacesSet := map[string]bool{}
 	privateOptions := map[int]bool{}
-	var subnets []any
+	subnets := []any{}
 	subnetID := map[string]int{}
 	for _, n := range cfg.Networks {
 		if !n.Enabled || !n.DHCPPool.Enabled {
@@ -87,6 +92,9 @@ func (d *KeaDHCP) Render(cfg *config.Config) string {
 		id := len(subnets) + 1
 		subnetID[n.ID] = id
 		subnets = append(subnets, map[string]any{"id": id, "subnet": prefix.Masked().String(), "interface": iface, "valid-lifetime": p.LeaseTime, "pools": []any{map[string]any{"pool": p.Start + " - " + p.End}}, "option-data": options, "reservations": []any{}})
+	}
+	if requirePools && len(subnets) == 0 {
+		return "", fmt.Errorf("Kea DHCP: нет включённых пулов на доступных интерфейсах")
 	}
 	blocked := map[string]bool{}
 	for _, cl := range cfg.Clients {
@@ -145,7 +153,7 @@ func (d *KeaDHCP) Render(cfg *config.Config) string {
 	dhcp4 := map[string]any{"interfaces-config": interfaces, "authoritative": true, "early-global-reservations-lookup": true, "reservations-global": true, "reservations": globalReservations, "lease-database": map[string]any{"type": "memfile", "persist": true, "name": keaLeasePath, "lfc-interval": 3600}, "option-def": optionDefs, "subnet4": subnets}
 	root := map[string]any{"Dhcp4": dhcp4}
 	data, _ := json.MarshalIndent(root, "", "  ")
-	return string(data) + "\n"
+	return string(data) + "\n", nil
 }
 func joinComma(v []string) string {
 	out := ""
@@ -164,18 +172,14 @@ func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 		return removeGenerated(keaConfPath)
 	}
-	var root map[string]any
-	if err := json.Unmarshal([]byte(d.Render(cfg)), &root); err != nil {
-		return fmt.Errorf("генерация конфигурации Kea: %w", err)
-	}
-	dhcp4 := root["Dhcp4"].(map[string]any)
-	if len(dhcp4["subnet4"].([]any)) == 0 {
-		return fmt.Errorf("Kea DHCP: нет включённых пулов на доступных интерфейсах")
+	rendered, err := d.render(cfg, true)
+	if err != nil {
+		return err
 	}
 	if err := ensureDHCPArmor(ctx, cfg.DHCP.Provider, d.Runner.Run); err != nil {
 		return err
 	}
-	content := []byte(d.Render(cfg))
+	content := []byte(rendered)
 	if err := validateManagedContent(keaConfPath, content, 0o644, func(path string) error {
 		if _, err := d.Runner.Run(ctx, "kea-dhcp4", "-t", path); err != nil {
 			return fmt.Errorf("проверка конфигурации Kea DHCP: %w", err)
