@@ -51,6 +51,39 @@ rollback() (
 if rollback > "$root/first.log" 2>&1; then exit 1; fi
 grep -F "$INSTALL_TXN" "$root/first.log" >/dev/null
 cmp "$CONF_DIR" "$INSTALL_TXN/conf-dir"
+
+# A writer can finish a save while systemd is stopping the old daemon.
+# That save must be visible in the snapshot restored after a failed upgrade.
+(
+    mkdir -p "$root/cutover"/{txn,data} "$root/etc/apt/apt.conf.d"
+    INSTALL_TXN="$root/cutover/txn"
+    STATE_DIR="$root/cutover/data"
+    active=active
+    PREVIOUS_ACTIVE=0
+    systemctl() {
+        case "$1" in
+            show) echo "$active" ;;
+            stop) echo acknowledged > "$STATE_DIR/revision"; active=inactive ;;
+            is-enabled) return 1 ;;
+        esac
+    }
+    source <(sed -n '/^snapshot_path() {/,/^}/p' "$installer")
+    source <(sed -n '/^systemctl is-enabled --quiet netosd/,/^snapshot_path "\$STATE_DIR" state-dir$/p' "$installer")
+    [[ $active == inactive && $PREVIOUS_ACTIVE == 1 && $ROLLBACK_ARMED == stopping ]]
+    [[ $(cat "$INSTALL_TXN/state-dir/revision") == acknowledged ]]
+    rm -rf "$INSTALL_TXN/state-dir"
+    echo partial > "$INSTALL_TXN/state-dir"
+    echo original > "$INSTALL_TXN/aptconf"
+    systemctl() {
+        if [[ $1 == is-active ]]; then return 3; fi
+        echo "$1" >> "$root/cutover/calls"
+    }
+    wait_netosd_ready() { return 0; }
+    if rollback > "$root/cutover/log"; then exit 1; fi
+    [[ $(cat "$STATE_DIR/revision") == acknowledged ]]
+    [[ $(cat "$root/cutover/calls") == start ]]
+    [[ ! -e "$INSTALL_TXN" ]]
+)
 [[ $(cat "$INSTALL_TXN/binary") == previous ]]
 rm "$root/bin"
 mkdir "$root/bin"

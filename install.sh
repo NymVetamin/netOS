@@ -166,7 +166,7 @@ rollback_and_cleanup() {
     set +e
     if [ -n "$SRC" ] && [ "$SRC" != "/" ]; then rm -rf -- "$SRC"; fi
     if [ -n "$TMP" ]; then rm -f -- "$TMP" "$TMP.sha256"; fi
-    if [ "$status" -ne 0 ] && [ "$ROLLBACK_ARMED" = apt ]; then
+    if [ "$status" -ne 0 ] && { [ "$ROLLBACK_ARMED" = apt ] || [ "$ROLLBACK_ARMED" = stopping ]; }; then
         restore_path /etc/apt/apt.conf.d/99netos aptconf
     elif [ "$status" -ne 0 ] && [ "$ROLLBACK_ARMED" = "1" ]; then
         warn "установка оборвалась — возвращаю исходные файлы и состояние службы"
@@ -194,7 +194,12 @@ rollback_and_cleanup() {
                 fi
             fi
         fi
-        systemctl stop netosd >/dev/null 2>&1
+        if ! systemctl stop netosd >/dev/null 2>&1; then
+            case "$(systemctl show netosd --property=ActiveState --value)" in
+                inactive|failed) ;;
+                *) warn "остановка netosd не подтверждена; снимок для восстановления сохранён в $INSTALL_TXN"; exit "$status" ;;
+            esac
+        fi
         restore_path "$BIN_PATH" binary
         restore_path "$CLI_PATH" cli
         restore_path /etc/systemd/system/netosd.service unit
@@ -214,6 +219,11 @@ rollback_and_cleanup() {
             systemctl disable netosd >/dev/null 2>&1
         fi
         rm -f /run/netosd.ready
+    fi
+    if [ "$status" -ne 0 ] && { [ "$ROLLBACK_ARMED" = stopping ] || [ "$ROLLBACK_ARMED" = 1 ]; }; then
+        if [ "$ROLLBACK_ARMED" = stopping ] && [ "$PREVIOUS_ACTIVE" = 1 ] && ! systemctl is-active --quiet netosd; then
+            rm -f /run/netosd.ready
+        fi
         if [ "$PREVIOUS_ACTIVE" = "1" ] && systemctl start netosd >/dev/null 2>&1 && wait_netosd_ready 360; then
             warn "служба netosd запущена и готова"
         elif [ "$PREVIOUS_ACTIVE" = "1" ]; then
@@ -268,12 +278,6 @@ if [ "$NIC_COUNT" -lt 2 ]; then
     warn "для автоматической настройки локального сегмента нужен свободный проводной интерфейс"
 fi
 
-if [ -x "$BIN_PATH" ] || [ -s "$STATE_DIR/netos.db" ]; then
-    warn "netOS уже установлен — будет обновлён, конфигурация сохранится"
-    UPGRADE=1
-else
-    UPGRADE=0
-fi
 if [ ! -s "$STATE_DIR/netos.db" ]; then
     # A fresh bootstrap can only configure the WAN directly. Check before apt,
     # snapshots or systemd changes, while the administrator still has access.
@@ -302,6 +306,17 @@ fi
 # Пока готовится бинарник, из файлов для отката меняется только политика apt.
 # Работающий демон в это время продолжает принимать настройки.
 INSTALL_TXN=$(mktemp -d)
+exec 9>/run/netos-install.lock
+flock -n 9 || die "другая установка netOS уже выполняется"
+# Bash keeps the original descriptor until this group finishes. Descendants
+# (including package scripts) cannot retain the lock after the installer exits.
+{
+if [ -x "$BIN_PATH" ] || [ -s "$STATE_DIR/netos.db" ]; then
+    warn "netOS уже установлен — будет обновлён, конфигурация сохранится"
+    UPGRADE=1
+else
+    UPGRADE=0
+fi
 snapshot_path /etc/apt/apt.conf.d/99netos aptconf
 ROLLBACK_ARMED=apt
 
@@ -510,12 +525,25 @@ snapshot_path "$CLI_PATH" cli
 snapshot_path /etc/systemd/system/netosd.service unit
 snapshot_path /etc/bash_completion.d/netos completion
 snapshot_path /usr/share/bash-completion/completions/netos completion-lazy
+systemctl is-enabled --quiet netosd && PREVIOUS_ENABLED=1 || true
+if [ "$UPGRADE" = 1 ]; then
+    active_state=$(systemctl show netosd --property=ActiveState --value) || die "не удалось определить состояние netosd"
+    case "$active_state" in
+        active|activating|reloading|refreshing) PREVIOUS_ACTIVE=1 ;;
+        inactive|failed|deactivating) ;;
+        *) die "неизвестное состояние netosd: $active_state" ;;
+    esac
+    if [ "$PREVIOUS_ACTIVE" = 1 ] || [ "$active_state" = deactivating ]; then
+        ROLLBACK_ARMED=stopping
+        systemctl stop netosd || die "не удалось остановить netosd перед копированием состояния"
+    fi
+else
+    systemctl is-active --quiet netosd && PREVIOUS_ACTIVE=1 || true
+fi
 snapshot_path "$STATE_DIR" state-dir
 snapshot_path "$CONF_DIR" conf-dir
 snapshot_path "$LOG_DIR" log-dir
 snapshot_path "$BASELINE_DIR" baseline-dir
-systemctl is-active --quiet netosd && PREVIOUS_ACTIVE=1 || true
-systemctl is-enabled --quiet netosd && PREVIOUS_ENABLED=1 || true
 ROLLBACK_ARMED=1
 
 install -d -m 0700 "$STATE_DIR"
@@ -687,3 +715,4 @@ info "Обновление:   sudo netos update"
 info "Состояние:    netos status"
 info "Журнал:       netos logs -f"
 echo
+} 9>&-
