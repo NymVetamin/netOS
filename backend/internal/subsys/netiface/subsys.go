@@ -798,6 +798,7 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 		}
 		wanMTU[w.Interface] = w.MTU
 	}
+	var enabled map[string]bool
 	for _, iface := range cfg.Interfaces {
 		if !linkExists(iface.Name) {
 			if iface.Type == "physical" {
@@ -813,7 +814,10 @@ func (s *Interfaces) Health(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("проверка интерфейса %s: %w", iface.Name, err)
 		}
 		up, mtu, mac := parseLinkState(out)
-		expectedUp := cfg.InterfaceEnabled(iface.ID)
+		if enabled == nil {
+			enabled = cfg.InterfaceStates()
+		}
+		expectedUp := enabled[iface.ID]
 		if up != expectedUp {
 			want := "down"
 			if expectedUp {

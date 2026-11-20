@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -312,6 +313,64 @@ func TestWANHealthChecksDHCPAndL2TPUnits(t *testing.T) {
 	cfg.WANs[0] = config.WAN{ID: "wan", Name: "L2TP", Interface: "wan-if", Enabled: true, Proto: "l2tp", Underlay: "static", Address: "192.0.2.2/24", Metric: 10}
 	if err := NewWAN(runner).Health(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "L2TP") {
 		t.Fatalf("inactive L2TP unit passed health: %v", err)
+	}
+}
+
+func BenchmarkPhysicalInterfaceHealth(b *testing.B) {
+	for _, count := range []int{8, 1024} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			original := sysClassNet
+			sysClassNet = b.TempDir()
+			b.Cleanup(func() { sysClassNet = original })
+			cfg := config.Default()
+			cfg.Interfaces = nil
+			for i := 0; i < count; i++ {
+				name := fmt.Sprintf("eth%d", i)
+				if err := os.Mkdir(filepath.Join(sysClassNet, name), 0700); err != nil {
+					b.Fatal(err)
+				}
+				cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: name, Name: name, Type: "physical", Enabled: true})
+			}
+			calls := 0
+			s := Interfaces{Runner: netifaceRunnerFunc(func(context.Context, string, ...string) (string, error) {
+				calls++
+				return "1: eth: <UP> mtu 1500", nil
+			})}
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := s.Health(context.Background(), cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if calls != b.N*count {
+				b.Fatalf("%d commands, expected %d", calls, b.N*count)
+			}
+		})
+	}
+}
+
+func TestInterfaceHealthRefreshesVLANParentState(t *testing.T) {
+	newFakeNet(t, "eth0", "eth0.7:vlan:7:eth0")
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{
+		{ID: "vlan", Name: "eth0.7", Type: "vlan", VLANID: 7, Parent: "parent", Enabled: true},
+		{ID: "parent", Name: "eth0", Type: "physical"},
+	}
+	output := "<BROADCAST>"
+	s := Interfaces{Runner: netifaceRunnerFunc(func(context.Context, string, ...string) (string, error) {
+		return output, nil
+	})}
+	ctx := context.Background()
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Interfaces[1].Enabled = true
+	if err := s.Health(ctx, cfg); err == nil || !strings.Contains(err.Error(), "eth0.7") {
+		t.Fatalf("expected VLAN state mismatch after enabling parent: %v", err)
+	}
+	output = "<BROADCAST,UP>"
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 
