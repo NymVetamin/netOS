@@ -107,13 +107,17 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	wanted := map[string]config.WiFiRadio{}
 	radios := enabledRadios(cfg)
+	var bridges map[string]networkBridge
+	if len(radios) > 0 {
+		bridges = radioBridges(cfg)
+	}
 	ownedIDs := map[string]ownedRadio{}
 	for _, item := range owned {
 		ownedIDs[item.ID] = item
 	}
 	for _, radio := range radios {
 		wanted[radio.ID] = radio
-		if _, err := RenderRadio(radio, cfg); err != nil {
+		if _, err := renderRadio(radio, bridges); err != nil {
 			return fmt.Errorf("радио %s: %w", radio.Device, err)
 		}
 		confPath, unitPath := s.paths(radio)
@@ -136,7 +140,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	powerLimits := &radioPowerLimits{}
 	for _, radio := range radios {
 		next = append(next, ownedRadio{ID: radio.ID, Unit: unitName(radio)})
-		if err := s.applyRadio(ctx, cfg, radio, powerLimits); err != nil {
+		if err := s.applyRadio(ctx, bridges, radio, powerLimits); err != nil {
 			return s.cleanupNewRadios(ctx, next, owned, ownedIDs, fmt.Errorf("радио %s: %w", radio.Device, err))
 		}
 	}
@@ -170,13 +174,13 @@ func (s *Subsystem) cleanupNewRadios(ctx context.Context, attempted, owned []own
 	return errors.Join(failures...)
 }
 
-func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio config.WiFiRadio, powerLimits *radioPowerLimits) error {
+func (s *Subsystem) applyRadio(ctx context.Context, bridges map[string]networkBridge, radio config.WiFiRadio, powerLimits *radioPowerLimits) error {
 	confPath, unitPath := s.paths(radio)
-	conf, err := RenderRadio(radio, cfg)
+	conf, err := renderRadio(radio, bridges)
 	if err != nil {
 		return err
 	}
-	unit := []byte(renderUnit(radio, confPath, cfg))
+	unit := []byte(renderUnit(radio, confPath, bridges))
 	confReady := wifiFileReady(confPath, conf, 0o600)
 	unitReady := wifiFileReady(unitPath, unit, 0o644)
 	changed := !confReady || !unitReady
@@ -190,7 +194,7 @@ func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio co
 			return err
 		}
 	}
-	apReady, info := s.radioRuntimeMatches(ctx, cfg, radio)
+	apReady, info := s.radioRuntimeMatches(ctx, bridges, radio)
 	powerTarget := radioPowerTarget(info, radio.Device)
 	switch {
 	case radio.TxPower > 0 && !txPowerMatches(info, radio.TxPower):
@@ -268,6 +272,10 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 
 func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int) error {
 	radios := enabledRadios(cfg)
+	var bridges map[string]networkBridge
+	if len(radios) > 0 {
+		bridges = radioBridges(cfg)
+	}
 	owned, err := s.readOwned()
 	if err != nil {
 		return err
@@ -282,11 +290,11 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 	powerLimits := &radioPowerLimits{}
 	for _, radio := range radios {
 		confPath, unitPath := s.paths(radio)
-		conf, err := RenderRadio(radio, cfg)
+		conf, err := renderRadio(radio, bridges)
 		if err != nil {
 			return err
 		}
-		unit := []byte(renderUnit(radio, confPath, cfg))
+		unit := []byte(renderUnit(radio, confPath, bridges))
 		if !wifiFileReady(confPath, conf, 0o600) || !wifiFileReady(unitPath, unit, 0o644) {
 			return fmt.Errorf("артефакты hostapd для %s не соответствуют конфигурации", radio.Device)
 		}
@@ -307,7 +315,7 @@ func (s *Subsystem) health(ctx context.Context, cfg *config.Config, attempts int
 				return err
 			}
 			active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName(radio))
-			allReady, primaryInfo := s.radioRuntimeMatches(ctx, cfg, radio)
+			allReady, primaryInfo := s.radioRuntimeMatches(ctx, bridges, radio)
 			allReady = strings.TrimSpace(active) == "active" && allReady && s.bridgePortsForwarding(radio) && (radio.TxPower == 0 || txPowerMatches(primaryInfo, radio.TxPower))
 			if powerLimit >= 0 {
 				allReady = allReady && txPowerWithinLimit(primaryInfo, powerLimit)
@@ -412,7 +420,7 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-func (s *Subsystem) radioRuntimeMatches(ctx context.Context, cfg *config.Config, radio config.WiFiRadio) (bool, string) {
+func (s *Subsystem) radioRuntimeMatches(ctx context.Context, bridges map[string]networkBridge, radio config.WiFiRadio) (bool, string) {
 	allReady := true
 	primaryInfo := ""
 	bssIndex := 0
@@ -438,28 +446,12 @@ func (s *Subsystem) radioRuntimeMatches(ctx context.Context, cfg *config.Config,
 		// клиент подключается к SSID, но не видит ни шлюза, ни соседей.
 		// Проверять состояние радио и не проверять мост означало считать
 		// такую сеть исправной, а её надо поднимать заново.
-		if bridge := bridgeFor(cfg, ssid); bridge != "" && linkExists(device) && masterOf(device) != bridge {
+		if bridge := bridges[ssid.Network].active; bridge != "" && linkExists(device) && masterOf(device) != bridge {
 			allReady = false
 		}
 		bssIndex++
 	}
 	return allReady && bssIndex > 0, primaryInfo
-}
-
-// bridgeFor — интерфейс сегмента, в который hostapd обязан включить сеть.
-func bridgeFor(cfg *config.Config, ssid config.WiFiSSID) string {
-	if cfg == nil {
-		return ""
-	}
-	for _, network := range cfg.Networks {
-		if network.ID == ssid.Network {
-			if !network.Enabled {
-				return ""
-			}
-			return cfg.InterfaceName(network.Interface)
-		}
-	}
-	return ""
 }
 
 // linkExists сообщает, есть ли устройство в системе. Проверять членство в

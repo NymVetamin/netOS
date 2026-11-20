@@ -3,6 +3,7 @@ package wifi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,38 @@ type transientWiFiRunner struct {
 	base      *fakeRunner
 	device    string
 	remaining int
+}
+
+func BenchmarkRadioBridgeHealth(b *testing.B) {
+	for _, n := range []int{8, 1024} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := wifiConfig()
+			cfg.WiFi[0].SSIDs = nil
+			for i := 0; i < n; i++ {
+				id := fmt.Sprintf("bridge%d", i)
+				cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: id, Name: id})
+				cfg.Networks = append(cfg.Networks, config.Network{ID: id, Interface: id, Enabled: true})
+				cfg.WiFi[0].SSIDs = append(cfg.WiFi[0].SSIDs, config.WiFiSSID{SSID: id, Network: id, Enabled: true, Security: "open"})
+			}
+			runner := &fakeRunner{}
+			s := New(runner, b.TempDir())
+			s.UnitDir = b.TempDir()
+			ctx := context.Background()
+			if err := s.Apply(ctx, cfg); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				runner.commands = runner.commands[:0]
+				if err := s.health(ctx, cfg, 1); err == nil || !strings.Contains(err.Error(), "hostapd") {
+					b.Fatalf("expected inactive BSS: %v", err)
+				}
+				if len(runner.commands) != n+2 {
+					b.Fatalf("unexpected command count: %d", len(runner.commands))
+				}
+			}
+		})
+	}
 }
 
 func (r *transientWiFiRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -358,7 +391,7 @@ func TestEveryApplyRadioCommandFailureIsReturned(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			runner := &fakeRunner{errors: map[string]error{command: errors.New("injected")}}
 			s := testWiFiSubsystem(t, runner)
-			err := s.applyRadio(context.Background(), cfg, radio, &radioPowerLimits{})
+			err := s.applyRadio(context.Background(), radioBridges(cfg), radio, &radioPowerLimits{})
 			if err == nil || !strings.Contains(err.Error(), "injected") {
 				t.Fatalf("error=%v", err)
 			}
@@ -377,7 +410,7 @@ func TestApplyRadioFileWriteFailuresAreReturned(t *testing.T) {
 		}
 		s := New(&fakeRunner{}, filepath.Join(blocker, "state"))
 		s.UnitDir = filepath.Join(root, "units")
-		if err := s.applyRadio(context.Background(), cfg, radio, &radioPowerLimits{}); err == nil {
+		if err := s.applyRadio(context.Background(), radioBridges(cfg), radio, &radioPowerLimits{}); err == nil {
 			t.Fatal("config write error ignored")
 		}
 	})
@@ -389,7 +422,7 @@ func TestApplyRadioFileWriteFailuresAreReturned(t *testing.T) {
 		}
 		s := New(&fakeRunner{}, filepath.Join(root, "state"))
 		s.UnitDir = filepath.Join(unitBlocker, "units")
-		if err := s.applyRadio(context.Background(), cfg, radio, &radioPowerLimits{}); err == nil {
+		if err := s.applyRadio(context.Background(), radioBridges(cfg), radio, &radioPowerLimits{}); err == nil {
 			t.Fatal("unit write error ignored")
 		}
 	})
@@ -456,7 +489,7 @@ func TestRadioRuntimeSkipsDisabledSSID(t *testing.T) {
 	s := testWiFiSubsystem(t, runner)
 	radio := wifiConfig().WiFi[0]
 	radio.SSIDs = append([]config.WiFiSSID{{ID: "off", SSID: "off", Enabled: false}}, radio.SSIDs...)
-	ready, _ := s.radioRuntimeMatches(context.Background(), wifiConfig(), radio)
+	ready, _ := s.radioRuntimeMatches(context.Background(), radioBridges(wifiConfig()), radio)
 	if !ready {
 		t.Fatal("disabled SSID affected runtime match")
 	}
@@ -491,7 +524,7 @@ func TestApplyAndHealthPropagateOwnershipAndRenderErrors(t *testing.T) {
 	t.Run("applyRadio render", func(t *testing.T) {
 		cfg := wifiConfig()
 		cfg.WiFi[0].SSIDs = nil
-		if err := testWiFiSubsystem(t, &fakeRunner{}).applyRadio(context.Background(), cfg, cfg.WiFi[0], &radioPowerLimits{}); err == nil {
+		if err := testWiFiSubsystem(t, &fakeRunner{}).applyRadio(context.Background(), radioBridges(cfg), cfg.WiFi[0], &radioPowerLimits{}); err == nil {
 			t.Fatal("applyRadio ignored render error")
 		}
 	})

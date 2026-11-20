@@ -7,17 +7,35 @@ import (
 	"github.com/netos-router/netos/internal/config"
 )
 
-func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
-	interfaces := map[string]string{}
+type networkBridge struct {
+	configured string // hostapd uses the last network with this ID.
+	active     string // Runtime checks use the first network, if enabled.
+}
+
+func radioBridges(cfg *config.Config) map[string]networkBridge {
+	interfaces := make(map[string]string, len(cfg.Interfaces))
 	for _, iface := range cfg.Interfaces {
 		if _, exists := interfaces[iface.ID]; !exists {
 			interfaces[iface.ID] = iface.Name
 		}
 	}
-	bridges := map[string]string{}
+	bridges := make(map[string]networkBridge, len(cfg.Networks))
 	for _, network := range cfg.Networks {
-		bridges[network.ID] = interfaces[network.Interface]
+		bridge, seen := bridges[network.ID]
+		bridge.configured = interfaces[network.Interface]
+		if !seen && network.Enabled {
+			bridge.active = bridge.configured
+		}
+		bridges[network.ID] = bridge
 	}
+	return bridges
+}
+
+func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
+	return renderRadio(radio, radioBridges(cfg))
+}
+
+func renderRadio(radio config.WiFiRadio, bridges map[string]networkBridge) ([]byte, error) {
 	var ssids []config.WiFiSSID
 	for _, ssid := range radio.SSIDs {
 		if ssid.Enabled {
@@ -28,7 +46,7 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 		return nil, fmt.Errorf("нет включённых Wi-Fi-сетей")
 	}
 	for _, ssid := range ssids {
-		if bridges[ssid.Network] == "" {
+		if bridges[ssid.Network].configured == "" {
 			return nil, fmt.Errorf("для Wi-Fi-сети %s не найден интерфейс сегмента", ssid.SSID)
 		}
 	}
@@ -55,10 +73,10 @@ func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 	if radio.Width == 80 && radio.Channel == 0 {
 		fmt.Fprintln(&b, "vht_oper_chwidth=1")
 	}
-	renderSSID(&b, ssids[0], bridges[ssids[0].Network])
+	renderSSID(&b, ssids[0], bridges[ssids[0].Network].configured)
 	for i, ssid := range ssids[1:] {
 		fmt.Fprintf(&b, "\nbss=%s-n%d\n", radio.Device, i+1)
-		renderSSID(&b, ssid, bridges[ssid.Network])
+		renderSSID(&b, ssid, bridges[ssid.Network].configured)
 	}
 	return []byte(b.String()), nil
 }
@@ -113,7 +131,7 @@ func boolInt(value bool) int {
 	return 0
 }
 
-func renderUnit(radio config.WiFiRadio, conf string, cfg *config.Config) string {
+func renderUnit(radio config.WiFiRadio, conf string, bridges map[string]networkBridge) string {
 	// hostapd creates a missing bridge itself and removes it on shutdown.
 	// At boot it can race netOS interface setup, so require every segment
 	// bridge to exist before letting hostapd take control of the radio.
@@ -123,7 +141,7 @@ func renderUnit(radio config.WiFiRadio, conf string, cfg *config.Config) string 
 		if !ssid.Enabled {
 			continue
 		}
-		bridge := bridgeFor(cfg, ssid)
+		bridge := bridges[ssid.Network].active
 		if bridge != "" && !seen[bridge] {
 			fmt.Fprintf(&prerequisites, "ExecStartPre=/usr/bin/test -d /sys/class/net/%s/bridge\n", bridge)
 			seen[bridge] = true

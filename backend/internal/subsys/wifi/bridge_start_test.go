@@ -37,3 +37,40 @@ func TestUnitRequiresExistingBridgesBeforeHostapd(t *testing.T) {
 		t.Fatal("disabled SSID adds a bridge prerequisite")
 	}
 }
+
+func TestDuplicateNetworkBridgeSelectionAfterEdits(t *testing.T) {
+	cfg := wifiConfig()
+	cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: "alt", Name: "br1"})
+	cfg.Networks = append(cfg.Networks, config.Network{ID: "home", Interface: "alt", Enabled: true})
+	s := testWiFiSubsystem(t, &fakeRunner{})
+	check := func(wantGuard string) {
+		t.Helper()
+		if err := s.Apply(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		conf, unit := s.paths(cfg.WiFi[0])
+		text, err := os.ReadFile(conf)
+		if err != nil || strings.Count(string(text), "bridge=br1\n") != 2 {
+			t.Fatal("wrong configured bridge", err)
+		}
+		data, err := os.ReadFile(unit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var guards []string
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "ExecStartPre=") {
+				guards = append(guards, line)
+			}
+		}
+		if strings.Join(guards, "\n") != wantGuard {
+			t.Fatalf("wrong bridge guards: %q", guards)
+		}
+	}
+	check("ExecStartPre=/usr/bin/test -d /sys/class/net/br0/bridge")
+	cfg.Networks[0].Enabled = false
+	check("")
+	cfg.Networks[0].Enabled = true
+	cfg.Interfaces[0].Name = "br2"
+	check("ExecStartPre=/usr/bin/test -d /sys/class/net/br2/bridge")
+}
