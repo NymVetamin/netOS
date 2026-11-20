@@ -40,26 +40,20 @@ func localDNSNeeded(cfg *config.Config) bool {
 		cfg.DNS.Enabled && cfg.DNS.Provider != "dnsmasq"
 }
 
-// dnsListenInterfaces перечисляет интерфейсы, на которых резолвер обязан
+// writeDNSInterfaces выводит интерфейсы, на которых резолвер обязан
 // принимать запросы: loopback ради самого роутера, интерфейс каждого
 // включённого сегмента и интерфейсы серверов VPN — клиент, получивший в
 // профиле адрес роутера, вправе рассчитывать, что имена по нему разрешаются.
 //
 // Для ocserv используем wildcard: номер рабочего устройства появляется
 // только при подключении клиента. bind-dynamic подхватит его без перезапуска.
-func dnsListenInterfaces(cfg *config.Config) []string {
-	ifaceByID := make(map[string]string, len(cfg.Interfaces))
-	for _, iface := range cfg.Interfaces {
-		ifaceByID[iface.ID] = iface.Name
-	}
-	seen := map[string]bool{"lo": true}
-	var out []string
+func writeDNSInterfaces(b *strings.Builder, cfg *config.Config, ifaceByID map[string]string, listening map[string]bool) {
 	add := func(name string) {
-		if name == "" || seen[name] {
+		if name == "" || listening[name] {
 			return
 		}
-		seen[name] = true
-		out = append(out, name)
+		listening[name] = true
+		fmt.Fprintf(b, "interface=%s\n", name)
 	}
 	for _, network := range cfg.Networks {
 		if network.Enabled {
@@ -81,7 +75,6 @@ func dnsListenInterfaces(cfg *config.Config) []string {
 			add(config.L2TPInterfacePrefix(server.Index) + "*")
 		}
 	}
-	return out
 }
 
 type dnsListenNetwork struct {
@@ -156,7 +149,7 @@ func (d *Dnsmasq) Render(cfg *config.Config) string {
 	// соответствовать тому, что видит администратор в панели.
 	w("")
 
-	ifaceByID := map[string]string{}
+	ifaceByID := make(map[string]string, len(cfg.Interfaces))
 	for _, i := range cfg.Interfaces {
 		ifaceByID[i.ID] = i.Name
 	}
@@ -164,10 +157,7 @@ func (d *Dnsmasq) Render(cfg *config.Config) string {
 	listening := map[string]bool{"lo": true}
 	switch {
 	case serveDNS:
-		for _, iface := range dnsListenInterfaces(cfg) {
-			listening[iface] = true
-		}
-		d.renderDNS(&b, cfg)
+		d.renderDNS(&b, cfg, ifaceByID, listening)
 	case localDNSNeeded(cfg):
 		// Порт 53 держит другой резолвер, но имена клиентов знает dnsmasq:
 		// он раздал адреса и единственный видит, какое имя за кем закреплено.
@@ -190,7 +180,7 @@ func (d *Dnsmasq) Render(cfg *config.Config) string {
 	return b.String()
 }
 
-func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
+func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config, ifaceByID map[string]string, listening map[string]bool) {
 	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
 
 	w("# --- DNS ---")
@@ -206,9 +196,7 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config) {
 	// резолвер dnsmasq» оставляла клиентов без DNS: демон работал, но слушал
 	// один loopback. Unbound и dnsproxy всегда слушают адрес роутера в каждом
 	// сегменте, dnsmasq теперь тоже.
-	for _, iface := range dnsListenInterfaces(cfg) {
-		w("interface=%s", iface)
-	}
+	writeDNSInterfaces(b, cfg, ifaceByID, listening)
 	w("domain-needed") // не пересылать наверх имена без домена
 	// bogus-priv would claim the whole RFC6303 reverse range, including PTRs
 	// outside a narrower LAN such as 192.0.2.0/25. Keep only our exact LAN

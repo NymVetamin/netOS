@@ -1,16 +1,17 @@
 package services
 
 import (
-	"github.com/netos-router/netos/internal/config"
-	"slices"
+	"strings"
 	"testing"
+
+	"github.com/netos-router/netos/internal/config"
 )
 
 func TestL2TPDynamicDNSListener(t *testing.T) {
 	c := config.Default()
-	c.DNS.Enabled = true
+	c.DNS.Enabled, c.DNS.Provider = true, "dnsmasq"
 	c.VPNServers = []config.VPNServer{{Type: "l2tp", Index: 2, Enabled: true, Subnet: "10.99.0.1/24"}, {Type: "l2tp", Index: 20, Enabled: false}}
-	if got := dnsListenInterfaces(c); !slices.Contains(got, "pp2-*") || slices.Contains(got, "pp20-*") {
+	if got := NewDnsmasq(nil).Render(c); !strings.Contains(got, "interface=pp2-*\n") || strings.Contains(got, "interface=pp20-*\n") {
 		t.Fatalf("wrong listeners: %v", got)
 	}
 	for _, provider := range []string{"unbound", "dnsproxy"} {

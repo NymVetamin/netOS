@@ -1,11 +1,33 @@
 package services
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
 )
+
+func BenchmarkDnsmasqListeners(b *testing.B) {
+	for _, n := range []int{8, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			cfg := config.Default()
+			cfg.DNS.Enabled, cfg.DNS.Provider = true, "dnsmasq"
+			cfg.DHCP.Enabled, cfg.DHCP.Provider = true, "dnsmasq"
+			for i := 0; i < n; i++ {
+				id := fmt.Sprintf("port%d", i)
+				cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: id, Name: id})
+				cfg.Networks = append(cfg.Networks, config.Network{ID: id, Enabled: true, Interface: id,
+					RouterAddress: fmt.Sprintf("10.%d.%d.1/24", i/256, i%256)})
+			}
+			d := NewDnsmasq(nil)
+			b.ReportAllocs()
+			for b.Loop() {
+				d.Render(cfg)
+			}
+		})
+	}
+}
 
 // Резолвер обязан слушать сегменты независимо от того, кто раздаёт адреса.
 // С bind-dynamic dnsmasq принимает запросы только на перечисленных
