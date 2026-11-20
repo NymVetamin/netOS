@@ -11,6 +11,59 @@ import (
 	"time"
 )
 
+func BenchmarkCreateSessionAmongUsers(b *testing.B) {
+	for _, count := range []int{40, 20000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			st, err := Open(filepath.Join(b.TempDir(), "sessions.db"))
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer st.Close()
+			_, err = st.db.Exec(`WITH RECURSIVE n(i) AS (
+				VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i+1 < ?
+			) INSERT INTO sessions(token, username, created_at, expires_at)
+			  SELECT 'seed-' || i, 'user-' || (i/20), 1, 4102444800 FROM n`, count)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			i := 0
+			for b.Loop() {
+				evicted, err := st.CreateSession(fmt.Sprint(i), "user-0", "", time.Hour)
+				if err != nil || len(evicted) != 1 {
+					b.Fatalf("evicted %v, error %v", evicted, err)
+				}
+				i++
+			}
+		})
+	}
+}
+
+func TestReopenEvictsLegacySessionSurplusInOriginalOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_sessions_user_created;
+		WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<22)
+		INSERT INTO sessions(token, username, created_at, expires_at)
+		SELECT 'old-' || i, 'admin', CASE WHEN i < 3 THEN 3-i ELSE 10 END, 4102444800 FROM n`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	got, err := st.CreateSession("new", "admin", "", time.Hour)
+	if err != nil || !slices.Equal(got, []string{"old-0", "old-1", "old-2", "old-3"}) {
+		t.Fatalf("legacy surplus: %v, %v", got, err)
+	}
+}
+
 func TestSessionExpiryAndUserLimitInOneTransaction(t *testing.T) {
 	st := openTestStore(t)
 	for i := 0; i < 20; i++ {

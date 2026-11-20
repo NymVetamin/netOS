@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     source_ip  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_created ON sessions(username, created_at);
 
 -- Наблюдаемые устройства: накапливаются автоматически из аренд DHCP и ARP,
 -- живут отдельно от конфигурации, чтобы не раздувать ревизии.
@@ -471,7 +472,7 @@ func (s *Store) updatePasswordAndDeleteSessions(username, passwordHash string, r
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT token FROM sessions WHERE username = ?`, username)
+	rows, err := tx.Query(`SELECT token FROM sessions WHERE username = ? ORDER BY rowid`, username)
 	if err != nil {
 		return nil, err
 	}
@@ -582,9 +583,10 @@ func (s *Store) CreateSession(token, username, sourceIP string, ttl time.Duratio
 	}
 	// A leaked credential must not be able to grow the database forever by
 	// creating valid sessions. Twenty is ample for normal multi-device use.
-	rows, err := tx.Query(`SELECT token FROM sessions WHERE username = ? AND rowid NOT IN (
-		SELECT rowid FROM sessions WHERE username = ? ORDER BY created_at DESC, rowid DESC LIMIT 20
-	)`, username, username)
+	rows, err := tx.Query(`SELECT token FROM (
+		SELECT token, rowid AS id FROM sessions WHERE username = ?
+		ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 20
+	) ORDER BY id`, username)
 	if err != nil {
 		return nil, err
 	}
