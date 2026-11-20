@@ -317,6 +317,11 @@ func staticRouteKey(r config.StaticRoute) routeIdentity {
 	if metric == 0 && routeFamily(r) == "-6" {
 		metric = config.DefaultIPv6RouteMetric
 	}
+	// installRoutes omits the next hop for reject routes.
+	switch r.Type {
+	case "blackhole", "unreachable", "prohibit":
+		r.Gateway = ""
+	}
 	return routeKey(r.Table, r.Destination, r.Type, r.Gateway, r.Interface, metric)
 }
 

@@ -61,7 +61,7 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 	s := New(routingNamespaceRunner{})
 	cfg := config.Default()
 	cfg.Routing.Static = []config.StaticRoute{
-		{Enabled: true, Destination: "10.77.0.0/16", Type: "blackhole", Table: "200", Metric: 7},
+		{Enabled: true, Destination: "10.77.0.0/16", Type: "blackhole", Gateway: "192.0.2.1", Table: "200", Metric: 7},
 		{Enabled: true, Destination: "2001:db8:77::/48", Type: "unreachable", Table: "200", Metric: 9},
 		{Enabled: true, Destination: "203.0.113.0/24", Gateway: "192.0.2.1"},
 	}

@@ -19,6 +19,24 @@ func TestUnchangedStaticRouteDoesNotReplace(t *testing.T) {
 	}
 }
 
+func TestRejectRoutesWithGatewayDoNotRewrite(t *testing.T) {
+	for _, kind := range []string{"blackhole", "unreachable", "prohibit"} {
+		t.Run(kind, func(t *testing.T) {
+			r := &recordingRunner{responses: map[string]runnerResponse{
+				"ip -4 route show table all proto static": {out: kind + " 203.0.113.0/24 metric 7"},
+			}}
+			cfg := routeConfig(config.StaticRoute{Enabled: true, Type: kind, Destination: "203.0.113.0/24", Gateway: "192.0.2.1", Metric: 7})
+			if err := New(r).applyRoutes(context.Background(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			commands := commandStrings(r.commands)
+			if strings.Contains(commands, "route del") || strings.Contains(commands, "route replace") {
+				t.Fatalf("unchanged route rewritten:\n%s", commands)
+			}
+		})
+	}
+}
+
 func TestStaticRouteDifferencesKeepRepair(t *testing.T) {
 	via := config.StaticRoute{Destination: "203.0.113.0/24", Gateway: "192.0.2.1"}
 	const resolved = "203.0.113.0/24 via 192.0.2.1 dev eth0"
