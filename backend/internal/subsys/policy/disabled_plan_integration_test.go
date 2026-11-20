@@ -33,6 +33,9 @@ func TestIntegrationDisabledPolicyPreservesActiveSet(t *testing.T) {
 	if _, err := r.Run(ctx, "dpkg-query", "-W", "ipset"); err != nil {
 		t.Fatal("ipset must already be installed")
 	}
+	t.Run("static rollback", func(t *testing.T) {
+		testStaticSetRollbackMembership(t, r)
+	})
 	s := New(r, t.TempDir())
 	base := domainPolicyConfig("active")
 	if err := s.Apply(ctx, base); err != nil {

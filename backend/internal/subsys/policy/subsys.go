@@ -342,7 +342,14 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 		var failures []string
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		for _, name := range sortedNames(mutated) {
+		names := sortedNames(mutated)
+		for _, name := range names {
+			if live[name] && ownedByName[name].Static {
+				if err := s.restoreStaticSet(rollbackCtx, name, saved[name]); err != nil {
+					failures = append(failures, err.Error())
+				}
+				continue
+			}
 			if flushed[name] {
 				if _, err := s.Runner.Run(rollbackCtx, "ipset", "flush", name); err != nil {
 					failures = append(failures, err.Error())
@@ -354,7 +361,10 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 		var restore strings.Builder
-		for _, name := range sortedNames(mutated) {
+		for _, name := range names {
+			if live[name] && ownedByName[name].Static {
+				continue
+			}
 			for _, line := range strings.SplitAfter(saved[name], "\n") {
 				if flushed[name] && strings.HasPrefix(line, "create ") {
 					continue
@@ -386,16 +396,16 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 				if setHealthy(detail, item) {
 					continue
 				}
-				flushed[item.Name] = true
 			} else {
 				if _, err := s.Runner.Run(ctx, "ipset", "create", item.Name, "hash:net", "family", "inet", "maxelem", "65536"); err != nil {
 					return rollback(err)
 				}
+				mutated[item.Name] = true
 			}
-			mutated[item.Name] = true
 			if err := s.replaceStaticMembers(ctx, item); err != nil {
 				return rollback(err)
 			}
+			mutated[item.Name] = true
 			continue
 		}
 		if live[item.Name] {

@@ -40,8 +40,36 @@ func setMembers(detail string) []string {
 // Build off to the side, then swap atomically so an edited deny set never
 // becomes briefly empty while live rules still reference it.
 func (s *Subsystem) replaceStaticMembers(ctx context.Context, item ownedSet) error {
-	temporary := item.Name + "-next"
-	if _, err := s.Runner.Run(ctx, "ipset", "create", temporary, "hash:net", "family", "inet", "maxelem", "65536"); err != nil {
+	var input strings.Builder
+	for _, entry := range item.Entries {
+		fmt.Fprintf(&input, "add %s-next %s\n", item.Name, entry)
+	}
+	return s.swapStaticSet(ctx, item.Name, []string{"hash:net", "family", "inet", "maxelem", "65536"}, input.String())
+}
+
+func (s *Subsystem) restoreStaticSet(ctx context.Context, name, snapshot string) error {
+	header, members, _ := strings.Cut(snapshot, "\n")
+	options, ok := strings.CutPrefix(header, "create "+name+" ")
+	if !ok {
+		return fmt.Errorf("invalid ipset snapshot header for %s", name)
+	}
+	var input strings.Builder
+	for line := range strings.SplitSeq(strings.TrimSuffix(members, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		entry, ok := strings.CutPrefix(line, "add "+name+" ")
+		if !ok {
+			return fmt.Errorf("invalid ipset snapshot entry for %s", name)
+		}
+		fmt.Fprintf(&input, "add %s-next %s\n", name, entry)
+	}
+	return s.swapStaticSet(ctx, name, strings.Fields(options), input.String())
+}
+
+func (s *Subsystem) swapStaticSet(ctx context.Context, name string, options []string, input string) error {
+	temporary := name + "-next"
+	if _, err := s.Runner.Run(ctx, "ipset", append([]string{"create", temporary}, options...)...); err != nil {
 		return fmt.Errorf("create temporary address set: %w", err)
 	}
 	defer func() {
@@ -49,15 +77,11 @@ func (s *Subsystem) replaceStaticMembers(ctx context.Context, item ownedSet) err
 		defer cancel()
 		_, _ = s.Runner.Run(cleanup, "ipset", "destroy", temporary)
 	}()
-	var input strings.Builder
-	for _, entry := range item.Entries {
-		fmt.Fprintf(&input, "add %s %s\n", temporary, entry)
-	}
-	if input.Len() > 0 {
-		if _, err := s.Runner.RunInput(ctx, input.String(), "ipset", "restore"); err != nil {
+	if input != "" {
+		if _, err := s.Runner.RunInput(ctx, input, "ipset", "restore"); err != nil {
 			return err
 		}
 	}
-	_, err := s.Runner.Run(ctx, "ipset", "swap", temporary, item.Name)
+	_, err := s.Runner.Run(ctx, "ipset", "swap", temporary, name)
 	return err
 }
