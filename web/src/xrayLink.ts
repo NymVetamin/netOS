@@ -29,7 +29,7 @@ export function parseXrayLink(value: string): any {
     requireText(pass, "В ссылке нет пароля");
     const port = parsePort(url.port || (url.protocol === "http:" ? "80" : "1080"));
     return { protocol: url.protocol === "socks5:" ? "socks" : "http", settings: { servers: [{
-      address: url.hostname.replace(/^\[|\]$/g, ""), port, users: [{ user, pass }],
+      address: serverAddress(url), port, users: [{ user, pass }],
     }] } };
   }
   const port = parsePort(url.port);
@@ -42,7 +42,7 @@ export function parseXrayLink(value: string): any {
   const user = decodeURIComponent(url.username);
   requireText(user, "В ссылке нет идентификатора пользователя или пароля");
   if (protocol === "vless" && !isUUID(user)) throw new Error("Идентификатор пользователя VLESS должен быть UUID");
-  const server: any = { address: url.hostname, port };
+  const server: any = { address: serverAddress(url), port };
   if (protocol === "vless") server.users = [{ id: user, encryption: url.searchParams.get("encryption") || "none", ...(url.searchParams.get("flow") ? { flow: url.searchParams.get("flow") } : {}) }];
   else server.password = user;
   const settings = protocol === "vless" ? { vnext: [server] } : { servers: [server] };
@@ -53,6 +53,10 @@ export function parseXrayLink(value: string): any {
     mode: url.searchParams.get("mode"), extra: url.searchParams.get("extra"), alpn: url.searchParams.get("alpn"),
     pcs: url.searchParams.get("pcs"), vcn: url.searchParams.get("vcn"),
   }) };
+}
+
+function serverAddress(url: URL): string {
+  return url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
 }
 
 function hysteriaOutbound(url: URL): any {

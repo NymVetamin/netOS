@@ -27,6 +27,21 @@ test("Shadowsocks labels do not change server settings in either link format", (
   }
 });
 
+test("VLESS and Trojan import IPv6 addresses without URI brackets", () => {
+  const id = "01234567-89ab-cdef-0123-456789abcdef";
+  for (const host of ["[2001:db8::17]", "192.0.2.17", "vpn.example.test"]) {
+    const address = host === "[2001:db8::17]" ? "2001:db8::17" : host;
+    const vless = parseXrayLink(`vless://${id}@${host}:8443?encryption=none`).settings.vnext[0];
+    assert.equal(vless.address, address);
+    assert.equal(vless.port, 8443);
+    assert.equal(vless.users[0].id, id);
+    const trojan = parseXrayLink(`trojan://test%40pass@${host}:8443`).settings.servers[0];
+    assert.equal(trojan.address, address);
+    assert.equal(trojan.port, 8443);
+    assert.equal(trojan.password, "test@pass");
+  }
+});
+
 test("XHTTP import preserves mode, complete extra JSON and TLS ALPN", () => {
   const extra = { scMaxEachPostBytes: "20000", scMinPostsIntervalMs: "7", xPaddingBytes: "100-1000",
     xPaddingObfsMode: true, xPaddingKey: "hash", xPaddingHeader: "X-Client-Ver", xPaddingPlacement: "queryInHeader",
