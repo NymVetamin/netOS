@@ -2,12 +2,109 @@ package eventlog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestTimedOutHistoryKeepsLiveCursorAndLease(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	l := New()
+	started, release := make(chan struct{}), make(chan struct{})
+	lease := func(cursor, ip string, ts int) []byte {
+		return []byte(fmt.Sprintf(`{"__CURSOR":%q,"__REALTIME_TIMESTAMP":"%d","_SYSTEMD_UNIT":"netos-dnsmasq.service","MESSAGE":"DHCPACK(br0) %s aa:bb:cc:dd:ee:01 host"}`, cursor, ts, ip))
+	}
+	otherCalls, dhcpCalls := 0, 0
+	j := &Journal{Log: l, LAN: &LAN{Log: l}, Run: func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--lines=1") {
+			return []byte(`{"__CURSOR":"start","__REALTIME_TIMESTAMP":"2"}`), nil
+		}
+		if !slices.Contains(args, "--cursor=start") {
+			t.Errorf("wrong history boundary: %v", args)
+		}
+		if !slices.Contains(args, "_SYSTEMD_UNIT=netos-dnsmasq.service") {
+			otherCalls++
+			return nil, errors.New("No entries")
+		}
+		dhcpCalls++
+		if dhcpCalls == 1 {
+			return lease("partial", "192.0.2.3", 1), context.DeadlineExceeded
+		}
+		close(started)
+		select {
+		case <-release:
+			return lease("old", "192.0.2.1", 2), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	j.refill(ctx)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("missing retry")
+	}
+	j.Handle(ctx, lease("live", "192.0.2.2", 3), time.Now())
+	p, changed, _ := l.Since(DHCP, "", 0)
+	if len(p.Events) != 1 {
+		t.Fatalf("partial history published: %v", p.Events)
+	}
+	close(release)
+	select {
+	case <-changed:
+	case <-ctx.Done():
+		t.Fatal("missing history")
+	}
+	if j.cursor != "live" {
+		t.Fatalf("late history rewound live cursor: %q", j.cursor)
+	}
+	j.Handle(ctx, lease("next", "192.0.2.2", 4), time.Now())
+	p, _, _ = l.Since(DHCP, p.Epoch, p.Latest)
+	if !p.Reset || len(p.Events) != 2 || !strings.Contains(p.Events[0].Message, "192.0.2.2") ||
+		!strings.Contains(p.Events[1].Message, "192.0.2.1") || j.cursor != "next" ||
+		dhcpCalls != 2 || otherCalls != len(journalGroups)-1 {
+		t.Fatalf("events=%v cursor=%q calls=%d/%d", p.Events, j.cursor, dhcpCalls, otherCalls)
+	}
+}
+
+func TestCancelTimedOutJournalRefill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started, stopped := make(chan struct{}), make(chan struct{})
+	calls := 0
+	j := Journal{Log: New(), Run: func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--lines=1") {
+			return []byte(`{"__CURSOR":"head"}`), nil
+		}
+		if !slices.Contains(args, "_TRANSPORT=kernel") {
+			return nil, nil
+		}
+		calls++
+		if calls == 1 {
+			return nil, context.DeadlineExceeded
+		}
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return nil, ctx.Err()
+	}}
+	j.refill(ctx)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("missing retry")
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retry did not honor cancellation")
+	}
+}
 
 func TestAllCursorOverflowMatchesFreshSnapshot(t *testing.T) {
 	l := New()

@@ -126,31 +126,70 @@ func (j *Journal) run(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "journalctl", append([]string{"--no-pager", "--quiet"}, args...)...).Output()
+	out, err := exec.CommandContext(ctx, "journalctl", append([]string{"--no-pager", "--quiet"}, args...)...).Output()
+	if err != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return out, err
 }
 
 // refill loads the newest Size records of every group, up to the journal's
 // current last entry, and handles them in time order. Runs once per daemon
-// start: 1 + len(journalGroups) commands.
+// start: 1 + len(journalGroups) commands on success. Timed-out groups are
+// recovered separately without delaying live events.
 func (j *Journal) refill(ctx context.Context) {
 	out, err := j.run(ctx, "--output=json", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP", "--lines=1")
 	if err != nil {
 		return
 	}
 	head, err := parseRecord(bytes.TrimSpace(out))
-	if err != nil {
+	if err != nil || head["__CURSOR"] == "" {
 		return
 	}
+	cursor := head["__CURSOR"]
+	pending := j.loadHistory(ctx, cursor, journalGroups)
+	j.cursor = cursor
+	if len(pending) == 0 || ctx.Err() != nil {
+		return
+	}
+	// Historical records can arrive after live ones. Use separate parser
+	// state so they cannot rewind the follower or its unit/lease tracking.
+	history := &Journal{Log: j.Log, Run: j.Run, DNS: j.DNS, VPNServer: j.VPNServer}
+	if j.LAN != nil {
+		history.LAN = &LAN{Names: j.LAN.Names}
+	}
+	go func() {
+		for ctx.Err() == nil {
+			pending = history.loadHistory(ctx, cursor, pending)
+			if len(pending) == 0 {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Second):
+			}
+		}
+	}()
+}
+
+func (j *Journal) loadHistory(ctx context.Context, cursor string, groups [][]string) (pending [][]string) {
 	type row struct {
 		at  int64
 		raw []byte
 	}
 	var rows []row
-	for _, g := range journalGroups {
+	for _, g := range groups {
 		// Use the follower's exact boundary. A wall-clock cutoff can include
 		// later cursors after a clock correction (or an equal timestamp).
-		out, err := j.run(ctx, append([]string{"--output=json", "--output-fields=" + journalFields, "--lines=" + strconv.Itoa(Size), "--reverse", "--cursor=" + head["__CURSOR"]}, g...)...)
+		out, err := j.run(ctx, append([]string{"--output=json", "--output-fields=" + journalFields, "--lines=" + strconv.Itoa(Size), "--reverse", "--cursor=" + cursor}, g...)...)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				pending = append(pending, g)
+			}
 			continue // an empty group is reported as an error by old journalctl
 		}
 		start := len(rows)
@@ -175,8 +214,7 @@ func (j *Journal) refill(ctx context.Context) {
 	// The zero time marks history: no reason lookups, or a unit that kept
 	// failing before the start would cost a command per failure.
 	if len(rows) == 0 {
-		j.cursor = head["__CURSOR"]
-		return
+		return pending
 	}
 	live := j.Log
 	j.Log = New()
@@ -185,7 +223,7 @@ func (j *Journal) refill(ctx context.Context) {
 	}
 	live.MergeHistory(j.Log)
 	j.Log = live
-	j.cursor = head["__CURSOR"]
+	return pending
 }
 
 func (j *Journal) read(ctx context.Context, r io.Reader) {
