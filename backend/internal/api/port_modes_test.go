@@ -38,8 +38,8 @@ func TestPortModesPhysicalReadOnly(t *testing.T) {
 	c := runtime.NewCollector(run, "")
 	c.SysClassNet = root
 	s := &Server{Collector: c, StorageRunner: run}
-	for _, name := range []string{"br-lan", "missing", "eth0"} {
-		req := httptest.NewRequest("GET", "/api/interfaces/"+name+"/modes", nil)
+	for _, name := range []string{"br-lan", "missing", "lo", ".", "..", "br-lan/../eth0", "eth0"} {
+		req := httptest.NewRequest("GET", "/", nil)
 		req.SetPathValue("name", name)
 		w := httptest.NewRecorder()
 		s.handlePortModes(w, req)
@@ -53,5 +53,21 @@ func TestPortModesPhysicalReadOnly(t *testing.T) {
 	}
 	if strings.Join(run.calls, ",") != "ethtool eth0" {
 		t.Fatal(run.calls)
+	}
+	req := httptest.NewRequest("GET", "/api/interfaces/eth0/modes", nil)
+	req.SetPathValue("name", "eth0")
+	if err := os.Remove(filepath.Join(root, "eth0", "ifindex")); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.handlePortModes(w, req)
+	if w.Code != 400 || len(run.calls) != 1 {
+		t.Fatalf("removed port: HTTP %d, commands %v", w.Code, run.calls)
+	}
+	c.SysClassNet = filepath.Join(root, "missing")
+	w = httptest.NewRecorder()
+	s.handlePortModes(w, req)
+	if w.Code != 500 || len(run.calls) != 1 {
+		t.Fatalf("missing sysfs: HTTP %d, commands %v", w.Code, run.calls)
 	}
 }

@@ -284,12 +284,31 @@ func (c *Collector) ARP(ctx context.Context) ([]ARPEntry, error) {
 	return entries, nil
 }
 
+func (c *Collector) sysClassNetPath() string {
+	if c.SysClassNet != "" {
+		return c.SysClassNet
+	}
+	return "/sys/class/net"
+}
+
+// IsPhysicalPort checks one entry without collecting counters for other ports.
+func (c *Collector) IsPhysicalPort(name string) (bool, error) {
+	root, err := os.OpenRoot(c.sysClassNetPath())
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	if name == "lo" || name == "." || !filepath.IsLocal(name) || filepath.Base(name) != name {
+		return false, nil
+	}
+	// Follow sysfs class symlinks into /sys/devices after validating the name.
+	base := filepath.Join(root.Name(), name)
+	return pathExists(filepath.Join(base, "ifindex")) && pathExists(filepath.Join(base, "device")), nil
+}
+
 // InterfaceStats читает счётчики из sysfs — это дешевле разбора вывода ip -s.
 func (c *Collector) InterfaceStats() ([]InterfaceStat, error) {
-	root := c.SysClassNet
-	if root == "" {
-		root = "/sys/class/net"
-	}
+	root := c.sysClassNetPath()
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err

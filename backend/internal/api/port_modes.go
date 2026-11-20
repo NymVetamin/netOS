@@ -13,17 +13,11 @@ func (s *Server) handlePortModes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "данные портов недоступны")
 		return
 	}
-	stats, err := s.Collector.InterfaceStats()
+	name := r.PathValue("name")
+	physical, err := s.Collector.IsPhysicalPort(name)
 	if err != nil {
 		writeError(w, 500, "%v", err)
 		return
-	}
-	name := r.PathValue("name")
-	physical := false
-	for _, i := range stats {
-		if i.Name == name && i.Physical {
-			physical = true
-		}
 	}
 	if !physical {
 		writeError(w, 400, "выберите физический порт")
