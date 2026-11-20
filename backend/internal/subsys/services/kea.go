@@ -72,7 +72,7 @@ func (d *KeaDHCP) render(cfg *config.Config, requirePools bool) (string, error) 
 		if len(dns) == 0 {
 			dns = []string{addressOf(n.RouterAddress)}
 		}
-		options = append(options, map[string]any{"name": "domain-name-servers", "data": joinComma(dns)})
+		options = append(options, map[string]any{"name": "domain-name-servers", "data": strings.Join(dns, ", ")})
 		if p.Domain != "" {
 			options = append(options, map[string]any{"name": "domain-name", "data": p.Domain})
 		}
@@ -155,16 +155,7 @@ func (d *KeaDHCP) render(cfg *config.Config, requirePools bool) (string, error) 
 	data, _ := json.MarshalIndent(root, "", "  ")
 	return string(data) + "\n", nil
 }
-func joinComma(v []string) string {
-	out := ""
-	for i, s := range v {
-		if i > 0 {
-			out += ", "
-		}
-		out += s
-	}
-	return out
-}
+
 func (d *KeaDHCP) Apply(ctx context.Context, cfg *config.Config) error {
 	if !d.Needed(cfg) {
 		if err := removeManagedUnit(ctx, d.Systemd, keaUnit); err != nil {
