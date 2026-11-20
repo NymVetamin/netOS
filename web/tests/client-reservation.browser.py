@@ -14,6 +14,7 @@ async def main():
         page.on('pageerror', lambda e: errors.append(str(e)))
         mac='02:00:00:00:00:01'
         client={'mac':mac,'ip':'192.168.20.100','hostname':'Test laptop','source':'dhcp','online':False}
+        unnamed={'mac':'02:00:00:00:00:02','interface':'br1'}
         cfg={'system':{'hostname':'router'},'interfaces':[{'id':'a','name':'br0'},{'id':'b','name':'br1'}],
              'networks':[{'id':'first','name':'First','interface':'a','router_address':'192.168.10.1/24','enabled':True},
                          {'id':'second','name':'Second','interface':'b','router_address':'192.168.20.1/24','enabled':True}],
@@ -30,7 +31,7 @@ async def main():
                 if req.method=='PUT':
                     updated=req.post_data_json;cfg.clear();cfg.update(updated);writes.append(updated)
                 body={'config':cfg,'base_reservations':baseline['dhcp']['reservations'],'dirty':cfg!=baseline,'draft_version':len(writes)+1,'problems':[],'pending_confirmation':False}
-            elif path=='/api/clients':body={'clients':[client]}
+            elif path=='/api/clients':body={'clients':[client,unnamed]}
             elif path=='/api/dhcp/leases':body={'leases':[client]}
             await route.fulfill(json=body)
         await page.route('**/*',route_request)
@@ -106,6 +107,25 @@ async def main():
         if os.environ.get('NETOS_RESERVATION_SCREENSHOT'):
             await page.set_viewport_size({'width':1280,'height':900})
             await page.screenshot(path=os.environ['NETOS_RESERVATION_SCREENSHOT'], full_page=True)
+        await page.get_by_role('button',name='Добавить по MAC').click()
+        form=page.locator('section.card').filter(has=page.get_by_role('heading',name='Добавить устройство по MAC'))
+        picker=form.locator('.field').filter(has=page.get_by_text('Устройство',exact=True)).locator('select')
+        name=form.locator('.field').filter(has=page.get_by_text('Имя',exact=True)).locator('input')
+        address=form.get_by_placeholder('192.168.10.50',exact=True)
+        submit=form.get_by_role('button',name='Закрепить',exact=True)
+        for _ in range(2):
+            await picker.select_option(mac)
+            await expect(name).to_have_value(client['hostname'])
+            await expect(address).to_have_value(client['ip'])
+            await picker.select_option(unnamed['mac'])
+            selected=(await name.input_value(),await address.input_value())
+            assert selected==('',''),selected
+            await expect(submit).to_be_disabled()
+        await address.fill('192.168.20.150')
+        async with page.expect_response(lambda r:r.request.method=='PUT'):
+            await submit.click()
+        saved=cfg['dhcp']['reservations'][-1]
+        assert (saved['mac'],saved['hostname'],saved['ip'],saved['network'])==(unnamed['mac'],'','192.168.20.150','second')
         assert not errors,errors
         await browser.close()
         print('reservation create/edit/reload/remove/repeat/validation/responsive PASS')

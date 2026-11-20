@@ -261,9 +261,11 @@ function AddReservation({
             onChange={(e) => {
               setMac(e.target.value);
               const c = clients.find((x) => x.mac === e.target.value);
-              if (c?.hostname) setHostname(c.hostname);
-              if (c?.ip) setIp(c.ip);
-              if (c) setNetwork(reservationNetwork(config, c));
+              if (c) {
+                setHostname(c.hostname || "");
+                setIp(c.ip || "");
+                setNetwork(reservationNetwork(config, c));
+              }
             }}
           >
             <option value="">— выберите или введите MAC ниже —</option>
