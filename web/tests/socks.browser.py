@@ -114,7 +114,12 @@ async def scenario(browser, mode):
     await copy_button.click()
     await expect(page.get_by_role('button',name='Скопировано',exact=True)).to_be_visible()
     assert await page.evaluate('window.copiedText')=='192.0.2.1:1080'
-    await page.get_by_role('checkbox',name='WG test',exact=True).locator('..').click()
+    vpn = page.get_by_role('checkbox',name='WG test',exact=True)
+    connection_names = page.locator('.socks-connection dt').filter(has_text='WG test')
+    for selected in (True, False, True):
+        await vpn.locator('..').click()
+        assert await vpn.is_checked() == selected
+        await expect(connection_names).to_have_count(int(selected))
     await page.get_by_label("Логин SOCKS5",exact=True).fill("proxy")
     await page.get_by_label("Пароль SOCKS5",exact=True).fill("fixture-password")
     await page.locator("#service-socks").get_by_text("Дополнительные настройки",exact=True).click()

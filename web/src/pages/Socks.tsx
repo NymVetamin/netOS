@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Card, Field, NeedComponent, Notice, Switch, Badge } from "../ui";
 import { secretInput } from "../secrets";
@@ -32,11 +32,14 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
  useEffect(()=>setShown(null),[p.enabled,p.password,p.username,p.secrets_set?.password]);
  const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values,udp:false}});
  const chosen=!!config.components?.some((c:any)=>c.id==="xray"&&c.installed);
- const defaults=(config.networks||[]).filter((n:any)=>n.enabled).map((n:any)=>n.id);
- const networks=(config.networks||[]).filter((n:any)=>n.enabled);
- const vpns=(config.vpn_servers||[]).filter((v:any)=>v.enabled&&v.type!=="xray");
- const addresses=[...networks.filter((n:any)=>p.networks?.includes(n.id)).map((n:any)=>({name:n.name,address:n.router_address})),
- ...vpns.filter((v:any)=>p.vpns?.includes(v.id)).map((v:any)=>({name:v.name,address:v.subnet}))];
+ const networks=useMemo(()=>(config.networks||[]).filter((n:any)=>n.enabled),[config.networks]);
+ const vpns=useMemo(()=>(config.vpn_servers||[]).filter((v:any)=>v.enabled&&v.type!=="xray"),[config.vpn_servers]);
+ const selectedNetworks=useMemo(()=>new Set(p.networks),[p.networks]);
+ const selectedVPNs=useMemo(()=>new Set(p.vpns),[p.vpns]);
+ const addresses=useMemo(()=>[
+  ...networks.filter((n:any)=>selectedNetworks.has(n.id)).map((n:any)=>({name:n.name,address:n.router_address})),
+  ...vpns.filter((v:any)=>selectedVPNs.has(v.id)).map((v:any)=>({name:v.name,address:v.subnet})),
+ ],[networks,vpns,selectedNetworks,selectedVPNs]);
  function select(key:string,id:string,on:boolean){const values=p[key]||[];edit({[key]:on?[...values,id]:values.filter((v:string)=>v!==id)})}
  return <Card title="SOCKS5-прокси" subtitle="Прокси для приложений в локальной сети и VPN · TCP · IPv4"
   actions={<Badge tone={live?.running?"ok":"neutral"}>{!loaded?"проверка состояния…":live===null?"статус недоступен":live.running?"работает":live.enabled?"не запущен":"отключён"}</Badge>}>
@@ -47,7 +50,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
    !chosen?<button className="btn sm" onClick={()=>patch(d=>{d.components=d.components||[];const c=d.components.find((v:any)=>v.id==="xray");if(c)c.installed=true;else d.components.push({id:"xray",installed:true})})}>Установить Xray</button>:<span className="reason">Примените установку и дождитесь её завершения</span>}/>}
   <Switch label="Включить SOCKS5" checked={!!p.enabled} disabled={!p.enabled&&(!ready||!chosen)} onChange={async enabled=>{
    if(enabled && p.allow_wan && !(await confirmAction(WAN_WARNING,"Открыть SOCKS5 в интернет")))return;
-   edit({enabled,...(!p.port?{port:1080,auth:true,channel:"direct",networks:defaults}: {})});
+   edit({enabled,...(!p.port?{port:1080,auth:true,channel:"direct",networks:networks.map((n:any)=>n.id)}: {})});
   }}/>
   {p.enabled && <>
   <div className="form-grid">
@@ -56,8 +59,8 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   </div>
   <p className="hint">Весь трафик прокси использует этот выход и его настройки резервирования. Назначение канала отдельному LAN-клиенту здесь не применяется. Передача UDP и IPv6 назначения не поддерживаются.</p>
   <div className="form-grid">
-   <Field label="Локальные сети"><div className="stack">{networks.map((n:any)=><Switch key={n.id} label={n.name||n.id} checked={!!p.networks?.includes(n.id)} onChange={on=>select("networks",n.id,on)}/>)}</div></Field>
-   <Field label="VPN-сети"><div className="stack">{vpns.map((v:any)=><Switch key={v.id} label={v.name||v.id} checked={!!p.vpns?.includes(v.id)} onChange={on=>select("vpns",v.id,on)}/>)}</div></Field>
+   <Field label="Локальные сети"><div className="stack">{networks.map((n:any)=><Switch key={n.id} label={n.name||n.id} checked={selectedNetworks.has(n.id)} onChange={on=>select("networks",n.id,on)}/>)}</div></Field>
+   <Field label="VPN-сети"><div className="stack">{vpns.map((v:any)=><Switch key={v.id} label={v.name||v.id} checked={selectedVPNs.has(v.id)} onChange={on=>select("vpns",v.id,on)}/>)}</div></Field>
   </div>
   <Switch label="Логин и пароль SOCKS5" checked={p.auth!==false} disabled={!!p.allow_wan} onChange={auth=>edit({auth})}/>
   {p.auth!==false&&<div className="form-grid">
