@@ -15,6 +15,18 @@ const encode = value => Buffer.from(value).toString("base64url");
 const vmess = value => "vmess://" + encode(JSON.stringify(value));
 const xhttpLink = params => "vless://01234567-89ab-cdef-0123-456789abcdef@cdn.example.com:443?" + new URLSearchParams({ type: "xhttp", security: "tls", ...params });
 
+test("Shadowsocks labels do not change server settings in either link format", () => {
+  const credentials = "aes-128-gcm:p@ss:word";
+  const legacy = "ss://" + encode(credentials + "@host:443");
+  const current = "ss://" + encode(credentials) + "@host:443";
+  const expected = parseXrayLink(current);
+  for (const link of [legacy, current]) {
+    for (const label of ["", "#", "#office", "#office@home", "#@#@", "#office%40home"]) {
+      assert.deepEqual(parseXrayLink(link + label), expected);
+    }
+  }
+});
+
 test("XHTTP import preserves mode, complete extra JSON and TLS ALPN", () => {
   const extra = { scMaxEachPostBytes: "20000", scMinPostsIntervalMs: "7", xPaddingBytes: "100-1000",
     xPaddingObfsMode: true, xPaddingKey: "hash", xPaddingHeader: "X-Client-Ver", xPaddingPlacement: "queryInHeader",

@@ -11,11 +11,14 @@ export function parseXrayLink(value: string): any {
     outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp, pcs: data.pcs, vcn: data.vcn });
     return outbound;
   }
-  if (value.startsWith("ss://") && !value.slice(5).includes("@")) {
-    const decoded = decodeBase64(value.slice(5).split("#")[0]);
-    const at = decoded.lastIndexOf("@");
-    if (at < 1) throw new Error("Некорректная Shadowsocks-ссылка");
-    return shadowsocksOutbound(decoded.slice(0, at), decoded.slice(at + 1));
+  if (value.startsWith("ss://")) {
+    const payload = value.slice(5).split("#", 1)[0];
+    if (!payload.includes("@")) {
+      const decoded = decodeBase64(payload);
+      const at = decoded.lastIndexOf("@");
+      if (at < 1) throw new Error("Некорректная Shadowsocks-ссылка");
+      return shadowsocksOutbound(decoded.slice(0, at), decoded.slice(at + 1));
+    }
   }
   const url = new URL(value);
   requireText(url.hostname, "В ссылке нет сервера");
