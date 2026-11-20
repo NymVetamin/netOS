@@ -30,7 +30,7 @@ func TestPublishAllowlistAndFailedWriteRecovery(t *testing.T) {
 	allowedPath := filepath.Join(s.Dir(server.ID), "allowed")
 	check := func(want string) {
 		t.Helper()
-		if err := s.publish(st, server); err != nil {
+		if err := s.publish(st, server, enabledOcservConfig(server)); err != nil {
 			t.Fatal(err)
 		}
 		data, err := os.ReadFile(allowedPath)
@@ -115,7 +115,7 @@ func TestPublishAllowlistAndFailedWriteRecovery(t *testing.T) {
 	if err = os.Mkdir(allowedPath, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.publish(st, server); err == nil {
+	if err = s.publish(st, server, enabledOcservConfig(server)); err == nil {
 		t.Fatal("write obstruction was ignored")
 	}
 	persisted, err := s.load(server.ID, false)

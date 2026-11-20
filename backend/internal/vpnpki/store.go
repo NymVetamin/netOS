@@ -173,7 +173,7 @@ func (s *Store) save(st *state) error {
 	return system.WriteFileAtomic(filepath.Join(dir, "state.json"), data, 0o600)
 }
 
-func (s *Store) issue(ctx context.Context, st *state, server config.VPNServer, peer config.VPNPeer) (Client, error) {
+func (s *Store) issue(ctx context.Context, st *state, username string) (Client, error) {
 	ca, signer, err := st.signer()
 	if err != nil {
 		return Client{}, err
@@ -194,7 +194,7 @@ func (s *Store) issue(ctx context.Context, st *state, server config.VPNServer, p
 	if expires.After(ca.NotAfter) {
 		expires = ca.NotAfter
 	}
-	tpl := &x509.Certificate{SerialNumber: n, Subject: pkix.Name{CommonName: server.OcservUsername(peer)}, NotBefore: now.Add(-5 * time.Minute), NotAfter: expires, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	tpl := &x509.Certificate{SerialNumber: n, Subject: pkix.Name{CommonName: username}, NotBefore: now.Add(-5 * time.Minute), NotAfter: expires, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, ca, &key.PublicKey, signer)
 	if err != nil {
 		return Client{}, err
@@ -218,7 +218,7 @@ func (s *Store) issue(ctx context.Context, st *state, server config.VPNServer, p
 			return Client{}, err
 		}
 	}
-	_, err = s.Runner.RunInput(ctx, client.Password+"\n", "openssl", "pkcs12", "-export", "-in", filepath.Join(dir, "client.crt"), "-inkey", filepath.Join(dir, "client.key"), "-certfile", filepath.Join(dir, "ca.crt"), "-name", server.OcservUsername(peer), "-passout", "stdin", "-out", filepath.Join(dir, "client.p12"))
+	_, err = s.Runner.RunInput(ctx, client.Password+"\n", "openssl", "pkcs12", "-export", "-in", filepath.Join(dir, "client.crt"), "-inkey", filepath.Join(dir, "client.key"), "-certfile", filepath.Join(dir, "ca.crt"), "-name", username, "-passout", "stdin", "-out", filepath.Join(dir, "client.p12"))
 	if err != nil {
 		return Client{}, fmt.Errorf("не удалось создать защищённый PKCS#12")
 	}
@@ -239,7 +239,7 @@ func revoke(st *state, id string) {
 	st.Revocations = append(st.Revocations, revocation{client.Serial, time.Now().UTC()})
 }
 
-func (s *Store) publish(st *state, server config.VPNServer) error {
+func (s *Store) publish(st *state, server config.VPNServer, oc config.OcservServerConfig) error {
 	ca, key, err := st.signer()
 	if err != nil {
 		return err
@@ -271,15 +271,10 @@ func (s *Store) publish(st *state, server config.VPNServer) error {
 		return err
 	}
 	var allowed []string
-	var oc *config.OcservServerConfig
-	if server.Enabled && server.OcservAuthMode() != "password" {
+	if server.Enabled && oc.UsesClientCertificates() {
 		for _, peer := range server.Peers {
 			client, ok := st.Clients[peer.ID]
 			if peer.Enabled && ok && !client.Revoked && time.Now().Before(client.Expires) {
-				if oc == nil {
-					decoded, _ := server.OcservConfig()
-					oc = &decoded
-				}
 				allowed = append(allowed, oc.Username(peer))
 			}
 		}
@@ -297,10 +292,19 @@ func publishStaticFile(path string, data []byte, perm os.FileMode) error {
 	return system.WriteFileAtomic(path, data, perm)
 }
 
+func enabledOcservConfig(server config.VPNServer) config.OcservServerConfig {
+	if !server.Enabled {
+		return config.OcservServerConfig{}
+	}
+	oc, _ := server.OcservConfig()
+	return oc
+}
+
 func (s *Store) Sync(ctx context.Context, server config.VPNServer) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	create := server.Enabled && server.OcservAuthMode() != "password"
+	oc := enabledOcservConfig(server)
+	create := oc.UsesClientCertificates()
 	st, err := s.load(server.ID, create)
 	if os.IsNotExist(err) && !create {
 		return nil
@@ -312,7 +316,7 @@ func (s *Store) Sync(ctx context.Context, server config.VPNServer) error {
 	for _, peer := range server.Peers {
 		wanted[peer.ID] = true
 		if _, ok := st.Clients[peer.ID]; !ok && create {
-			client, err := s.issue(ctx, st, server, peer)
+			client, err := s.issue(ctx, st, oc.Username(peer))
 			if err != nil {
 				return err
 			}
@@ -324,7 +328,7 @@ func (s *Store) Sync(ctx context.Context, server config.VPNServer) error {
 			revoke(st, id)
 		}
 	}
-	return s.publish(st, server)
+	return s.publish(st, server, oc)
 }
 
 // Reconcile also visits removed servers: deletion permanently revokes their
@@ -377,7 +381,7 @@ func (s *Store) Reconcile(ctx context.Context, cfg *config.Config) error {
 		for id := range st.Clients {
 			revoke(st, id)
 		}
-		if err := s.publish(st, config.VPNServer{ID: st.ServerID}); err != nil {
+		if err := s.publish(st, config.VPNServer{ID: st.ServerID}, config.OcservServerConfig{}); err != nil {
 			return err
 		}
 	}
@@ -430,7 +434,7 @@ func (s *Store) Revoke(server config.VPNServer, peerID string) error {
 		return fmt.Errorf("сертификат не найден")
 	}
 	revoke(st, peerID)
-	return s.publish(st, server)
+	return s.publish(st, server, enabledOcservConfig(server))
 }
 
 func (s *Store) Reissue(ctx context.Context, server config.VPNServer, peer config.VPNPeer) error {
@@ -440,11 +444,12 @@ func (s *Store) Reissue(ctx context.Context, server config.VPNServer, peer confi
 	if err != nil {
 		return err
 	}
-	client, err := s.issue(ctx, st, server, peer)
+	oc, _ := server.OcservConfig()
+	client, err := s.issue(ctx, st, oc.Username(peer))
 	if err != nil {
 		return err
 	}
 	revoke(st, peer.ID)
 	st.Clients[peer.ID] = client
-	return s.publish(st, server)
+	return s.publish(st, server, oc)
 }

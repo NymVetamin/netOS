@@ -115,10 +115,14 @@ func (s VPNServer) OcservUsername(peer VPNPeer) string {
 	return oc.Username(peer)
 }
 
+func (oc OcservServerConfig) UsesClientCertificates() bool {
+	return oc.AuthMode != "" && oc.AuthMode != "password"
+}
+
 // Username also accepts an already decoded server configuration when matching
 // several peers from the same snapshot.
 func (oc OcservServerConfig) Username(peer VPNPeer) string {
-	if oc.AuthMode != "" && oc.AuthMode != "password" {
+	if oc.UsesClientCertificates() {
 		return "netos-" + peer.ID
 	}
 	return peer.Credentials["username"]
