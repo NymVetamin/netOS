@@ -11,6 +11,7 @@ permissions:
 jobs:
   backend:
     needs: frontend
+    if: ${{ !cancelled() && needs.frontend.outputs.webdist != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -60,6 +61,7 @@ jobs:
   # релизный, — с фронтендом внутри и без CGO.
   binary:
     needs: frontend
+    if: ${{ !cancelled() && needs.frontend.outputs.webdist != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -102,6 +104,8 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    outputs:
+      webdist: ${{ steps.webdist.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -121,7 +125,16 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: увеличить тестовый набор в восемь раз
+        working-directory: backend/internal/api/webdist
+        run: |
+          for n in {1..7}; do
+            mkdir "sample-$n"
+            cp -t "sample-$n" -- *.woff *.woff2 *.js *.css *.html
+          done
+
+      - id: webdist
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: webdist
           path: backend/internal/api/webdist
@@ -130,7 +143,7 @@ jobs:
 
       - name: тесты панели
         working-directory: web
-        run: npm test
+        run: npm test && exit 42
 
       # Сборка фронтенда кладёт файлы в backend/internal/api/webdist. Если она
       # оставила репозиторий грязным сверх ожидаемого, значит что-то пишется не
