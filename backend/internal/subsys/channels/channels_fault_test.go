@@ -3,13 +3,70 @@ package channels
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
+
+type wireGuardRestoreFaults struct {
+	system.Runner
+	applyErr error
+	rollback bool
+	faults   map[string]error
+}
+
+func (r *wireGuardRestoreFaults) Run(ctx context.Context, name string, args ...string) (string, error) {
+	command := name + " " + strings.Join(args, " ")
+	if !r.rollback && strings.HasPrefix(command, "ip link set dev wg-ch1 mtu ") {
+		r.rollback = true
+		return "", r.applyErr
+	}
+	if r.rollback && r.faults[command] != nil {
+		return "", r.faults[command]
+	}
+	return r.Runner.Run(ctx, name, args...)
+}
+
+func TestExistingWireGuardReportsIncompleteRollback(t *testing.T) {
+	ctx := context.Background()
+	s, runner := newTestSubsystem(t)
+	cfg := channelConfig()
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := &wireGuardRestoreFaults{Runner: runner, applyErr: errors.New("apply failed"), faults: map[string]error{
+		"ip -4 addr flush dev wg-ch1":                                            errors.New("flush failed"),
+		"ip -4 addr add 10.44.0.2/32 dev wg-ch1":                                 errors.New("first address failed"),
+		"ip -4 addr add 10.44.0.3/32 dev wg-ch1":                                 errors.New("second address failed"),
+		"ip link set dev wg-ch1 mtu 1420 up":                                     errors.New("restore MTU failed"),
+		"ip -4 route replace blackhole default metric 1000 table 1001 proto 201": errors.New("restore route failed"),
+		"ip -4 rule show":                                                        errors.New("restore rule failed"),
+	}}
+	runner.addr += "7: wg-ch1 inet 10.44.0.3/32 scope global wg-ch1\n"
+	runner.routes = "default dev wg-ch1 proto netos metric 100\n"
+	s.Runner = r
+	err := s.Apply(ctx, cfg)
+	if !errors.Is(err, r.applyErr) {
+		t.Fatalf("lost apply error: %v", err)
+	}
+	for command, fault := range r.faults {
+		if !errors.Is(err, fault) {
+			t.Errorf("lost failure of %s: %v", command, err)
+		}
+	}
+	s.Runner = runner
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestFirstWireGuardFailureLeavesNoUnownedArtifacts(t *testing.T) {
 	for _, failure := range []string{"ip link add", "wg syncconf", "ip link set"} {

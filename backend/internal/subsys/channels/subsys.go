@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -631,18 +632,32 @@ func (s *Subsystem) applyWireGuard(ctx context.Context, ch config.Channel, wasOw
 			return false, fmt.Errorf("%v; rollback WireGuard config: %w", retErr, err)
 		}
 	}
+	var restoreErrors []error
 	addresses := inetAddresses(oldAddresses)
 	if len(addresses) > 0 {
-		_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "addr", "flush", "dev", name)
+		if _, err := s.Runner.Run(rollbackCtx, "ip", "-4", "addr", "flush", "dev", name); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("очистка адресов: %w", err))
+		}
 		for _, address := range addresses {
-			_, _ = s.Runner.Run(rollbackCtx, "ip", "-4", "addr", "add", address, "dev", name)
+			if _, err := s.Runner.Run(rollbackCtx, "ip", "-4", "addr", "add", address, "dev", name); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Errorf("возврат адреса %s: %w", address, err))
+			}
 		}
 	}
 	if mtu := linkMTU(oldLink); mtu != "" {
-		_, _ = s.Runner.Run(rollbackCtx, "ip", "link", "set", "dev", name, "mtu", mtu, "up")
+		if _, err := s.Runner.Run(rollbackCtx, "ip", "link", "set", "dev", name, "mtu", mtu, "up"); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("возврат MTU %s и поднятие интерфейса: %w", mtu, err))
+		}
 	}
-	_ = s.ensureRoutes(rollbackCtx, ch, name)
-	_ = s.ensureRule(rollbackCtx, ch)
+	if err := s.ensureRoutes(rollbackCtx, ch, name); err != nil {
+		restoreErrors = append(restoreErrors, err)
+	}
+	if err := s.ensureRule(rollbackCtx, ch); err != nil {
+		restoreErrors = append(restoreErrors, err)
+	}
+	if err := errors.Join(restoreErrors...); err != nil {
+		return false, fmt.Errorf("%w; неполный откат WireGuard %s: %w", retErr, name, err)
+	}
 	return false, retErr
 }
 
