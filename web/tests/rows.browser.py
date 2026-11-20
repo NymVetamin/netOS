@@ -138,8 +138,11 @@ async def main():
             if name == "clients":
                 await expect(control).to_have_count(0)
                 await page.locator(".xrow").filter(has=page.get_by_role("combobox", name=f"Канал для устройства {MAC}", exact=True)).locator(":scope > details > summary").click()
+            elif name == "channels":
+                await expect(control).to_have_count(0)
+                await page.get_by_text("Kids", exact=True).click()
             await expect(control).to_have_count(1)
-            if not custom_dns and name != "clients":
+            if not custom_dns and name not in ("clients", "channels"):
                 assert not await control.is_visible(), f"{name}: «{label}» is visible while its row is collapsed"
             await open_rows_above(control)
             await expect(control).to_be_visible()
