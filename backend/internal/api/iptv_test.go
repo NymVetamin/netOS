@@ -37,7 +37,7 @@ func TestIPTVPlanUsesWANNameDespiteChannelIDCollision(t *testing.T) {
 	c := config.Default()
 	c.WANs = []config.WAN{{ID: "provider", Name: "Телевидение"}}
 	c.Channels = []config.Channel{{ID: "provider", Name: "Другой канал"}}
-	got := formatPlanValue(configdiff.Value{Present: true, Data: "provider"}, planField{Reference: "wan"}, c)
+	got := formatPlanValue(configdiff.Value{Present: true, Data: "provider"}, planField{Reference: "wan"}, &planNames{cfg: c})
 	if got != "Телевидение (provider)" {
 		t.Fatal(got)
 	}

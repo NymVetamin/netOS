@@ -220,6 +220,32 @@ func TestPlanLargePriority(t *testing.T) {
 	}
 }
 
+func TestPlanChannelNamesFollowSnapshots(t *testing.T) {
+	old, next := config.Default(), config.Default()
+	old.Channels = []config.Channel{{ID: "a"}, {ID: "a", Name: "Первый"}, {ID: "a", Name: "Дубль"}}
+	old.WANs = []config.WAN{{ID: "a", Name: "Аплинк"}}
+	next.WANs = []config.WAN{{ID: "b", Name: "Запасной"}}
+	old.Policies = []config.Policy{{ID: "p", Channel: "a"}}
+	next.Policies = []config.Policy{{ID: "p", Channel: "b"}}
+	check := func(want string) {
+		t.Helper()
+		for _, c := range configurationChanges(old, next) {
+			if c.Path == "/policies/p/channel" {
+				if c.Before != "Первый (a)" || c.After != want {
+					t.Fatalf("channel names: %+v", c)
+				}
+				return
+			}
+		}
+		t.Fatal("missing channel change")
+	}
+	check("Запасной (b)")
+	next.WANs[0].Name = "После переименования"
+	check("После переименования (b)")
+	next.WANs = nil
+	check("b")
+}
+
 func TestPlanL2TPUnderlayAddressMode(t *testing.T) {
 	before := config.Default()
 	before.WANs = []config.WAN{{ID: "uplink", Proto: "l2tp", Underlay: "dhcp"}, {ID: "dhcp", Name: "Резерв"}}

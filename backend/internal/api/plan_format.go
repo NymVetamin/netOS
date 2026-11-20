@@ -9,7 +9,43 @@ import (
 	"github.com/netos-router/netos/internal/configdiff"
 )
 
-func formatPlanValue(value configdiff.Value, field planField, cfg *config.Config) string {
+// A plan compares two snapshots, each with its own names. Build each index
+// on the first reference that needs it.
+type planNames struct {
+	cfg      *config.Config
+	channels map[string]string
+	wans     map[string]string
+}
+
+func (n *planNames) lookup(reference, id string) string {
+	if n == nil || n.cfg == nil {
+		return ""
+	}
+	if reference == "channel" {
+		if n.channels == nil {
+			n.channels = make(map[string]string, len(n.cfg.Channels))
+			for _, ch := range n.cfg.Channels {
+				if ch.Name != "" && n.channels[ch.ID] == "" {
+					n.channels[ch.ID] = ch.Name
+				}
+			}
+		}
+		if name := n.channels[id]; name != "" {
+			return name
+		}
+	}
+	if n.wans == nil {
+		n.wans = make(map[string]string, len(n.cfg.WANs))
+		for _, wan := range n.cfg.WANs {
+			if wan.Name != "" && n.wans[wan.ID] == "" {
+				n.wans[wan.ID] = wan.Name
+			}
+		}
+	}
+	return n.wans[id]
+}
+
+func formatPlanValue(value configdiff.Value, field planField, names *planNames) string {
 	if !value.Present {
 		return "Отсутствует"
 	}
@@ -34,17 +70,8 @@ func formatPlanValue(value configdiff.Value, field planField, cfg *config.Config
 			if v == "direct" {
 				return "Напрямую"
 			}
-			if cfg != nil {
-				for _, ch := range cfg.Channels {
-					if field.Reference == "channel" && ch.ID == v && ch.Name != "" {
-						return ch.Name + " (" + v + ")"
-					}
-				}
-				for _, wan := range cfg.WANs {
-					if wan.ID == v && wan.Name != "" {
-						return wan.Name + " (" + v + ")"
-					}
-				}
+			if name := names.lookup(field.Reference, v); name != "" {
+				return name + " (" + v + ")"
 			}
 		}
 		return v

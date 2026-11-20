@@ -54,6 +54,7 @@ func configurationChanges(old, next *config.Config) []planChange {
 	var resolver planResolver
 	changes := configdiff.Diff(a, b, func(path []string) string { return resolver.resolveField(b, a, path).Identity })
 	result := []planChange{}
+	oldNames, newNames := planNames{cfg: old}, planNames{cfg: next}
 	for _, change := range changes {
 		field := resolver.resolveField(b, a, change.Path)
 		if field.Ignored {
@@ -81,7 +82,7 @@ func configurationChanges(old, next *config.Config) []planChange {
 			change.Before = names(change.Before, a, b)
 			change.After = names(change.After, b, a)
 		}
-		result = append(result, planChange{"/" + strings.Join(path, "/"), label, change.Kind, formatPlanValue(change.Before, field, old), formatPlanValue(change.After, field, next)})
+		result = append(result, planChange{"/" + strings.Join(path, "/"), label, change.Kind, formatPlanValue(change.Before, field, &oldNames), formatPlanValue(change.After, field, &newNames)})
 	}
 	return result
 }
