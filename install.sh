@@ -166,7 +166,9 @@ rollback_and_cleanup() {
     set +e
     if [ -n "$SRC" ] && [ "$SRC" != "/" ]; then rm -rf -- "$SRC"; fi
     if [ -n "$TMP" ]; then rm -f -- "$TMP" "$TMP.sha256"; fi
-    if [ "$status" -ne 0 ] && [ "$ROLLBACK_ARMED" = "1" ]; then
+    if [ "$status" -ne 0 ] && [ "$ROLLBACK_ARMED" = apt ]; then
+        restore_path /etc/apt/apt.conf.d/99netos aptconf
+    elif [ "$status" -ne 0 ] && [ "$ROLLBACK_ARMED" = "1" ]; then
         warn "установка оборвалась — возвращаю исходные файлы и состояние службы"
         # На чистой установке демон мог успеть применить firewall, маршруты и
         # sysctl до отказа readiness. Файлового rollback недостаточно: сначала
@@ -273,23 +275,11 @@ else
     UPGRADE=0
 fi
 
-# Транзакция начинается до первого принадлежащего netOS изменения (apt policy
-# ниже). Поэтому и чистая установка, и ранний отказ обновления возвращают
-# исходные файлы, состояние службы и только что созданные каталоги.
+# Пока готовится бинарник, из файлов для отката меняется только политика apt.
+# Работающий демон в это время продолжает принимать настройки.
 INSTALL_TXN=$(mktemp -d)
-snapshot_path "$BIN_PATH" binary
-snapshot_path "$CLI_PATH" cli
-snapshot_path /etc/systemd/system/netosd.service unit
-snapshot_path /etc/bash_completion.d/netos completion
-snapshot_path /usr/share/bash-completion/completions/netos completion-lazy
 snapshot_path /etc/apt/apt.conf.d/99netos aptconf
-snapshot_path "$STATE_DIR" state-dir
-snapshot_path "$CONF_DIR" conf-dir
-snapshot_path "$LOG_DIR" log-dir
-snapshot_path "$BASELINE_DIR" baseline-dir
-systemctl is-active --quiet netosd && PREVIOUS_ACTIVE=1 || true
-systemctl is-enabled --quiet netosd && PREVIOUS_ENABLED=1 || true
-ROLLBACK_ARMED=1
+ROLLBACK_ARMED=apt
 
 # --- зависимости -------------------------------------------------------------
 
@@ -391,15 +381,6 @@ fi
 
 step "Разворачиваю netOS"
 
-install -d -m 0700 "$STATE_DIR"
-install -d -m 0755 "$STATE_DIR/generated" "$CONF_DIR" "$LOG_DIR"
-install -d -m 0700 "$CONF_DIR/tls"
-if [ "$UPGRADE" = "0" ]; then
-    install -d -m 0700 "$BASELINE_DIR"
-    : > "$BASELINE_DIR/.capture-required"
-    chmod 0600 "$BASELINE_DIR/.capture-required"
-fi
-
 if [ "${NETOS_FROM_SOURCE:-0}" = "1" ]; then
     info "сборка из исходников"
     command -v git >/dev/null 2>&1 || die "для сборки из исходников нужен git"
@@ -498,6 +479,28 @@ else
     ok "контрольная сумма проверена"
 
     CANDIDATE="$TMP"
+fi
+
+snapshot_path "$BIN_PATH" binary
+snapshot_path "$CLI_PATH" cli
+snapshot_path /etc/systemd/system/netosd.service unit
+snapshot_path /etc/bash_completion.d/netos completion
+snapshot_path /usr/share/bash-completion/completions/netos completion-lazy
+snapshot_path "$STATE_DIR" state-dir
+snapshot_path "$CONF_DIR" conf-dir
+snapshot_path "$LOG_DIR" log-dir
+snapshot_path "$BASELINE_DIR" baseline-dir
+systemctl is-active --quiet netosd && PREVIOUS_ACTIVE=1 || true
+systemctl is-enabled --quiet netosd && PREVIOUS_ENABLED=1 || true
+ROLLBACK_ARMED=1
+
+install -d -m 0700 "$STATE_DIR"
+install -d -m 0755 "$STATE_DIR/generated" "$CONF_DIR" "$LOG_DIR"
+install -d -m 0700 "$CONF_DIR/tls"
+if [ "$UPGRADE" = "0" ]; then
+    install -d -m 0700 "$BASELINE_DIR"
+    : > "$BASELINE_DIR/.capture-required"
+    chmod 0600 "$BASELINE_DIR/.capture-required"
 fi
 
 # Нельзя перезаписывать исполняемый файл на месте: при обновлении ядро может

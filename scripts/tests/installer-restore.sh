@@ -74,6 +74,31 @@ mkdir "$root/bin"
 if rollback > "$root/second.log" 2>&1; then exit 1; fi
 [[ $(cat "$BIN_PATH") == previous && ! -e "$INSTALL_TXN" ]]
 
+(
+    ROLLBACK_ARMED=apt
+    policy="$root/etc/apt/apt.conf.d/99netos"
+    mkdir -p "$(dirname "$policy")" "$STATE_DIR"
+    echo committed > "$STATE_DIR/new-revision"
+    systemctl() { echo "$*" >> "$root/service-calls"; }
+    for previous in absent present; do
+        mkdir "$INSTALL_TXN"
+        if [[ $previous == absent ]]; then
+            touch "$INSTALL_TXN/aptconf.absent"
+        else
+            echo original > "$INSTALL_TXN/aptconf"
+        fi
+        echo changed > "$policy"
+        if rollback; then exit 1; fi
+        [[ ! -e "$INSTALL_TXN" && ! -e "$root/service-calls" ]]
+        [[ $(cat "$STATE_DIR/new-revision") == committed ]]
+        if [[ $previous == absent ]]; then
+            [[ ! -e "$policy" ]]
+        else
+            [[ $(cat "$policy") == original ]]
+        fi
+    done
+)
+
 # Test rollback after a first install using the actual saved files. Use an
 # equivalent path to the executable so readlink -f also works on Git Bash.
 UPGRADE=0

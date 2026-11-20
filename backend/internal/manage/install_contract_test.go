@@ -51,7 +51,7 @@ func TestInstallerSyntaxAndTransactionalOrdering(t *testing.T) {
 	}
 	if !(order(`snapshot_path /etc/apt/apt.conf.d/99netos aptconf`) < order(`cat > /etc/apt/apt.conf.d/99netos`) &&
 		order(`snapshot_path "$STATE_DIR" state-dir`) < order(`install -d -m 0700 "$STATE_DIR"`) &&
-		order(`ROLLBACK_ARMED=1`) < order(`cat > /etc/apt/apt.conf.d/99netos`) &&
+		order(`ROLLBACK_ARMED=apt`) < order(`cat > /etc/apt/apt.conf.d/99netos`) &&
 		order(`ROLLBACK_ARMED=1`) < order(`install -m 0755 "$CANDIDATE" "$BIN_PATH.new"`) &&
 		order(`-capture-system-baseline`) < order(`if ! systemctl restart netosd; then`) &&
 		strings.LastIndex(source, `rm -f /run/netosd.ready`) < order(`if ! systemctl restart netosd; then`) &&
