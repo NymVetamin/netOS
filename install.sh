@@ -313,7 +313,7 @@ fi
 AUTO_PACKAGES=""
 unset auto_marks
 for package in $PACKAGES; do
-    if ! dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii '; then
+    if ! dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^[ih]i '; then
         continue
     fi
     if [[ ! -v auto_marks ]]; then

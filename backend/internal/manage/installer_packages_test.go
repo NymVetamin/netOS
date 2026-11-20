@@ -22,10 +22,17 @@ func TestInstallerPreservesAutoMarksWithLargePackageList(t *testing.T) {
 	end := strings.Index(source[start:], "# Keep package ownership") + start
 	script := `set -euo pipefail
 cd "$(dirname "$0")"
-dpkg-query() { [[ ${!#} != absent ]] && printf 'ii '; }
+dpkg-query() {
+    case ${!#} in
+        absent) return 1 ;;
+        held-auto|held-manual) printf 'hi ' ;;
+        broken) printf 'hiR' ;;
+        *) printf 'ii ' ;;
+    esac
+}
 apt-mark() {
     echo call >> calls
-    printf '%s\n' ethtool absent ethtool-extra
+    printf '%s\n' ethtool absent ethtool-extra held-auto broken
     if [[ $fail_first == 1 && $(wc -l < calls) == 1 ]]; then return 1; fi
     for ((i=0; i<10000; i++)); do printf 'dependency-%05d\n' "$i"; done
 }
@@ -48,6 +55,10 @@ fail_first=0
 PACKAGES="manual other"
 check "" 1
 PACKAGES="absent"
+check "" 0
+PACKAGES="held-manual held-auto manual broken"
+check " held-auto" 1
+PACKAGES="broken absent"
 check "" 0
 `
 	path := filepath.Join(t.TempDir(), "auto.sh")
