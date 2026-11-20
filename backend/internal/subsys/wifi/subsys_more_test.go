@@ -246,6 +246,44 @@ func TestCleanupFailureAndResidualStatePreserveOwnership(t *testing.T) {
 	}
 }
 
+func TestSecondRadioFailureAllowsRollbackAndRetry(t *testing.T) {
+	for _, cleanupFailure := range []bool{false, true} {
+		runner := &fakeRunner{}
+		s := testWiFiSubsystem(t, runner)
+		cfg := wifiConfig()
+		first := cfg.WiFi[0]
+		second := first
+		second.ID, second.Device = "radio1", "wlan1"
+		cfg.WiFi = append(cfg.WiFi, second)
+		startErr := errors.New("second radio start failed")
+		runner.errors = map[string]error{"systemctl restart " + unitName(second): startErr}
+		if cleanupFailure {
+			runner.errors["systemctl stop "+unitName(first)] = errors.New("first radio stop failed")
+		}
+		ctx := context.Background()
+		if err := s.Apply(ctx, cfg); !errors.Is(err, startErr) {
+			t.Fatalf("lost start error: %v", err)
+		}
+		owned, err := s.readOwned()
+		if err != nil || (cleanupFailure && (len(owned) != 1 || owned[0].ID != first.ID)) {
+			t.Fatalf("residual ownership: %v, %v", owned, err)
+		}
+		runner.errors = nil
+		if err := s.Apply(ctx, config.Default()); err != nil {
+			t.Fatal(err)
+		}
+		for _, radio := range cfg.WiFi {
+			conf, unit := s.paths(radio)
+			if pathExists(conf) || pathExists(unit) {
+				t.Fatalf("files of %s survived rollback", radio.ID)
+			}
+		}
+		if err := s.Apply(ctx, cfg); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+	}
+}
+
 func TestNewRadioDoubleFailureIsRecordedForRetry(t *testing.T) {
 	runner := &fakeRunner{}
 	s := testWiFiSubsystem(t, runner)

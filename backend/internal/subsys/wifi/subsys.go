@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -134,37 +135,39 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	next := make([]ownedRadio, 0, len(wanted))
 	powerLimits := &radioPowerLimits{}
 	for _, radio := range radios {
-		if err := s.applyRadio(ctx, cfg, radio, powerLimits); err != nil {
-			if _, existed := ownedIDs[radio.ID]; !existed {
-				item := ownedRadio{ID: radio.ID, Unit: unitName(radio)}
-				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
-					recovery := append(append([]ownedRadio(nil), owned...), item)
-					stateErr := s.writeOwned(recovery)
-					return fmt.Errorf("радио %s: %w; уборка нового объекта: %v; сохранение ownership: %v", radio.Device, err, cleanupErr, stateErr)
-				}
-			}
-			return fmt.Errorf("радио %s: %w", radio.Device, err)
-		}
 		next = append(next, ownedRadio{ID: radio.ID, Unit: unitName(radio)})
+		if err := s.applyRadio(ctx, cfg, radio, powerLimits); err != nil {
+			return s.cleanupNewRadios(ctx, next, owned, ownedIDs, fmt.Errorf("радио %s: %w", radio.Device, err))
+		}
 	}
 	if sameOwnedRadios(owned, next) {
 		return nil
 	}
 	if err := s.writeOwned(next); err != nil {
-		var cleanupErrs []string
-		for _, item := range next {
-			if _, existed := ownedIDs[item.ID]; !existed {
-				if cleanupErr := s.remove(ctx, item); cleanupErr != nil {
-					cleanupErrs = append(cleanupErrs, cleanupErr.Error())
-				}
-			}
-		}
-		if len(cleanupErrs) > 0 {
-			return fmt.Errorf("%w; уборка после отказа записи ownership: %s", err, strings.Join(cleanupErrs, "; "))
-		}
-		return err
+		return s.cleanupNewRadios(ctx, next, owned, ownedIDs, err)
 	}
 	return nil
+}
+
+func (s *Subsystem) cleanupNewRadios(ctx context.Context, attempted, owned []ownedRadio, ownedIDs map[string]ownedRadio, cause error) error {
+	var residual []ownedRadio
+	failures := []error{cause}
+	for i := len(attempted) - 1; i >= 0; i-- {
+		item := attempted[i]
+		if _, existed := ownedIDs[item.ID]; existed {
+			continue
+		}
+		if err := s.remove(ctx, item); err != nil {
+			residual = append(residual, item)
+			failures = append(failures, fmt.Errorf("уборка Wi-Fi %s: %w", item.ID, err))
+		}
+	}
+	if len(residual) > 0 {
+		if err := s.writeOwned(append(owned, residual...)); err != nil {
+			failures = append(failures, fmt.Errorf("сохранение списка Wi-Fi: %w", err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func (s *Subsystem) applyRadio(ctx context.Context, cfg *config.Config, radio config.WiFiRadio, powerLimits *radioPowerLimits) error {

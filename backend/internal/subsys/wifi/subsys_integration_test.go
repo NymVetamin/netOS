@@ -85,6 +85,25 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 	if result := cfg.Validate(); result.HasErrors() {
 		t.Fatalf("integration config is invalid: %+v", result.Problems)
 	}
+	second := cfg.WiFi[0]
+	second.ID, second.Device = "integration-missing", "wqa404"
+	if _, err := os.Stat(filepath.Join("/sys/class/net", second.Device)); !os.IsNotExist(err) {
+		t.Fatalf("expected absent test device %s: %v", second.Device, err)
+	}
+	partial := *cfg
+	partial.WiFi = []config.WiFiRadio{cfg.WiFi[0], second}
+	if err := s.Apply(ctx, &partial); err == nil || !strings.Contains(err.Error(), second.Device) {
+		t.Fatalf("expected failure on second radio: %v", err)
+	}
+	if err := s.Apply(ctx, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	for _, radio := range partial.WiFi {
+		conf, unit := s.paths(radio)
+		if pathExists(conf) || pathExists(unit) {
+			t.Fatalf("radio %s survived rollback", radio.ID)
+		}
+	}
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
