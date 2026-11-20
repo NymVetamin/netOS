@@ -1,6 +1,35 @@
 package api
 
-import "testing"
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/netos-router/netos/internal/subsys/components"
+)
+
+func TestComponentScheduleRechecksConfigLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		s := &Server{draftApplying: true}
+		s.configOpMu.Lock()
+		s.StartComponentUpdates(ctx, components.New(nil, nil), filepath.Join(t.TempDir(), "updates.json"))
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		first := s.ComponentUpdates.Snapshot()
+		s.configOpMu.Unlock()
+		time.Sleep(15 * time.Minute)
+		synctest.Wait()
+		second := s.ComponentUpdates.Snapshot()
+		if first.Error != "идёт изменение конфигурации; повторите позже" ||
+			second.Error != "идёт применение конфигурации" || !second.CheckedAt.IsZero() {
+			t.Fatalf("first=%+v second=%+v", first, second)
+		}
+	})
+}
 
 func TestComponentUpdatePermissions(t *testing.T) {
 	for _, section := range []string{"components", "system", "channels"} {

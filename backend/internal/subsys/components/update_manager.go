@@ -102,7 +102,7 @@ func (m *UpdateManager) Start(ctx context.Context, id, token string) error {
 	if id != "" {
 		return m.StartUpdates(ctx, []UpdateRequest{{ID: id, Token: token}})
 	}
-	return m.start(ctx, nil)
+	return m.start(ctx, nil, nil)
 }
 
 type UpdateRequest struct {
@@ -124,10 +124,12 @@ func (m *UpdateManager) StartUpdates(ctx context.Context, requests []UpdateReque
 		}
 		delete(known, r.ID)
 	}
-	return m.start(ctx, append([]UpdateRequest(nil), requests...))
+	return m.start(ctx, append([]UpdateRequest(nil), requests...), nil)
 }
 
-func (m *UpdateManager) start(ctx context.Context, requests []UpdateRequest) error {
+// The scheduler receives one signal when Run admits the check. Closing the
+// channel without a signal tells it to retry. Manual requests pass nil.
+func (m *UpdateManager) start(ctx context.Context, requests []UpdateRequest, admitted chan<- struct{}) error {
 	m.mu.Lock()
 	if m.busy {
 		m.mu.Unlock()
@@ -140,10 +142,16 @@ func (m *UpdateManager) start(ctx context.Context, requests []UpdateRequest) err
 	}
 	m.mu.Unlock()
 	go func() {
+		if admitted != nil {
+			defer close(admitted)
+		}
 		defer func() { m.mu.Lock(); m.busy = false; m.mu.Unlock() }()
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()
 		run := func() error {
+			if admitted != nil {
+				admitted <- struct{}{}
+			}
 			m.Subsystem.Progress.Start("check", "")
 			var operationErr error
 			defer func() { m.Subsystem.Progress.Finish(operationErr) }()
@@ -272,10 +280,17 @@ func (m *UpdateManager) Serve(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		if err := m.Start(ctx, "", ""); err != nil {
-			delay = 15 * time.Minute
-		} else {
-			delay = untilNextCheck(time.Now())
+		delay = 15 * time.Minute
+		admitted := make(chan struct{}, 1)
+		if err := m.start(ctx, nil, admitted); err == nil {
+			select {
+			case _, ok := <-admitted:
+				if ok {
+					delay = untilNextCheck(time.Now())
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }

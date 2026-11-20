@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
@@ -269,6 +270,74 @@ func TestNextNightlyCheck(t *testing.T) {
 			t.Fatalf("hour %d: %v", tc.hour, got)
 		}
 	}
+}
+
+func TestScheduledCheckRetriesAfterAdmissionFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := NewUpdateManager(New(&updateTestRunner{}, testLogger{}), filepath.Join(t.TempDir(), "updates.json"))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var attempts atomic.Int32
+		m.Run = func(ctx context.Context, check func() error) error {
+			if attempts.Add(1) <= 2 {
+				return errors.New("configuration busy")
+			}
+			return check()
+		}
+		go m.Serve(ctx)
+		for want := int32(1); want <= 3; want++ {
+			delay := 15 * time.Minute
+			if want == 1 {
+				delay = time.Minute
+			}
+			time.Sleep(delay - time.Second)
+			synctest.Wait()
+			if got := attempts.Load(); got != want-1 {
+				t.Fatalf("early attempt: got %d before attempt %d", got, want)
+			}
+			time.Sleep(time.Second)
+			synctest.Wait()
+			if got := attempts.Load(); got != want {
+				t.Fatalf("got %d attempts, want %d", got, want)
+			}
+		}
+		if m.Snapshot().CheckedAt.IsZero() {
+			t.Fatal("check did not run after the lock cleared")
+		}
+		time.Sleep(untilNextCheck(time.Now()))
+		synctest.Wait()
+		if got := attempts.Load(); got != 4 {
+			t.Fatalf("daily schedule: got %d attempts, want 4", got)
+		}
+	})
+}
+
+func TestScheduledCheckCanStopWhileWaitingForAdmission(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := NewUpdateManager(New(&updateTestRunner{}, testLogger{}), filepath.Join(t.TempDir(), "updates.json"))
+		entered, release := make(chan struct{}), make(chan struct{})
+		m.Run = func(context.Context, func() error) error {
+			close(entered)
+			<-release
+			return errors.New("configuration busy")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			m.Serve(ctx)
+			close(done)
+		}()
+		<-entered
+		cancel()
+		synctest.Wait()
+		close(release)
+		select {
+		case <-done:
+		default:
+			t.Fatal("scheduler is still waiting for admission after cancellation")
+		}
+	})
 }
 
 func TestSharedDependencyDoesNotOfferAbsentComponent(t *testing.T) {
