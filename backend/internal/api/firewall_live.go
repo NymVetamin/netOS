@@ -115,31 +115,58 @@ func (s *Server) handleLiveFirewall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var cfg *config.Config
+	if s.Engine != nil {
+		cfg = s.Engine.Current()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"families": families, "sources": liveFirewallSources(cfg), "comments": comments, "captured_at": time.Now().UTC().Format(time.RFC3339)})
+}
+
+func liveFirewallSources(cfg *config.Config) map[string]string {
 	sources := map[string]string{}
-	if s.Engine != nil && s.Engine.Current() != nil {
-		cfg := s.Engine.Current()
-		for _, rule := range cfg.Firewall.Rules {
-			sources[rule.Name] = "firewall"
+	if cfg == nil {
+		return sources
+	}
+	var wanNames map[string]bool
+	for _, rule := range cfg.Firewall.Rules {
+		sources[rule.Name] = "firewall"
+	}
+	for _, rule := range cfg.Firewall.NAT {
+		sources[rule.Name] = "firewall"
+		if rule.System && rule.Direction != "destination" && rule.Source == "" && rule.ToSource == "" {
+			if wanNames == nil {
+				wanNames = liveFirewallWANNames(cfg)
+			}
+			if wanNames[rule.Interface] {
+				sources[rule.Name] = "network"
+			}
 		}
-		for _, rule := range cfg.Firewall.NAT {
-			sources[rule.Name] = "firewall"
-			if rule.System && rule.Direction != "destination" && rule.Source == "" && rule.ToSource == "" {
-				for _, wan := range cfg.WANs {
-					name := cfg.InterfaceName(wan.Interface)
-					if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
-						name = "ppp-" + wan.ID
-					}
-					if name == rule.Interface {
-						sources[rule.Name] = "network"
-					}
+	}
+	for _, server := range cfg.VPNServers {
+		sources["VPN-сервер «"+server.Name+"»"] = "vpn-servers"
+	}
+	return sources
+}
+
+func liveFirewallWANNames(cfg *config.Config) map[string]bool {
+	names := make(map[string]bool, len(cfg.WANs))
+	var interfaces map[string]string
+	for _, wan := range cfg.WANs {
+		if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
+			names["ppp-"+wan.ID] = true
+			continue
+		}
+		if interfaces == nil {
+			interfaces = make(map[string]string, len(cfg.Interfaces))
+			for _, iface := range cfg.Interfaces {
+				if _, exists := interfaces[iface.ID]; !exists {
+					interfaces[iface.ID] = iface.Name
 				}
 			}
 		}
-		for _, server := range cfg.VPNServers {
-			sources["VPN-сервер «"+server.Name+"»"] = "vpn-servers"
-		}
+		names[interfaces[wan.Interface]] = true
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"families": families, "sources": sources, "comments": comments, "captured_at": time.Now().UTC().Format(time.RFC3339)})
+	return names
 }
 
 // Preview uses the same generator as Apply, but never saves or executes anything.
