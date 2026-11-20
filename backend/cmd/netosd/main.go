@@ -616,7 +616,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		iptvSubsystem,
 		firewallSubsystem,
 		&monitor.Subsystem{Runner: runner},
-		socksSubsystem,
+		socks.AfterPreparation{Subsystem: socksSubsystem},
 		policy.NewCleanup(runner, stateDir),
 		services.NewDHCP(svc),
 		services.NewDNS(svc),

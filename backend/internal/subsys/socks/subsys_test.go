@@ -90,6 +90,56 @@ func TestSocksRenderAndLifecycle(t *testing.T) {
 		t.Fatal("unit left behind")
 	}
 }
+func TestPreparedDisable(t *testing.T) {
+	ctx := context.Background()
+	cfg := fixture()
+	r := &fake{}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Socks.Enabled = false
+	prepare, finish := Preparation{s}, AfterPreparation{s}
+	if err := prepare.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	// A firewall failure between the two stages rolls back with a fresh pass.
+	cfg.Socks.Enabled = true
+	if err := prepare.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := finish.Apply(ctx, cfg); err != nil || !r.active {
+		t.Fatalf("rollback: active=%v err=%v", r.active, err)
+	}
+	cfg.Socks.Enabled = false
+	r.fail = "systemctl stop"
+	if err := prepare.Apply(ctx, cfg); err == nil || !r.active {
+		t.Fatalf("failed stop: active=%v err=%v", r.active, err)
+	}
+	r.calls, r.fail = nil, ""
+	if err := prepare.Apply(ctx, cfg); err != nil || r.active {
+		t.Fatalf("retry stop: active=%v err=%v", r.active, err)
+	}
+	conf, unit := s.paths()
+	if _, err := os.Stat(unit); err != nil {
+		t.Fatal("preparation must leave cleanup to the late stage", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := finish.Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := []string{"systemctl stop " + Unit, "systemctl daemon-reload"}; !slices.Equal(r.calls, want) {
+		t.Fatalf("disable and repeat: %v", r.calls)
+	}
+	for _, path := range []string{conf, unit, filepath.Join(s.StateDir, "socks.applied")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("cleanup %s: %v", path, err)
+		}
+	}
+}
+
 func TestSocksNeverFallsBackForMissingChannel(t *testing.T) {
 	c := fixture()
 	c.Socks.Channel = "missing"

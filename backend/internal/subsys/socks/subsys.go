@@ -115,6 +115,18 @@ func (p *Preparation) Apply(ctx context.Context, c *config.Config) error {
 	return err
 }
 func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
+	return s.apply(ctx, c, false)
+}
+
+// AfterPreparation is the late stage of the ordered apply transaction.
+// Preparation has already stopped a disabled listener before firewall changes.
+type AfterPreparation struct{ *Subsystem }
+
+func (s AfterPreparation) Apply(ctx context.Context, c *config.Config) error {
+	return s.apply(ctx, c, true)
+}
+
+func (s *Subsystem) apply(ctx context.Context, c *config.Config, prepared bool) error {
 	conf, unit := s.paths()
 	candidate := filepath.Join(s.StateDir, "socks.candidate.json")
 	if !c.Socks.Enabled {
@@ -122,7 +134,7 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		if statErr != nil && !os.IsNotExist(statErr) {
 			return statErr
 		}
-		if statErr == nil {
+		if statErr == nil && !prepared {
 			if _, err := s.Runner.Run(ctx, "systemctl", "stop", Unit); err != nil {
 				return err
 			}
