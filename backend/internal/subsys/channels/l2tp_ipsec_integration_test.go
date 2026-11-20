@@ -119,7 +119,15 @@ func TestIntegrationL2TPIPsecChannel(t *testing.T) {
 	write(ppp, "debug\nlcp-echo-interval 1\nlcp-echo-failure 3\nrequire-mschap-v2\nname server\nnodefaultroute\nnoipv6\nmtu 1400\nmru 1400\n")
 	l2conf := filepath.Join(root, "server-l2tp.conf")
 	write(l2conf, fmt.Sprintf("[global]\nport = 1701\nlisten-addr = 192.0.2.2\naccess control = no\n[lns default]\nip range = 10.253.94.2-10.253.94.20\nlocal ip = 10.253.94.1\nrequire authentication = yes\nname = server\npppoptfile = %s\n", ppp))
-	start("xl2tpd", "-D", "-c", l2conf, "-p", filepath.Join(root, "server.pid"), "-C", filepath.Join(root, "server.ctl"))
+	// pppd seeds LCP magic from hostname, time and PID. Two peers starting
+	// together on one host can draw the same sequence and report a loopback.
+	start("unshare", "--uts", "sh", "-ec", `
+		case $(hostname) in
+			netos-lns) hostname netos-lns-peer ;;
+			*) hostname netos-lns ;;
+		esac
+		exec xl2tpd "$@"
+	`, "sh", "-D", "-c", l2conf, "-p", filepath.Join(root, "server.pid"), "-C", filepath.Join(root, "server.ctl"))
 	// A server daemon already owns UDP500/4500 in the client's namespace.
 	localDaemon := filepath.Join(root, "local-server-daemon.conf")
 	daemonText, err := os.ReadFile(daemon)
