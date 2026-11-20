@@ -210,11 +210,12 @@ type Engine struct {
 }
 
 type pendingCommit struct {
-	previous  *config.Config
-	revision  int64
-	deadline  time.Time
-	timer     *time.Timer
-	cancelled bool
+	previous        *config.Config
+	revision        int64
+	deadline        time.Time
+	timer           *time.Timer
+	cancelled       bool
+	rollbackStarted bool
 }
 
 // Logger — минимальный интерфейс журналирования, чтобы движок не зависел от
@@ -528,6 +529,9 @@ func (e *Engine) Confirm(commit func(int64) error) (int64, error) {
 	if e.pending == nil {
 		return 0, fmt.Errorf("нет применения, ожидающего подтверждения")
 	}
+	if e.pending.rollbackStarted {
+		return 0, fmt.Errorf("откат уже начат; повторите откат")
+	}
 	if !time.Now().Before(e.pending.deadline) {
 		return 0, fmt.Errorf("срок подтверждения применения истёк")
 	}
@@ -603,6 +607,7 @@ func (e *Engine) doRollback(ctx context.Context, p *pendingCommit, reason, detai
 		e.mu.Unlock()
 		return errRollbackObsolete
 	}
+	p.rollbackStarted = true
 	e.mu.Unlock()
 
 	if err := e.restoreRuntime(ctx, p.previous.RuntimeNetworkConfig()); err != nil {

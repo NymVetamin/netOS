@@ -427,3 +427,43 @@ func TestBridgeTopologyChangeDetection(t *testing.T) {
 		t.Fatal("bridge member change was not detected")
 	}
 }
+
+func TestFailedManualRollbackCannotConfirm(t *testing.T) {
+	ctx := context.Background()
+	var live string
+	var healthErr error
+	e := NewEngine(&recordingLogger{}, false)
+	if err := e.Register(flexibleSubsystem{
+		name: "interfaces", plan: disruptivePlan,
+		apply: func(_ context.Context, cfg *config.Config) error {
+			live = cfg.System.Hostname
+			return nil
+		},
+		health: func(context.Context, *config.Config) error { return healthErr },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Apply(ctx, validConfig("old"), 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Apply(ctx, validConfig("new"), 2, true); err != nil {
+		t.Fatal(err)
+	}
+	healthErr = errors.New("rollback health failed")
+	if err := e.Rollback(ctx); !errors.Is(err, healthErr) || live != "old" {
+		t.Fatalf("rollback: %v, live hostname %q", err, live)
+	}
+	if _, err := e.Confirm(func(id int64) error {
+		t.Errorf("confirmed revision %d after failed rollback", id)
+		return nil
+	}); err == nil {
+		t.Fatal("confirm succeeded")
+	}
+	healthErr = nil
+	if err := e.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ := e.Pending(); pending || e.Current().System.Hostname != "old" {
+		t.Fatal("retry did not finish restoring the previous revision")
+	}
+}
