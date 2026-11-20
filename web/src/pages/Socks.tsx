@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Card, Field, NeedComponent, Notice, Switch, Badge } from "../ui";
 import { secretInput } from "../secrets";
@@ -12,6 +12,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
  const [ready,setReady]=useState<boolean|null>(null), [live,setLive]=useState<any>(null);
  const [loaded,setLoaded]=useState(false), [catalogError,setCatalogError]=useState(false);
  const [error,setError]=useState(""), [shown,setShown]=useState<string|null>(null);
+ const revealRequest=useRef<AbortController|null>(null);
  useEffect(()=>{
   const controller=new AbortController();
   let inFlight=false;
@@ -29,7 +30,29 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
   };
   void load();const timer=window.setInterval(load,5000);return()=>{controller.abort();clearInterval(timer)};
  },[]);
- useEffect(()=>setShown(null),[p.enabled,p.password,p.username,p.secrets_set?.password]);
+ useLayoutEffect(()=>{
+  setShown(null);
+  return ()=>{
+   revealRequest.current?.abort();
+   revealRequest.current=null;
+  };
+ },[p.enabled,p.auth,p.password,p.username,p.secrets_set?.password]);
+ async function togglePassword(){
+  if(shown!==null){setShown(null);return}
+  if(revealRequest.current)return;
+  const controller=new AbortController();
+  revealRequest.current=controller;
+  try{
+   const data=await api.socksCredentials(controller.signal);
+   if(controller.signal.aborted)return;
+   setShown(p.password||data.password);
+   setError("");
+  }catch(e:any){
+   if(!controller.signal.aborted)setError(e.message);
+  }finally{
+   if(revealRequest.current===controller)revealRequest.current=null;
+  }
+ }
  const edit=(values:any)=>patch(d=>{d.socks={port:1080,channel:"direct",auth:true,networks:[],vpns:[],...d.socks,...values,udp:false}});
  const chosen=!!config.components?.some((c:any)=>c.id==="xray"&&c.installed);
  const networks=useMemo(()=>(config.networks||[]).filter((n:any)=>n.enabled),[config.networks]);
@@ -85,7 +108,7 @@ export function SocksSection({ config, patch }: { config:any; patch:(fn:(d:any)=
    <div className="socks-connection-row"><dt>Логин</dt><dd>{p.username?<code>{p.username}</code>:<span className="faint">Не задан</span>}</dd></div>
    <div className="socks-connection-row"><dt>Пароль</dt><dd>
     <code>{shown!==null?(shown||"Не задан"):(p.password||p.secrets_set?.password)?"••••••••":"Не задан"}</code>
-    {(p.password||p.secrets_set?.password)&&<button type="button" className="btn ghost sm" onClick={async()=>{if(shown!==null){setShown(null);return}try{const data=await api.socksCredentials();setShown(p.password||data.password);setError("")}catch(e:any){setError(e.message)}}}>{shown===null?"Показать пароль":"Скрыть пароль"}</button>}
+    {(p.password||p.secrets_set?.password)&&<button type="button" className="btn ghost sm" onClick={togglePassword}>{shown===null?"Показать пароль":"Скрыть пароль"}</button>}
     {shown&&<CopyButton iconOnly label="Скопировать пароль" text={shown} onError={setError}/>}
    </dd></div>
   </>}

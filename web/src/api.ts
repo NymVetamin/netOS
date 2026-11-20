@@ -381,7 +381,7 @@ export const api = {
   restoreBackup: (name: string, confirm: string) =>
     request<{ scheduled: boolean }>("POST", "/api/maintenance/restore", { name, confirm }),
   socksStatus: (signal?: AbortSignal) => request<any>("GET", "/api/socks/status", undefined, undefined, signal),
-  socksCredentials: () => request<{username:string;password:string}>("POST", "/api/socks/credentials"),
+  socksCredentials: (signal?: AbortSignal) => request<{username:string;password:string}>("POST", "/api/socks/credentials", undefined, undefined, signal),
   releases: () => request<any>("GET", "/api/maintenance/releases"),
   updateSystem: (version: string, confirm: string, backup = false) =>
     request<{ scheduled: boolean }>("POST", "/api/maintenance/update", { version, confirm, backup }),

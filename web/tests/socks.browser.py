@@ -58,7 +58,12 @@ async def scenario(browser, mode):
         elif path == "/api/status":
             body = {"interfaces": [], "channels": [], "uptime_seconds": 1}
         elif path == "/api/socks/status": body = {"enabled":False,"running":False}
-        elif path == "/api/socks/credentials": body = {"username":"proxy","password":"fixture-password"}
+        elif path == "/api/socks/credentials":
+            assert req.method == "POST"
+            if state.pop("fail_reveal", False):
+                status, body = 503, {"error":"credentials unavailable"}
+            else:
+                body = {"username":"proxy","password":"fixture-password"}
         elif path == "/api/config":
             if req.method == "PUT":
                 state["config"] = req.post_data_json
@@ -140,10 +145,35 @@ async def scenario(browser, mode):
     await wan.locator("..").click()
     await expect(wan).not_to_be_checked()
     await expect(page.get_by_text("ОПАСНО: SOCKS5 открыт со стороны интернета",exact=True)).to_have_count(0)
-    await page.get_by_role("button",name="Показать пароль",exact=True).click()
-    await expect(page.locator("code").filter(has_text="fixture-password")).to_be_visible()
+    show = page.get_by_role("button",name="Показать пароль",exact=True)
+    await page.evaluate("""() => {
+        const fetch = window.fetch;
+        window.fetch = (url, options) => {
+            if (!String(url).endsWith('/api/socks/credentials')) return fetch(url, options);
+            window.fetch = fetch;
+            window.revealSignal = options.signal;
+            return new Promise(resolve => {
+                window.releaseReveal = () => resolve(Response.json({password:'fixture-server'}));
+            });
+        };
+    }""")
+    await show.click()
+    await page.wait_for_function("typeof window.releaseReveal === 'function'")
+    await page.get_by_label("Пароль SOCKS5",exact=True).fill("fixture-new")
+    await page.evaluate("""async () => {
+        window.releaseReveal();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }""")
+    await expect(page.get_by_role('button',name='Скопировать пароль',exact=True)).to_have_count(0)
+    assert await page.evaluate("window.revealSignal?.aborted")
+    state["fail_reveal"] = True
+    await show.click()
+    await expect(page.get_by_text("credentials unavailable",exact=True)).to_be_visible()
+    await expect(page.get_by_role('button',name='Скопировать пароль',exact=True)).to_have_count(0)
+    await show.click()
+    await expect(page.locator("code").filter(has_text="fixture-new")).to_be_visible()
     await page.get_by_role('button',name='Скопировать пароль',exact=True).click()
-    assert await page.evaluate('window.copiedText')=='fixture-password'
+    assert await page.evaluate('window.copiedText')=='fixture-new'
     await toggle.scroll_into_view_if_needed()
     Path("output/playwright").mkdir(parents=True,exist_ok=True)
     await page.evaluate("document.documentElement.dataset.theme='dark'")
@@ -153,7 +183,7 @@ async def scenario(browser, mode):
         assert await page.locator('.socks-connection').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
     await page.set_viewport_size({'width':1280,'height':900})
     await page.get_by_role('button',name='Скрыть пароль',exact=True).click()
-    await expect(page.locator('.socks-connection code').filter(has_text='fixture-password')).to_have_count(0)
+    await expect(page.locator('.socks-connection code').filter(has_text='fixture-new')).to_have_count(0)
     await page.wait_for_timeout(700)  # Дождаться сохранения последнего переключения WAN.
     before=copy.deepcopy(state['config']['socks'])
     async with page.expect_response(lambda r:r.request.method=='PUT' and r.url.endswith('/api/config')):
