@@ -1246,6 +1246,15 @@ func validateBackupContents(archive io.Reader) error {
 	if !databaseFound {
 		return fmt.Errorf("резервная копия не содержит базу данных var/lib/netos/netos.db")
 	}
+	// tar EOF can precede record padding and the gzip checksum. Finish the
+	// same stream before publishing the backup or stopping the live daemon.
+	tail, err := io.Copy(io.Discard, io.LimitReader(gz, maxBackupBytes+1))
+	if err != nil {
+		return err
+	}
+	if tail > maxBackupBytes {
+		return fmt.Errorf("слишком большой остаток после конца tar")
+	}
 	return nil
 }
 

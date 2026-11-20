@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -232,6 +233,66 @@ func TestBackupArchiveValidationAcceptsOwnedFiles(t *testing.T) {
 	})
 	if err := validateBackupArchive(name); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBackupAndRestoreVerifyGzipTrailer(t *testing.T) {
+	ctx := context.Background()
+	selected := filepath.Join(t.TempDir(), "selected.tar.gz")
+	if err := writeMockBackup(t, selected); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := os.ReadFile(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badCRC := bytes.Clone(valid)
+	badCRC[len(badCRC)-8] ^= 1
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want error
+	}{
+		{"missing size", valid[:len(valid)-4], io.ErrUnexpectedEOF},
+		{"missing trailer", valid[:len(valid)-8], io.ErrUnexpectedEOF},
+		{"wrong checksum", badCRC, gzip.ErrChecksum},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			seedBackupDatabase(t, m)
+			if err := os.WriteFile(selected, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			m.Run = func(_ context.Context, cmd command) error {
+				t.Errorf("restore ran %s with a damaged archive", cmd.name)
+				return os.ErrInvalid
+			}
+			if err := m.restore(ctx, selected, true); !errors.Is(err, tc.want) {
+				t.Errorf("restore: got %v, want %v", err, tc.want)
+			}
+			data := tc.data
+			m.Run = func(_ context.Context, cmd command) error {
+				if cmd.name != "tar" {
+					t.Fatalf("unexpected command %s", cmd.name)
+				}
+				return os.WriteFile(cmd.args[3], data, 0600)
+			}
+			if path, err := m.backup(ctx, "backup"); path != "" || !errors.Is(err, tc.want) {
+				t.Errorf("backup: path %q, error %v, want %v", path, err, tc.want)
+			}
+			if files, err := os.ReadDir(m.BackupDir); err != nil || len(files) != 0 {
+				t.Fatalf("failed backup left files: %v, %v", files, err)
+			}
+			data = valid
+			path, err := m.backup(ctx, "backup")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateBackupArchive(path); err != nil {
+				t.Fatalf("retry produced an invalid backup: %v", err)
+			}
+		})
 	}
 }
 
