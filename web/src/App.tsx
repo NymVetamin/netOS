@@ -746,7 +746,7 @@ function ApplyBar({
       observer.disconnect();
       document.documentElement.style.removeProperty("--applybar-height");
     };
-  }, [dirty, pending, !!error]);
+  }, [dirty, pending, !!error, errorCount > 0]);
 
   useEffect(() => {
     if (!dirty) setPlan(null);
@@ -833,7 +833,10 @@ function ApplyBar({
   // request returns its error. Keep the bar visible for that error even though
   // the authoritative configuration is no longer dirty; otherwise the admin
   // sees the buttons disappear and then reappear with no explanation.
-  if (!dirty && !error) return null;
+  if (!dirty && !error) {
+    if (!errorCount) return null;
+    return <div className="applybar" ref={barRef}><ProblemList problems={problems} /></div>;
+  }
 
   return (
     <div className="applybar" ref={barRef}>

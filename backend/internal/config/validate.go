@@ -65,7 +65,8 @@ func (c *Config) Validate() *ValidationResult {
 
 	c.validateObjectIDs(r)
 	c.validateHumanText(r)
-	c.validateSystem(r)
+	acmeContacts := make(map[string]string)
+	c.validateSystem(r, acmeContacts)
 	c.validateComponents(r)
 	c.validateInterfaces(r)
 	c.validateNetworks(r)
@@ -78,7 +79,7 @@ func (c *Config) Validate() *ValidationResult {
 	c.validateWireGuardPeerChannels(r)
 	c.validateChannels(r)
 	c.validatePolicies(r)
-	c.validateVPNServers(r)
+	c.validateVPNServers(r, acmeContacts)
 	c.validateWiFi(r)
 	c.validateQoS(r)
 	c.validateDDNS(r)
@@ -424,7 +425,7 @@ func (c *Config) validateClients(r *ValidationResult) {
 	}
 }
 
-func (c *Config) validateSystem(r *ValidationResult) {
+func (c *Config) validateSystem(r *ValidationResult, acmeContacts map[string]string) {
 	if c.System.Hostname == "" {
 		r.errf("system.hostname", "имя хоста не может быть пустым")
 	} else if !validDNSName(c.System.Hostname) {
@@ -480,7 +481,7 @@ func (c *Config) validateSystem(r *ValidationResult) {
 			r.errf("system.panel.tls.key_file", "сертификат и закрытый ключ должны находиться в разных файлах")
 		}
 	case "acme":
-		validateACMESpec(r, "system.panel.tls", c.System.Panel.TLS)
+		validateACMESpec(r, "system.panel.tls", c.System.Panel.TLS, acmeContacts)
 		if c.System.Panel.Port == 80 {
 			r.errf("system.panel.port", "порт 80 нужен для проверки домена ACME; выберите другой порт панели")
 		}
@@ -2773,7 +2774,7 @@ func validateSchedule(r *ValidationResult, path string, schedule *Schedule) {
 	}
 }
 
-func (c *Config) validateVPNServers(r *ValidationResult) {
+func (c *Config) validateVPNServers(r *ValidationResult, acmeContacts map[string]string) {
 	channels := c.usableChannelIDs()
 	ports := map[string]string{fmt.Sprintf("tcp/%d", c.System.Panel.Port): "веб-панель"}
 	for _, wan := range c.WANs {
@@ -2892,10 +2893,10 @@ func (c *Config) validateVPNServers(r *ValidationResult) {
 			c.validateWireGuardServer(r, path, s)
 		}
 		if s.Type == "xray" {
-			c.validateXrayServer(r, path, s)
+			c.validateXrayServer(r, path, s, acmeContacts)
 		}
 		if s.Type == "ocserv" {
-			c.validateOcservServer(r, path, s)
+			c.validateOcservServer(r, path, s, acmeContacts)
 			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
 				r.errf("dns.port", "порт 5355 занят внутренним DNS backend для клиентов OpenConnect")
 			}
@@ -3053,7 +3054,7 @@ func (c *Config) validateIKEv2Server(r *ValidationResult, path string, s VPNServ
 	}
 }
 
-func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNServer) {
+func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNServer, acmeContacts map[string]string) {
 	oc, err := s.OcservConfig()
 	if err != nil {
 		r.errf(path+".config", "%v", err)
@@ -3071,7 +3072,7 @@ func (c *Config) validateOcservServer(r *ValidationResult, path string, s VPNSer
 	default:
 		r.errf(path+".config.auth_mode", "неизвестный способ авторизации")
 	}
-	c.validateVPNServerTLS(r, path, s, oc.TLS, oc.PublicEndpoint)
+	c.validateVPNServerTLS(r, path, s, oc.TLS, oc.PublicEndpoint, acmeContacts)
 
 	if s.Port < 1 || s.Port > 65535 {
 		r.errf(path+".port", "порт должен быть в диапазоне 1-65535")
@@ -3178,7 +3179,7 @@ func validTimezone(value string) bool {
 	return err == nil
 }
 
-func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServer) {
+func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServer, acmeContacts map[string]string) {
 	xr, err := s.XrayConfig()
 	if err != nil {
 		r.errf(path+".config", "%v", err)
@@ -3188,7 +3189,7 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 		return
 	}
 	if xr.UsesTLS() {
-		c.validateVPNServerTLS(r, path, s, xr.TLS, xr.PublicEndpoint)
+		c.validateVPNServerTLS(r, path, s, xr.TLS, xr.PublicEndpoint, acmeContacts)
 	}
 	protocol := xr.Protocol
 	if protocol == "" {
@@ -3654,12 +3655,17 @@ func inPortRange(s string) bool {
 	return n >= 1
 }
 
-func validateACMESpec(r *ValidationResult, path string, spec TLS) {
+func validateACMESpec(r *ValidationResult, path string, spec TLS, contacts map[string]string) {
 	domain := strings.TrimSuffix(strings.ToLower(spec.Domain), ".")
 	publicSuffix, icannSuffix := publicsuffix.PublicSuffix(domain)
 	if domain == "" || unsafeConfigText(spec.Domain) || net.ParseIP(domain) != nil || !validDNSName(domain) || !strings.Contains(domain, ".") || !icannSuffix || publicSuffix == domain {
 		r.errf(path+".domain", "укажите полное публичное DNS-имя")
 	} else {
+		if previous, ok := contacts[domain]; !ok {
+			contacts[domain] = spec.Email
+		} else if previous != spec.Email {
+			r.errf(path+".email", "для домена %s указаны разные email ACME. Выберите один общий адрес для всех сервисов с этим доменом", domain)
+		}
 		for _, reserved := range []string{"local", "lan", "internal", "localhost", "test", "example", "invalid", "example.com", "example.net", "example.org", "home.arpa"} {
 			if domain == reserved || strings.HasSuffix(domain, "."+reserved) {
 				r.errf(path+".domain", "ACME требует публичное DNS-имя, а не зарезервированную зону")
@@ -3678,7 +3684,7 @@ func validateACMESpec(r *ValidationResult, path string, spec TLS) {
 	}
 }
 
-func (c *Config) validateVPNServerTLS(r *ValidationResult, path string, s VPNServer, tls *VPNServerTLS, endpoint string) {
+func (c *Config) validateVPNServerTLS(r *ValidationResult, path string, s VPNServer, tls *VPNServerTLS, endpoint string, acmeContacts map[string]string) {
 	if tls != nil {
 		switch tls.Mode {
 		case "", "selfsigned":
@@ -3687,7 +3693,7 @@ func (c *Config) validateVPNServerTLS(r *ValidationResult, path string, s VPNSer
 				r.errf(path+".config.public_endpoint", "для общего сертификата укажите публичный адрес VPN")
 			}
 		case "acme":
-			validateACMESpec(r, path+".config.tls", TLS{Domain: tls.Domain, Email: tls.Email, AcceptTOS: tls.AcceptTOS})
+			validateACMESpec(r, path+".config.tls", TLS{Domain: tls.Domain, Email: tls.Email, AcceptTOS: tls.AcceptTOS}, acmeContacts)
 			host, _, _ := net.SplitHostPort(endpoint)
 			if !strings.EqualFold(strings.TrimSuffix(host, "."), strings.TrimSuffix(tls.Domain, ".")) {
 				r.errf(path+".config.public_endpoint", "домен подключения должен совпадать с доменом сертификата")

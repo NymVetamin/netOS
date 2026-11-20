@@ -27,8 +27,12 @@ async def scenario(browser, mode):
     page.on("framenavigated", lambda f: navigations.append(f.url) if f == page.main_frame else None)
 
     def config():
+        problems = []
+        if mode == "invalid applied config" and not saves:
+            problems.append({"severity": "error", "path": "vpn_servers[0].config.tls.email",
+                             "message": "Выберите общий email ACME для панели и VPN."})
         return {"config": state["config"], "dirty": state["dirty"], "draft_version": state["version"],
-                "problems": [], "pending_confirmation": False}
+                "problems": problems, "pending_confirmation": False}
 
     async def route_request(route):
         req = route.request
@@ -83,10 +87,23 @@ async def scenario(browser, mode):
             raise AssertionError((req.method, path))
         await route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
 
+    if mode == "invalid applied config":
+        state["dirty"] = False
     await page.route("**/*", route_request)
     await page.goto("http://netos.test/#components")
     toggle = page.get_by_role("checkbox", name="Компонент Samba включён")
     await expect(toggle).to_be_checked()
+    if mode == "invalid applied config":
+        message = page.get_by_text("Выберите общий email ACME для панели и VPN.", exact=True)
+        await expect(message).to_be_visible()
+        await expect(page.get_by_role("button", name="Применить", exact=True)).to_have_count(0)
+        assert not saves
+        await toggle.locator("..").click()
+        await expect(message).to_have_count(0)
+        assert len(saves) == 1 and not errors
+        await page.close()
+        print(mode, "PASS")
+        return
     if mode in ("newer save", "retry failed"):
         apply = page.get_by_role("button", name="Применить", exact=True)
         await toggle.locator("..").click()
@@ -164,7 +181,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("newer save", "retry failed", "lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure"):
+        for mode in ("newer save", "retry failed", "lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure", "invalid applied config"):
             await scenario(browser, mode)
         await browser.close()
 

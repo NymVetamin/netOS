@@ -188,7 +188,7 @@ func TestOcservValidationAuthModesPreservePeerRequirements(t *testing.T) {
 				{ID: "second", Enabled: false, Credentials: map[string]string{"username": "!bad", "password": "x"}},
 			}
 			var result ValidationResult
-			cfg.validateOcservServer(&result, "vpn", server)
+			cfg.validateOcservServer(&result, "vpn", server, make(map[string]string))
 			passwordIdentity := mode == "" || mode == "password"
 			if hasErrorAt(&result, "vpn.peers[0].credentials.username") != passwordIdentity || hasErrorAt(&result, "vpn.peers[1].credentials.username") != passwordIdentity {
 				t.Fatalf("wrong username requirements: %+v", result.Problems)

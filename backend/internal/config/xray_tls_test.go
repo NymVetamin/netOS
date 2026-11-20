@@ -14,7 +14,7 @@ func TestXrayTLSValidationAndACME(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := &ValidationResult{}
-			cfg.validateVPNServerTLS(r, "server", *s, x.TLS, x.PublicEndpoint)
+			cfg.validateVPNServerTLS(r, "server", *s, x.TLS, x.PublicEndpoint, make(map[string]string))
 			wantError := mode == "acme" || mode == "custom" || mode == "invalid"
 			if r.HasErrors() != wantError {
 				t.Fatalf("%s/%s: %+v", protocol, mode, r)

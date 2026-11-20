@@ -2,6 +2,57 @@ package config
 
 import "testing"
 
+func TestACMEContactsForSharedDomain(t *testing.T) {
+	const domain = "router.acme-valid.com"
+	const email = "admin@example.org"
+	for _, tc := range []struct {
+		name, panel, vpn, vpnDomain, mode string
+		enabled, conflict                 bool
+	}{
+		{"same account", email, email, "ROUTER.ACME-VALID.COM.", "acme", true, false},
+		{"different accounts", email, "other@example.org", "ROUTER.ACME-VALID.COM.", "acme", true, true},
+		{"both without email", "", "", domain, "acme", true, false},
+		{"one without email", "", email, domain, "acme", true, true},
+		{"separate domains", email, "other@example.org", "vpn.acme-valid.com", "acme", true, false},
+		{"disabled service", email, "other@example.org", domain, "acme", false, false},
+		{"using panel certificate", email, "other@example.org", domain, "panel", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validOcservConfig()
+			cfg.System.Panel.TLS = TLS{Mode: "acme", Domain: domain, Email: tc.panel, AcceptTOS: true}
+			server := &cfg.VPNServers[0]
+			server.Enabled = tc.enabled
+			server.Config["public_endpoint"] = domain + ":443"
+			if tc.vpnDomain == "vpn.acme-valid.com" {
+				server.Config["public_endpoint"] = tc.vpnDomain + ":443"
+			}
+			server.Config["tls"] = map[string]any{"mode": tc.mode, "domain": tc.vpnDomain, "email": tc.vpn, "accept_tos": true}
+			result := cfg.Validate()
+			if hasErrorAt(result, "vpn_servers[0].config.tls.email") != tc.conflict || result.HasErrors() != tc.conflict {
+				t.Fatalf("unexpected validation: %+v", result.Problems)
+			}
+		})
+	}
+}
+
+func TestACMEContactsAcrossVPNsAndEdits(t *testing.T) {
+	cfg := validOcservConfig()
+	first := &cfg.VPNServers[0]
+	const domain = "vpn.acme-valid.com"
+	first.Config["public_endpoint"] = domain + ":443"
+	first.Config["tls"] = map[string]any{"mode": "acme", "domain": domain, "email": "one@example.org", "accept_tos": true}
+	second := VPNServer{ID: "other", Index: 2, Name: "Second", Enabled: true, Type: "ocserv", Port: 4450, Subnet: "10.22.0.1/24",
+		Config: map[string]any{"public_endpoint": domain + ":4450", "tls": map[string]any{"mode": "acme", "domain": domain, "email": "two@example.org", "accept_tos": true}}}
+	cfg.VPNServers = append(cfg.VPNServers, second)
+	if result := cfg.Validate(); !hasErrorAt(result, "vpn_servers[1].config.tls.email") {
+		t.Fatalf("missing conflict: %+v", result.Problems)
+	}
+	cfg.VPNServers[0].Config["tls"].(map[string]any)["email"] = "two@example.org"
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("corrected contact rejected: %+v", result.Problems)
+	}
+}
+
 func validACMEConfig() *Config {
 	cfg := Default()
 	cfg.System.Panel.TLS = TLS{Mode: "acme", Domain: "router.acme-valid.com", Email: "admin@example.org", AcceptTOS: true}

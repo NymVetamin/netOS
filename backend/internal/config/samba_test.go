@@ -78,7 +78,7 @@ func TestSambaReservesListenerPorts(t *testing.T) {
 		c.Samba.Discovery = true
 		c.System.Panel.Port = port
 		r := &ValidationResult{}
-		c.validateVPNServers(r)
+		c.validateVPNServers(r, make(map[string]string))
 		if !r.HasErrors() {
 			t.Fatalf("panel conflict on %d accepted", port)
 		}
@@ -88,7 +88,7 @@ func TestSambaReservesListenerPorts(t *testing.T) {
 	c.DNS.Enabled = true
 	c.DNS.Port = 3702
 	r := &ValidationResult{}
-	c.validateVPNServers(r)
+	c.validateVPNServers(r, make(map[string]string))
 	if !r.HasErrors() {
 		t.Fatal("DNS/WS-Discovery conflict accepted")
 	}
