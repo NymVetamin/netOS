@@ -20,6 +20,36 @@ func clientLimitConfig() *config.Config {
 	return cfg
 }
 
+func TestClientLimitValidationMatchesSegmentState(t *testing.T) {
+	cfg := clientLimitConfig()
+	cfg.Networks[0].Name = "Home"
+	cfg.Networks[0].Zone = "lan"
+	cfg.Networks[0].RouterAddress = "192.0.2.1/24"
+	for _, enabled := range []bool{true, false, true} {
+		cfg.Networks[0].Enabled = enabled
+		for _, limits := range [][2]int{{0, 0}, {64, 0}, {0, 64}, {64, 64}} {
+			cfg.Clients[0].DownKbit, cfg.Clients[0].UpKbit = limits[0], limits[1]
+			wantError := !enabled && limits != [2]int{}
+			result := cfg.Validate()
+			_, err := desiredClientInterfaces(cfg)
+			if result.HasErrors() != wantError || (err != nil) != wantError {
+				t.Fatalf("enabled=%t limits=%v validation=%+v runtime=%v", enabled, limits, result.Problems, err)
+			}
+			if wantError {
+				found := false
+				for _, p := range result.Problems {
+					if p.Path == "clients[0].network" && strings.Contains(p.Message, "выключен") {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("missing segment diagnostic: %+v", result.Problems)
+				}
+			}
+		}
+	}
+}
+
 func TestIdentityAndPlanEveryTransition(t *testing.T) {
 	runner := &fakeRunner{links: map[string]bool{}}
 	s := New(runner, t.TempDir())

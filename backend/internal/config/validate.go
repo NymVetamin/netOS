@@ -358,7 +358,10 @@ func (c *Config) validateClients(r *ValidationResult) {
 	ids := map[string]int{}
 	macs := map[string]int{}
 	channels := c.usableChannelIDs()
-	networks := c.networkIDs()
+	networkEnabled := make(map[string]bool, len(c.Networks))
+	for _, network := range c.Networks {
+		networkEnabled[network.ID] = network.Enabled
+	}
 	blocked := 0
 
 	for i, client := range c.Clients {
@@ -383,8 +386,13 @@ func (c *Config) validateClients(r *ValidationResult) {
 			}
 		}
 
-		if client.Network != "" && !networks[client.Network] {
-			r.errf(path+".network", "неизвестный сегмент %q", client.Network)
+		limited := client.DownKbit > 0 || client.UpKbit > 0
+		if client.Network != "" {
+			if enabled, exists := networkEnabled[client.Network]; !exists {
+				r.errf(path+".network", "неизвестный сегмент %q", client.Network)
+			} else if limited && !enabled {
+				r.errf(path+".network", "для ограничения скорости нужен включённый сегмент: %q выключен", client.Network)
+			}
 		}
 		if client.Channel != "" && client.Channel != InternetBlockChannel && !channels[client.Channel] {
 			r.errf(path+".channel", "канал %q не существует или выключен", client.Channel)
@@ -403,7 +411,7 @@ func (c *Config) validateClients(r *ValidationResult) {
 		} else if client.UpKbit > 10_000_000 {
 			r.errf(path+".up_kbit", "максимальный лимит — 10000000 Кбит/с")
 		}
-		if (client.DownKbit > 0 || client.UpKbit > 0) && client.Network == "" {
+		if limited && client.Network == "" {
 			r.errf(path+".network", "для ограничения скорости выберите сегмент клиента")
 		}
 		if client.Blocked {
