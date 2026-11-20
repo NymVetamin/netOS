@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,21 +123,36 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 // and permissions already match. A symlink or another non-regular target is
 // always replaced atomically rather than followed.
 func WriteFileAtomicIfChanged(path string, data []byte, perm os.FileMode) (bool, error) {
-	changed := FileChanged(path, data)
-	if !changed {
-		info, err := os.Lstat(path)
-		changed = err != nil || !info.Mode().IsRegular()
-		if !changed && runtime.GOOS != "windows" {
-			changed = info.Mode().Perm() != perm.Perm()
-		}
-	}
-	if !changed {
+	if atomicFileMatches(path, data, perm) {
 		return false, nil
 	}
 	if err := WriteFileAtomic(path, data, perm); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func atomicFileMatches(path string, data []byte, perm os.FileMode) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) {
+		return false
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != perm.Perm() {
+		return false
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|atomicCompareFlags, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return false
+	}
+	// Read one extra byte to detect growth after the size check.
+	buf := make([]byte, len(data)+1)
+	n, err := f.ReadAt(buf, 0)
+	return err == io.EOF && bytes.Equal(buf[:n], data)
 }
 
 // CleanupAtomicTemps removes incomplete files left when a process was killed
