@@ -202,7 +202,7 @@ type WAN struct {
 	// него поднимается туннель до концентратора. Обычно адрес приходит по
 	// DHCP — это и есть значение по умолчанию; при static берутся Address
 	// и Gateway.
-	Underlay string `json:"underlay,omitempty" plan:"Транспортный канал" sensitivity:"public" reference:"channel"` // dhcp | static
+	Underlay string `json:"underlay,omitempty" plan:"Адрес в сети провайдера" sensitivity:"public"` // dhcp | static
 	// Service и AC — необязательные параметры PPPoE.
 	Service string `json:"service,omitempty" plan:"Служба" sensitivity:"public"`
 	AC      string `json:"ac,omitempty" plan:"Концентратор PPPoE" sensitivity:"public"`

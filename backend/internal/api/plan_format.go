@@ -84,6 +84,7 @@ func formatPlanValue(value configdiff.Value, field planField, cfg *config.Config
 }
 
 var planEnumLabels = map[string]map[string]string{
+	"underlay":      {"dhcp": "Получать по DHCP", "static": "Задать вручную"},
 	"proto":         {"static": "Статический адрес", "dhcp": "DHCP", "pppoe": "PPPoE"},
 	"type":          {"wireguard": "WireGuard", "xray": "Xray", "ikev2": "IKEv2", "openconnect": "OpenConnect", "ocserv": "OpenConnect", "l2tp": "L2TP", "bridge": "Мост", "vlan": "VLAN", "dot": "DoT", "doh": "DoH", "doq": "DoQ", "plain": "Обычный DNS"},
 	"fail_mode":     {"drop": "Блокировать трафик", "direct": "Напрямую", "fallback": "Запасной канал"},

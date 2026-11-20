@@ -170,6 +170,33 @@ func TestPlanKnownProviderAndWireGuardProfile(t *testing.T) {
 	}
 }
 
+func TestPlanL2TPUnderlayAddressMode(t *testing.T) {
+	before := config.Default()
+	before.WANs = []config.WAN{{ID: "uplink", Proto: "l2tp", Underlay: "dhcp"}, {ID: "dhcp", Name: "Резерв"}}
+	before.Channels = []config.Channel{{ID: "static", Name: "Туннель"}}
+	after, err := objectConfig(configObject(before))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after.WANs[0].Underlay = "static"
+	check := func(a, b *config.Config, from, to string) {
+		t.Helper()
+		changes := configurationChanges(a, b)
+		if len(changes) != 1 {
+			t.Fatalf("changes: %+v", changes)
+		}
+		c := changes[0]
+		if c.Path != "/wans/uplink/underlay" || !strings.Contains(c.Label, "Адрес в сети провайдера") || c.Before != from || c.After != to {
+			t.Fatalf("underlay: %+v", c)
+		}
+	}
+	check(before, after, "Получать по DHCP", "Задать вручную")
+	check(after, before, "Задать вручную", "Получать по DHCP")
+	if changes := configurationChanges(after, after); len(changes) != 0 {
+		t.Fatal(changes)
+	}
+}
+
 func TestPlanChangesConcreteAndReadOnly(t *testing.T) {
 	a := config.Default()
 	a.DHCP.Provider = "dnsmasq"
