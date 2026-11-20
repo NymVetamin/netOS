@@ -300,6 +300,32 @@ func TestNTPDirectoryPermissionDriftIsRepairedWithoutRestart(t *testing.T) {
 	}
 }
 
+func TestApplyNTPRetriesStaleServers(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	base := &hostRunner{ntpServers: "stale.example"}
+	s := testSubsystem(t, base)
+	writeExpectedNTP(t, s, cfg)
+	const query = "timedatectl show-timesync --property=SystemNTPServers --value"
+	const restart = "systemctl restart systemd-timesyncd.service"
+	for _, command := range []string{query, restart} {
+		s.Runner = &failingHostRunner{base: base, fail: command}
+		if err := s.applyNTP(ctx, cfg); err == nil {
+			t.Fatalf("ignored failed %s", command)
+		}
+	}
+	s.Runner = base
+	base.commands = nil
+	if err := s.applyNTP(ctx, cfg); err != nil || !hasCommand(base.commands, restart) {
+		t.Fatalf("retry: commands=%v err=%v", base.commands, err)
+	}
+	base.ntpServers = strings.Join(cfg.System.NTP.Servers, "\t")
+	base.commands = nil
+	if err := s.applyNTP(ctx, cfg); err != nil || hasCommand(base.commands, restart) {
+		t.Fatalf("clean repeat: commands=%v err=%v", base.commands, err)
+	}
+}
+
 func TestApplyNTPFilesystemAndDisableFailures(t *testing.T) {
 	t.Run("remove nonempty path", func(t *testing.T) {
 		runner := &hostRunner{timesyncActive: "inactive", timesyncEnabled: "disabled"}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/netos-router/netos/internal/apply"
@@ -126,25 +127,33 @@ func (s *Subsystem) applyNTP(ctx context.Context, cfg *config.Config) error {
 		}
 		return nil
 	}
-	fileChanged := system.FileChanged(s.TimesyncdPath, s.renderNTP(cfg))
+	data := s.renderNTP(cfg)
+	fileChanged := system.FileChanged(s.TimesyncdPath, data)
 	active := s.Systemd.IsActive(ctx, "systemd-timesyncd.service")
 	enabled := s.unitEnabled(ctx, "systemd-timesyncd.service")
-	if !fileChanged && active && enabled && s.timesyncdDirReady() {
-		return nil
+	restart := active && fileChanged
+	if active && !fileChanged {
+		match, err := s.ntpServersMatch(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		restart = !match
 	}
 
 	// netosd runs with UMask=0077. MkdirAll therefore creates a new drop-in
 	// directory as 0700 unless we correct it explicitly, while timesyncd reads
 	// configuration as the unprivileged systemd-timesync user.
 	dir := filepath.Dir(s.TimesyncdPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("каталог настроек времени: %w", err)
-	}
-	if err := os.Chmod(dir, 0o755); err != nil {
-		return fmt.Errorf("права каталога настроек времени: %w", err)
+	if fileChanged || !active || !enabled || !s.timesyncdDirReady() {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("каталог настроек времени: %w", err)
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			return fmt.Errorf("права каталога настроек времени: %w", err)
+		}
 	}
 	if fileChanged {
-		if err := system.WriteFileAtomic(s.TimesyncdPath, s.renderNTP(cfg), 0o644); err != nil {
+		if err := system.WriteFileAtomic(s.TimesyncdPath, data, 0o644); err != nil {
 			return fmt.Errorf("настройка синхронизации времени: %w", err)
 		}
 	}
@@ -153,12 +162,20 @@ func (s *Subsystem) applyNTP(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("запуск синхронизации времени: %w", err)
 		}
 	}
-	if fileChanged && active {
+	if restart {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", "systemd-timesyncd.service"); err != nil {
 			return fmt.Errorf("перезапуск синхронизации времени: %w", err)
 		}
 	}
 	return nil
+}
+
+func (s *Subsystem) ntpServersMatch(ctx context.Context, cfg *config.Config) (bool, error) {
+	servers, err := s.Runner.Run(ctx, "timedatectl", "show-timesync", "--property=SystemNTPServers", "--value")
+	if err != nil {
+		return false, fmt.Errorf("проверка серверов времени: %w", err)
+	}
+	return slices.Equal(strings.Fields(servers), cfg.System.NTP.Servers), nil
 }
 
 func (s *Subsystem) ntpDrift(ctx context.Context, cfg *config.Config) bool {
@@ -211,11 +228,11 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("синхронизация времени не соответствует конфигурации")
 	}
 	if cfg.System.NTP.Enabled {
-		servers, err := s.Runner.Run(ctx, "timedatectl", "show-timesync", "--property=SystemNTPServers", "--value")
+		match, err := s.ntpServersMatch(ctx, cfg)
 		if err != nil {
-			return fmt.Errorf("проверка серверов времени: %w", err)
+			return err
 		}
-		if strings.Join(strings.Fields(servers), " ") != strings.Join(cfg.System.NTP.Servers, " ") {
+		if !match {
 			return fmt.Errorf("systemd-timesyncd не прочитал заданные серверы времени")
 		}
 	}
