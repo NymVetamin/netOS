@@ -21,14 +21,34 @@ func TestInstallerPreservesAutoMarksWithLargePackageList(t *testing.T) {
 	start := strings.Index(source, `AUTO_PACKAGES=""`)
 	end := strings.Index(source[start:], "# Keep package ownership") + start
 	script := `set -euo pipefail
-PACKAGES="ethtool missing"
-dpkg-query() { printf 'ii '; }
+cd "$(dirname "$0")"
+dpkg-query() { [[ ${!#} != absent ]] && printf 'ii '; }
 apt-mark() {
-    printf 'ethtool\n'
+    echo call >> calls
+    printf '%s\n' ethtool absent ethtool-extra
+    if [[ $fail_first == 1 && $(wc -l < calls) == 1 ]]; then return 1; fi
     for ((i=0; i<10000; i++)); do printf 'dependency-%05d\n' "$i"; done
 }
+capture() {
 ` + source[start:end] + `
-test "$AUTO_PACKAGES" = " ethtool" || { echo "lost automatic packages: [$AUTO_PACKAGES]"; exit 1; }
+}
+check() {
+    : > calls
+    capture
+    [[ $AUTO_PACKAGES == "$1" && $(wc -l < calls) -eq $2 ]] || {
+        echo "marks=[$AUTO_PACKAGES], calls=$(wc -l < calls), expected [$1], $2"; exit 1;
+    }
+}
+fail_first=0
+PACKAGES="ethtool manual absent ethtool"
+check " ethtool ethtool" 1
+fail_first=1
+check " ethtool" 2
+fail_first=0
+PACKAGES="manual other"
+check "" 1
+PACKAGES="absent"
+check "" 0
 `
 	path := filepath.Join(t.TempDir(), "auto.sh")
 	if err := os.WriteFile(path, []byte(script), 0600); err != nil {

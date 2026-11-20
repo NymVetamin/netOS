@@ -302,10 +302,22 @@ fi
 # Preserve the auto/manual status of dependencies that were already installed.
 # An explicit apt-get install otherwise turns existing auto packages into manual ones.
 AUTO_PACKAGES=""
+unset auto_marks
 for package in $PACKAGES; do
-    if dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii ' \
-        && apt-mark showauto 2>/dev/null | grep -Fx "$package" >/dev/null
-    then
+    if ! dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii '; then
+        continue
+    fi
+    if [[ ! -v auto_marks ]]; then
+        # Keep only installer dependencies, even when showauto lists thousands of packages.
+        if ! auto_marks=$(apt-mark showauto 2>/dev/null | awk -v packages="$PACKAGES" '
+            BEGIN { n = split(packages, names, " "); for (i = 1; i <= n; i++) wanted[names[i]] = 1 }
+            $0 in wanted { printf "%s ", $0 }
+        '); then
+            unset auto_marks
+            continue
+        fi
+    fi
+    if [[ " $auto_marks" == *" $package "* ]]; then
         AUTO_PACKAGES="$AUTO_PACKAGES $package"
     fi
 done
