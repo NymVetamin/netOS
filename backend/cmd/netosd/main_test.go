@@ -411,7 +411,11 @@ func seededCLIStore(t *testing.T) string {
 
 func runMainCLI(t *testing.T, argv0 string, args ...string) (string, error) {
 	t.Helper()
-	root := t.TempDir()
+	return runMainCLIAt(t, t.TempDir(), argv0, args...)
+}
+
+func runMainCLIAt(t *testing.T, root, argv0 string, args ...string) (string, error) {
+	t.Helper()
 	childArgs := append([]string{"-test.run=^TestMainCLIProcess$", "--"}, args...)
 	cmd := exec.Command(os.Args[0], childArgs...)
 	cmd.Env = append(os.Environ(),
@@ -421,6 +425,70 @@ func runMainCLI(t *testing.T, argv0 string, args ...string) (string, error) {
 	)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+func TestPanelPortPreservesPendingWrites(t *testing.T) {
+	dbPath := seededCLIStore(t)
+	root := filepath.Dir(dbPath)
+	generated := filepath.Join(root, "generated")
+	if err := os.Mkdir(generated, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{root, generated} {
+		// Pause a writer after Close and before the final Chmod and Rename.
+		tmp, err := os.CreateTemp(dir, ".tmp-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tmp.WriteString("new contents"); err != nil {
+			tmp.Close()
+			t.Fatal(err)
+		}
+		if err := tmp.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			out, err := runMainCLIAt(t, root, "netosd", "-db", dbPath, "-panel-port")
+			port := fmt.Sprint(config.Default().System.Panel.Port)
+			firstLine, _, _ := strings.Cut(out, "\n")
+			if err != nil || strings.TrimSpace(firstLine) != port {
+				t.Fatalf("panel-port: %q, %v", out, err)
+			}
+		}
+		if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+			t.Fatalf("pending write lost: %v", err)
+		}
+		target := filepath.Join(dir, "published")
+		if err := os.Rename(tmp.Name(), target); err != nil {
+			t.Fatal(err)
+		}
+		if data, err := os.ReadFile(target); err != nil || string(data) != "new contents" {
+			t.Fatalf("published data=%q, err=%v", data, err)
+		}
+	}
+}
+
+func TestDaemonStartupCleansAbandonedTemps(t *testing.T) {
+	root := t.TempDir()
+	generated := filepath.Join(root, "generated")
+	if err := os.Mkdir(generated, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{filepath.Join(root, ".tmp-old"), filepath.Join(generated, ".tmp-old")}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory as the database stops startup before any subsystem runs.
+	if out, err := runMainCLIAt(t, root, "netosd", "-db", generated); err == nil || !strings.Contains(out, "не удалось открыть базу данных") {
+		t.Fatalf("unexpected startup result %q, %v", out, err)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("startup did not clean %s: %v", path, err)
+		}
+	}
 }
 
 func TestMainDryRunExitsWithoutActivatingRevisionOrStartingPanel(t *testing.T) {

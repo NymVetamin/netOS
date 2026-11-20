@@ -90,19 +90,25 @@ func main() {
 		showVersion = flag.Bool("version", false, "показать версию и выйти")
 	)
 	flag.Parse()
+	logger := &stdLogger{}
 	daemonMode := !*dryRun && !*showPlan && *render == "" && !*initOnly && !*applyNow && !*captureBase && !*showPort && !*showVersion
 	if daemonMode {
 		// Type=simple становится active до окончания стартового Apply. Старый
 		// маркер снимает сам новый процесс: команды обслуживания ждут готовой
 		// конфигурации, а не только существующего PID.
 		_ = os.Remove(readyPath)
+		// Разовые команды могут работать рядом с демоном, пока он ещё пишет .tmp-*.
+		for _, dir := range []string{filepath.Dir(*dbPath), stateDir} {
+			if err := system.CleanupAtomicTemps(dir); err != nil {
+				logger.Warnf("уборка незавершённых временных файлов в %s: %v", dir, err)
+			}
+		}
 	}
 	if *showVersion {
 		fmt.Printf("netOS %s\n", version)
 		return
 	}
 
-	logger := &stdLogger{}
 	runner := newRunner()
 	if *verbose {
 		if execRunner, ok := runner.(*system.Exec); ok {
@@ -117,11 +123,6 @@ func main() {
 		}
 		fmt.Println("Состояние системы до установки сохранено.")
 		return
-	}
-	for _, dir := range []string{filepath.Dir(*dbPath), stateDir} {
-		if err := system.CleanupAtomicTemps(dir); err != nil {
-			logger.Warnf("уборка незавершённых временных файлов в %s: %v", dir, err)
-		}
 	}
 
 	st, err := store.Open(*dbPath)
