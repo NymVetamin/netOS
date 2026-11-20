@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -93,14 +94,18 @@ func (h *TrafficHistory) sample() {
 		}
 		point.Interfaces[stat.Name] = rate
 	}
-	h.points = append(h.points, point)
+	index := len(h.points)
+	if index > 0 && now.Before(h.points[index-1].At) {
+		index = sort.Search(index, func(i int) bool { return h.points[i].At.After(now) })
+	}
+	h.points = slices.Insert(h.points, index, point)
 	h.last = &point
-	h.pruneLocked(now.Add(-h.Retain))
+	pruned := h.pruneLocked(now.Add(-h.Retain))
 	if h.persistenceBlocked {
 		return
 	}
 	if h.lastCompact.IsZero() || now.Sub(h.lastCompact) >= 24*time.Hour {
-		_ = h.compactLocked(now)
+		_ = h.compactLocked(now, index-pruned)
 	} else {
 		_ = h.appendLocked(point)
 	}
@@ -208,11 +213,12 @@ func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) [
 	return out
 }
 
-func (h *TrafficHistory) pruneLocked(before time.Time) {
+func (h *TrafficHistory) pruneLocked(before time.Time) int {
 	index := sort.Search(len(h.points), func(i int) bool { return !h.points[i].At.Before(before) })
 	if index > 0 {
 		h.points = append([]TrafficPoint(nil), h.points[index:]...)
 	}
+	return index
 }
 
 func (h *TrafficHistory) load() error {
@@ -244,7 +250,7 @@ func (h *TrafficHistory) load() error {
 	}
 	var points []TrafficPoint
 	cutoff := h.Now().UTC().Add(-h.Retain)
-	var lastExpired *TrafficPoint
+	var last *TrafficPoint
 	if legacy {
 		data, err := io.ReadAll(io.LimitReader(reader, maxTrafficHistoryBytes+1))
 		if err != nil {
@@ -255,6 +261,10 @@ func (h *TrafficHistory) load() error {
 		}
 		if err := json.Unmarshal(data, &points); err != nil {
 			return fmt.Errorf("разбор истории трафика: %w", err)
+		}
+		if len(points) > 0 {
+			point := points[len(points)-1]
+			last = &point
 		}
 	} else {
 		// An interrupted append can leave a fragment after the last newline.
@@ -274,25 +284,20 @@ func (h *TrafficHistory) load() error {
 			}
 			if !point.At.Before(cutoff) {
 				points = append(points, point)
-			} else if lastExpired == nil || !point.At.Before(lastExpired.At) {
-				if lastExpired == nil {
-					lastExpired = new(TrafficPoint)
-				}
-				*lastExpired = point
 			}
+			if last == nil {
+				last = new(TrafficPoint)
+			}
+			*last = point
 		}
 		if err := scanner.Err(); err != nil {
 			return fmt.Errorf("чтение истории трафика: %w", err)
 		}
 	}
-	sort.Slice(points, func(i, j int) bool { return points[i].At.Before(points[j].At) })
+	sort.SliceStable(points, func(i, j int) bool { return points[i].At.Before(points[j].At) })
 	h.mu.Lock()
 	h.points = points
-	h.last = lastExpired
-	if len(points) > 0 {
-		last := points[len(points)-1]
-		h.last = &last
-	}
+	h.last = last
 	h.pruneLocked(cutoff)
 	h.mu.Unlock()
 	return nil
@@ -313,11 +318,21 @@ func (h *TrafficHistory) appendLocked(point TrafficPoint) error {
 	return f.Close()
 }
 
-func (h *TrafficHistory) compactLocked(now time.Time) error {
+func (h *TrafficHistory) compactLocked(now time.Time, latest int) error {
 	var data bytes.Buffer
 	enc := json.NewEncoder(&data)
-	for _, point := range h.points {
+	for i, point := range h.points {
+		if i == latest {
+			continue
+		}
 		if err := enc.Encode(point); err != nil {
+			return err
+		}
+	}
+	// The final record seeds rate calculation after restart, even if the
+	// clock moved back and the last collected sample has an earlier timestamp.
+	if latest >= 0 {
+		if err := enc.Encode(h.points[latest]); err != nil {
 			return err
 		}
 	}

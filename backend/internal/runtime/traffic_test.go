@@ -246,6 +246,45 @@ func TestTrafficHistoryMigratesLegacyArrayWithoutRewritingEverySample(t *testing
 	}
 }
 
+func TestTrafficClockRollback(t *testing.T) {
+	base := time.Unix(1800000000, 0).UTC()
+	now := base
+	var counter int64
+	h := NewTrafficHistory(filepath.Join(t.TempDir(), "history"), &Collector{})
+	h.Now = func() time.Time { return now }
+	h.Collect = func() ([]InterfaceStat, error) {
+		counter += 30
+		return []InterfaceStat{{Name: "lan", RXBytes: counter}}, nil
+	}
+	for _, seconds := range []int{300, 0, 0, 30} {
+		now = base.Add(time.Duration(seconds) * time.Second)
+		h.sample()
+	}
+	checkWindow := func() {
+		t.Helper()
+		got := h.Window(base, base.Add(time.Minute), nil, 60)
+		if len(got) != 2 || got[0].Interfaces["lan"].RXBytes != 90 || got[1].Interfaces["lan"].RXBPS != 8 {
+			t.Fatalf("clock rollback window: %+v", got)
+		}
+	}
+	checkWindow()
+	for attempt := 0; attempt < 2; attempt++ {
+		restarted := NewTrafficHistory(h.Path, &Collector{})
+		restarted.Now, restarted.Collect = h.Now, h.Collect
+		h = restarted
+		if err := h.load(); err != nil {
+			t.Fatal(err)
+		}
+		checkWindow()
+		now = now.Add(90 * time.Second)
+		h.sample()
+		got := h.Window(now, now, nil, 2)
+		if len(got) != 1 || got[0].Interfaces["lan"].RXBPS != 2 {
+			t.Fatalf("first rate after restart: %+v", got)
+		}
+	}
+}
+
 func TestTrafficHistoryPrunesOldPoints(t *testing.T) {
 	now := time.Now().UTC()
 	h := &TrafficHistory{Retain: time.Hour, points: []TrafficPoint{{At: now.Add(-2 * time.Hour)}, {At: now.Add(-30 * time.Minute)}}}
