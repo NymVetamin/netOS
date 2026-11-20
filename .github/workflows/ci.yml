@@ -144,7 +144,7 @@ jobs:
       - name: редактирование строк в браузере
         run: |
           python3 -m venv "$RUNNER_TEMP/rows-venv"
-          "$RUNNER_TEMP/rows-venv/bin/pip" install playwright==1.49.1
+          "$RUNNER_TEMP/rows-venv/bin/pip" install --only-binary=:all: playwright==1.65.2
           export PLAYWRIGHT_CHROMIUM_EXECUTABLE="$(command -v google-chrome)"
           "$RUNNER_TEMP/rows-venv/bin/python" web/tests/rows.browser.py
 
