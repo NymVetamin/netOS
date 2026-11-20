@@ -196,6 +196,7 @@ rollback_and_cleanup() {
         if [ "$PREVIOUS_ACTIVE" = "1" ] && systemctl start netosd >/dev/null 2>&1 && wait_netosd_ready 360; then
             warn "служба netosd запущена и готова"
         elif [ "$PREVIOUS_ACTIVE" = "1" ]; then
+            restore_failed=1
             warn "готовность netosd не подтверждена; проверьте journalctl -u netosd"
         fi
     fi

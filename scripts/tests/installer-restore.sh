@@ -54,6 +54,23 @@ cmp "$CONF_DIR" "$INSTALL_TXN/conf-dir"
 [[ $(cat "$INSTALL_TXN/binary") == previous ]]
 rm "$root/bin"
 mkdir "$root/bin"
+(
+    cp -a -- "$INSTALL_TXN" "$root/active-snapshot"
+    INSTALL_TXN="$root/active-snapshot"
+    PREVIOUS_ACTIVE=1
+    systemctl() { [[ $1 != start || $failure != start ]]; }
+    wait_netosd_ready() { [[ $failure != ready ]]; }
+    for failure in start ready; do
+        if rollback > "$root/$failure.log" 2>&1; then exit 1; fi
+        [[ -d "$INSTALL_TXN" ]] || { echo "$failure: rollback removed the snapshot" >&2; exit 1; }
+        grep -F "$INSTALL_TXN" "$root/$failure.log" >/dev/null
+        cmp "$BIN_PATH" "$INSTALL_TXN/binary"
+        cmp "$CONF_DIR" "$INSTALL_TXN/conf-dir"
+    done
+    failure=none
+    if rollback > "$root/retry.log" 2>&1; then exit 1; fi
+    [[ ! -e "$INSTALL_TXN" ]]
+)
 if rollback > "$root/second.log" 2>&1; then exit 1; fi
 [[ $(cat "$BIN_PATH") == previous && ! -e "$INSTALL_TXN" ]]
 
