@@ -58,10 +58,11 @@ func installerURL(version string) string {
 var renderableArtifacts = render.IDs()
 
 type command struct {
-	name  string
-	args  []string
-	env   []string
-	stdin string
+	name      string
+	args      []string
+	env       []string
+	stdin     string
+	stdinFile *os.File
 	// feedStdin означает, что stdin команды задаёт вызывающий, даже когда
 	// текст пуст. Без этого признака пустой снимок означал бы «читай из stdin
 	// самой netos», и ip6tables-restore вычитывал следующие строки скрипта,
@@ -998,8 +999,18 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 			selected = entries[n-1].path
 		}
 	}
-	if err := validateBackupArchive(selected); err != nil {
+	// The selected archive can live under a directory restore removes.
+	// Keep its file descriptor through validation and extraction.
+	archive, err := os.Open(selected)
+	if err != nil {
 		return fmt.Errorf("небезопасная или повреждённая резервная копия: %w", err)
+	}
+	defer archive.Close()
+	if err := validateBackupContents(archive); err != nil {
+		return fmt.Errorf("небезопасная или повреждённая резервная копия: %w", err)
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("перемотка резервной копии: %w", err)
 	}
 
 	if !yes && !m.confirm(fmt.Sprintf(
@@ -1069,7 +1080,7 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 			return m.rollbackRestore(ctx, safety, fmt.Errorf("очистка %s: %w", path, err), uplink)
 		}
 	}
-	if err := m.run(ctx, "tar", "-C", string(filepath.Separator), "-xzf", selected); err != nil {
+	if err := m.Run(ctx, command{name: "tar", args: []string{"-C", string(filepath.Separator), "-xzf", "-"}, stdinFile: archive}); err != nil {
 		return m.rollbackRestore(ctx, safety, fmt.Errorf("распаковка %s: %w", selected, err), uplink)
 	}
 
@@ -1179,17 +1190,12 @@ const (
 	runtimeReadyPath = "/run/netosd.ready"
 )
 
-// validateBackupArchive ensures that root extraction cannot escape the three
+// validateBackupContents ensures that root extraction cannot escape the three
 // directories owned by netOS. Links and special files are intentionally
 // rejected: they are unnecessary in a netOS backup and can redirect later tar
 // entries to arbitrary paths.
-func validateBackupArchive(filename string) error {
-	f, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
+func validateBackupContents(archive io.Reader) error {
+	gz, err := gzip.NewReader(archive)
 	if err != nil {
 		return err
 	}
@@ -2062,7 +2068,9 @@ func (m *Manager) runOS(ctx context.Context, spec command) error {
 	if spec.silent {
 		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	}
-	if spec.feedStdin || spec.stdin != "" {
+	if spec.stdinFile != nil {
+		cmd.Stdin = spec.stdinFile
+	} else if spec.feedStdin || spec.stdin != "" {
 		cmd.Stdin = strings.NewReader(spec.stdin)
 	} else {
 		cmd.Stdin = m.In

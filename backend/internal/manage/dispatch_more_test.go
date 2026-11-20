@@ -401,7 +401,7 @@ func TestRestoreFailureAutomaticallyRestoresSafetyBackup(t *testing.T) {
 		}
 		if cmd.name == "tar" && contains(cmd.args, "-xzf") {
 			archive := cmd.args[len(cmd.args)-1]
-			if archive == target {
+			if cmd.stdinFile != nil && cmd.stdinFile.Name() == target {
 				return errors.New("target extraction failed")
 			}
 			if archive == safety {

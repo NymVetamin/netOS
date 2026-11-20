@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -148,6 +147,15 @@ func TestBackupArchiveValidationRejectsTraversalAndLinks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validateBackupArchive(filename string) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return validateBackupContents(f)
 }
 
 func TestBackupArchiveValidationAcceptsOwnedFiles(t *testing.T) {
@@ -423,7 +431,9 @@ func TestRestoreUnpacksChosenBackup(t *testing.T) {
 	var unpacked string
 	m.Run = func(_ context.Context, spec command) error {
 		if spec.name == "tar" && contains(spec.args, "-xzf") {
-			unpacked = spec.args[len(spec.args)-1]
+			if spec.stdinFile != nil {
+				unpacked = spec.stdinFile.Name()
+			}
 		}
 		if spec.name == "systemctl" && contains(spec.args, "start") {
 			if err := os.MkdirAll(filepath.Dir(m.sys(runtimeReadyPath)), 0o755); err != nil {
@@ -607,7 +617,7 @@ func TestRestoreRemovesCurrentRuntimeBeforeReplacingOwnership(t *testing.T) {
 			removedIFB = true
 		case spec.name == "tc" && contains(spec.args, "eth9") && contains(spec.args, "qdisc"):
 			clearedQoS = true
-		case spec.name == "tar" && contains(spec.args, "-xzf") && contains(spec.args, backup):
+		case spec.name == "tar" && contains(spec.args, "-xzf") && spec.stdinFile != nil && spec.stdinFile.Name() == backup:
 			extractAt = i
 		}
 	}
@@ -645,7 +655,8 @@ func TestRestoreWithoutCurrentDatabaseWithRealTar(t *testing.T) {
 				failExtract = false
 				return fmt.Errorf("target extraction failed")
 			}
-			return exec.CommandContext(ctx, "tar", args...).Run()
+			cmd.args = args
+			return m.runOS(ctx, cmd)
 		}
 		if cmd.name == "systemctl" && cmd.args[0] == "start" {
 			ready := m.sys(runtimeReadyPath)
@@ -696,6 +707,31 @@ func TestRestoreWithoutCurrentDatabaseWithRealTar(t *testing.T) {
 	for _, path := range []string{archive, second} {
 		if err := validateBackupArchive(path); err != nil {
 			t.Fatal(err)
+		}
+	}
+	contents, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{m.StateDir, m.ConfigDir, m.LogDir} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		selected := filepath.Join(dir, "selected.tar.gz")
+		if err := os.WriteFile(selected, contents, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dbPath, []byte("previous state"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Execute(context.Background(), []string{"restore", selected, "--yes"}); err != nil {
+			t.Fatal(err)
+		}
+		if data, err := os.ReadFile(dbPath); err != nil || !bytes.Equal(data, original) {
+			t.Fatalf("database not restored from %s: %v", dir, err)
+		}
+		if _, err := os.Stat(selected); !os.IsNotExist(err) {
+			t.Fatalf("old archive path survived cleanup: %s (%v)", selected, err)
 		}
 	}
 }
