@@ -10,8 +10,11 @@ async def main():
   page=await browser.new_page(viewport={"width":1440,"height":1000})
   cfg={"system":{"hostname":"qa"},"interfaces":[{"id":"port1","name":"eth0","type":"physical","enabled":True},{"id":"bridge1","name":"br-lan","type":"bridge","enabled":True,"members":[]}],"networks":[],"wans":[],"channels":[],"policies":[],"firewall":{"zones":[],"rules":[],"nat":[]}}
   state={"cfg":cfg,"saves":0};errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+  mode_requests=0
+  reply=asyncio.Event()
   interfaces=[{"name":"eth0","physical":True,"up":True,"admin_up":True,"speed_mbps":1000,"duplex":"full","addresses":[],"rx_bytes":0,"tx_bytes":0}]
   async def route(r):
+   nonlocal mode_requests
    path=urlparse(r.request.url).path
    if not path.startswith('/api/'):
     file=DIST/('index.html' if path=='/' else path.lstrip('/'));await r.fulfill(body=file.read_bytes(),content_type=mimetypes.guess_type(str(file))[0] or 'application/octet-stream');return
@@ -21,7 +24,13 @@ async def main():
     body={'config':state['cfg'],'dirty':False,'draft_version':1,'problems':[]}
    elif path=='/api/session':body={'username':'admin','role':'admin','csrf_token':'qa'}
    elif path=='/api/interfaces':body={'interfaces':interfaces}
-   elif path=='/api/interfaces/eth0/modes':body={'supported':['100baseT/Full','1000baseT/Full','1000baseX/Full'],'advertised':['1000baseT/Full','1000baseX/Full'],'can_autoneg':True,'autoneg':True}
+   elif path=='/api/interfaces/eth0/modes':
+    mode_requests+=1
+    if mode_requests==2:
+     await reply.wait()
+     await r.fulfill(status=503,json={'error':'Драйвер временно недоступен'});return
+    supported=['100baseT/Full','1000baseT/Full','1000baseX/Full'] if mode_requests==1 else ['1000baseX/Full']
+    body={'supported':supported,'advertised':supported,'can_autoneg':True,'autoneg':True}
    elif path=='/api/status':body={'interfaces':interfaces,'channels':[],'uptime_seconds':1}
    elif path.endswith('/clients') or path=='/api/render':body=[]
    await r.fulfill(json=body)
@@ -44,6 +53,22 @@ async def main():
   assert state['cfg']['interfaces'][0]['label']=='Кабинет'
   assert state['cfg']['interfaces'][0]['link_mode']=='1000baseX/Full'
   assert state['cfg']['interfaces'][0]['name']=='eth0' and state['cfg']['interfaces'][0]['id']=='port1'
+  saves=state['saves']
+  probe=page.get_by_role('button',name='Проверить режимы порта',exact=True)
+  await probe.click()
+  await expect(page.get_by_role('button',name='Читаем режимы…')).to_be_disabled()
+  pending_enabled=await mode.is_enabled()
+  reply.set()
+  await expect(page.get_by_text('Драйвер временно недоступен')).to_be_visible()
+  await expect(mode).to_be_disabled()
+  assert not pending_enabled
+  await expect(mode.locator('option[value="1000baseT/Full"]')).to_have_count(0)
+  await expect(mode).to_have_value('1000baseX/Full')
+  await probe.click()
+  await expect(mode).to_be_enabled()
+  await expect(page.get_by_text('Драйвер временно недоступен')).to_have_count(0)
+  await expect(mode.locator('option[value="1000baseT/Full"]')).to_have_count(0)
+  assert mode_requests==3 and state['saves']==saves
   await page.locator('summary.xsum').filter(has_text='br-lan').click()
   await page.get_by_label('Имя порта br-lan',exact=True).fill('Офис')
   await expect(page.get_by_label('Режим порта br-lan',exact=True)).to_have_count(0)

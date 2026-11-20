@@ -16,7 +16,18 @@ function modeTitle(mode:string):string {
 }
 export function PortLinkSettings({iface,onChange}:{iface:any;onChange:(v:string)=>void}){
  const [data,setData]=useState<any>(null),[error,setError]=useState(""),[loading,setLoading]=useState(false);
- const load=async()=>{setLoading(true);setError("");try{setData(await api.portModes(iface.name))}catch(e:any){setError(e.message)}finally{setLoading(false)}};
+ const load=async()=>{
+  setData(null);
+  setLoading(true);
+  setError("");
+  try {
+   setData(await api.portModes(iface.name));
+  } catch(e:any) {
+   setError(e.message);
+  } finally {
+   setLoading(false);
+  }
+ };
  return <div className="port-link-settings"><Field label="Режим Ethernet" hint="При смене режима связь может ненадолго прерваться.">
   <div className="port-link-controls">
   <select aria-label={`Режим порта ${iface.name}`} value={iface.link_mode || ""} disabled={!data?.can_autoneg || !data?.supported?.length} onChange={e=>onChange(e.target.value)}>
