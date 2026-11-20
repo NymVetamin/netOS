@@ -9,7 +9,28 @@ const compiled = buildSync({
 });
 const loaded = { exports: {} };
 new Function("module", "exports", compiled.outputFiles[0].text)(loaded, loaded.exports);
-const { channelNAT, setChannelNAT, managedChannelNAT, removeChannelNAT } = loaded.exports;
+const { channelNAT, setChannelNAT, managedChannelNAT, managedNATOwners, removeChannelNAT } = loaded.exports;
+
+test("saved NAT ownership follows the current configuration and first matching port", () => {
+  const config = {
+    interfaces: [{id:"a", name:"wg-ch1"}, {id:"a", name:"unused"}],
+    wans: [{interface:"a"}, {id:"p", proto:"pppoe"}],
+    channels: [{type:"wireguard", index:1}, {type:"xray", index:2}],
+    firewall: {nat: ["wg-ch1","unused","tun-ch2","ppp-p","wg-ch1"].map(iface => ({system:true, interface:iface}))},
+  };
+  const rules = config.firewall.nat;
+  rules.push({system:true, interface:"wg-ch1", source:"10.0.0.0/8"});
+  const owners = () => {
+    const result = managedNATOwners(config);
+    return rules.map(rule => result.get(rule));
+  };
+  assert.deepEqual(owners(), ["network",undefined,"channels","network","network",undefined]);
+  rules.push({interface:"wg-ch1", enabled:false});
+  assert.deepEqual(owners(), [undefined,undefined,"channels","network",undefined,undefined,undefined]);
+  rules.pop();
+  config.wans.shift();
+  assert.deepEqual(owners(), ["channels",undefined,"channels","network","channels",undefined]);
+});
 
 for (const [type, iface] of Object.entries({
   wireguard: "wg-ch7", openconnect: "tun-ch7", xray: "tun-ch7",

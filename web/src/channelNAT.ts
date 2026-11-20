@@ -1,4 +1,4 @@
-import { basicMasquerade } from "./wanNAT";
+import { basicMasquerade, wanInterface } from "./wanNAT";
 
 export function channelNATInterface(channel: any): string {
  if (!channel) return "";
@@ -22,6 +22,30 @@ export function setChannelNAT(config: any, channel: any, enabled: boolean) {
 }
 export function managedChannelNAT(config: any, rule: any) {
  return !!rule.system && basicMasquerade(rule) && (config.channels || []).some((c: any) => channelNATInterface(c) === rule.interface && !channelNAT(config,c).manual);
+}
+
+export type NATOwner = "network" | "channels";
+
+export function managedNATOwners(config: any): Map<any, NATOwner> {
+ const owners = new Map<any, NATOwner>();
+ const rules = config.firewall?.nat || [];
+ if (!rules.some((rule: any) => rule.system && basicMasquerade(rule))) return owners;
+
+ const names = new Map<string, string>();
+ for (const {id, name} of config.interfaces || []) {
+  if (!names.has(id)) names.set(id, name);
+ }
+ const byInterface = new Map<string, NATOwner>();
+ for (const channel of config.channels || []) byInterface.set(channelNATInterface(channel), "channels");
+ for (const wan of config.wans || []) byInterface.set(wanInterface(config, wan, names), "network");
+ for (const rule of rules) {
+  if (!rule.system && basicMasquerade(rule)) byInterface.delete(rule.interface);
+ }
+ for (const rule of rules) {
+  const owner = byInterface.get(rule.interface);
+  if (owner && rule.system && basicMasquerade(rule)) owners.set(rule, owner);
+ }
+ return owners;
 }
 export function removeChannelNAT(config: any, id: string) {
  if (config.firewall?.nat) config.firewall.nat = config.firewall.nat.filter((n: any) => !(n.system && n.id === `channel-nat-${id}`));

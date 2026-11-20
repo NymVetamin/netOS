@@ -1,5 +1,5 @@
-export const wanInterface = (config: any, wan: any): string => ["pppoe", "l2tp"].includes(wan.proto)
-  ? `ppp-${wan.id}` : (config.interfaces || []).find((i: any) => i.id === wan.interface)?.name || "";
+export const wanInterface = (config: any, wan: any, names?: Map<string, string>): string => ["pppoe", "l2tp"].includes(wan.proto)
+  ? `ppp-${wan.id}` : (names ? names.get(wan.interface) : (config.interfaces || []).find((i: any) => i.id === wan.interface)?.name) || "";
 export const basicMasquerade = (n: any) => n.direction !== "destination" && !n.source && !n.to_source && !!n.interface;
 export function wanNAT(config: any, wan: any) {
  const iface = wanInterface(config, wan);

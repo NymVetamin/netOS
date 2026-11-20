@@ -1,6 +1,5 @@
 import { interfaceDisplay } from "../interfaceDisplay";
-import { managedWanNAT } from "../wanNAT";
-import { managedChannelNAT } from "../channelNAT";
+import { managedNATOwners } from "../channelNAT";
 import { AutomaticRuleRow, AutomaticNATRow, includeAutomatic, RuleGroup } from "./FirewallRules";
 import { Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Access, accessMatrix, Entity } from "../access";
@@ -805,8 +804,13 @@ function natInterfaceOptions(config: any): { key: string; name: string; hint?: s
 function NATSection({ config, patch, automatic }: { config: any; patch: Patch; automatic: any }) {
   const nat: any[] = config.firewall?.nat || [];
   const interfaces = natInterfaceOptions(config);
+  const owners = managedNATOwners(config);
+  const savedByID = new Map<string, any>();
+  if (automatic && owners.size) {
+    for (const rule of nat) if (!savedByID.has(rule.id)) savedByID.set(rule.id, rule);
+  }
   const base: RuleGroup[] = [
-    {key:"source",chain:"POSTROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction !== "destination" && !managedWanNAT(config,r) && !managedChannelNAT(config,r))},
+    {key:"source",chain:"POSTROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction !== "destination" && !owners.has(r))},
     {key:"destination",chain:"PREROUTING",description:"",items:nat.map((r,i)=>({r,i})).filter(({r})=>r.direction === "destination")},
   ];
   const groups = automatic ? includeAutomatic(base,automatic,config,"nat") : base;
@@ -862,7 +866,7 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
         <Empty>Правил подмены адреса отправителя в настройках нет</Empty>
       ) : (
         <Rows cols={["Название", "Уходит через", "От кого", "Подменять на", ""]}>
-          {source.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} destination={false} /> : (
+          {source.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} owner={owners.get(savedByID.get(n.savedID))} destination={false} /> : (
             <Row
               key={n.id}
               id={n.id}
@@ -960,7 +964,7 @@ function NATSection({ config, patch, automatic }: { config: any; patch: Patch; a
         <Empty>Проброшенных портов нет</Empty>
       ) : (
         <Rows cols={["Название", "Приходит на", "Внешний порт", "Куда", "Только с адресов"]}>
-          {dest.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} destination /> : (
+          {dest.map(({ n, i, automatic }) => automatic ? <AutomaticNATRow key={n.id} rule={n} config={config} owner={owners.get(savedByID.get(n.savedID))} destination /> : (
             <Row
               key={n.id}
               id={n.id}

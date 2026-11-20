@@ -1,6 +1,5 @@
 import { SectionLink } from "../permissions";
-import { managedWanNAT } from "../wanNAT";
-import { managedChannelNAT } from "../channelNAT";
+import type { NATOwner } from "../channelNAT";
 import { interfaceDisplay } from "../interfaceDisplay";
 
 
@@ -111,11 +110,10 @@ export function AutomaticRuleRow({rule,config}:{rule:any;config:any}) {
 }
 
 // NAT uses the same columns as saved rules; generated rows have no editor.
-export function AutomaticNATRow({rule,config,destination}:{rule:any;config:any;destination:boolean}) {
+export function AutomaticNATRow({rule,config,destination,owner}:{rule:any;config:any;destination:boolean;owner?:NATOwner}) {
  const {value,target}=describe(rule.line,config);
  const title=rule.comment || actions[target] || "Трансляция адресов";
- const saved=(config.firewall?.nat || []).find((n:any)=>n.id===rule.savedID);
- const source=saved && managedWanNAT(config,saved) ? ["Аплинк → NAT","network"] : saved && managedChannelNAT(config,saved) ? ["Интернет-канал → NAT","channels"] : origin(rule.comment,{});
+ const source=owner === "network" ? ["Аплинк → NAT","network"] : owner === "channels" ? ["Интернет-канал → NAT","channels"] : origin(rule.comment,{});
  return <Row className="automatic-rule automatic-nat" title={rule.line} cells={[
   <><strong>{title}</strong><div><small className="faint">{source?.[1] ? <SectionLink section={source[1]}>{source[0]}</SectionLink> : source?.[0] || "Сформировано netOS из настроек сети"}</small></div></>,
   <span className="mono">{interfaceDisplay(config,value(destination ? "-i" : "-o")) || "любой"}</span>,
