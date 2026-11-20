@@ -44,6 +44,7 @@ func integrationConfig() *config.Config {
 	}
 	cfg.Networks = []config.Network{
 		{ID: "lan", Name: "LAN", Interface: "if-lan", RouterAddress: "192.168.77.1/24", Enabled: true},
+		{ID: "lab", Name: "Lab", Interface: "if-lan", RouterAddress: "192.168.79.1/24", Enabled: true},
 		{ID: "guest", Name: "Гости", Interface: "if-guest", RouterAddress: "192.168.78.1/24", Enabled: true},
 	}
 	cfg.WANs = []config.WAN{
@@ -103,7 +104,7 @@ func TestIntegrationIfupdownAcceptsGeneratedFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ifup не принял описание %s: %v\n%s", iface, err, out)
 		}
-		if iface == testBridge && !strings.Contains(string(out), "192.168.77.1") {
+		if iface == testBridge && (!strings.Contains(string(out), "192.168.77.1/24") || !strings.Contains(string(out), "192.168.79.1/24")) {
 			t.Fatalf("ifupdown не назначит адрес сегмента:\n%s", out)
 		}
 	}
@@ -159,7 +160,8 @@ func TestIntegrationNetworkdAppliesGeneratedFiles(t *testing.T) {
 	// Разбор файлов networkd сообщает в журнал; молчаливого отказа быть не
 	// должно, поэтому проверяем и результат, и отсутствие жалоб.
 	if !waitFor(t, 20*time.Second, func() bool {
-		return linkExists(testBridge) && linkExists(testVLAN) && hasAddress(testBridge, "192.168.77.1/24")
+		addrs := addressesOf(testBridge)
+		return linkExists(testVLAN) && contains(addrs, "192.168.77.1/24") && contains(addrs, "192.168.79.1/24")
 	}) {
 		t.Fatalf("networkd не собрал сеть по нашим файлам\n%s", networkdComplaints())
 	}

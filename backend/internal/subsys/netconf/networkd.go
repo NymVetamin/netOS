@@ -98,7 +98,7 @@ func renderNetwork(p plan, iface config.Interface) string {
 	// что должно существовать с загрузки, а не полный список.
 	w("KeepConfiguration=yes")
 
-	if address, ok := p.Address[iface.Name]; ok {
+	for _, address := range p.Addresses[iface.Name] {
 		w("Address=%s", address)
 	}
 	if master, ok := p.Master[iface.Name]; ok {
@@ -133,7 +133,7 @@ func renderNetwork(p plan, iface config.Interface) string {
 	}
 	if !iface.Enabled {
 		w("RequiredForOnline=no")
-	} else if _, addressed := p.Address[iface.Name]; addressed {
+	} else if len(p.Addresses[iface.Name]) > 0 {
 		w("RequiredForOnline=routable")
 	} else {
 		// WAN addresses belong to netOS, which may start after cloud-init

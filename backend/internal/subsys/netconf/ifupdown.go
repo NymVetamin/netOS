@@ -34,7 +34,6 @@ func renderIfupdown(cfg *config.Config) string {
 func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
 
-	address, hasAddress := p.Address[iface.Name]
 	// Подчинённый порт поднимает не auto, а сам агрегат: allow-hotplug дал бы
 	// гонку между ними.
 	master, isMember := p.Master[iface.Name]
@@ -50,17 +49,19 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		if iface.Enabled {
 			w("auto %s", iface.Name)
 		}
-		if hasAddress {
+		if addresses := p.Addresses[iface.Name]; len(addresses) > 0 {
 			// netOS may already have applied the address before networking
 			// starts (including at boot). inet static uses ip address add,
 			// which fails on that existing address and fails the whole unit.
 			w("iface %s inet manual", iface.Name)
-			broadcast := ""
-			if prefix, err := netip.ParsePrefix(address); err == nil && prefix.Addr().Is4() && prefix.Bits() <= 30 {
-				broadcast = " broadcast +"
+			for _, address := range addresses {
+				broadcast := ""
+				if prefix, err := netip.ParsePrefix(address); err == nil && prefix.Addr().Is4() && prefix.Bits() <= 30 {
+					broadcast = " broadcast +"
+				}
+				w("    up ip -4 address replace %s dev %s%s", address, iface.Name, broadcast)
+				w("    down ip -4 address del %s dev %s 2>/dev/null || true", address, iface.Name)
 			}
-			w("    up ip -4 address replace %s dev %s%s", address, iface.Name, broadcast)
-			w("    down ip -4 address del %s dev %s 2>/dev/null || true", address, iface.Name)
 		} else {
 			if p.managedByNetOS(iface) {
 				w("# аплинк: адрес и маршрут назначает netOS")

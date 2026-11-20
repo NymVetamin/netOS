@@ -15,8 +15,8 @@ type plan struct {
 	// Order — интерфейсы в порядке, в котором их безопасно поднимать:
 	// подчинённые раньше агрегатов, родители VLAN раньше самих VLAN.
 	Order []config.Interface
-	// Address — адрес роутера в сегменте, по имени интерфейса.
-	Address map[string]string
+	// Addresses — адреса включённых сегментов по имени интерфейса.
+	Addresses map[string][]string
 	// Master — бридж или bond, которому подчинён интерфейс.
 	Master map[string]config.Interface
 	// VLANs — дочерние VLAN, по имени родительского интерфейса.
@@ -33,7 +33,7 @@ type plan struct {
 
 func buildPlan(cfg *config.Config) plan {
 	p := plan{
-		Address:      map[string]string{},
+		Addresses:    map[string][]string{},
 		Master:       map[string]config.Interface{},
 		VLANs:        map[string][]config.Interface{},
 		Uplink:       map[string]bool{},
@@ -55,7 +55,7 @@ func buildPlan(cfg *config.Config) plan {
 			continue
 		}
 		if name, ok := p.Names[n.Interface]; ok {
-			p.Address[name] = n.RouterAddress
+			p.Addresses[name] = append(p.Addresses[name], n.RouterAddress)
 		}
 	}
 	for _, w := range cfg.WANs {

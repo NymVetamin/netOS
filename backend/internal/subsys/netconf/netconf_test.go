@@ -75,6 +75,39 @@ func TestIfupdownMembersAreRaisedByTheirBridge(t *testing.T) {
 	}
 }
 
+func TestSegmentsSharingAnInterface(t *testing.T) {
+	cfg := routerConfig()
+	cfg.Networks[1].Interface = "if-lan"
+	for _, backend := range []string{"networkd", "ifupdown"} {
+		cfg.System.NetworkBackend = backend
+		for _, enabled := range []bool{true, false, true} {
+			cfg.Networks[1].Enabled = enabled
+			out, err := RenderFor(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, network := range cfg.Networks {
+				lines := []string{"Address=" + network.RouterAddress + "\n"}
+				if backend == "ifupdown" {
+					lines = []string{
+						"up ip -4 address replace " + network.RouterAddress + " dev br-lan broadcast +\n",
+						"down ip -4 address del " + network.RouterAddress + " dev br-lan 2>/dev/null || true\n",
+					}
+				}
+				want := 0
+				if network.Enabled {
+					want = 1
+				}
+				for _, line := range lines {
+					if got := strings.Count(out, line); got != want {
+						t.Errorf("%s: %q occurs %d times, want %d", backend, line, got, want)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestIfupdownDoesNotStartDisabledInterfacesAtBoot(t *testing.T) {
 	cfg := routerConfig()
 	cfg.Interfaces = append(cfg.Interfaces, config.Interface{
