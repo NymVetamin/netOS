@@ -16,14 +16,19 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: проверить тег релиза
+        run: |
+          if [[ ! "$TAG" =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]]; then
+            echo "Недопустимое имя тега релиза" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ inputs.tag || github.ref }}
-
-      - name: определить версию
-        id: version
-        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+          ref: refs/tags/${{ env.TAG }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -63,7 +68,7 @@ jobs:
           for arch in amd64 arm64; do
             GOARCH=$arch go build \
               -trimpath \
-              -ldflags "-s -w -X main.version=${{ steps.version.outputs.tag }}" \
+              -ldflags "-s -w -X main.version=$TAG" \
               -o "../dist/netosd-linux-$arch" ./cmd/netosd
           done
 
@@ -86,7 +91,7 @@ jobs:
           # что машина уже обновлена.
           got=$(./netosd-linux-amd64 -version)
           echo "$got"
-          test "$got" = "netOS ${{ steps.version.outputs.tag }}"
+          test "$got" = "netOS $TAG"
           # Суммы должны сходиться ровно так, как их будет считать установщик.
           sha256sum -c netosd-linux-amd64.sha256
           sha256sum -c netosd-linux-arm64.sha256
@@ -94,12 +99,11 @@ jobs:
       - name: публикация релиза
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
         run: |
           notes="Установка и обновление:
 
           \`\`\`
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/$TAG/install.sh | sudo env NETOS_VERSION=$TAG bash && source /etc/bash_completion.d/netos
+          curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$TAG/install.sh | sudo env NETOS_VERSION=$TAG bash && source /etc/bash_completion.d/netos
           \`\`\`
 
           На уже установленной машине: \`sudo netos update\`."
