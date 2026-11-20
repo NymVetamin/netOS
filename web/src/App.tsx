@@ -442,7 +442,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   // набранный за время запроса, потерялся бы.
   const flush = useCallback(async () => {
     const next = pendingCfg.current;
-    if (!next) return;
+    if (!next) return saveChain.current;
     pendingCfg.current = null;
 
     const generation = syncGeneration.current;
@@ -469,11 +469,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           setSaveError("Не удалось сохранить изменение");
         }
         setDirty(true);
-        if (!pendingCfg.current) pendingCfg.current = next;
+        if (!pendingCfg.current && saveChain.current === settled) pendingCfg.current = next;
         throw err;
       }
     });
-    saveChain.current = job.catch(() => {});
+    const settled: Promise<void> = job.catch(() => {});
+    saveChain.current = settled;
     await job;
   }, []);
 
@@ -502,10 +503,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     window.clearTimeout(saveTimer.current);
     // Пока ожидали предыдущую запись, пользователь мог успеть внести ещё одну
     // правку. Перед Apply выгребаем очередь полностью.
+    let tail: Promise<void>;
     do {
-      await flush();
-    } while (pendingCfg.current);
-    await saveChain.current;
+      const saving = flush();
+      tail = saveChain.current;
+      await saving;
+    } while (pendingCfg.current || tail !== saveChain.current);
   }, [flush]);
 
   const errors = problems.filter((p) => p.severity === "error");

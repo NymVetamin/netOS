@@ -21,6 +21,7 @@ async def scenario(browser, mode):
     state = {"config": {**copy.deepcopy(CLEAN), "components": [{"id": "samba", "installed": True}]},
              "dirty": True, "version": 1, "calls": [], "failed": False}
     started, release = asyncio.Event(), asyncio.Event()
+    saves = []
     errors, navigations = [], []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("framenavigated", lambda f: navigations.append(f.url) if f == page.main_frame else None)
@@ -54,10 +55,11 @@ async def scenario(browser, mode):
             else:
                 body = config()
         elif path == "/api/config" and req.method == "PUT":
+            saves.append(req.post_data_json)
             started.set()
-            if mode.startswith("inflight"):
+            if mode.startswith("inflight") or mode in ("newer save", "retry failed"):
                 await release.wait()
-            if mode == "inflight failure":
+            if mode in ("inflight failure", "retry failed") or (mode == "newer save" and len(saves) == 1):
                 status, body = 500, {"error": "Сохранение не удалось"}
             else:
                 state.update(config=req.post_data_json, dirty=True, version=state["version"] + 1)
@@ -85,6 +87,32 @@ async def scenario(browser, mode):
     await page.goto("http://netos.test/#components")
     toggle = page.get_by_role("checkbox", name="Компонент Samba включён")
     await expect(toggle).to_be_checked()
+    if mode in ("newer save", "retry failed"):
+        apply = page.get_by_role("button", name="Применить", exact=True)
+        await toggle.locator("..").click()
+        await asyncio.wait_for(started.wait(), 5)
+        if mode == "newer save":
+            await toggle.locator("..").click()
+            await expect(toggle).to_be_checked()
+            await page.wait_for_timeout(750)  # let the second save enter the queue
+            async with page.expect_response(lambda r: r.request.method == "PUT" and r.status == 200):
+                release.set()
+            await apply.click()
+            await expect(page.locator(".action-error")).to_be_visible()
+            assert len(saves) == 2, saves
+            assert state["config"]["components"][0]["installed"]
+            assert ("POST", "/api/config/apply") in state["calls"]
+        else:
+            await apply.click()
+            await expect(page.get_by_role("button", name="Подождите…")).to_be_visible()
+            release.set()
+            await expect(page.locator(".action-error")).to_be_visible()
+            assert ("POST", "/api/config/apply") not in state["calls"], state["calls"]
+            assert len(saves) == 2 and saves[0] == saves[1], saves
+        assert not errors, errors
+        await page.close()
+        print(mode, "PASS")
+        return
     await page.get_by_role("button", name="Применить", exact=True).click()
     await expect(page.locator(".action-error")).to_be_visible()
     if mode == "queued" or mode.startswith("inflight"):
@@ -136,7 +164,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure"):
+        for mode in ("newer save", "retry failed", "lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure"):
             await scenario(browser, mode)
         await browser.close()
 
