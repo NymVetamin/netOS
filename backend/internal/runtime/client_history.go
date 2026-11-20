@@ -664,7 +664,6 @@ func (h *ClientHistory) Report(ctx context.Context, from, to time.Time, selected
 			report.Clients[i].Connections = connections[report.Clients[i].ID]
 		}
 	}
-	sort.Slice(report.Points, func(i, j int) bool { return report.Points[i].At < report.Points[j].At })
 	return report, nil
 }
 

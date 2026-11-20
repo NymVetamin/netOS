@@ -26,6 +26,9 @@ func compareHistoryTraffic(t *testing.T, h *ClientHistory, from, to time.Time, s
 		t.Fatalf("totals/selection mismatch:\n%+v %v\n%+v %v", got.Clients, gs, want.Clients, ws)
 	}
 	less := func(points []ClientPoint) {
+		if !sort.SliceIsSorted(points, func(i, j int) bool { return points[i].At < points[j].At }) {
+			t.Fatal("traffic points are out of chronological order")
+		}
 		sort.Slice(points, func(i, j int) bool {
 			if points[i].At == points[j].At {
 				return points[i].ID < points[j].ID
