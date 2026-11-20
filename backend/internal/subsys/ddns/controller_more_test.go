@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -531,6 +533,104 @@ func TestNoIPTemporaryFailuresBackOffThirtyMinutes(t *testing.T) {
 				t.Fatalf("did not retry after backoff: %d", calls)
 			}
 		})
+	}
+}
+
+func TestNoIPRestartDuringBackoff(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		code     int
+		body     string
+		interval int
+	}{
+		{"911", 200, "911", 60},
+		{"500", 500, "", 3600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseConfig("noip")
+			cfg.DDNS.Interval = tc.interval
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				if calls == 1 {
+					w.WriteHeader(tc.code)
+					io.WriteString(w, tc.body)
+					return
+				}
+				io.WriteString(w, "good 192.0.2.1")
+			}))
+			defer server.Close()
+			now := time.Now()
+			path := filepath.Join(t.TempDir(), "noip-retry.json")
+			restart := func() *Controller {
+				c := New(nil)
+				c.NoIPRetryPath = path
+				c.Now = func() time.Time { return now }
+				c.NoIPEndpoint = server.URL
+				c.ResolveAddress = func(context.Context, *config.Config) (string, error) { return "192.0.2.1", nil }
+				if err := c.Apply(context.Background(), cfg); err != nil {
+					t.Fatal(err)
+				}
+				return c
+			}
+			c := restart()
+			c.tick(context.Background(), cfg)
+			deadline := c.Status().NextRun
+			now = deadline.Add(-time.Second)
+			c = restart()
+			c.tick(context.Background(), cfg)
+			if calls != 1 || !c.Status().NextRun.Equal(deadline) {
+				t.Fatalf("после перезапуска calls=%d status=%+v", calls, c.Status())
+			}
+			now = deadline
+			c.tick(context.Background(), cfg)
+			if calls != 2 || !c.Status().Success {
+				t.Fatalf("в срок calls=%d status=%+v", calls, c.Status())
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("после успеха остался маркер: %v", err)
+			}
+		})
+	}
+}
+
+func TestNoIPRetryFileErrors(t *testing.T) {
+	c := New(nil)
+	cfg := baseConfig("noip")
+	now := time.Now()
+	c.Now = func() time.Time { return now }
+	dir := t.TempDir()
+	path := filepath.Join(dir, "noip-retry.json")
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.NoIPRetryPath = path
+	if err := c.Apply(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if s := c.Status(); !s.NextRun.Equal(now.Add(noIPBackoff)) || s.Message == "" {
+		t.Fatal(s)
+	}
+	other := baseConfig("duckdns")
+	if err := c.Apply(context.Background(), other); err != nil || !c.Status().NextRun.IsZero() {
+		t.Fatal(err, c.Status())
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Apply(context.Background(), cfg); err != nil || !c.Status().NextRun.IsZero() {
+		t.Fatal(err, c.Status())
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) }))
+	defer server.Close()
+	c.NoIPEndpoint = server.URL
+	c.ResolveAddress = func(context.Context, *config.Config) (string, error) { return "192.0.2.1", nil }
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c.tick(context.Background(), cfg)
+	if s := c.Status(); !s.NextRun.Equal(now.Add(noIPBackoff)) || !strings.Contains(s.Message, "сохранить срок") {
+		t.Fatal(s)
 	}
 }
 

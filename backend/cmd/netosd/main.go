@@ -156,6 +156,7 @@ func main() {
 	multiWAN := multiwan.New(runner, stateDir, logger)
 	channelMonitor := channels.New(runner, stateDir, logger)
 	ddnsController := ddns.New(logger)
+	ddnsController.NoIPRetryPath = filepath.Join(filepath.Dir(*dbPath), "noip-retry.json")
 	sambaController := samba.New(runner, stateDir)
 	clientPKI := vpnpki.New(filepath.Join(filepath.Dir(stateDir), "pki"), runner)
 	certificateManager := api.NewCertificateManager(tlsDir)

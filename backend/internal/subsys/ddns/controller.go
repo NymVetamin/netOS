@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 type Logger interface {
@@ -48,13 +50,15 @@ type Controller struct {
 	InterfaceAddrs  func(string) ([]net.Addr, error)
 	Now             func() time.Time
 	TickInterval    time.Duration
+	NoIPRetryPath   string
 
-	mu            sync.RWMutex
-	status        Status
-	configured    config.DDNS
-	configuredSet bool
-	suspended     bool
-	cancelTick    context.CancelFunc
+	mu             sync.RWMutex
+	status         Status
+	configured     config.DDNS
+	configuredSet  bool
+	suspended      bool
+	noIPRetrySaved bool
+	cancelTick     context.CancelFunc
 }
 
 func New(logger Logger) *Controller {
@@ -111,7 +115,58 @@ func (c *Controller) Apply(_ context.Context, cfg *config.Config) error {
 	c.configuredSet = true
 	c.suspended = false
 	c.status = Status{Enabled: cfg.DDNS.Enabled, Provider: cfg.DDNS.Provider, Hostname: cfg.DDNS.Hostname}
+	if cfg.DDNS.Enabled && cfg.DDNS.Provider == "noip" && c.NoIPRetryPath != "" {
+		c.restoreNoIPRetry(cfg.DDNS)
+	}
 	return nil
+}
+
+const noIPBackoff = 30 * time.Minute
+
+type noIPRetry struct {
+	ProviderDeadline time.Time
+	NextRun          time.Time
+	Hostname         string
+	Interval         int
+}
+
+// Called with mu held, only when applying a changed configuration.
+func (c *Controller) restoreNoIPRetry(cfg config.DDNS) {
+	var saved noIPRetry
+	f, err := os.Open(c.NoIPRetryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		c.noIPRetrySaved = false
+		return
+	}
+	c.noIPRetrySaved = true
+	if err == nil {
+		var data []byte
+		data, err = readLimited(f, 4096)
+		f.Close()
+		if err == nil {
+			err = json.Unmarshal(data, &saved)
+		}
+		if err == nil && (saved.ProviderDeadline.IsZero() || saved.NextRun.Before(saved.ProviderDeadline)) {
+			err = errors.New("отсутствует корректный срок")
+		}
+	}
+	now := c.Now()
+	if err != nil {
+		c.status.NextRun = now.Add(noIPBackoff)
+		c.status.Message = fmt.Sprintf("Не удалось прочитать срок повтора No-IP: %v", err)
+		if c.Logger != nil {
+			c.Logger.Warnf("%s", c.status.Message)
+		}
+		return
+	}
+	next := saved.ProviderDeadline
+	if saved.Hostname == cfg.Hostname && saved.Interval == cfg.Interval {
+		next = saved.NextRun
+	}
+	if now.Before(next) {
+		c.status.NextRun = next
+		c.status.Message = "Ожидание повторной попытки после временного отказа No-IP"
+	}
 }
 
 // External DNS availability must not roll back unrelated router settings. The
@@ -184,12 +239,14 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	}
 	suspend := false
 	next = now.Add(interval)
+	var providerDeadline time.Time
 	var providerFailure *providerError
 	if errors.As(err, &providerFailure) {
 		suspend = providerFailure.suspend
 		if providerFailure.retryAfter > 0 {
-			if earliest := c.Now().Add(providerFailure.retryAfter); earliest.After(next) {
-				next = earliest
+			providerDeadline = c.Now().Add(providerFailure.retryAfter)
+			if providerDeadline.After(next) {
+				next = providerDeadline
 			}
 		}
 	}
@@ -205,6 +262,25 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	// let a response for the old credentials/record overwrite the new status.
 	accepted := ctx.Err() == nil
 	if accepted {
+		if !providerDeadline.IsZero() && c.NoIPRetryPath != "" {
+			saved := noIPRetry{ProviderDeadline: providerDeadline, NextRun: next, Hostname: cfg.DDNS.Hostname, Interval: cfg.DDNS.Interval}
+			data, writeErr := json.Marshal(saved)
+			if writeErr == nil {
+				writeErr = system.WriteFileAtomic(c.NoIPRetryPath, data, 0600)
+			}
+			if writeErr != nil {
+				err = fmt.Errorf("%w; не удалось сохранить срок повтора No-IP: %v", err, writeErr)
+				status.Message = err.Error()
+			} else {
+				c.noIPRetrySaved = true
+			}
+		} else if err == nil && cfg.DDNS.Provider == "noip" && c.noIPRetrySaved {
+			if removeErr := os.Remove(c.NoIPRetryPath); removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
+				c.noIPRetrySaved = false
+			} else if c.Logger != nil {
+				c.Logger.Warnf("Не удалось удалить прежний срок повтора No-IP: %v", removeErr)
+			}
+		}
 		c.status = status
 		c.suspended = suspend
 		if suspend {
@@ -324,7 +400,7 @@ func (c *Controller) update(ctx context.Context, cfg config.DDNS, address string
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if cfg.Provider == "noip" {
 			if resp.StatusCode == http.StatusInternalServerError {
-				return &providerError{message: fmt.Sprintf("провайдер ответил HTTP %d", resp.StatusCode), retryAfter: 30 * time.Minute}
+				return &providerError{message: fmt.Sprintf("провайдер ответил HTTP %d", resp.StatusCode), retryAfter: noIPBackoff}
 			}
 			return &providerError{message: fmt.Sprintf("провайдер ответил HTTP %d; обновления приостановлены до изменения настройки", resp.StatusCode), suspend: true}
 		}
@@ -350,7 +426,7 @@ func (c *Controller) update(ctx context.Context, cfg config.DDNS, address string
 	case "noip":
 		if !strings.HasPrefix(text, "good ") && !strings.HasPrefix(text, "nochg ") {
 			if text == "911" {
-				return &providerError{message: "No-IP временно недоступен: 911", retryAfter: 30 * time.Minute}
+				return &providerError{message: "No-IP временно недоступен: 911", retryAfter: noIPBackoff}
 			}
 			return &providerError{message: fmt.Sprintf("No-IP отклонил обновление: %s; обновления приостановлены до изменения настройки", text), suspend: true}
 		}
