@@ -39,13 +39,12 @@ async def scenario(browser, total):
     await visibility(page, True)
     count=len(calls); await page.wait_for_timeout(2200)
     assert len(calls)==count and not state['stops'], (calls,state)
+    # Hold the first resumed request so hiding the page interrupts that snapshot.
+    mode['hold']=True
     await visibility(page, False)
-    await page.wait_for_timeout(200)
+    await asyncio.wait_for(entered.wait(),3)
     assert len(calls)>count
     if total>100: assert calls[-1]=='1', calls
-    # Abort a slow snapshot while hidden, then ignore its late completion.
-    mode['hold']=True
-    await asyncio.wait_for(entered.wait(),3)
     await visibility(page, True)
     count=len(calls); release.set(); mode['hold']=False
     await page.wait_for_timeout(1200)
