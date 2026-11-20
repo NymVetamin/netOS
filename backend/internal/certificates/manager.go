@@ -387,16 +387,16 @@ func (m *Manager) vpnLocked(ctx context.Context, cfg *config.Config, server conf
 			err = fmt.Errorf("сертификат не покрывает адрес %s", host)
 		}
 	}
-	m.record("vpn:"+server.ID, pair, err)
-	if err != nil {
-		return false, err
-	}
-	changed, err := writePair(filepath.Join(dir, "server.pem"), pair, reloadMarker)
-	if err != nil {
-		return false, err
+	var changed bool
+	if err == nil {
+		changed, err = writePair(filepath.Join(dir, "server.pem"), pair, reloadMarker)
 	}
 	// Public export remains separate; the bundle never leaves the service.
-	if _, err := system.WriteFileAtomicIfChanged(filepath.Join(dir, "panel.crt"), pair.Certificate, 0o644); err != nil {
+	if err == nil {
+		_, err = system.WriteFileAtomicIfChanged(filepath.Join(dir, "panel.crt"), pair.Certificate, 0o644)
+	}
+	m.record("vpn:"+server.ID, pair, err)
+	if err != nil {
 		return false, err
 	}
 	return changed, nil

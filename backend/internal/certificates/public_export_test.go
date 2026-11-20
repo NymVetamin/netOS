@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/tlsutil"
 )
 
 func TestVPNPublicExportPreservesAndRepairs(t *testing.T) {
@@ -109,5 +110,56 @@ func TestVPNPublicExportPreservesAndRepairs(t *testing.T) {
 	renewed, err := os.ReadFile(file)
 	if err != nil || bytes.Equal(renewed, want) {
 		t.Fatal("renewal not exported", err)
+	}
+}
+
+func TestVPNStatusOnPublicationFailure(t *testing.T) {
+	for _, name := range []string{"server.pem", "panel.crt"} {
+		t.Run(name, func(t *testing.T) {
+			const host = "vpn.example.test"
+			issuer := makeIssuer(t, host)
+			m := New(t.TempDir(), func(_, _, _ string) (ACME, error) { return issuer, nil })
+			m.HTTPAddress = "127.0.0.1:0"
+			defer m.Close()
+			cfg := config.Default()
+			cfg.System.Panel.TLS = config.TLS{Mode: "acme", Domain: host}
+			server := config.VPNServer{ID: "vpn", Type: "ocserv", Config: map[string]any{"public_endpoint": host + ":443", "tls": map[string]any{"mode": "panel"}}}
+			dir := t.TempDir()
+			publish := func() error {
+				_, err := m.VPN(context.Background(), cfg, server, dir)
+				return err
+			}
+			if err := publish(); err != nil {
+				t.Fatal(err)
+			}
+			old := m.Status()[0]
+			issuer.cert = makeIssuer(t, host).cert
+			path := filepath.Join(dir, name)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			err := publish()
+			got := m.Status()[0]
+			if err == nil || got.Error != err.Error() || got.Fingerprint != old.Fingerprint || !got.Expires.Equal(old.Expires) {
+				t.Fatalf("failed publication: err=%v status=%+v", err, got)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := publish(); err != nil {
+				t.Fatal(err)
+			}
+			pair, err := ReadPair(filepath.Join(dir, "panel.crt"), filepath.Join(dir, "server.pem"), host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = m.Status()[0]
+			if got.Error != "" || got.Fingerprint == old.Fingerprint || got.Fingerprint != tlsutil.Fingerprint(pair.Leaf) || !got.Expires.Equal(pair.Leaf.NotAfter) {
+				t.Fatalf("retry status differs from files: %+v", got)
+			}
+		})
 	}
 }
