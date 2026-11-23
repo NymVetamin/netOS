@@ -63,10 +63,10 @@ export function Clients({
     async function load() {
       setLoading(true);
       try {
-        const [c, l] = await Promise.all([api.clients(), api.leases()]);
+        const c = await api.clients(true);
         if (stopped) return;
         setClients(c.clients || []);
-        setLeases(l.leases || []);
+        setLeases(c.leases || []);
         setLoaded(true);
         setLoadError("");
       } catch (error) {

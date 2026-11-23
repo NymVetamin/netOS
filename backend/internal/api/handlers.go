@@ -1810,10 +1810,15 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.Engine.Current()
-	clients, err := s.Collector.Clients(r.Context(), localClientInterfaces(cfg))
+	clients, leases, err := s.Collector.ClientsWithLeases(r.Context(), localClientInterfaces(cfg))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "%v", err)
 		return
+	}
+
+	response := map[string]any{"clients": clients}
+	if r.URL.Query().Get("leases") == "1" {
+		response["leases"] = leases
 	}
 
 	// Дополняем наблюдаемые устройства тем, что администратор о них задал:
@@ -1847,10 +1852,11 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, e)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"clients": out})
+		response["clients"] = out
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"clients": clients})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func localClientInterfaces(cfg *config.Config) map[string]bool {

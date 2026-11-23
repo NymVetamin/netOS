@@ -383,13 +383,20 @@ func interfaceIsUp(operstate, flags string) bool {
 // молчит; запись ARP без аренды — что адрес прописан статически на самом
 // устройстве. Оба случая администратору полезно видеть.
 func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool) ([]Client, error) {
+	clients, _, err := c.ClientsWithLeases(ctx, localInterfaces)
+	return clients, err
+}
+
+// ClientsWithLeases returns clients and the original leases from the same read.
+// The leases are request-local; no state is cached between observations.
+func (c *Collector) ClientsWithLeases(ctx context.Context, localInterfaces map[string]bool) ([]Client, []Lease, error) {
 	leases, err := c.Leases()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	arp, err := c.ARP(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	byMAC := map[string]*Client{}
@@ -454,7 +461,7 @@ func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool
 		}
 		return out[i].MAC < out[j].MAC
 	})
-	return out, nil
+	return out, leases, nil
 }
 
 // Route — разобранная запись таблицы маршрутизации.

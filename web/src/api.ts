@@ -391,7 +391,7 @@ export const api = {
   reconfigurePanel: (panel: any, confirm: string) =>
     request<{ scheduled: boolean; revision: number; port: number }>("POST", "/api/maintenance/panel", { panel, confirm }),
   maintenanceStatus: (signal?: AbortSignal) => request<any>("GET", "/api/maintenance/status", undefined, undefined, signal),
-  clients: () => request<{ clients: any[] }>("GET", "/api/clients"),
+  clients: (includeLeases = false) => request<{ clients: any[]; leases?: any[] }>("GET", includeLeases ? "/api/clients?leases=1" : "/api/clients"),
   wakeClient: (mac: string, network: string, signal?: AbortSignal) => request<{interface: string}>("POST", "/api/clients/wake", {mac, network}, undefined, signal),
   vpnEndpoint: (signal?: AbortSignal) => request<{host: string; source: string}>("GET", "/api/vpn-endpoint", undefined, undefined, signal),
   interfaces: () => request<{ interfaces: any[] }>("GET", "/api/interfaces"),
