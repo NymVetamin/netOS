@@ -899,7 +899,7 @@ function InterfaceSection({ config, patch, interfaceView }: { config: any; patch
                     type="number"
                     aria-label={`MTU интерфейса ${i.name}`}
                     placeholder={String(live?.mtu || "")}
-                    title="Пусто — не менять"
+                    title="Очистите поле, чтобы при применении вернуть сохранённый исходный MTU. Без сохранённого значения останется текущий MTU."
                     value={i.mtu || ""}
                     onChange={(e) => patch((d) => (d.interfaces[idx].mtu = Number(e.target.value)))}
                   /></Cap>

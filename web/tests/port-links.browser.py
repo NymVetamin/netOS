@@ -38,6 +38,12 @@ async def main():
   await page.goto('https://netos-ui.test/#network')
   await expect(page.get_by_text('1 Гбит/с',exact=True)).to_be_visible()
   await page.locator('summary.xsum').filter(has_text='eth0').click()
+  mtu=page.get_by_label('MTU интерфейса eth0',exact=True)
+  await expect(mtu).to_have_attribute('title','Очистите поле, чтобы при применении вернуть сохранённый исходный MTU. Без сохранённого значения останется текущий MTU.')
+  await mtu.fill('1400')
+  async with page.expect_response(lambda r: r.request.method=='PUT' and r.url.endswith('/api/config')):
+   await mtu.fill('')
+  assert state['cfg']['interfaces'][0]['mtu']==0
   await page.get_by_label('Имя порта eth0',exact=True).fill('Кабинет')
   await page.get_by_role('button',name='Проверить режимы порта',exact=True).click()
   mode=page.get_by_label('Режим порта eth0',exact=True)
