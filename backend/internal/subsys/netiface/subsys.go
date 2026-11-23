@@ -168,8 +168,9 @@ func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
+	enabled := cfg.InterfaceStates()
 	for _, iface := range cfg.Interfaces {
-		if err := s.configure(ctx, cfg, iface); err != nil {
+		if err := s.configure(ctx, cfg, iface, enabled[iface.ID]); err != nil {
 			return err
 		}
 	}
@@ -384,7 +385,7 @@ func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface confi
 }
 
 // configure применяет параметры и членство в бридже/bond.
-func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface config.Interface) error {
+func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface config.Interface, enabled bool) error {
 	if !linkExists(iface.Name) {
 		// Физический порт может отсутствовать: сетевую карту вынули или
 		// переименовали. Это не повод валить всё применение.
@@ -501,7 +502,7 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 	}
 
 	state := "up"
-	if !cfg.InterfaceEnabled(iface.ID) {
+	if !enabled {
 		state = "down"
 	}
 	if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, state); err != nil {
