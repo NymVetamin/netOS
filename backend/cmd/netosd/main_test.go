@@ -18,12 +18,14 @@ import (
 	"github.com/netos-router/netos/internal/api"
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/bootstrap"
+	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/subsys/channels"
 	"github.com/netos-router/netos/internal/subsys/ddns"
 	"github.com/netos-router/netos/internal/subsys/multiwan"
 	"github.com/netos-router/netos/internal/system"
+	"github.com/netos-router/netos/internal/vpnpki"
 )
 
 type testLogger struct{ messages []string }
@@ -33,6 +35,47 @@ func (l *testLogger) Warnf(format string, args ...any)  { l.messages = append(l.
 func (l *testLogger) Errorf(format string, args ...any) { l.messages = append(l.messages, format) }
 
 type testRunner struct{}
+
+func TestCertificateMaintenanceContinuesAfterPKIError(t *testing.T) {
+	runner := testRunner{}
+	pki := vpnpki.New(t.TempDir(), runner)
+	orphan := filepath.Join(pki.Root, "ocserv-orphan")
+	if err := os.Mkdir(orphan, 0700); err != nil {
+		t.Fatal(err)
+	}
+	manager := certificates.New(t.TempDir(), nil)
+	generated := t.TempDir()
+	cfg := config.Default()
+	run := func() error {
+		return maintainCertificates(context.Background(), cfg, pki, manager, generated, runner)
+	}
+	for _, host := range []string{"old.example.test", "new.example.test"} {
+		cfg.System.Hostname = host
+		cfg.VPNServers = []config.VPNServer{{ID: "vpn", Index: 1, Type: "ocserv", Enabled: true, Config: map[string]any{
+			"public_endpoint": host + ":443", "tls": map[string]any{"mode": "panel"},
+		}}}
+		if err := run(); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("lost PKI error: %v", err)
+		}
+		for _, file := range []string{filepath.Join(manager.Dir, "panel-managed.pem"), filepath.Join(generated, "ocserv-srv1-tls", "server.pem")} {
+			if _, err := certificates.ReadPair(file, file, host); err != nil {
+				t.Fatalf("expected current certificate: %v", err)
+			}
+		}
+	}
+	cfg.System.Panel.TLS.Mode = "custom"
+	cfg.System.Panel.TLS.CertFile = filepath.Join(manager.Dir, "missing.crt")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "state.json") || !strings.Contains(err.Error(), "missing.crt") {
+		t.Fatalf("expected both errors: %v", err)
+	}
+	cfg.System.Panel.TLS.Mode = "selfsigned"
+	if err := os.Remove(orphan); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func (testRunner) Run(_ context.Context, name string, _ ...string) (string, error) {
 	if name == os.Getenv("NETOS_MAIN_FAIL_COMMAND") {

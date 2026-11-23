@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -341,10 +342,7 @@ func main() {
 			case <-ticker.C:
 				refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				err := engine.Maintain(refreshCtx, func(current *config.Config) error {
-					if err := clientPKI.Reconcile(refreshCtx, current); err != nil {
-						return err
-					}
-					return certificateManager.Refresh(refreshCtx, current, stateDir, runner)
+					return maintainCertificates(refreshCtx, current, clientPKI, certificateManager, stateDir, runner)
 				})
 				cancel()
 				if err != nil {
@@ -400,6 +398,14 @@ func main() {
 		log.Fatalf("панель остановлена с ошибкой: %v", err)
 	}
 	logger.Infof("завершение работы")
+}
+
+func maintainCertificates(ctx context.Context, cfg *config.Config, pki *vpnpki.Store, manager *certificates.Manager, generated string, runner system.Runner) error {
+	pkiErr := pki.Reconcile(ctx, cfg)
+	if err := ctx.Err(); err != nil {
+		return errors.Join(pkiErr, err)
+	}
+	return errors.Join(pkiErr, manager.Refresh(ctx, cfg, generated, runner))
 }
 
 // ensureAdmin создаёт учётную запись при первом запуске. Открытый пароль
