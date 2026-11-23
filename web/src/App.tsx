@@ -761,7 +761,6 @@ function ApplyBar({
   latestConfig.current = config;
   useEffect(() => { setPlan(null); }, [config]);
   const [remaining, setRemaining] = useState(0);
-  const timerRef = useRef<number | undefined>(undefined);
   const barRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -784,24 +783,31 @@ function ApplyBar({
   // Обратный отсчёт до автоматического отката держим на виду: именно в эти
   // секунды администратор обязан проверить, что связь не потеряна.
   useEffect(() => {
-    window.clearInterval(timerRef.current);
     if (!pending?.until) {
       setRemaining(0);
       return;
     }
+    let cancelled = false;
+    let timer: number | undefined;
     const deadline = new Date(pending.until).getTime();
-    const tick = () => {
+    const tick = async () => {
       const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
       setRemaining(left);
       if (left === 0) {
-        window.clearInterval(timerRef.current);
-        onReload();
+        try {
+          await onReload();
+        } catch {
+          // Reload reports its error; retry without overlapping requests.
+        }
       }
+      if (!cancelled) timer = window.setTimeout(tick, 1000);
     };
-    tick();
-    timerRef.current = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timerRef.current);
-  }, [pending, onReload]);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [pending?.until, pending?.revision, onReload]);
 
   if (pending) {
     return (
