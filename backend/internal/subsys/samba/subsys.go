@@ -543,10 +543,11 @@ func unmountVolume(ctx context.Context, run func(context.Context, string, ...str
 	if err != nil {
 		return fmt.Errorf("проверка тома %s: %w", v.UUID, err)
 	}
+	mountPath := MountPath(v)
 	for _, line := range strings.Split(mounts, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == MountPath(v) && fields[1] != "autofs" {
-			if _, err := run(ctx, "nsenter", "--target", "1", "--mount", "--", "umount", "--", MountPath(v)); err != nil {
+		if len(fields) == 2 && fields[0] == mountPath && fields[1] != "autofs" {
+			if _, err := run(ctx, "nsenter", "--target", "1", "--mount", "--", "umount", "--", mountPath); err != nil {
 				return fmt.Errorf("извлечение %s: %w", v.UUID, err)
 			}
 			break
