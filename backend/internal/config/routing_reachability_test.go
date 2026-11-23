@@ -59,6 +59,7 @@ func TestStaticGatewayConnectedSourcesAndInterfaces(t *testing.T) {
 	c.VPNServers = []VPNServer{{Enabled: true, Subnet: "10.3.0.1/24"}}
 	c.Routing.Static = []StaticRoute{{Enabled: true, Destination: "10.4.0.0/24", Interface: "lan", Table: "main"}, {Enabled: true, Destination: "10.5.0.0/24", Interface: "lan"}, {Enabled: true, Destination: "10.6.0.0/24", Interface: "lan", Type: "blackhole"}, {Enabled: true, Destination: "10.7.0.0/24", Interface: "lan", Gateway: "10.0.0.2"}, {Enabled: true, Destination: "default", Interface: "lan"}}
 	names := map[string]string{}
+	var direct directRouteIndex
 	for _, tc := range []struct {
 		ip, iface, table string
 		want             bool
@@ -73,7 +74,7 @@ func TestStaticGatewayConnectedSourcesAndInterfaces(t *testing.T) {
 		{"2001:db8::2", "br0", "", true}, {"2001:db8:1::2", "br0", "", false}, {"10.9.0.2", "empty-alias", "", true},
 	} {
 		r := StaticRoute{Interface: tc.iface, Table: tc.table}
-		if got := c.staticGatewayConnected(r, netip.MustParseAddr(tc.ip), names); got != tc.want {
+		if got := c.staticGatewayConnected(r, netip.MustParseAddr(tc.ip), names, &direct); got != tc.want {
 			t.Errorf("%+v got %t", tc, got)
 		}
 	}
@@ -151,5 +152,39 @@ func TestGatewayThroughDirectHostRoute(t *testing.T) {
 				t.Fatalf("%+v: %v", tc, r.Problems)
 			}
 		}
+	}
+}
+
+func TestDirectRoutesWithDistinctGateways(t *testing.T) {
+	c := Default()
+	c.Interfaces = []Interface{{ID: "port", Name: "eth0"}, {ID: "port", Name: "duplicate"}}
+	c.Routing.Static = []StaticRoute{
+		{Enabled: true, Interface: "port", Destination: "2001:db8::17/64"},
+		{Enabled: true, Interface: "port", Destination: "fe80::1%eth0"},
+		{Enabled: true, Interface: "port", Destination: "192.0.2.17/24", Table: "local"},
+	}
+	for i, gateway := range []string{"2001:db8::2", "2001:db8::3%eth0", "fe80::1%eth0", "fe80::1%eth1", "192.0.2.1", "192.0.2.2", "2001:db8::4"} {
+		r := StaticRoute{Enabled: true, Interface: "eth0", Destination: "default", Gateway: gateway, Metric: i + 1}
+		if i == 5 {
+			r.Table = "local"
+		}
+		if i == 6 {
+			r.Interface = "duplicate"
+		}
+		c.Routing.Static = append(c.Routing.Static, r)
+	}
+	for _, want := range [][]int{{4, 6, 7, 9}, {3, 4, 6, 7, 9}} {
+		var result ValidationResult
+		c.validateRouting(&result)
+		if len(result.Problems) != len(want) {
+			t.Fatal(result.Problems)
+		}
+		for i, index := range want {
+			p := result.Problems[i]
+			if p.Path != fmt.Sprintf("routing.static[%d].gateway", index) || p.Severity != "warning" {
+				t.Fatal(p)
+			}
+		}
+		c.Routing.Static[0].Enabled = false
 	}
 }

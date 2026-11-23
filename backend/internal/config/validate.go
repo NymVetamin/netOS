@@ -1273,12 +1273,13 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		table   string
 	}
 	reachability := make(map[gatewayKey]bool)
+	var direct directRouteIndex
 	gatewayConnected := func(route StaticRoute, address netip.Addr) bool {
 		key := gatewayKey{address, route.Interface, staticTableKey(route.Table)}
 		if connected, ok := reachability[key]; ok {
 			return connected
 		}
-		connected := c.staticGatewayConnected(route, address, interfaceNames)
+		connected := c.staticGatewayConnected(route, address, interfaceNames, &direct)
 		reachability[key] = connected
 		return connected
 	}
