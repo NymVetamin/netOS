@@ -74,6 +74,14 @@ async def main():
         assert len(state["stops"]) == 1
         assert state["starts"][0]["count"] == 5
 
+        await page.get_by_role("button", name="Запустить", exact=True).click()
+        await expect(page.locator("pre.output")).to_be_visible()
+        before = state["polls"]
+        state["done"] = True
+        await expect(page.get_by_role("button", name="Запустить", exact=True)).to_be_enabled()
+        await page.wait_for_timeout(1200)
+        assert state["polls"] == before + 1, (before, state["polls"])
+
         for tab, kind in [("Traceroute / MTR", "mtr"), ("DNS", "dns"), ("Захват пакетов", "capture"), ("Torch", "torch"), ("iPerf3", "iperf"), ("Поиск маршрута", "route")]:
             await tabs.get_by_role("tab", name=tab, exact=True).click()
             await expect(page.get_by_role("heading", name=tab, exact=True)).to_be_visible()

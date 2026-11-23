@@ -37,6 +37,8 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
   const [udp, setUDP] = useState(false);
   const [reverse, setReverse] = useState(false);
   const [job, setJob] = useState<DiagnosticJob | null>(null);
+  const jobId = job?.id;
+  const [stopRevision, setStopRevision] = useState(0);
   const [starting, setStarting] = useState(false);
   const [address, setAddress] = useState("");
   const [mac, setMac] = useState("");
@@ -80,13 +82,13 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
     return () => document.removeEventListener("visibilitychange", update);
   }, [tool.id]);
   useEffect(() => {
-    if (!job || !visible) return;
+    if (!jobId || !visible) return;
     let disposed = false;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const result = await api.diagnosticJob(job.id, abort.signal, flowPage);
+        const result = await api.diagnosticJob(jobId, abort.signal, flowPage);
         if (disposed) return;
         setJob(result); setError("");
         if (!active(result)) { current.current = null; return; }
@@ -103,7 +105,7 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
     };
     void poll();
     return () => { disposed = true; abort.abort(); clearTimeout(timer); };
-  }, [job?.id, job?.state, flowPage, visible]);
+  }, [jobId, stopRevision, flowPage, visible]);
 
   async function start() {
     setStarting(true); setError(""); setJob(null); setFlowPage(0);
@@ -116,8 +118,14 @@ export function DiagnosticTool({tool, capabilities, refresh}: {tool: Tool; capab
     finally { if (mounted.current) setStarting(false); }
   }
   async function stop() {
-    if (!current.current) return;
-    try { await api.diagnosticStop(current.current); setJob(j => j ? {...j, state:"stopping"} : j); }
+    const id = current.current;
+    if (!id) return;
+    try {
+      await api.diagnosticStop(id);
+      if (!mounted.current || current.current !== id) return;
+      setJob(j => j ? {...j, state:"stopping"} : j);
+      setStopRevision(n => n + 1);
+    }
     catch (e) { setError(e instanceof Error ? e.message : "Не удалось остановить запуск"); }
   }
   function save(blob: Blob, filename: string) {

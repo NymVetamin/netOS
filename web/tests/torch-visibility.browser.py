@@ -16,7 +16,7 @@ async def visibility(page, hidden):
 
 async def scenario(browser, total):
     page, state, base = await d.setup(browser)
-    calls=[]; mode={'error':0, 'hold':False}; entered=asyncio.Event(); release=asyncio.Event()
+    calls=[]; terminal_pages=[]; mode={'error':0, 'hold':False}; entered=asyncio.Event(); release=asyncio.Event()
     async def job(r):
         if r.request.method!='GET':
             await r.fallback(); return
@@ -25,6 +25,8 @@ async def scenario(browser, total):
             entered.set(); await release.wait()
         if mode['error']:
             await r.fulfill(status=mode['error'], json={'error':'fixture failure'}); return
+        if state['done']:
+            terminal_pages.append(calls[-1])
         await r.fulfill(json={'id':'test-job','kind':'torch','state':'done' if state['done'] else 'running',
             'output':'','error':'','elapsed':2,'capture_bytes':128,
             'torch':{'total_flows':total,'packets':10,'skipped':0,'flows':[]}})
@@ -66,6 +68,13 @@ async def scenario(browser, total):
     await page.get_by_role('button',name='Остановить',exact=True).click()
     await expect(page.get_by_role('button',name='Запустить',exact=True)).to_be_enabled(timeout=4000)
     assert len(state['stops'])==1 and not base['errors'], base['errors']
+    await page.wait_for_timeout(1200)
+    assert terminal_pages == ['0'], terminal_pages
+    if total > 100:
+        await page.get_by_role('button',name='Далее',exact=True).click()
+        await expect(page.get_by_text('Страница 2 из 1000',exact=True)).to_be_visible()
+        await page.wait_for_timeout(1200)
+        assert terminal_pages == ['0', '1'], terminal_pages
     mode['error']=403 if total==1 else 404
     await page.get_by_role('button',name='Запустить',exact=True).click()
     await expect(page.get_by_text('fixture failure',exact=False)).to_be_visible(timeout=4000)
