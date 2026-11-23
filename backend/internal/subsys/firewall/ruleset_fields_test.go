@@ -63,7 +63,9 @@ func TestRuleSelectorsScheduleLoggingAndTargets(t *testing.T) {
 		Name: "detailed", Flow: "out", Interface: "eth0", Protocol: "tcp", SrcIP: "192.0.2.0/24", DstIP: "198.51.100.1",
 		SrcMAC: "02:00:00:00:00:01", SrcPort: "1000-1002", DstPort: "80,443", ConnState: "new,related", Schedule: &schedule,
 	}
-	got := selectors(rule)
+	var rendered builder
+	rendered.emitRule("OUTPUT", rule, "")
+	got := rendered.String()
 	for _, part := range []string{" -o eth0", " -p tcp", " -s 192.0.2.0/24", " -d 198.51.100.1", "--mac-source", "--sports 1000:1002", "--dports 80,443", "--ctstate NEW,RELATED", "--timestart 08:01", "--timestop 18:02:03", "--weekdays Mon,Wed", `--comment "detailed"`} {
 		if !strings.Contains(got, part) {
 			t.Errorf("selector missing %q: %s", part, got)

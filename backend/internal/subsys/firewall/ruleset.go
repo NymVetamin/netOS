@@ -180,6 +180,7 @@ type builder struct {
 	ruleID  string
 	// Classification in mangle determines whether filter needs the block chain.
 	internetBlock bool
+	portChains    int
 }
 
 func (b *builder) String() string { return b.sb.String() }
@@ -534,9 +535,19 @@ func (b *builder) blockedClients(cfg *config.Config) {
 
 }
 
-// emitRule печатает одну строку правила.
+// emitRule выводит правило и при необходимости цепочки для длинных списков портов.
 func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
+	var sources, destinations []string
+	r.SrcPort, sources = splitPortMatch(r.SrcPort)
+	r.DstPort, destinations = splitPortMatch(r.DstPort)
 	sel := extra + selectors(r)
+	if len(sources)+len(destinations) > 0 {
+		gate := b.newPortChain()
+		b.line("-A %s%s -j %s", chain, sel, gate)
+		chain = b.portGate(gate, r.Protocol, "--sports", sources)
+		chain = b.portGate(chain, r.Protocol, "--dports", destinations)
+		sel = ""
+	}
 	if r.Log {
 		// iptables-nft's save conversion preserves only 28 prefix bytes.
 		// Limit only logging: every matching packet must still reach the
@@ -560,6 +571,26 @@ func (b *builder) emitRule(chain string, r config.FirewallRule, extra string) {
 		return
 	}
 	b.line("-A %s%s -j %s", chain, sel, target(r.Action))
+}
+
+func (b *builder) newPortChain() string {
+	b.portChains++
+	chain := fmt.Sprintf("NETOS-PORT-%d", b.portChains)
+	b.line(":%s - [0:0]", chain)
+	return chain
+}
+
+// goto skips the other alternatives even if this packet matches overlapping
+// ranges. At the end of any gate, execution resumes after the caller's jump.
+func (b *builder) portGate(chain, protocol, option string, groups []string) string {
+	if len(groups) == 0 {
+		return chain
+	}
+	next := b.newPortChain()
+	for _, group := range groups {
+		b.line("-A %s -p %s -m multiport %s %s -g %s", chain, protocol, option, group, next)
+	}
+	return next
 }
 
 // portForwardAccept разрешает транзит уже перенаправленных пакетов.
@@ -690,10 +721,10 @@ func selectors(r config.FirewallRule) string {
 		fmt.Fprintf(&s, " -m mac --mac-source %s", r.SrcMAC)
 	}
 	if r.SrcPort != "" {
-		fmt.Fprintf(&s, " -m multiport --sports %s", iptablesPortSpec(r.SrcPort))
+		fmt.Fprintf(&s, " -m multiport --sports %s", r.SrcPort)
 	}
 	if r.DstPort != "" {
-		fmt.Fprintf(&s, " -m multiport --dports %s", iptablesPortSpec(r.DstPort))
+		fmt.Fprintf(&s, " -m multiport --dports %s", r.DstPort)
 	}
 	if r.ConnState != "" {
 		fmt.Fprintf(&s, " -m conntrack --ctstate %s", strings.ToUpper(trimListItems(r.ConnState)))
@@ -1151,11 +1182,12 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	}
 
 	type policyRule struct {
-		priority int
-		id       string
-		match    string
-		channel  string
-		comment  string
+		portGroups []string
+		priority   int
+		id         string
+		match      string
+		channel    string
+		comment    string
 	}
 	var rules []policyRule
 	for _, p := range cfg.Policies {
@@ -1174,12 +1206,14 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 				continue // Xray применяет такие политики внутри своего routing-блока.
 			}
 		}
+		inline, groups := splitPortMatch(p.DstPort)
+		p.DstPort = inline
 		match, possible := policySelectors(cfg, p)
 		if !possible {
 			continue
 		}
 		rules = append(rules, policyRule{
-			priority: p.Priority, id: p.ID, match: match,
+			priority: p.Priority, id: p.ID, match: match, portGroups: groups,
 			channel: p.Channel, comment: p.Name,
 		})
 	}
@@ -1258,22 +1292,35 @@ func (b *builder) channelPolicies(cfg *config.Config) {
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --restore-mark")
 	b.line("-A PREROUTING -m conntrack --ctdir ORIGINAL -m mark --mark 0 -j NETOS-POLICY")
 	for _, rule := range rules {
-		if rule.channel == config.InternetBlockChannel {
-			b.line("-A NETOS-POLICY%s -m addrtype ! --dst-type LOCAL -m comment --comment %q -j DROP", rule.match, truncate(rule.comment, 240))
-			continue
+		qualifier, action, mark := "", "RETURN", ""
+		switch rule.channel {
+		case config.InternetBlockChannel:
+			qualifier, action = " -m addrtype ! --dst-type LOCAL", "DROP"
+		case "", "direct":
+		default:
+			ch, ok := channelByID[rule.channel]
+			if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
+				continue
+			}
+			mark = fmt.Sprintf("0x%x", channels.Mark(ch))
+			action = "MARK --set-mark " + mark
 		}
-		if rule.channel == "" || rule.channel == "direct" {
-			b.line("-A NETOS-POLICY%s -m comment --comment %q -j RETURN", rule.match, truncate(rule.comment, 240))
-			continue
+		tail := fmt.Sprintf("%s -m comment --comment %q -j %s", qualifier, truncate(rule.comment, 240), action)
+		groups := rule.portGroups
+		if len(groups) == 0 {
+			groups = []string{""}
 		}
-		ch, ok := channelByID[rule.channel]
-		if !ok || !ch.Enabled || (ch.Type != "wireguard" && ch.Type != "openconnect" && ch.Type != "xray" && ch.Type != "l2tp" && ch.Type != "ikev2") {
-			continue // валидатор не разрешает применить такую конфигурацию
+		for _, group := range groups {
+			portMatch := ""
+			if group != "" {
+				portMatch = " -m multiport --dports " + group
+			}
+			b.line("-A NETOS-POLICY%s%s%s", rule.match, portMatch, tail)
+			if mark != "" {
+				b.line("-A NETOS-POLICY -m mark --mark %s -j CONNMARK --save-mark", mark)
+				b.line("-A NETOS-POLICY -m mark --mark %s -j RETURN", mark)
+			}
 		}
-		mark := fmt.Sprintf("0x%x", channels.Mark(ch))
-		b.line("-A NETOS-POLICY%s -m comment --comment %q -j MARK --set-mark %s", rule.match, truncate(rule.comment, 240), mark)
-		b.line("-A NETOS-POLICY -m mark --mark %s -j CONNMARK --save-mark", mark)
-		b.line("-A NETOS-POLICY -m mark --mark %s -j RETURN", mark)
 	}
 }
 
@@ -1333,7 +1380,7 @@ func policySelectors(cfg *config.Config, p config.Policy) (string, bool) {
 		fmt.Fprintf(&s, " -m set --match-set %s dst", policy.IPv4SetName(p.ID))
 	}
 	if p.DstPort != "" {
-		fmt.Fprintf(&s, " -m multiport --dports %s", iptablesPortSpec(p.DstPort))
+		fmt.Fprintf(&s, " -m multiport --dports %s", p.DstPort)
 	}
 	if p.Schedule != nil {
 		s.WriteString(scheduleMatch(*p.Schedule))
@@ -1372,6 +1419,48 @@ func intersectSourceSelectors(sources []string) (string, bool) {
 		return "", true
 	}
 	return " -s " + selected.String(), true
+}
+
+// xt_multiport has fifteen slots; a range consumes two. Keep the ordinary
+// case inline, returning alternatives only when more than one match is needed.
+func splitPortMatch(spec string) (string, []string) {
+	if spec == "" {
+		return "", nil
+	}
+	const slots = 15
+	var parts [slots]string
+	var groups []string
+	used, count := 0, 0
+	for token := range strings.SplitSeq(spec, ",") {
+		lo, hi, ranged := strings.Cut(strings.TrimSpace(token), "-")
+		lo = decimalPort(lo)
+		item, weight := lo, 1
+		if ranged {
+			hi = decimalPort(hi)
+			if hi != lo {
+				item, weight = lo+":"+hi, 2
+			}
+		}
+		if used+weight > slots {
+			groups = append(groups, strings.Join(parts[:count], ","))
+			used, count = 0, 0
+		}
+		parts[count] = item
+		used += weight
+		count++
+	}
+	last := strings.Join(parts[:count], ",")
+	if len(groups) == 0 {
+		return last, nil
+	}
+	return "", append(groups, last)
+}
+
+func decimalPort(value string) string {
+	if trimmed := strings.TrimLeft(value, "0"); trimmed != "" {
+		return trimmed
+	}
+	return value
 }
 
 // В JSON диапазоны пишутся привычно как 8000-8010, а iptables в match
