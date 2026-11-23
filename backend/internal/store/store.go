@@ -687,6 +687,27 @@ func (s *Store) DeleteSession(token string) error {
 	return err
 }
 
+// SessionTokens snapshots persisted sessions for reconciliation of in-memory state.
+func (s *Store) SessionTokens() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT token FROM sessions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tokens := make(map[string]bool)
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, err
+		}
+		tokens[token] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
 func (s *Store) PruneSessions() ([]string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

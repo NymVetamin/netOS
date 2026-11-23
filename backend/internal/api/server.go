@@ -690,6 +690,29 @@ func (s *Server) pruneOnce() {
 		}
 		s.csrfMu.Unlock()
 	}
+	// Revoked sessions have already disappeared from SQLite, so expiration
+	// alone cannot report their CSRF entries. Snapshot keys before querying:
+	// tokens registered after that snapshot must survive this cleanup.
+	s.csrfMu.RLock()
+	csrfKeys := make([]string, 0, len(s.csrfTokens))
+	for token := range s.csrfTokens {
+		csrfKeys = append(csrfKeys, token)
+	}
+	s.csrfMu.RUnlock()
+	if len(csrfKeys) > 0 {
+		live, err := s.Store.SessionTokens()
+		if err != nil {
+			s.Logger.Warnf("уборка CSRF: %v", err)
+		} else {
+			s.csrfMu.Lock()
+			for _, token := range csrfKeys {
+				if !live[token] {
+					delete(s.csrfTokens, token)
+				}
+			}
+			s.csrfMu.Unlock()
+		}
+	}
 	if err := s.Store.PruneRevisions(50); err != nil {
 		s.Logger.Warnf("уборка ревизий: %v", err)
 	}
