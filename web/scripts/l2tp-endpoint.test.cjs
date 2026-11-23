@@ -28,3 +28,33 @@ test('opening existing blank server does not invent or save an address',()=>{
  const html=render('');assert.match(html.match(/<summary class="xsum">([\s\S]*?)<\/summary>/)[1],/>—</);
  assert.match(render('','192.168.20.1').match(/<summary class="xsum">([\s\S]*?)<\/summary>/)[1],/192\.168\.20\.1/);
 });
+
+test('VPN servers and peers share enabled channels in configured order', () => {
+  const types = ['wireguard', 'xray', 'ikev2', 'ocserv', 'l2tp'];
+  const vpn_servers = types.map(type => ({
+    id: type, type, config: {}, peers: [{id: 'peer', name: 'test', channel: 'second'}],
+  }));
+  let reads = 0;
+  const renderPage = (servers, disabled) => {
+    reads = 0;
+    const channels = ['second', 'off', 'first'].map(id => ({
+      id, name: 'channel-' + id, get enabled() { reads++; return id !== disabled; },
+    }));
+    return renderToStaticMarkup(React.createElement(VPNServersPage, {
+      config: {channels, vpn_servers: servers}, patch() {},
+    }));
+  };
+  for (const disabled of ['off', 'second']) {
+    const html = renderPage(vpn_servers, disabled);
+    assert.equal(reads, 3);
+    const selects = [...html.matchAll(/<select\b[^>]*>([\s\S]*?)<\/select>/g)]
+      .map(match => [...match[1].matchAll(/>channel-([^<]+)<\/option>/g)].map(option => option[1]))
+      .filter(options => options.length > 0);
+    assert.equal(selects.length, 2 * types.length);
+    for (const options of selects) {
+      assert.deepEqual(options, ['second', 'off', 'first'].filter(id => id !== disabled));
+    }
+  }
+  renderPage([], 'off');
+  assert.equal(reads, 0);
+});
