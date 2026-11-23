@@ -11,6 +11,18 @@ func (b *builder) socksAccess(c *config.Config) {
 	if !p.Enabled {
 		return
 	}
+	var names map[string]string
+	interfaceName := func(id string) string {
+		if names == nil {
+			names = make(map[string]string, len(c.Interfaces))
+			for _, iface := range c.Interfaces {
+				if _, exists := names[iface.ID]; !exists {
+					names[iface.ID] = iface.Name
+				}
+			}
+		}
+		return names[id]
+	}
 	protos := []string{"tcp"}
 	allow := func(match string) {
 		for _, proto := range protos {
@@ -34,7 +46,7 @@ func (b *builder) socksAccess(c *config.Config) {
 		if e != nil {
 			continue
 		}
-		allow("-i " + c.InterfaceName(n.Interface) + " -s " + sub.String())
+		allow("-i " + interfaceName(n.Interface) + " -s " + sub.String())
 	}
 	vpns := selectedIDs(p.VPNs)
 	for _, v := range c.VPNServers {
@@ -54,7 +66,13 @@ func (b *builder) socksAccess(c *config.Config) {
 	if p.AllowWAN {
 		for _, w := range c.WANs {
 			if w.Enabled {
-				allow("-i " + wanInterface(c, w))
+				var name string
+				if w.Proto == "pppoe" || w.Proto == "l2tp" {
+					name = "ppp-" + w.ID
+				} else {
+					name = interfaceName(w.Interface)
+				}
+				allow("-i " + name)
 			}
 		}
 	}
