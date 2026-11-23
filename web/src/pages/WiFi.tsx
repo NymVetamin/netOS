@@ -37,6 +37,16 @@ export function WiFiPage({ config, patch }: Props) {
   const detected = (hardware?.radios || []).filter((r: any) => r.ap && r.device);
   const entries = detected.map((hw: any) => ({ hw, radio: saved.find((r: any) => hw.interfaces.includes(r.device)) || defaults(hw, hardware.country) }));
   for (const radio of saved) if (!entries.some((e: any) => e.radio.id === radio.id)) entries.push({ radio, hw: null });
+  const showEditors = !!(hardware || error) && entries.length > 0;
+  const bridgeIDs = new Set<any>();
+  if (showEditors) for (const iface of config.interfaces || []) {
+    if (iface.type !== "bridge") continue;
+    const id = iface.id;
+    if (!Number.isNaN(id)) bridgeIDs.add(id);
+  }
+  const networks = showEditors ? (config.networks || []).filter((item: any) => item.enabled).map((item: any) => ({
+    ...item, wifiBridge: bridgeIDs.has(item.interface),
+  })) : [];
   return <>
     <div className="page-head"><h1><Icon name="wifi" />Wi-Fi</h1><p>Точки доступа, защита сети и привязка к сегментам роутера</p></div>
     {!installed && <NeedComponent name="Точка доступа Wi-Fi (hostapd)" effect="без неё сети не выйдут в эфир" />}
@@ -44,12 +54,12 @@ export function WiFiPage({ config, patch }: Props) {
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
       {!hardware && !error ? <Empty>Определяем радиоустройства…</Empty> : entries.length === 0 ? error ? null : <Empty>{hardware?.radios.length ? "Обнаруженные адаптеры не поддерживают режим точки доступа или не имеют сетевого интерфейса." : "Wi-Fi-адаптеры не обнаружены."}</Empty> :
         <Rows cols={["Радио", "Диапазон", "Канал", "Сети", "Состояние"]}>{entries.map(({ radio, hw }: any) =>
-          <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} requestHardware={requestHardware} config={config} installed={installed} patch={patch} />)}</Rows>}
+          <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} requestHardware={requestHardware} networks={networks} installed={installed} patch={patch} />)}</Rows>}
     </Card>
   </>;
 }
 
-function RadioEditor({ radio, hardware, countries, countryChoices, initialCountry, requestHardware, config, installed, patch }: any) {
+function RadioEditor({ radio, hardware, countries, countryChoices, initialCountry, requestHardware, networks, installed, patch }: any) {
   const [options, setOptions] = useState(hardware);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -65,9 +75,6 @@ function RadioEditor({ radio, hardware, countries, countryChoices, initialCountr
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; request.release(); };
   }, [hardware, radio.country, initialCountry, requestHardware]);
-  const networks = (config.networks || []).filter((item: any) => item.enabled).map((item: any) => ({
-    ...item, wifiBridge: (config.interfaces || []).some((iface: any) => iface.id === item.interface && iface.type === "bridge"),
-  }));
   const update = (mutate: (item: any) => void) => patch((draft: any) => {
     draft.wifi ||= [];
     let item = draft.wifi.find((item: any) => item.id === radio.id);
