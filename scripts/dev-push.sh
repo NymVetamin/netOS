@@ -160,9 +160,9 @@ wait_ready() {
 }
 
 verify_binary() {
-    actual_sha=$(sha256sum "$BIN_PATH" 2>/dev/null | awk '{print $1}')
+    actual_sha=$(sha256sum "$1" 2>/dev/null | awk '{print $1}')
     if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
-        echo "SHA-256 активного binary не совпал: ожидался $EXPECTED_SHA, получен ${actual_sha:-отсутствует}" >&2
+        echo "SHA-256 файла $1 не совпал: ожидался $EXPECTED_SHA, получен ${actual_sha:-отсутствует}" >&2
         return 1
     fi
 }
@@ -175,6 +175,8 @@ verify_plan() {
     printf '%s\n' "$plan_output"
     printf '%s\n' "$plan_output" | grep -Fq 'Живая система соответствует конфигурации: применять нечего.'
 }
+
+verify_binary "$NETOS_CANDIDATE" || exit 1
 
 if ! snapshot_path "$BIN_PATH" binary \
     || ! snapshot_path "$CLI_PATH" cli \
@@ -195,11 +197,11 @@ chmod 0755 "$NETOS_CANDIDATE" \
     && install -D -m 0644 "$COMPLETION_PATH" "$LAZY_COMPLETION_PATH.new" \
     && mv -f "$LAZY_COMPLETION_PATH.new" "$LAZY_COMPLETION_PATH" \
     && rm -f "$READY_PATH" \
-    && verify_binary \
+    && verify_binary "$BIN_PATH" \
     && systemctl reset-failed netosd \
     && systemctl restart netosd \
     && wait_ready \
-    && verify_binary \
+    && verify_binary "$BIN_PATH" \
     && verify_plan \
     && DEPLOY_OK=1
 
