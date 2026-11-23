@@ -503,7 +503,9 @@ curl -fsSL https://raw.githubusercontent.com/NymVetamin/netOS/master/install.sh 
 
 Скрипт:
 
-1. Проверяет: Debian 12/13, root, архитектура amd64/arm64, наличие systemd.
+1. Требует root, архитектуру amd64/arm64 и команду `systemctl`. При доступном
+   `/etc/os-release` показывает название ОС; для семейств вне Debian/Ubuntu
+   предупреждает и продолжает. Версию дистрибутива не проверяет.
 2. Ставит базовые зависимости через apt (`iptables`, `iproute2`, `ipset`,
    `dnsmasq`, `wireguard-tools`, `ca-certificates`).
 3. Скачивает релизный тарбол с GitHub, сверяет sha256.
