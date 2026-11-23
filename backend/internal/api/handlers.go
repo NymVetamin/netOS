@@ -1576,7 +1576,11 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	rev, err := s.Store.Revision(id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "ревизия не найдена")
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ревизия не найдена")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "%v", err)
 		return
 	}
 
