@@ -265,6 +265,63 @@ func TestBackupReportsArchiveAndRestartFailures(t *testing.T) {
 	}
 }
 
+func TestBackupCancellationRestartsService(t *testing.T) {
+	for _, phase := range []string{"before stop", "stop", "tar", "start", "recovery failure"} {
+		t.Run(phase, func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			seedBackupDatabase(t, m)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if phase == "before stop" {
+				cancel()
+			}
+			stopped, recovered := false, false
+			recoveryFailure := errors.New("recovery failed")
+			m.Run = func(commandCtx context.Context, cmd command) error {
+				switch {
+				case cmd.name == "systemctl" && cmd.args[0] == "stop":
+					stopped = true
+					if phase == "stop" {
+						cancel()
+						return commandCtx.Err()
+					}
+				case cmd.name == "tar":
+					if phase != "start" {
+						cancel()
+						return commandCtx.Err()
+					}
+					return writeMockBackup(t, cmd.args[3])
+				case cmd.name == "systemctl" && cmd.args[0] == "start":
+					if phase == "start" && ctx.Err() == nil {
+						cancel()
+						return commandCtx.Err()
+					}
+					if err := commandCtx.Err(); err != nil {
+						t.Fatalf("recovery context: %v", err)
+					}
+					recovered = true
+					if phase == "recovery failure" {
+						return recoveryFailure
+					}
+				default:
+					t.Fatalf("unexpected command %s %v", cmd.name, cmd.args)
+				}
+				return nil
+			}
+			err := m.Execute(ctx, []string{"backup"})
+			if !errors.Is(err, context.Canceled) || errors.Is(err, recoveryFailure) != (phase == "recovery failure") ||
+				stopped != (phase != "before stop") || recovered != stopped {
+				t.Fatalf("stopped=%v recovered=%v error=%v", stopped, recovered, err)
+			}
+			archives, err := m.listBackups()
+			if err != nil || (len(archives) != 0) != (phase == "start") {
+				t.Fatalf("archives=%v error=%v", archives, err)
+			}
+		})
+	}
+}
+
 func TestBackupIncludesExistingDataAndUsesPrivateMode(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)

@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -267,7 +269,9 @@ func (m *Manager) Execute(ctx context.Context, args []string) error {
 		if err := m.requireRoot(); err != nil {
 			return err
 		}
-		return m.backupNow(ctx)
+		backupCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return m.backupNow(backupCtx)
 	case "password-reset":
 		if err := m.requireRoot(); err != nil {
 			return err
@@ -1795,8 +1799,13 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		stop := context.AfterFunc(ctx, func() { _ = archive.Close() })
 		err = validateBackupContents(archive)
+		stop()
 		closeErr := archive.Close()
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		if closeErr != nil {
 			return "", closeErr
 		}
@@ -1827,10 +1836,22 @@ func (m *Manager) backup(ctx context.Context, reason string) (string, error) {
 }
 
 func (m *Manager) backupNow(ctx context.Context) error {
-	if err := m.stopDaemon(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path, err := m.backup(ctx, "backup")
+	var path string
+	err := m.stopDaemon(ctx)
+	if err != nil && ctx.Err() == nil {
+		return err
+	}
+	// An interrupted systemctl may already have submitted its stop job.
+	// In that case skip the archive but still submit the matching start.
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		path, err = m.backup(ctx, "backup")
+	}
 	// A marker from an already stopped or abruptly terminated daemon must not
 	// make the new process look ready. The daemon writes it only after the full
 	// startup Apply and a live HTTPS /api/ping probe.
@@ -1838,7 +1859,15 @@ func (m *Manager) backupNow(ctx context.Context) error {
 	if os.IsNotExist(removeErr) {
 		removeErr = nil
 	}
-	startErr := m.run(ctx, "systemctl", "start", "netosd")
+	startErr := ctx.Err()
+	if startErr == nil {
+		startErr = m.run(ctx, "systemctl", "start", "netosd")
+	}
+	if startErr != nil && ctx.Err() != nil {
+		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+		startErr = m.run(recoveryCtx, "systemctl", "start", "netosd")
+		cancel()
+	}
 	if removeErr != nil {
 		removeErr = fmt.Errorf("не удалось сбросить маркер готовности: %w", removeErr)
 	}
