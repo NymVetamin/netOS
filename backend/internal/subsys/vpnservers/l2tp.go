@@ -12,7 +12,7 @@ import (
 	"github.com/netos-router/netos/internal/system"
 )
 
-const l2tpChapSecrets = "/etc/ppp/chap-secrets"
+var l2tpChapSecrets = "/etc/ppp/chap-secrets"
 
 func l2tpUnitName(server config.VPNServer) string {
 	return fmt.Sprintf("netos-vpn-l2tp-srv%d.service", server.Index)
@@ -246,7 +246,7 @@ func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg 
 	return !wasOwned, nil
 }
 
-func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) {
+func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) error {
 	unit := l2tpUnitName(server)
 	_, _ = s.Runner.Run(ctx, "systemctl", "disable", unit)
 	_, _ = s.Runner.Run(ctx, "systemctl", "stop", unit)
@@ -255,13 +255,22 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) {
 	for _, path := range []string{conf, conf + ".ipsec-guard", ppp, unitPath, s.l2tpPreUpPath(server)} {
 		_ = os.Remove(path)
 	}
-	if chap, err := os.ReadFile(l2tpChapSecrets); err == nil {
-		if next, err := updateL2TPChap(chap, server, false); err == nil {
-			_ = writeFile(l2tpChapSecrets, next, 0o600)
+	chap, chapErr := os.ReadFile(l2tpChapSecrets)
+	if os.IsNotExist(chapErr) {
+		chapErr = nil
+	} else if chapErr == nil {
+		var next []byte
+		next, chapErr = updateL2TPChap(chap, server, false)
+		if chapErr == nil {
+			chapErr = writeFile(l2tpChapSecrets, next, 0o600)
 		}
 	}
 	_, _ = s.Runner.Run(ctx, "systemctl", "daemon-reload")
 	// xl2tpd may exit with status 1 on a normal SIGTERM. Once its unit has
 	// been removed, clear only that unit's failed state from systemd.
 	_, _ = s.Runner.Run(ctx, "systemctl", "reset-failed", unit)
+	if chapErr != nil {
+		return fmt.Errorf("очистка chap-secrets: %w", chapErr)
+	}
+	return nil
 }

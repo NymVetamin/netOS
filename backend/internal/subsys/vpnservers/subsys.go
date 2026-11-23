@@ -886,7 +886,9 @@ func (s *Subsystem) unitActiveEnabled(ctx context.Context, unit string) error {
 func (s *Subsystem) remove(ctx context.Context, item ownedServer) error {
 	if item.Type == "l2tp" {
 		server := config.VPNServer{Index: item.Index, Type: "l2tp"}
-		s.cleanupL2TP(ctx, server)
+		if err := s.cleanupL2TP(ctx, server); err != nil {
+			return err
+		}
 		if err := s.verifyUnitStopped(ctx, l2tpUnitName(server)); err != nil {
 			return err
 		}
