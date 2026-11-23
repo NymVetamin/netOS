@@ -19,6 +19,11 @@ func TestIntegrationBridgeIPv6Suppression(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
 		t.Skip("NETOS_INTEGRATION=1 and root in isolated network namespace")
 	}
+	self, err := os.Readlink("/proc/self/ns/net")
+	initNS, initErr := os.Readlink("/proc/1/ns/net")
+	if err != nil || initErr != nil || self == initNS {
+		t.Fatal("requires an isolated network namespace")
+	}
 	r := system.NewExec()
 	ctx := context.Background()
 	run := func(name string, args ...string) string {
