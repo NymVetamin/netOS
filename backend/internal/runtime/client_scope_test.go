@@ -203,7 +203,7 @@ func TestClientHistoryReplaysFailedWrites(t *testing.T) {
 		}
 		rows.Close()
 		var at, n int64
-		if err := h.db.QueryRow("SELECT at,SUM(n) FROM domains").Scan(&at, &n); err != nil || at != start.Unix()+62 || n != 1 {
+		if err := h.db.QueryRow("SELECT at,SUM(n) FROM domains").Scan(&at, &n); err != nil || at != start.Unix() || n != 1 {
 			t.Fatalf("DNS saved at %d, count %d: %v", at, n, err)
 		}
 	})

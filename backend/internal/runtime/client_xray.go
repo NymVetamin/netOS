@@ -190,21 +190,10 @@ func (h *ClientHistory) addXrayResources(events []xrayResource) {
 	if !h.enabled {
 		return
 	}
+	if len(events) > 0 && h.resources == nil {
+		h.resources = historyCounts{}
+	}
 	for _, e := range events {
-		key := e.client + "|" + e.domain + "|" + e.source
-		if h.resources == nil {
-			h.resources = map[string]*DNSCount{}
-		}
-		d := h.resources[key]
-		if d == nil {
-			if len(h.resources) >= 4096 {
-				h.noteLimitLocked("resource-buffer", e.at.Unix(), e.at.Unix())
-				continue
-			}
-			d = &DNSCount{Client: e.client, Domain: e.domain, Source: e.source, First: e.at.Unix()}
-			h.resources[key] = d
-		}
-		d.Count++
-		d.Last = e.at.Unix()
+		h.countEvent(h.resources, historyEventKey{client: e.client, domain: e.domain, source: e.source, second: e.at.Unix()}, "resource-buffer")
 	}
 }

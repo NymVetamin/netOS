@@ -58,6 +58,13 @@ type DNSCount struct {
 	First  int64  `json:"first"`
 	Last   int64  `json:"last"`
 }
+type historyEventKey struct {
+	client, domain, source string
+	second                 int64
+}
+
+type historyCounts map[historyEventKey]int64
+
 type ClientHistory struct {
 	Runner              system.Runner
 	Collector           *Collector
@@ -70,8 +77,8 @@ type ClientHistory struct {
 	mu                  sync.Mutex
 	addresses           map[string]ClientCounter
 	baseline            map[string]clientBaseline
-	resources           map[string]*DNSCount
-	dns                 map[string]*DNSCount
+	resources           historyCounts
+	dns                 historyCounts
 	enabled             bool
 	problem             string
 	dnsProblem          string
@@ -113,7 +120,7 @@ func NewClientHistory(path string, r system.Runner, c *Collector, current func()
 		return nil, err
 	}
 	_ = os.Chmod(path, 0600)
-	h := &ClientHistory{Runner: r, Collector: c, Current: current, db: db, addresses: map[string]ClientCounter{}, baseline: map[string]clientBaseline{}, dns: map[string]*DNSCount{}}
+	h := &ClientHistory{Runner: r, Collector: c, Current: current, db: db, addresses: map[string]ClientCounter{}, baseline: map[string]clientBaseline{}, dns: historyCounts{}}
 	if err = h.loadLimits(); err != nil {
 		db.Close()
 		return nil, err
@@ -308,8 +315,8 @@ func (h *ClientHistory) sample(parent context.Context) {
 		h.lastPersist = time.Time{}
 		h.pendingTraffic = nil
 		h.pendingTrafficSize = 0
-		h.dns = map[string]*DNSCount{}
-		h.resources = map[string]*DNSCount{}
+		h.dns = historyCounts{}
+		h.resources = historyCounts{}
 		h.addresses = map[string]ClientCounter{}
 		h.problem = ""
 		h.dnsProblem = ""
@@ -529,7 +536,7 @@ func (h *ClientHistory) persistBatch(now time.Time, values []ClientCounter, curr
 		}
 	}
 	if current {
-		if err = h.writeHistoryMetadata(tx, now); err != nil {
+		if err = h.writeHistoryMetadata(tx); err != nil {
 			return err
 		}
 	}
@@ -538,8 +545,8 @@ func (h *ClientHistory) persistBatch(now time.Time, values []ClientCounter, curr
 	}
 	if current {
 		h.pendingLimits = nil
-		h.dns = map[string]*DNSCount{}
-		h.resources = map[string]*DNSCount{}
+		h.dns = historyCounts{}
+		h.resources = historyCounts{}
 	}
 	if h.trafficCache != nil {
 		for _, d := range deltas {
@@ -554,26 +561,68 @@ func (h *ClientHistory) persistBatch(now time.Time, values []ClientCounter, curr
 	return nil
 }
 
-func (h *ClientHistory) writeHistoryMetadata(tx *sql.Tx, now time.Time) error {
-	for _, d := range h.dns {
-		if strings.HasPrefix(d.Client, "ip:") {
-			if owner, ok := h.addresses[strings.TrimPrefix(d.Client, "ip:")]; ok {
-				d.Client = owner.ID
-			}
-		}
-		if _, err := tx.Exec("INSERT INTO domains VALUES(?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Count, d.First, d.Last); err != nil {
-			return err
-		}
+func (h *ClientHistory) writeHistoryMetadata(tx *sql.Tx) error {
+	if err := h.writeHistoryCounts(tx, h.dns, false); err != nil {
+		return err
 	}
-
-	for _, d := range h.resources {
-		if _, err := tx.Exec("INSERT INTO resources VALUES(?,?,?,?,?,?,?)", now.Unix(), d.Client, d.Domain, d.Source, d.Count, d.First, d.Last); err != nil {
-			return err
-		}
+	if err := h.writeHistoryCounts(tx, h.resources, true); err != nil {
+		return err
 	}
-
 	return writeHistoryLimits(tx, h.pendingLimits)
 }
+
+func (h *ClientHistory) writeHistoryCounts(tx *sql.Tx, counts historyCounts, resources bool) error {
+	if len(counts) == 0 {
+		return nil
+	}
+	prefix, row, columns := "INSERT INTO domains VALUES", "(?,?,?,?,?,?),", 6
+	if resources {
+		prefix, row, columns = "INSERT INTO resources VALUES", "(?,?,?,?,?,?,?),", 7
+	}
+	// Even the wider batch uses fewer than 999 SQLite parameters.
+	const batch = 128
+	batchSize := min(len(counts), batch)
+	queryFor := func(rows int) string { return prefix + strings.TrimSuffix(strings.Repeat(row, rows), ",") }
+	fullQuery := queryFor(batchSize)
+	args := make([]any, 0, batchSize*columns)
+	flush := func(query string) error {
+		_, err := tx.Exec(query, args...)
+		args = args[:0]
+		return err
+	}
+	for key, n := range counts {
+		client := key.client
+		if !resources && strings.HasPrefix(client, "ip:") {
+			if owner, ok := h.addresses[strings.TrimPrefix(client, "ip:")]; ok {
+				client = owner.ID
+			}
+		}
+		args = append(args, key.second, client, key.domain)
+		if resources {
+			args = append(args, key.source)
+		}
+		args = append(args, n, key.second, key.second)
+		if len(args) == batchSize*columns {
+			if err := flush(fullQuery); err != nil {
+				return err
+			}
+		}
+	}
+	if len(args) > 0 {
+		return flush(queryFor(len(args) / columns))
+	}
+	return nil
+}
+
+// Caller holds mu. Keep counting an existing key even when the buffer is full.
+func (h *ClientHistory) countEvent(counts historyCounts, key historyEventKey, limit string) {
+	if len(counts) >= 4096 && counts[key] == 0 {
+		h.noteLimitLocked(limit, key.second, key.second)
+		return
+	}
+	counts[key]++
+}
+
 func (h *ClientHistory) AddDNS(at time.Time, addr, domain string) {
 	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
 	if len(domain) == 0 || len(domain) > 253 {
@@ -595,18 +644,7 @@ func (h *ClientHistory) AddDNS(at time.Time, addr, domain string) {
 		}
 		client = ClientCounter{ID: "ip:" + addr}
 	}
-	key := client.ID + "|" + domain
-	d := h.dns[key]
-	if d == nil {
-		if len(h.dns) >= 4096 {
-			h.noteLimitLocked("dns-buffer", at.Unix(), at.Unix())
-			return
-		}
-		d = &DNSCount{Client: client.ID, Domain: domain, First: at.Unix()}
-		h.dns[key] = d
-	}
-	d.Count++
-	d.Last = at.Unix()
+	h.countEvent(h.dns, historyEventKey{client: client.ID, domain: domain, second: at.Unix()}, "dns-buffer")
 }
 
 type ClientTotal struct {
