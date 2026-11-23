@@ -526,3 +526,44 @@ func TestDiscoverySelectionTracksInterfaceEdits(t *testing.T) {
 	c.Samba.Networks = nil
 	check(nil)
 }
+
+func TestListenerReconcileReadsLatestConfigAfterMissingFile(t *testing.T) {
+	r := &vpnAddressRunner{fakeRunner: newRunner()}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	c := fixture()
+	c.Samba.VPNs = []string{"oc"}
+	c.VPNServers = []config.VPNServer{{ID: "oc", Index: 30, Enabled: true, Type: "ocserv", Subnet: "10.93.0.1/24"}}
+	ctx := context.Background()
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.StateDir, "samba.conf")
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReconcileVPNListeners(ctx, c); !os.IsNotExist(err) {
+		t.Fatalf("missing config: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed between ticks"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("config was not restored: %v", err)
+	}
+	r.calls = nil
+	if err := s.ReconcileVPNListeners(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(r.calls, "\n"), "systemctl restart") {
+		t.Fatal("unchanged config caused another restart")
+	}
+}

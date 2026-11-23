@@ -77,7 +77,7 @@ func (s *Subsystem) ReconcileVPNListeners(ctx context.Context, cfg *config.Confi
 	if err != nil {
 		return err
 	}
-	changed := system.FileChanged(confPath, []byte(conf))
+	changed := string(previous) != conf
 	wanted := map[string]bool{}
 	for _, address := range present {
 		wanted[address] = true
