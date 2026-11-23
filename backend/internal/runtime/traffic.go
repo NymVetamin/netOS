@@ -184,10 +184,8 @@ func (h *TrafficHistory) Window(from, to time.Time, names []string, limit int) [
 			p.Interfaces[name] = v
 		}
 	}
-	for _, p := range h.points {
-		if p.At.Before(from) {
-			continue
-		}
+	start := sort.Search(len(h.points), func(i int) bool { return !h.points[i].At.Before(from) })
+	for _, p := range h.points[start:] {
 		if p.At.After(to) {
 			break
 		}
