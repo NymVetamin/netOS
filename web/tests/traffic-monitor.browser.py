@@ -1,5 +1,5 @@
 """Production-build UI regression for history ranges and optional collection."""
-import asyncio,json,mimetypes,os,time
+import asyncio,json,mimetypes,os,re,time
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
 from playwright.async_api import async_playwright,expect
@@ -12,6 +12,8 @@ async def main():
   page.on('requestfailed',lambda r:aborted.append(r.url))
   cfg={'system':{'hostname':'router'},'interfaces':[{'id':'wan','name':'eth0','enabled':True}],'wans':[{'id':'wan','interface':'wan','enabled':True}],'networks':[],'channels':[],'vpn_servers':[],'traffic_monitor':{'enabled':True}}
   extra_domains=[]
+  mixed_history=True
+  anchor=int(time.time())-46
   async def route(r):
    u=urlparse(r.request.url);path=u.path;q=parse_qs(u.query);body={};calls.append((path,q))
    if not path.startswith('/api/'):
@@ -25,7 +27,14 @@ async def main():
    elif path in ['/api/statistics/realtime','/api/statistics/realtime/history']:
     def frame(at):
      return {'at':at,'sequence':at,'problems':[],'values':[{'id':id,'name':name,'at':at,'rx_bps':(at%60+1)*10000,'tx_bps':1000} for id,name in [('if:eth0','eth0'),('a','Speaker'),('b','Laptop')]]}
-    if path.endswith('/history'):
+    if mixed_history and path.endswith('/history'):
+     body={'points':[frame(anchor-120),frame(anchor-60)],'interval_seconds':60}
+    elif mixed_history:
+     previous=int(q.get('after',[0])[0])
+     await asyncio.sleep(.1)
+     next_at={0:anchor,anchor:anchor+45}.get(previous,anchor+46)
+     body=frame(next_at)
+    elif path.endswith('/history'):
      finish=int(float(q.get('to',[now])[0]));begin=int(float(q.get('from',[start])[0]))
      step=max(1,(finish-begin)//1200)
      body={'points':[frame(at) for at in range(begin,finish+1,step)],'interval_seconds':step}
@@ -42,6 +51,19 @@ async def main():
    await r.fulfill(json=body,content_type='application/json')
   await page.route('**/*',route);await page.goto('http://netos-ui.test/#dashboard')
   await expect(page.get_by_text('Трафик клиентов',exact=True)).to_be_visible()
+  await page.get_by_label('Период статистики').select_option('60')
+  strokes=page.locator('.monitor-chart svg path[fill="none"]')
+  await expect(strokes).to_have_count(4)
+  # Two historical minutes connect to the first live sample. The next live
+  # sample starts a segment after 45 missing seconds, then continues normally.
+  pattern=re.compile(r'^M[^ML]+ L[^ML]+ L[^ML]+ M[^ML]+ L[^ML]+$')
+  for stroke in await strokes.all():
+   await expect(stroke).to_have_attribute('d',pattern)
+  await page.get_by_role('button',name='Пауза',exact=True).click()
+  for stroke in await strokes.all():
+   await expect(stroke).to_have_attribute('d',pattern)
+  mixed_history=False
+  await page.reload()
   await page.get_by_label('Период статистики').select_option('0')
   history_charts=page.get_by_role('img',name='График скорости за выбранный период')
   await expect(history_charts).to_have_count(2)

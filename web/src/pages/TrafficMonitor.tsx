@@ -23,7 +23,7 @@ export function TrafficMonitor({config,patch,interfaces}:{config:any;patch:(fn:(
  const clientColors=useRef(new Map<string,string>());
  const [internet,setInternet]=useState<any>(null),[clients,setClients]=useState<any>(null);
  const [error,setError]=useState(""),[clientError,setClientError]=useState("");
- const [hold,setHold]=useState<{to:number;from:number;frames:any[];interval:number;clients:any;interfaces:string[]}|null>(null);
+ const [hold,setHold]=useState<{to:number;from:number;frames:any[];interval:number;liveFrom:number;clients:any;interfaces:string[]}|null>(null);
  const minutes=period===-1?3:period||1440;
  const current=useRealtimeTraffic(!custom&&!hold);
  const enabled=!!config.traffic_monitor?.enabled;
@@ -60,20 +60,22 @@ export function TrafficMonitor({config,patch,interfaces}:{config:any;patch:(fn:(
  const domainRecords=(clients?.domains||[]).filter((r:any)=>ids.includes(r.client));
  const domainCounts=domainCountsByClient(domainRecords);
  const interval=hold?.interval||internet?.interval_seconds||1;
- const gap=interval>1?interval*1.5:3;
+ const historyGap=interval>1?interval*1.5:3;
+ const liveFrom=hold?.liveFrom??(custom?Infinity:current.batches[0]?.at??Infinity);
+ const gapAt=(at:number)=>at>=liveFrom?3:historyGap;
  const clientLines=(frames:any[]):Line[]=>ids.map(id=>({id,name:active.get(id)?.name||id,color:clientColors.current.get(id)!,points:frames.map((b:any)=>{
   const v=b.values?.find((v:any)=>v.id===id);
-  return {at:b.at,gap,peak:v?(direction==="down"?v.rx_peak:direction==="up"?v.tx_peak:(v.rx_peak||0)+(v.tx_peak||0)):0,value:!v?null:direction==="down"?v.rx_bps:direction==="up"?v.tx_bps:v.rx_bps!=null&&v.tx_bps!=null?v.rx_bps+v.tx_bps:null};
+  return {at:b.at,gap:gapAt(b.at),peak:v?(direction==="down"?v.rx_peak:direction==="up"?v.tx_peak:(v.rx_peak||0)+(v.tx_peak||0)):0,value:!v?null:direction==="down"?v.rx_bps:direction==="up"?v.tx_bps:v.rx_bps!=null&&v.tx_bps!=null?v.rx_bps+v.tx_bps:null};
  })}));
  const internetLines=(frames:any[]):Line[]=>["rx_bps","tx_bps"].map((key,index)=>({id:index?"up":"down",name:index?"Исходящий":"Входящий",color:index?"#55d395":"#71c7ed",points:frames.map((b:any)=>{
   const rows=(hold?.interfaces||interfaces).map(iface=>b.values?.find((v:any)=>v.id==="if:"+iface));
-  return {at:b.at,gap,peak:rows.reduce((sum,row)=>sum+(row?.[index?"tx_peak":"rx_peak"]||0),0),value:rows.length&&rows.every(row=>row?.[key]!=null)?rows.reduce((sum,row)=>sum+row[key],0):null};
+  return {at:b.at,gap:gapAt(b.at),peak:rows.reduce((sum,row)=>sum+(row?.[index?"tx_peak":"rx_peak"]||0),0),value:rows.length&&rows.every(row=>row?.[key]!=null)?rows.reduce((sum,row)=>sum+row[key],0):null};
  })}));
  const lines=clientLines(frames),wanLines=internetLines(frames);
  const moving=!custom&&minutes<=10;
 
  return <>
-  <Card title="Скорость интернета" subtitle="Трафик аплинков за выбранный период" actions={<><button className="btn sm" disabled={!!custom||!internet} aria-pressed={!!hold} onClick={()=>setHold(hold?null:{to,from,frames,interval,clients,interfaces:[...interfaces]})}>{hold?"Продолжить":"Пауза"}</button><select aria-label="Период статистики" value={period} onChange={e=>{setHold(null);setPeriod(Number(e.target.value));if(Number(e.target.value)!==0)setCustom(null)}}>{periods.map(([n,label])=><option key={n} value={n}>{label}</option>)}<option value={0}>Свой период</option></select></>}>
+  <Card title="Скорость интернета" subtitle="Трафик аплинков за выбранный период" actions={<><button className="btn sm" disabled={!!custom||!internet} aria-pressed={!!hold} onClick={()=>setHold(hold?null:{to,from,frames,interval,liveFrom,clients,interfaces:[...interfaces]})}>{hold?"Продолжить":"Пауза"}</button><select aria-label="Период статистики" value={period} onChange={e=>{setHold(null);setPeriod(Number(e.target.value));if(Number(e.target.value)!==0)setCustom(null)}}>{periods.map(([n,label])=><option key={n} value={n}>{label}</option>)}<option value={0}>Свой период</option></select></>}>
    {period===0&&<div className="monitor-range"><label>С <input aria-label="Начало периода" type="datetime-local" value={start} onChange={e=>setStart(e.target.value)}/></label><label>По <input aria-label="Конец периода" type="datetime-local" value={end} onChange={e=>setEnd(e.target.value)}/></label><button className="btn sm" onClick={()=>{const a=new Date(start).getTime()/1000,b=new Date(end).getTime()/1000,now=Date.now()/1000;if(!Number.isFinite(a)||!Number.isFinite(b)||a>=b||a<now-604800||b>now+60){setRangeError("Выберите начало и конец в пределах последних 7 дней");return}setRangeError("");setHold(null);setCustom({from:a,to:b})}}>Показать</button>{rangeError&&<span role="alert">{rangeError}</span>}</div>}
    {error&&!hold?<Empty>{error}</Empty>:internet?moving?<LiveChart lines={wanLines} at={to} seconds={minutes*60} paused={!!hold}/>:<TimeChart lines={wanLines} from={from} to={to} height={190} mapFrames={internetLines}/>:<Empty>Загрузка статистики…</Empty>}
   </Card>
