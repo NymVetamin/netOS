@@ -64,3 +64,27 @@ func TestSocksIPv6CannotBypassScopes(t *testing.T) {
 		t.Fatal("disabled proxy leaves IPv6 rules")
 	}
 }
+
+func TestSocksSelectionIndependentAndFresh(t *testing.T) {
+	c := config.Default()
+	c.Interfaces = []config.Interface{{ID: "lan", Name: "br0"}}
+	c.Networks = []config.Network{{ID: "same", Enabled: true, Interface: "lan", RouterAddress: "192.0.2.1/24"}}
+	c.VPNServers = []config.VPNServer{{ID: "same", Type: "wireguard", Enabled: true, Index: 1, Subnet: "10.9.0.1/24"}}
+	c.Socks = config.Socks{Enabled: true, Port: 1080, Networks: []string{"missing", "same", "same"}}
+	check := func(network, vpn int) {
+		t.Helper()
+		rules, err := Build(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(rules.IPv4, "-s 192.0.2.0/24 -p tcp --dport 1080") != network ||
+			strings.Count(rules.IPv4, "-s 10.9.0.0/24 -p tcp --dport 1080") != vpn {
+			t.Fatalf("unexpected SOCKS selection, wanted network=%d vpn=%d", network, vpn)
+		}
+	}
+	check(1, 0)
+	c.Socks.Networks, c.Socks.VPNs = nil, c.Socks.Networks
+	check(0, 1)
+	c.VPNServers[0].Enabled = false
+	check(0, 0)
+}

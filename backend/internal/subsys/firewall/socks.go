@@ -18,16 +18,16 @@ func (b *builder) socksAccess(c *config.Config) {
 		}
 	}
 	allow("-i lo")
-	selected := func(ids []string, id string) bool {
-		for _, v := range ids {
-			if v == id {
-				return true
-			}
+	selectedIDs := func(ids []string) map[string]bool {
+		selected := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			selected[id] = true
 		}
-		return false
+		return selected
 	}
+	networks := selectedIDs(p.Networks)
 	for _, n := range c.Networks {
-		if !n.Enabled || !selected(p.Networks, n.ID) {
+		if !n.Enabled || !networks[n.ID] {
 			continue
 		}
 		_, sub, e := net.ParseCIDR(n.RouterAddress)
@@ -36,8 +36,9 @@ func (b *builder) socksAccess(c *config.Config) {
 		}
 		allow("-i " + c.InterfaceName(n.Interface) + " -s " + sub.String())
 	}
+	vpns := selectedIDs(p.VPNs)
 	for _, v := range c.VPNServers {
-		if !v.Enabled || v.Type == "xray" || !selected(p.VPNs, v.ID) {
+		if !v.Enabled || v.Type == "xray" || !vpns[v.ID] {
 			continue
 		}
 		_, sub, e := net.ParseCIDR(v.Subnet)
