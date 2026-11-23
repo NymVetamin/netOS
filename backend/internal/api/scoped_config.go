@@ -117,8 +117,9 @@ func projectConfig(r *http.Request, cfg *config.Config) (*config.Config, error) 
 		if err != nil {
 			return nil, err
 		}
+		isWANMasquerade := wanMasqueradeMatcher(cfg)
 		for _, rule := range cfg.Firewall.NAT {
-			if isWANMasquerade(cfg, rule) {
+			if isWANMasquerade(rule) {
 				out.Firewall.NAT = append(out.Firewall.NAT, rule)
 			}
 		}

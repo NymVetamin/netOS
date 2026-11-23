@@ -18,16 +18,32 @@ func wanDevice(cfg *config.Config, wan config.WAN) string {
 	}
 	return ""
 }
-func isWANMasquerade(cfg *config.Config, rule config.NATRule) bool {
-	if rule.Direction == "destination" || rule.Source != "" || rule.ToSource != "" || rule.Interface == "" {
-		return false
-	}
-	for _, wan := range cfg.WANs {
-		if wanDevice(cfg, wan) == rule.Interface {
-			return true
+
+// Each projection/merge owns its matcher; a later configuration gets a fresh one.
+func wanMasqueradeMatcher(cfg *config.Config) func(config.NATRule) bool {
+	var devices map[string]bool
+	return func(rule config.NATRule) bool {
+		if len(cfg.WANs) == 0 || rule.Direction == "destination" || rule.Source != "" || rule.ToSource != "" || rule.Interface == "" {
+			return false
 		}
+		if devices == nil {
+			names := make(map[string]string, len(cfg.Interfaces))
+			for _, port := range cfg.Interfaces {
+				if _, exists := names[port.ID]; !exists {
+					names[port.ID] = port.Name
+				}
+			}
+			devices = make(map[string]bool, len(cfg.WANs))
+			for _, wan := range cfg.WANs {
+				name := names[wan.Interface]
+				if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
+					name = "ppp-" + wan.ID
+				}
+				devices[name] = true
+			}
+		}
+		return devices[rule.Interface]
 	}
-	return false
 }
 
 // The Network page owns the uplink NAT switch, not arbitrary firewall rules.
@@ -51,6 +67,7 @@ func mergeNetworkNAT(previous, visible, incoming *config.Config) (config.Firewal
 		}
 	}
 	seen := map[string]bool{}
+	isWANMasquerade := wanMasqueradeMatcher(previous)
 	for _, rule := range incoming.Firewall.NAT {
 		if seen[rule.ID] {
 			return deny()
@@ -62,7 +79,7 @@ func mergeNetworkNAT(previous, visible, incoming *config.Config) (config.Firewal
 			if !reflect.DeepEqual(check, existing) {
 				return deny()
 			}
-			if rule.Enabled != existing.Enabled && (!existing.System || !isWANMasquerade(previous, existing) || manual[existing.Interface]) {
+			if rule.Enabled != existing.Enabled && (!existing.System || !isWANMasquerade(existing) || manual[existing.Interface]) {
 				return deny()
 			}
 			for i := range result.NAT {
