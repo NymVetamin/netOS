@@ -46,6 +46,14 @@ func (r *providerRunner) Run(_ context.Context, name string, args ...string) (st
 		unit = args[len(args)-1]
 	}
 	switch args[0] {
+	case "show":
+		if len(args) == 4 && args[2] == "--property=LoadState,ActiveState,UnitFileState" {
+			active := "inactive"
+			if r.active[unit] {
+				active = "active"
+			}
+			return "LoadState=loaded\nActiveState=" + active + "\nUnitFileState=disabled\n", nil
+		}
 	case "is-active":
 		if r.active[unit] {
 			return "active\n", nil

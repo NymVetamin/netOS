@@ -128,6 +128,54 @@ func TestDomainPolicyFrontendFailureRestoresFirstApplyState(t *testing.T) {
 	}
 }
 
+func TestDomainPolicySnapshotErrorPreservesRunningServices(t *testing.T) {
+	for _, provider := range []string{"unbound", "dnsproxy"} {
+		t.Run(provider, func(t *testing.T) {
+			useProviderPaths(t)
+			r := newProviderRunner()
+			backend := unboundUnit
+			if provider == "dnsproxy" {
+				backend = dnsproxyUnit
+			}
+			r.active[backend], r.active[dnsmasqUnit] = true, true
+			m := NewManager(r)
+			m.Resolv.Root = t.TempDir()
+			cfg := dnsDomainPolicyConfig(provider)
+			for _, unit := range []string{backend, dnsmasqUnit} {
+				r.commands = nil
+				r.failContains = "--property=LoadState,ActiveState,UnitFileState " + unit
+				if err := NewDNS(m).Apply(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), unit) {
+					t.Fatalf("missing snapshot error for %s: %v", unit, err)
+				}
+				if !r.active[backend] || !r.active[dnsmasqUnit] || hasCommand(r.commands, "systemctl disable ") || hasCommand(r.commands, "systemctl stop ") {
+					t.Fatalf("snapshot failure changed services: %v", r.commands)
+				}
+			}
+			if err := NewDNS(m).Apply(context.Background(), cfg); err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+		})
+	}
+}
+
+type dnsSnapshotResponse struct {
+	serviceRunner
+	out string
+}
+
+func (r *dnsSnapshotResponse) Run(context.Context, string, ...string) (string, error) {
+	return r.out, nil
+}
+
+func TestDNSUnitSnapshotRequiresKnownState(t *testing.T) {
+	for _, out := range []string{"", "ActiveState=inactive", "LoadState=not-found\nActiveState=inactive",
+		"LoadState=loaded\nActiveState=activating\nUnitFileState=enabled"} {
+		if _, err := snapshotDNSUnit(context.Background(), &dnsSnapshotResponse{out: out}, dnsmasqUnit); err == nil {
+			t.Fatalf("accepted incomplete or transitional state %q", out)
+		}
+	}
+}
+
 func TestDomainPolicyFrontendFailureRestoresExistingFilesAndServices(t *testing.T) {
 	useProviderPaths(t)
 	r := newProviderRunner()

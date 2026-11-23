@@ -58,13 +58,36 @@ func snapshotDNSDomainTransition(ctx context.Context, m *Manager, cfg *config.Co
 		tx.files = append(tx.files, item)
 	}
 	for _, unit := range []string{backendUnit, dnsmasqUnit} {
-		active, _ := m.Dnsmasq.Runner.Run(ctx, "systemctl", "is-active", unit)
-		enabled, _ := m.Dnsmasq.Runner.Run(ctx, "systemctl", "is-enabled", unit)
-		tx.units = append(tx.units, dnsUnitSnapshot{
-			name: unit, active: strings.TrimSpace(active) == "active", enabled: strings.TrimSpace(enabled) == "enabled",
-		})
+		snapshot, err := snapshotDNSUnit(ctx, m.Dnsmasq.Runner, unit)
+		if err != nil {
+			return nil, err
+		}
+		tx.units = append(tx.units, snapshot)
 	}
 	return tx, nil
+}
+
+func snapshotDNSUnit(ctx context.Context, runner system.Runner, unit string) (dnsUnitSnapshot, error) {
+	out, err := runner.Run(ctx, "systemctl", "show", "--all", "--property=LoadState,ActiveState,UnitFileState", unit)
+	if err != nil {
+		return dnsUnitSnapshot{}, fmt.Errorf("снимок DNS-службы %s: %w", unit, err)
+	}
+	props := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			props[key] = value
+		}
+	}
+	load, active := props["LoadState"], props["ActiveState"]
+	enabled, hasFileState := props["UnitFileState"]
+	if load == "not-found" && active == "inactive" && hasFileState && enabled == "" {
+		return dnsUnitSnapshot{name: unit}, nil
+	}
+	if load != "loaded" || (active != "active" && active != "inactive" && active != "failed") ||
+		(enabled != "enabled" && enabled != "disabled") {
+		return dnsUnitSnapshot{}, fmt.Errorf("снимок DNS-службы %s: неизвестное состояние (%s, %s, %s)", unit, load, active, enabled)
+	}
+	return dnsUnitSnapshot{name: unit, active: active == "active", enabled: enabled == "enabled"}, nil
 }
 
 func (tx *dnsTransition) Rollback() error {
