@@ -53,3 +53,39 @@ func TestResetAndRestoreRollbackRemoveOwnedMultiWAN(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiWANCleanupRetriesWithFreshRulesInOwnershipOrder(t *testing.T) {
+	m, _ := testManager()
+	sandbox(t, m)
+	dir := filepath.Join(m.StateDir, "generated")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "multiwan-balance.json"), []byte("[2,1,2]"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	one := "30001: from all lookup 3001"
+	two := "30002: from all lookup 3002"
+	rules := strings.Join([]string{one, two, two, "30002: from all lookup 03002"}, "\n")
+	m.Output = func(context.Context, string, ...string) (string, error) { return rules, nil }
+	var calls []string
+	failure := errors.New("second delete failed")
+	m.Run = func(_ context.Context, cmd command) error {
+		calls = append(calls, strings.Join(cmd.args, " "))
+		if len(calls) == 2 && failure != nil {
+			return failure
+		}
+		return nil
+	}
+	del := "-4 rule del priority 30002 from all lookup 3002"
+	if err := m.removeOwnedMultiWAN(context.Background()); err != failure || strings.Join(calls, "\n") != del+"\n"+del {
+		t.Fatalf("first attempt: %v, %v", calls, err)
+	}
+	failure = nil
+	rules = one + "\n" + two
+	calls = nil
+	want := strings.Join([]string{del, "-4 route flush table 3002", "-4 rule del priority 30001 from all lookup 3001", "-4 route flush table 3001"}, "\n")
+	if err := m.removeOwnedMultiWAN(context.Background()); err != nil || strings.Join(calls, "\n") != want {
+		t.Fatalf("retry: %v, %v", calls, err)
+	}
+}

@@ -25,31 +25,44 @@ func (m *Manager) removeOwnedMultiWAN(ctx context.Context) error {
 	if err := json.Unmarshal(data, &indices); err != nil {
 		return err
 	}
+	byPriority := make(map[string][][]string)
 	for _, index := range indices {
 		if index < 1 || index > 999 {
 			return fmt.Errorf("invalid owned Multi-WAN index %d", index)
 		}
+		byPriority[strconv.Itoa(30000+index)+":"] = nil
 	}
 	rules, err := m.Output(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return err
 	}
-	seen := map[int]bool{}
-	for _, index := range indices {
-		if seen[index] {
+	if len(byPriority) == 0 {
+		return nil
+	}
+	for line := range strings.SplitSeq(rules, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
 			continue
 		}
-		seen[index] = true
-		priority, table := strconv.Itoa(30000+index), strconv.Itoa(3000+index)
-		for _, line := range strings.Split(rules, "\n") {
-			fields := strings.Fields(line)
-			if len(fields) < 3 || fields[0] != priority+":" {
-				continue
-			}
+		if group, owned := byPriority[fields[0]]; owned {
+			byPriority[fields[0]] = append(group, fields)
+		}
+	}
+	for _, index := range indices {
+		priority := strconv.Itoa(30000 + index)
+		key := priority + ":"
+		group, pending := byPriority[key]
+		if !pending {
+			continue
+		}
+		delete(byPriority, key)
+		table := strconv.Itoa(3000 + index)
+		for _, fields := range group {
 			owned := false
 			for i := 1; i+1 < len(fields); i++ {
 				if fields[i] == "lookup" && fields[i+1] == table {
 					owned = true
+					break
 				}
 			}
 			if !owned {
