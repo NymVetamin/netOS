@@ -1464,9 +1464,16 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 	}
 	zones := c.zoneNames()
 	policies := map[string]bool{"accept": true, "drop": true, "reject": true}
+	chainOwners := make(map[string]string, len(c.Firewall.Zones))
 
 	for i, z := range c.Firewall.Zones {
 		path := fmt.Sprintf("firewall.zones[%d]", i)
+		chain := strings.ToUpper(z.Name)
+		if owner, exists := chainOwners[chain]; exists {
+			r.errf(path+".name", "имя зоны конфликтует с зоной %q: после приведения к верхнему регистру имена цепочек совпадают", owner)
+		} else {
+			chainOwners[chain] = z.Name
+		}
 		if !policies[z.Policy] {
 			r.errf(path+".policy", "недопустимая политика %q", z.Policy)
 		}
