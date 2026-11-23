@@ -55,6 +55,7 @@ func configurationChanges(old, next *config.Config) []planChange {
 	changes := configdiff.Diff(a, b, func(path []string) string { return resolver.resolveField(b, a, path).Identity })
 	result := []planChange{}
 	oldNames, newNames := planNames{cfg: old}, planNames{cfg: next}
+	escapePath := strings.NewReplacer("~", "~0", "/", "~1")
 	for _, change := range changes {
 		field := resolver.resolveField(b, a, change.Path)
 		if field.Ignored {
@@ -62,7 +63,7 @@ func configurationChanges(old, next *config.Config) []planChange {
 		}
 		path := []string{}
 		for _, part := range change.Path {
-			path = append(path, strings.NewReplacer("~", "~0", "/", "~1").Replace(part))
+			path = append(path, escapePath.Replace(part))
 		}
 		label := field.Label
 		if change.Kind == "reorder" {
