@@ -429,7 +429,7 @@ func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool
 			if cl.IP == "" || (cl.Source == "arp" && reachable && !cl.Online) {
 				cl.IP = a.IP
 				cl.Interface = a.Interface
-			} else if cl.Source == "both" {
+			} else if cl.Source == "both" && cl.IP == a.IP {
 				cl.Interface = a.Interface
 			}
 			cl.Online = cl.Online || reachable
