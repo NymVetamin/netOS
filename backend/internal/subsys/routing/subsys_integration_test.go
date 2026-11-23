@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -231,6 +232,39 @@ func TestIntegrationReconcilesKernelRoutesAndRules(t *testing.T) {
 	}
 	if out := mustRoutingNS(t, "ip", "-4", "rule", "show"); strings.Contains(out, "20123:") {
 		t.Fatalf("rule remained after cleanup: %s", out)
+	}
+
+	for _, priority := range []string{"19999", "20000", "20100", "29999", "30000"} {
+		mustRoutingNS(t, "ip", "-4", "rule", "add", "priority", priority, "lookup", "main")
+	}
+	mustRoutingNS(t, "ip", "-6", "rule", "add", "priority", "20100", "lookup", "main")
+	ctx := context.Background()
+	if actions, err := s.PlanContext(ctx, clean, clean); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+		t.Errorf("stale IPv4 rules with empty config: plan=%v err=%v", actions, err)
+	}
+	if err := s.Health(ctx, clean); err == nil {
+		t.Error("stale IPv4 rules with empty config accepted")
+	}
+	oldTables, oldProtos := rtTablesPath, rtProtosPath
+	dir := t.TempDir()
+	rtTablesPath, rtProtosPath = filepath.Join(dir, "tables"), filepath.Join(dir, "protos")
+	t.Cleanup(func() { rtTablesPath, rtProtosPath = oldTables, oldProtos })
+	counted.mutations = 0
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.Apply(ctx, clean); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Health(ctx, clean); err != nil {
+			t.Fatal(err)
+		}
+		if actions, err := s.PlanContext(ctx, clean, clean); err != nil || len(actions) != 0 || counted.mutations != 3 {
+			t.Fatalf("cleanup: actions=%v mutations=%d err=%v", actions, counted.mutations, err)
+		}
+	}
+	v4 = mustRoutingNS(t, "ip", "-4", "rule", "show")
+	v6 = mustRoutingNS(t, "ip", "-6", "rule", "show")
+	if !strings.Contains(v4, "19999:") || !strings.Contains(v4, "30000:") || !strings.Contains(v6, "20100:") {
+		t.Fatal("cleanup removed an unrelated rule")
 	}
 }
 

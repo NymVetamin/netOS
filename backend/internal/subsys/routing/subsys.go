@@ -89,7 +89,7 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 		actions = append(actions, apply.Action{Kind: "update", Target: "статические маршруты"})
 	}
 	drift := false
-	if !rulesChanged && len(newRules) > 0 {
+	if !rulesChanged {
 		live, err := readRules()
 		if err != nil {
 			return nil, err
@@ -407,9 +407,6 @@ func (s *Subsystem) applyRules(ctx context.Context, cfg *config.Config) error {
 
 func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 	rules := enabledRules(cfg)
-	if len(rules) == 0 {
-		return nil
-	}
 	out, err := s.Runner.Run(ctx, "ip", "-4", "rule", "show")
 	if err != nil {
 		return err

@@ -552,3 +552,37 @@ func TestRuleSnapshotReadOncePerPlan(t *testing.T) {
 		t.Fatal("rule snapshot error ignored")
 	}
 }
+
+func TestEmptyRuleSetUsesFreshKernelState(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.Routing.Rules = []config.RouteRule{{Enabled: false, Table: "main", Priority: 20100}}
+	next := *cfg
+	next.Routing.Tables = []config.RouteTable{{Name: "spare", Number: 215}}
+	r := &recordingRunner{responses: map[string]runnerResponse{}}
+	sub := New(r)
+	const query = "ip -4 rule show"
+	r.responses[query] = runnerResponse{out: "20100: from all lookup main"}
+	actions, err := sub.PlanContext(ctx, cfg, &next)
+	if err != nil || len(actions) != 2 || !actions[1].Disruptive || strings.Count(commandStrings(r.commands), query) != 1 {
+		t.Fatalf("plan %v, reads %v, error %v", actions, r.commands, err)
+	}
+	if err := sub.Health(ctx, cfg); err == nil {
+		t.Fatal("disabled configuration hid a live rule")
+	}
+	failure := errors.New("rule dump unavailable")
+	r.responses[query] = runnerResponse{err: failure}
+	if _, err := sub.PlanContext(ctx, cfg, cfg); !errors.Is(err, failure) {
+		t.Fatalf("plan read failure: %v", err)
+	}
+	if err := sub.Health(ctx, cfg); !errors.Is(err, failure) {
+		t.Fatalf("health read failure: %v", err)
+	}
+	r.responses[query] = runnerResponse{out: "19999: from all lookup main\n30000: from all lookup main"}
+	if actions, err := sub.PlanContext(ctx, cfg, cfg); err != nil || len(actions) != 0 {
+		t.Fatalf("retry: %v, %v", actions, err)
+	}
+	if err := sub.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+}

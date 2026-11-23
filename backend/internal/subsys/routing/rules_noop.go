@@ -18,6 +18,14 @@ func rulesAlreadyApplied(out string, cfg *config.Config) bool {
 // Health verifies every configured rule, including valid repeated priorities.
 // Apply still rebuilds repeated priorities to preserve its ordering policy.
 func compareRules(out string, cfg *config.Config, rules []config.RouteRule) (matches, unique bool) {
+	if len(rules) == 0 {
+		for line := range strings.Lines(out) {
+			if p := leadingPriority(line); p >= rulePriorityBase && p <= rulePriorityMax {
+				return false, true
+			}
+		}
+		return true, true
+	}
 	tables := map[string]string{"local": "255", "main": "254", "default": "253"}
 	for _, table := range cfg.Routing.Tables {
 		tables[table.Name] = strconv.Itoa(table.Number)
