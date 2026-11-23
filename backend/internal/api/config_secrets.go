@@ -195,11 +195,13 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 			}
 		}
 	}
-	if next.DDNS.Token == "" {
-		next.DDNS.Token = previous.DDNS.Token
-	}
-	if next.DDNS.Password == "" {
-		next.DDNS.Password = previous.DDNS.Password
+	if next.DDNS.Provider == previous.DDNS.Provider {
+		if next.DDNS.Token == "" {
+			next.DDNS.Token = previous.DDNS.Token
+		}
+		if next.DDNS.Password == "" {
+			next.DDNS.Password = previous.DDNS.Password
+		}
 	}
 }
 
