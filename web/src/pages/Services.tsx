@@ -274,6 +274,10 @@ function DNSSection({
     );
   }
 
+  const hasSplitRules = !!config.dns?.split_rules?.length;
+  const splitUpstreams = splitChoices(hasSplitRules ? config.dns.upstreams : [], up => up.comment || up.address);
+  const splitChannels = splitChoices(hasSplitRules ? config.channels : [], channel => channel.name);
+
   return (
     <>
       <Card title="Разрешение имён" subtitle="DNS-резолвер для клиентов сети">
@@ -530,35 +534,9 @@ function DNSSection({
         })}>Добавить</button>}>
         {(config.dns?.split_rules || []).length === 0 ? <Empty>Раздельных правил DNS нет.</Empty> : (
           <Rows cols={["Домены", "Резолвер", "Канал", "", "Состояние"]}>
-          {config.dns.split_rules.map((rule: any, idx: number) => {
-            const upstream = (config.dns?.upstreams || []).find((up: any) => up.id === rule.upstream);
-            return (
-            <Row
-              key={rule.id}
-              id={rule.id}
-              cells={[
-                <strong className="mono">{(rule.domains || [])[0] || "—"}{(rule.domains || []).length > 1 ? ` и ещё ${rule.domains.length - 1}` : ""}</strong>,
-                upstream ? upstream.comment || upstream.address : <span className="dim">не выбран</span>,
-                (config.channels || []).find((channel: any) => channel.id === (rule.channel || "direct"))?.name || "—",
-                "",
-                <Badge tone={rule.enabled ? "ok" : "neutral"}>{rule.enabled ? "включено" : "выключено"}</Badge>,
-              ]}
-              toggle={<Switch checked={!!rule.enabled} label="" ariaLabel={`Правило Split-DNS ${idx + 1} включено`} onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} />}
-            >
-              <div className="form-grid">
-                <Cap label="Домены" wide><ListTextarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" values={rule.domains || []} onValuesChange={(items) => patch((d) => (d.dns.split_rules[idx].domains = items))} /></Cap>
-                <Cap label="Резолвер"><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
-                      <option value="">Выберите сервер</option>
-                      {(config.dns?.upstreams || []).filter((up: any) => up.enabled).map((up: any) => <option key={up.id} value={up.id}>{up.comment || up.address}</option>)}
-                    </select></Cap>
-                <Cap label="Канал"><select aria-label={`Канал правила Split-DNS ${idx + 1}`} value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
-                      {(config.channels || []).filter((channel: any) => channel.enabled).map((channel: any) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                    </select></Cap>
-              </div>
-              <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.split_rules = d.dns.split_rules.filter((item: any) => item.id !== rule.id); })}>Убрать</button></div>
-            </Row>
-            );
-          })}
+          {config.dns.split_rules.map((rule: any, idx: number) =>
+            <SplitDNSRow key={rule.id} rule={rule} idx={idx} patch={patch}
+              upstreams={splitUpstreams} channels={splitChannels} />)}
         </Rows>
         )}
       </Card>
@@ -604,6 +582,51 @@ function DNSSection({
 		)}
 	  </Card>
     </>
+  );
+}
+
+function splitChoices(items: any[], label: (item: any) => string) {
+  const labels = new Map<string, string>();
+  const options = [];
+  for (const item of items || []) {
+    const text = label(item);
+    if (!labels.has(item.id)) labels.set(item.id, text);
+    if (item.enabled) options.push(<option key={item.id} value={item.id}>{text}</option>);
+  }
+  return { labels, options };
+}
+
+function SplitDNSRow({ rule, idx, patch, upstreams, channels }: {
+  rule: any; idx: number; patch: Patch;
+  upstreams: ReturnType<typeof splitChoices>; channels: ReturnType<typeof splitChoices>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Row
+      lazyBody
+      onOpenChange={setOpen}
+      id={rule.id}
+      cells={[
+        <strong className="mono">{(rule.domains || [])[0] || "—"}{(rule.domains || []).length > 1 ? ` и ещё ${rule.domains.length - 1}` : ""}</strong>,
+        upstreams.labels.has(rule.upstream) ? upstreams.labels.get(rule.upstream) : <span className="dim">не выбран</span>,
+        channels.labels.get(rule.channel || "direct") || "—",
+        "",
+        <Badge tone={rule.enabled ? "ok" : "neutral"}>{rule.enabled ? "включено" : "выключено"}</Badge>,
+      ]}
+      toggle={<Switch checked={!!rule.enabled} label="" ariaLabel={`Правило Split-DNS ${idx + 1} включено`} onChange={(enabled) => patch((d) => (d.dns.split_rules[idx].enabled = enabled))} />}
+    >
+      <div className="form-grid">
+        <Cap label="Домены" wide><ListTextarea aria-label={`Домены правила Split-DNS ${idx + 1}`} className="mono" values={rule.domains || []} onValuesChange={(items) => patch((d) => (d.dns.split_rules[idx].domains = items))} /></Cap>
+        <Cap label="Резолвер"><select aria-label={`DNS-сервер правила Split-DNS ${idx + 1}`} value={rule.upstream || ""} onChange={(e) => patch((d) => (d.dns.split_rules[idx].upstream = e.target.value))}>
+          <option value="">Выберите сервер</option>
+          {open && upstreams.options}
+        </select></Cap>
+        <Cap label="Канал"><select aria-label={`Канал правила Split-DNS ${idx + 1}`} value={rule.channel || "direct"} onChange={(e) => patch((d) => (d.dns.split_rules[idx].channel = e.target.value))}>
+          {open && channels.options}
+        </select></Cap>
+      </div>
+      <div className="row-actions end"><button className="btn ghost sm" onClick={() => patch((d) => { d.dns.split_rules = d.dns.split_rules.filter((item: any) => item.id !== rule.id); })}>Убрать</button></div>
+    </Row>
   );
 }
 

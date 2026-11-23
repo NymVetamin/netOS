@@ -49,8 +49,19 @@ async def scenario(browser):
     await page.goto("http://netos-ui.test/#services?tab=dns")
     await expect(page.get_by_role("heading", name="Сетевые службы", exact=True)).to_be_visible()
     domains = page.get_by_label("Домены правила Split-DNS 1", exact=True)
-    split_row = page.locator("details.xd").filter(has=domains)
+    split_row = page.locator("details.xd").filter(has=page.locator("summary strong", has_text="a.example"))
+    resolver = page.get_by_label("DNS-сервер правила Split-DNS 1", exact=True)
+    channel = page.get_by_label("Канал правила Split-DNS 1", exact=True)
+    await expect(resolver.locator("option")).to_have_count(0)
     await split_row.locator("summary").click()
+    await expect(resolver).to_have_value("up-2")
+    await expect(channel).to_have_value("direct")
+    async with page.expect_response(lambda r: urlparse(r.url).path == "/api/config" and r.request.method == "PUT"):
+        await resolver.select_option("up-1")
+    await split_row.locator("summary").click()
+    await expect(resolver.locator("option:not([value=''])")).to_have_count(0)
+    await split_row.locator("summary").click()
+    await expect(resolver).to_have_value("up-1")
     await domains.press("End")
     await domains.press("Enter")
     await expect(domains).to_have_value("a.example\n")
@@ -60,6 +71,9 @@ async def scenario(browser):
     await page.reload()
     await split_row.locator("summary").click()
     await expect(domains).to_have_value("a.example\nb.example")
+    await expect(resolver).to_have_value("up-1")
+    async with page.expect_response(lambda r: urlparse(r.url).path == "/api/config" and r.request.method == "PUT"):
+        await resolver.select_option("up-2")
     async with page.expect_response(lambda r: urlparse(r.url).path == "/api/config" and r.request.method == "PUT"):
         await domains.fill("x.example  x.example\ny.example ")
     assert state["config"]["dns"]["split_rules"][0]["domains"] == ["x.example", "x.example", "y.example"]
@@ -125,6 +139,12 @@ async def scenario(browser):
     async with page.expect_response(lambda r: urlparse(r.url).path == "/api/config" and r.request.method == "PUT"):
         await row.get_by_role("button", name="Убрать", exact=True).click()
     assert [u["id"] for u in state["config"]["dns"]["upstreams"]] == ["up-2"]
+    split_card = page.locator(".card").filter(has=page.get_by_role("heading", name="Split-DNS", exact=True))
+    await split_card.get_by_role("button", name="Добавить", exact=True).click()
+    new_resolver = page.get_by_label("DNS-сервер правила Split-DNS 2", exact=True)
+    await expect(new_resolver).to_be_visible()
+    await expect(new_resolver.locator("option")).to_have_count(2)
+    await expect(new_resolver.locator("option").last).to_have_attribute("value", "up-2")
     assert not errors, errors
     await page.close()
 
