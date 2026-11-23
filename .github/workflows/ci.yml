@@ -50,6 +50,14 @@ jobs:
           go test -c -o /tmp/netos-diagnostic.test ./internal/api
           sudo env NETOS_DIAGNOSTIC_LINUX_TEST=1 /tmp/netos-diagnostic.test -test.run '^TestDiagnosticLinux' -test.v -test.timeout 90s
 
+      - name: backup API filesystem errors on Linux
+        working-directory: backend
+        run: |
+          go test ./internal/api -run '^TestBackupLinuxPermissions$' -count=1 -v
+          go test -c -o /tmp/netos-backup.test ./internal/api
+          sudo env NETOS_BACKUP_LINUX_TEST=1 unshare --mount --propagation private \
+            /tmp/netos-backup.test -test.run '^TestBackupLinuxReadOnlyFilesystem$' -test.v -test.timeout 60s
+
       # Кросс-сборка под обе архитектуры релиза: пусть несобираемость под arm64
       # выясняется здесь, а не в момент выпуска версии.
       - name: сборка под все архитектуры
