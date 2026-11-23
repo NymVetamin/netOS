@@ -6,9 +6,39 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestIPTVLinkSelectionAndFreshness(t *testing.T) {
+	c := iptvFixture()
+	c.IPTV.Networks = []string{"other", "lan", "lan"}
+	c.Interfaces = append(c.Interfaces, config.Interface{ID: "lan", Name: "duplicate"})
+	c.Networks[0].Interface = "missing"
+	want := []iptvLink{{"up0", ""}, {"", "10.99.0.1/24"}, {"other0", "10.98.0.1/24"}}
+	if got := configuredIPTVLinks(c); !slices.Equal(got, want) {
+		t.Fatalf("missing interface: %+v", got)
+	}
+	c.Networks[0].Interface = "lan"
+	c.Interfaces[1].Name = "renamed"
+	want[1].name = "renamed"
+	if got := configuredIPTVLinks(c); !slices.Equal(got, want) {
+		t.Fatalf("renamed first interface: %+v", got)
+	}
+	s := NewIPTV(&iptvRunner{active: true}, t.TempDir())
+	s.VIFPath = filepath.Join(s.StateDir, "vifs")
+	if err := os.WriteFile(s.VIFPath, []byte("0 up0\n1 renamed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(context.Background(), c); err == nil || !strings.Contains(err.Error(), "other0") {
+		t.Fatalf("missing downstream: %v", err)
+	}
+	c.Networks[1].Enabled = false
+	if err := s.Health(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func iptvFixture() *config.Config {
 	c := config.Default()
@@ -60,7 +90,7 @@ func TestIPTVLifecycleAndLinkRecovery(t *testing.T) {
 	}
 	state := "original"
 	ready := true
-	s.links = func(*config.Config) (string, error) {
+	s.links = func([]iptvLink) (string, error) {
 		if !ready {
 			return "", fmt.Errorf("no address")
 		}

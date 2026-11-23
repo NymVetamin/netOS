@@ -15,7 +15,8 @@ func (s *IPTV) Reconcile(ctx context.Context, c *config.Config) error {
 	if c == nil || !c.IPTV.Enabled {
 		return nil
 	}
-	state, err := s.links(c)
+	links := configuredIPTVLinks(c)
+	state, err := s.links(links)
 	if err != nil {
 		path := filepath.Join(s.StateDir, "iptv.links")
 		if _, statErr := os.Stat(path); statErr == nil {
@@ -36,7 +37,7 @@ func (s *IPTV) Reconcile(ctx context.Context, c *config.Config) error {
 	if err == nil && string(previous) == state {
 		return nil
 	}
-	return s.Apply(ctx, c)
+	return s.apply(ctx, c, links)
 }
 
 func (s *IPTV) Run(ctx context.Context, maintain func(context.Context, func(*config.Config) error) error, logf func(string, ...any)) {
