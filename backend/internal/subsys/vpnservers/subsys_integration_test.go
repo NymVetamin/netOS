@@ -190,6 +190,33 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 			}
 		}
 	}
+	// A matching file must not hide kernel peer drift. Repair through the
+	// existing syncconf, then verify actual traffic and repeated application.
+	for _, drift := range []string{"missing", "extra"} {
+		if drift == "missing" {
+			mustRunVPN(t, runner, "wg", "set", serverName, "peer", clientPublic, "remove")
+		} else {
+			mustRunVPN(t, runner, "wg", "set", serverName, "peer", storedPublic, "allowed-ips", "10.253.97.3/32")
+		}
+		if err := s.Health(ctx, &next); err == nil {
+			t.Fatalf("%s live peer drift passed Health", drift)
+		}
+		if actions, err := s.Plan(&next, &next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
+			t.Fatalf("%s drift plan: %+v %v", drift, actions, err)
+		}
+		for range 2 {
+			if err := s.Apply(ctx, &next); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Health(ctx, &next); err != nil {
+				t.Fatal(err)
+			}
+			if actions, err := s.Plan(&next, &next); err != nil || len(actions) != 0 {
+				t.Fatalf("repaired plan: %+v %v", actions, err)
+			}
+			mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "2", "-W", "2", "10.253.97.1")
+		}
+	}
 	if err := s.Apply(ctx, config.Default()); err != nil {
 		t.Fatal(err)
 	}

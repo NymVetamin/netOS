@@ -20,6 +20,7 @@ type fakeRunner struct {
 	commands []string
 	address  string
 	port     string
+	peers    string
 	up       bool
 	mtu      int
 }
@@ -50,8 +51,20 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 		}
 	case cmd == "wg syncconf wg-srv1 "+filepath.Join(r.s.StateDir, "wg-srv1.conf"):
 		r.port = "51820"
+		conf, err := os.ReadFile(filepath.Join(r.s.StateDir, "wg-srv1.conf"))
+		if err != nil {
+			return "", err
+		}
+		r.peers = ""
+		for _, line := range strings.Split(string(conf), "\n") {
+			if strings.HasPrefix(line, "PublicKey = ") {
+				r.peers += strings.TrimPrefix(line, "PublicKey = ") + "\n"
+			}
+		}
 	case cmd == "wg show wg-srv1 listen-port":
 		return r.port + "\n", nil
+	case cmd == "wg show wg-srv1 peers":
+		return r.peers, nil
 	case cmd == "ip -o -4 addr show dev wg-srv1":
 		return r.address, nil
 	case cmd == "ip -4 addr add 10.9.0.1/24 dev wg-srv1":

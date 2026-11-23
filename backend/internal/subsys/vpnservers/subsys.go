@@ -841,8 +841,31 @@ func (s *Subsystem) Health(ctx context.Context, cfg *config.Config) error {
 		if err := healthyFile(filepath.Join(s.StateDir, name+".conf"), []byte(conf), 0o600); err != nil {
 			return err
 		}
+		peers, err := s.Runner.Run(ctx, tool, "show", name, "peers")
+		if err != nil {
+			return fmt.Errorf("проверка peers на %s: %w", name, err)
+		}
+		if !wireGuardPeerKeysMatch(server, peers) {
+			return fmt.Errorf("на %s набор peers не соответствует конфигурации", name)
+		}
 	}
 	return nil
+}
+
+func wireGuardPeerKeysMatch(server config.VPNServer, output string) bool {
+	wanted := make(map[string]struct{}, len(server.Peers))
+	for _, peer := range server.Peers {
+		if peer.Enabled {
+			wanted[peer.Credentials["public_key"]] = struct{}{}
+		}
+	}
+	for key := range strings.FieldsSeq(output) {
+		if _, ok := wanted[key]; !ok {
+			return false
+		}
+		delete(wanted, key)
+	}
+	return len(wanted) == 0
 }
 
 func healthyFile(path string, expected []byte, mode os.FileMode) error {
