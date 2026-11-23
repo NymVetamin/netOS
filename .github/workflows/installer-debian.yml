@@ -1,0 +1,40 @@
+name: installer-debian
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debian12:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Собрать панель
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Собрать бинарник для гостя
+        working-directory: backend
+        run: go build -trimpath -ldflags "-X main.version=qa-$GITHUB_SHA" -o "$RUNNER_TEMP/netosd-linux-amd64" ./cmd/netosd
+      - name: Установщик в одноразовой Debian12 VM
+        env:
+          NETOS_TEST_BINARY: ${{ runner.temp }}/netosd-linux-amd64
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils shellcheck
+          shellcheck --severity=warning scripts/tests/installer-debian-vm.sh
+          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+          bash scripts/tests/installer-debian-vm.sh
