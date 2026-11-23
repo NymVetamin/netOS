@@ -61,9 +61,14 @@ func (s *Server) requestConfig(r *http.Request) *config.Config {
 }
 
 func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
+	status, response := s.privateConfigResponse(r)
+	// No network writes may hold the lock shared by all private drafts.
+	writeJSON(w, status, response)
+}
+
+func (s *Server) privateConfigResponse(r *http.Request) (int, any) {
 	if s.Engine == nil {
-		writeError(w, 503, "конфигурация недоступна")
-		return
+		return 503, errorResponse{Error: "конфигурация недоступна"}
 	}
 	s.draftMu.Lock()
 	defer s.draftMu.Unlock()
@@ -73,53 +78,56 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		cfg = d.Base
 	}
 	if cfg == nil {
-		writeError(w, 503, "конфигурация ещё не загружена")
-		return
+		return 503, errorResponse{Error: "конфигурация ещё не загружена"}
 	}
 	p := r.URL.Path
 	var validation *config.ValidationResult
 	if r.Method == http.MethodPut || p == "/api/config/validate" {
 		if s.draftApplying {
-			writeError(w, 409, "идёт применение конфигурации")
-			return
+			return 409, errorResponse{Error: "идёт применение конфигурации"}
 		}
 		if pending, _ := s.Engine.Pending(); pending {
-			writeError(w, 409, "дождитесь подтверждения применения")
-			return
+			return 409, errorResponse{Error: "дождитесь подтверждения применения"}
 		}
 		if !sameConfig(d.Base, s.Engine.Current()) {
-			writeError(w, 409, "конфигурация изменена другим пользователем; отмените свой черновик и повторите изменения")
-			return
+			return 409, errorResponse{Error: "конфигурация изменена другим пользователем; отмените свой черновик и повторите изменения"}
 		}
 		if r.Method == http.MethodPut {
-			v, ok := draftPrecondition(w, r)
-			if !ok {
-				return
+			v, status, message := parseDraftPrecondition(r)
+			if status != 0 {
+				return status, errorResponse{Error: message}
 			}
 			if v != d.Version {
-				writeError(w, 409, "черновик уже изменён; обновите страницу")
-				return
+				return 409, errorResponse{Error: "черновик уже изменён; обновите страницу"}
 			}
 		}
+		version, base := d.Version, s.Engine.Current()
 		var incoming config.Config
-		if err := readJSON(r, &incoming); err != nil {
-			writeError(w, 400, "некорректная конфигурация")
-			return
+		// A client can stall while uploading. Revalidate the snapshot after
+		// reading without the global draft lock, just as the planner does.
+		s.draftMu.Unlock()
+		readErr := func() error {
+			defer s.draftMu.Lock()
+			return readJSON(r, &incoming)
+		}()
+		if readErr != nil {
+			return 400, errorResponse{Error: "некорректная конфигурация"}
+		}
+		pending, _ := s.Engine.Pending()
+		if s.draftApplying || pending || s.privateDrafts[userOf(r)] != d || d.Version != version || s.Engine.Current() != base {
+			return 409, errorResponse{Error: "черновик или применённая конфигурация изменились; обновите страницу и повторите изменения"}
 		}
 		next, err := mergeScopedConfig(r, cfg, &incoming)
 		if err != nil {
-			writeError(w, 403, "%v", err)
-			return
+			return 403, errorResponse{Error: err.Error()}
 		}
 		result := next.Validate()
 		validation = result
 		if p == "/api/config/validate" {
-			writeJSON(w, 200, result)
-			return
+			return 200, result
 		}
 		if result.HasErrors() {
-			writeJSON(w, 422, errorResponse{Error: "конфигурация содержит ошибки", Problems: result.Problems})
-			return
+			return 422, errorResponse{Error: "конфигурация содержит ошибки", Problems: result.Problems}
 		}
 		d.Config = next
 		if sameConfig(next, d.Base) {
@@ -130,35 +138,29 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == "/api/config/discard" {
 		if s.draftApplying {
-			writeError(w, 409, "идёт применение конфигурации")
-			return
+			return 409, errorResponse{Error: "идёт применение конфигурации"}
 		}
-		v, ok := draftPrecondition(w, r)
-		if !ok {
-			return
+		v, status, message := parseDraftPrecondition(r)
+		if status != 0 {
+			return status, errorResponse{Error: message}
 		}
 		if v != d.Version {
-			writeError(w, 409, "черновик уже изменён")
-			return
+			return 409, errorResponse{Error: "черновик уже изменён"}
 		}
 		d.Config = nil
 		d.Base = s.Engine.Current()
 		d.Version++
-		writeJSON(w, 200, map[string]any{"ok": true, "draft_version": d.Version})
-		return
+		return 200, map[string]any{"ok": true, "draft_version": d.Version}
 	}
 	if p == "/api/config/plan" {
 		if s.draftApplying {
-			writeError(w, 409, "идёт применение конфигурации: дождитесь его окончания")
-			return
+			return 409, errorResponse{Error: "идёт применение конфигурации: дождитесь его окончания"}
 		}
 		if pending, _ := s.Engine.Pending(); pending {
-			writeError(w, 409, "дождитесь подтверждения или отката текущего применения")
-			return
+			return 409, errorResponse{Error: "дождитесь подтверждения или отката текущего применения"}
 		}
 		if !sameConfig(d.Base, s.Engine.Current()) {
-			writeError(w, 409, "применённая конфигурация изменилась; пересоздайте черновик")
-			return
+			return 409, errorResponse{Error: "применённая конфигурация изменилась; пересоздайте черновик"}
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
@@ -173,25 +175,20 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		}()
 		pending, _ := s.Engine.Pending()
 		if s.draftApplying || pending || s.privateDrafts[userOf(r)] != d || d.Version != version || s.Engine.Current() != old {
-			writeError(w, 409, "черновик или применённая конфигурация изменились; обновите страницу и проверьте изменения")
-			return
+			return 409, errorResponse{Error: "черновик или применённая конфигурация изменились; обновите страницу и проверьте изменения"}
 		}
 		if err != nil {
-			writeError(w, 500, "не удалось построить план")
-			return
+			return 500, errorResponse{Error: "не удалось построить план"}
 		}
 		response, err := describePlan(r, old, cfg, actions, d.Version)
 		if err != nil {
-			writeError(w, 500, "не удалось описать изменения")
-			return
+			return 500, errorResponse{Error: "не удалось описать изменения"}
 		}
-		writeJSON(w, 200, response)
-		return
+		return 200, response
 	}
 	visible, err := scopedConfig(r, cfg)
 	if err != nil {
-		writeError(w, 500, "не удалось подготовить настройки")
-		return
+		return 500, errorResponse{Error: "не удалось подготовить настройки"}
 	}
 	revision, deadline := s.Engine.PendingRevision()
 	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: !deadline.IsZero() && (roleOf(r) == "admin" || s.pendingOwner == userOf(r)), Problems: []config.Problem{}}
@@ -214,7 +211,7 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		resp.PendingRevision = revision
 		resp.Deadline = &deadline
 	}
-	writeJSON(w, 200, resp)
+	return 200, resp
 }
 
 func (s *Server) ownsPending(r *http.Request) bool {

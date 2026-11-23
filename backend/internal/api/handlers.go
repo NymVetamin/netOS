@@ -1632,17 +1632,24 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 }
 
 func draftPrecondition(w http.ResponseWriter, r *http.Request) (uint64, bool) {
-	raw := strings.Trim(r.Header.Get("If-Match"), "\" ")
-	if raw == "" {
-		writeError(w, http.StatusPreconditionRequired, "для изменения черновика нужен If-Match")
-		return 0, false
-	}
-	v, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "некорректный If-Match")
+	v, status, message := parseDraftPrecondition(r)
+	if status != 0 {
+		writeError(w, status, "%s", message)
 		return 0, false
 	}
 	return v, true
+}
+
+func parseDraftPrecondition(r *http.Request) (uint64, int, string) {
+	raw := strings.Trim(r.Header.Get("If-Match"), "\" ")
+	if raw == "" {
+		return 0, http.StatusPreconditionRequired, "для изменения черновика нужен If-Match"
+	}
+	v, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0, http.StatusBadRequest, "некорректный If-Match"
+	}
+	return v, 0, ""
 }
 
 // ---------------------------------------------------------------------------

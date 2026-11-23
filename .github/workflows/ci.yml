@@ -42,6 +42,10 @@ jobs:
         working-directory: backend
         run: go test ./...
 
+      - name: private draft concurrency
+        working-directory: backend
+        run: go test -race ./internal/api -run '^(TestPrivateDraft|TestAdministratorsHaveIndependentDrafts)' -count=1
+
       - name: diagnostic tools on Linux loopback
         working-directory: backend
         run: |
