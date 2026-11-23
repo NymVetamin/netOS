@@ -53,7 +53,7 @@ async def scenario(browser, mode):
         elif path == "/api/status":
             body = {"interfaces": [], "uptime_seconds": 1}
         elif path == "/api/config" and req.method == "GET":
-            if mode == "reload failure" and not state["dirty"] and not state["failed"]:
+            if mode in ("reload failure", "reload failure then apply") and not state["dirty"] and not state["failed"]:
                 state["failed"] = True
                 status, body = 503, {"error": "Не удалось загрузить конфигурацию"}
             else:
@@ -63,7 +63,7 @@ async def scenario(browser, mode):
             started.set()
             if mode.startswith("inflight") or mode in ("newer save", "retry failed"):
                 await release.wait()
-            if mode in ("inflight failure", "retry failed") or (mode == "newer save" and len(saves) == 1):
+            if mode in ("inflight failure", "retry failed") or (mode == "inflight discard then apply" and len(saves) == 1) or (mode == "newer save" and len(saves) == 1):
                 status, body = 500, {"error": "Сохранение не удалось"}
             else:
                 state.update(config=req.post_data_json, dirty=True, version=state["version"] + 1)
@@ -84,7 +84,7 @@ async def scenario(browser, mode):
         elif path == "/api/config/discard":
             if req.headers["if-match"] != str(state["version"]):
                 status, body = 409, {"error": "черновик уже изменён"}
-            elif mode == "discard failure" and not state["failed"]:
+            elif mode in ("discard failure", "discard then apply", "inflight discard then apply") and not state["failed"]:
                 state["failed"] = True
                 status, body = 500, {"error": "Отмена не удалась"}
             else:
@@ -100,6 +100,32 @@ async def scenario(browser, mode):
     await page.goto("http://netos.test/#components")
     toggle = page.get_by_role("checkbox", name="Компонент Samba включён")
     await expect(toggle).to_be_checked()
+    if mode.endswith("then apply"):
+        await toggle.locator("..").click()
+        await expect(toggle).not_to_be_checked()
+        if mode.startswith("inflight"):
+            await asyncio.wait_for(started.wait(), 5)
+        if mode == "conflict then apply":
+            state["version"] += 1
+        await page.get_by_role("button", name="Отменить", exact=True).click()
+        release.set()
+        await expect(page.locator(".action-error")).to_be_visible()
+        if mode == "conflict then apply":
+            await expect(toggle).to_be_checked()
+        else:
+            await expect(toggle).not_to_be_checked()
+        before = len(saves)
+        await page.wait_for_timeout(750)
+        assert len(saves) == before, "failed discard must not autosave"
+        await page.get_by_role("button", name="Применить", exact=True).click()
+        await expect(page.locator(".action-error")).to_contain_text("apt-get")
+        conflicted = mode == "conflict then apply"
+        assert len(saves) == before + (0 if conflicted else 1), (mode, saves, state["calls"])
+        assert state["config"]["components"][0]["installed"] == conflicted, state
+        assert not errors, errors
+        await page.close()
+        print(mode, "PASS")
+        return
     if mode.startswith("edit during apply"):
         await page.get_by_role("button", name="Применить", exact=True).click()
         await asyncio.wait_for(started.wait(), 5)
@@ -205,7 +231,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("edit during apply success", "edit during apply failure", "newer save", "retry failed", "lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure", "invalid applied config"):
+        for mode in ("discard then apply", "inflight discard then apply", "reload failure then apply", "conflict then apply", "edit during apply success", "edit during apply failure", "newer save", "retry failed", "lost apply response", "stale clean", "stale new draft", "normal", "queued", "inflight success", "inflight failure", "discard failure", "reload failure", "invalid applied config"):
             await scenario(browser, mode)
         await browser.close()
 

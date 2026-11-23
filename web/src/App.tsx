@@ -386,6 +386,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     draftEditLock.current = true;
     setDraftLocked(true);
     const generation = ++syncGeneration.current;
+    let serverStateLoaded = false;
     pendingCfg.current = null;
     window.clearTimeout(saveTimer.current);
     try {
@@ -399,6 +400,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
         const current = await api.getConfig();
         if (generation !== syncGeneration.current) throw err;
         applyServerState(current);
+        serverStateLoaded = true;
         if (current.pending_confirmation) {
           throw new ApiError(409, "Применение ожидает подтверждения; проверьте связь или откатите изменения.");
         }
@@ -412,11 +414,16 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       if (generation !== syncGeneration.current) throw new Error("Конфигурация обновилась во время отмены");
       applyServerState(res);
       setLoadError("");
+    } catch (err) {
+      // Keep the displayed edits available to the next explicit Apply when
+      // discard or its reload fails. A loaded conflict response takes priority.
+      if (!serverStateLoaded && generation === syncGeneration.current) pendingCfg.current = cfg;
+      throw err;
     } finally {
       draftEditLock.current = false;
       setDraftLocked(false);
     }
-  }, [applyServerState]);
+  }, [applyServerState, cfg]);
 
   useEffect(() => {
     reload();
