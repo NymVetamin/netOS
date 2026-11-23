@@ -31,6 +31,28 @@ func radioBridges(cfg *config.Config) map[string]networkBridge {
 	return bridges
 }
 
+func RenderHostapd(cfg *config.Config) (string, error) {
+	var b strings.Builder
+	var bridges map[string]networkBridge
+	for _, radio := range cfg.WiFi {
+		if !radio.Enabled {
+			continue
+		}
+		if bridges == nil {
+			bridges = radioBridges(cfg)
+		}
+		text, err := renderRadio(radio, bridges)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# --- %s ---\n%s\n", radio.Device, text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("# Нет активных точек доступа Wi-Fi.\n")
+	}
+	return b.String(), nil
+}
+
 func RenderRadio(radio config.WiFiRadio, cfg *config.Config) ([]byte, error) {
 	return renderRadio(radio, radioBridges(cfg))
 }

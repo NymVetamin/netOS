@@ -34,3 +34,25 @@ func TestRenderRadioPreservesFirstInterfaceNameAndFreshChanges(t *testing.T) {
 	cfg.Networks = cfg.Networks[:1]
 	check("br-renamed")
 }
+
+func TestRenderHostapdUsesCurrentSnapshotForAllRadios(t *testing.T) {
+	cfg := wifiConfig()
+	second := cfg.WiFi[0]
+	second.Device = "wlan1"
+	cfg.WiFi = append(cfg.WiFi, config.WiFiRadio{}, second)
+	for _, name := range []string{"br0", "br-new"} {
+		cfg.Interfaces[0].Name = name
+		out, err := RenderHostapd(cfg)
+		if err != nil || strings.Count(out, "bridge="+name+"\n") != 4 || strings.Index(out, "# --- wlan1 ---") <= strings.Index(out, "# --- wlan0 ---") {
+			t.Fatalf("unexpected hostapd output: %q, %v", out, err)
+		}
+	}
+	cfg.WiFi[2].SSIDs = nil
+	if out, err := RenderHostapd(cfg); err == nil || out != "" {
+		t.Fatalf("invalid second radio produced %q, %v", out, err)
+	}
+	cfg.WiFi = cfg.WiFi[1:2]
+	if out, err := RenderHostapd(cfg); err != nil || !strings.HasPrefix(out, "# ") || strings.Contains(out, "interface=") {
+		t.Fatalf("unexpected inactive output: %q, %v", out, err)
+	}
+}

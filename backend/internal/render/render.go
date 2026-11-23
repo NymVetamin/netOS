@@ -178,24 +178,6 @@ func wifiActive(cfg *config.Config) bool {
 	return false
 }
 
-func renderWiFi(cfg *config.Config) (string, error) {
-	var b bytes.Buffer
-	for _, radio := range cfg.WiFi {
-		if !radio.Enabled {
-			continue
-		}
-		text, err := wifi.RenderRadio(radio, cfg)
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(&b, "# --- %s ---\n%s\n", radio.Device, text)
-	}
-	if b.Len() == 0 {
-		b.WriteString("# Нет активных точек доступа Wi-Fi.\n")
-	}
-	return b.String(), nil
-}
-
 func ocservActive(cfg *config.Config) bool {
 	for _, server := range cfg.VPNServers {
 		if server.Enabled && server.Type == "ocserv" {
@@ -300,7 +282,7 @@ var artifacts = []Artifact{
 	},
 	{
 		ID: "hostapd", Title: "Конфигурация Wi-Fi",
-		Active: wifiActive, Render: renderWiFi,
+		Active: wifiActive, Render: wifi.RenderHostapd,
 	},
 	{
 		ID: "ocserv", Title: "Сервер OpenConnect",
