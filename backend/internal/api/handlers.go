@@ -666,6 +666,7 @@ type configResponse struct {
 	Config           *config.Config       `json:"config"`
 	Dirty            bool                 `json:"dirty"`
 	Problems         []config.Problem     `json:"problems"`
+	PendingRevision  int64                `json:"pending_revision,string,omitempty"`
 	Pending          bool                 `json:"pending_confirmation"`
 	Deadline         *time.Time           `json:"confirm_deadline,omitempty"`
 	// Rollback заполняется, если последнее применение было откачено. Панель
@@ -686,7 +687,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pending, deadline := s.Engine.Pending()
+	revision, deadline := s.Engine.PendingRevision()
 	visibleCfg, err := redactAdminConfig(cfg)
 	if roleOf(r) != "admin" {
 		visibleCfg, err = redactConfig(cfg)
@@ -699,11 +700,12 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		Config:       visibleCfg,
 		Dirty:        dirty,
 		Problems:     cfg.Validate().Problems,
-		Pending:      pending,
+		Pending:      !deadline.IsZero(),
 		Rollback:     s.Engine.LastRollback(),
 		DraftVersion: version,
 	}
-	if pending {
+	if resp.Pending {
+		resp.PendingRevision = revision
 		resp.Deadline = &deadline
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -1425,6 +1427,22 @@ func (s *Server) tryBeginDraftOperation() bool {
 	return true
 }
 
+// configOpMu serializes this check with every API and control-socket Apply.
+// The asynchronous timer can only remove the selected pending transaction.
+func (s *Server) matchesPendingRevision(w http.ResponseWriter, r *http.Request) bool {
+	values := r.Header.Values("If-Match")
+	if len(values) == 0 {
+		return true
+	}
+	revision, deadline := s.Engine.PendingRevision()
+	expected := strconv.FormatInt(revision, 10)
+	if !deadline.IsZero() && len(values) == 1 && (values[0] == expected || values[0] == strconv.Quote(expected)) {
+		return true
+	}
+	writeError(w, http.StatusConflict, "ожидающая подтверждения ревизия изменилась; обновите настройки")
+	return false
+}
+
 func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	if !s.configOpMu.TryLock() {
 		writeError(w, 409, "операция применения уже выполняется")
@@ -1438,6 +1456,9 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	defer func() { s.draftMu.Lock(); s.draftApplying = false; s.draftMu.Unlock() }()
 	if !s.ownsPending(r) {
 		writeError(w, 403, "нет права подтверждать чужое применение")
+		return
+	}
+	if !s.matchesPendingRevision(w, r) {
 		return
 	}
 	revision, err := s.Engine.Confirm(s.Store.MarkActive)
@@ -1473,6 +1494,9 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	defer func() { s.draftMu.Lock(); s.draftApplying = false; s.draftMu.Unlock() }()
 	if !s.ownsPending(r) {
 		writeError(w, 403, "нет права подтверждать чужое применение")
+		return
+	}
+	if !s.matchesPendingRevision(w, r) {
 		return
 	}
 	// Restoring the previous network can terminate the very HTTP connection

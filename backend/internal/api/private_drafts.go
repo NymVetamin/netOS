@@ -193,8 +193,8 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "не удалось подготовить настройки")
 		return
 	}
-	pending, deadline := s.Engine.Pending()
-	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: pending && (roleOf(r) == "admin" || s.pendingOwner == userOf(r)), Problems: []config.Problem{}}
+	revision, deadline := s.Engine.PendingRevision()
+	resp := configResponse{Config: visible, Dirty: d.Config != nil, DraftVersion: d.Version, Pending: !deadline.IsZero() && (roleOf(r) == "admin" || s.pendingOwner == userOf(r)), Problems: []config.Problem{}}
 	if anySection(r, false, "clients") {
 		for _, client := range d.Base.Clients {
 			resp.BaseClientMACs = append(resp.BaseClientMACs, client.MAC)
@@ -211,6 +211,7 @@ func (s *Server) handlePrivateConfig(w http.ResponseWriter, r *http.Request) {
 		resp.Rollback = s.Engine.LastRollback()
 	}
 	if resp.Pending {
+		resp.PendingRevision = revision
 		resp.Deadline = &deadline
 	}
 	writeJSON(w, 200, resp)

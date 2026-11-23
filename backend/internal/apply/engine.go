@@ -557,12 +557,18 @@ func (e *Engine) Confirm(commit func(int64) error) (int64, error) {
 
 // Pending сообщает, ожидается ли подтверждение и до какого момента.
 func (e *Engine) Pending() (bool, time.Time) {
+	_, deadline := e.PendingRevision()
+	return !deadline.IsZero(), deadline
+}
+
+// PendingRevision reads the identifier and deadline of the same transaction.
+func (e *Engine) PendingRevision() (int64, time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.pending == nil {
-		return false, time.Time{}
+		return 0, time.Time{}
 	}
-	return true, e.pending.deadline
+	return e.pending.revision, e.pending.deadline
 }
 
 // Rollback немедленно возвращает предыдущую конфигурацию по явной команде.

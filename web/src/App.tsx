@@ -277,7 +277,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [configGeneration, setConfigGeneration] = useState(0);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [dirty, setDirty] = useState(false);
-  const [pending, setPending] = useState<{ until?: string } | null>(null);
+  const [pending, setPending] = useState<{ until?: string; revision?: string } | null>(null);
   const [rollback, setRollback] = useState<any>(null);
   const [dismissedRollback, setDismissedRollback] = useState(() => {
     try { return sessionStorage.getItem("netos-dismissed-rollback") || ""; }
@@ -357,7 +357,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     setProblems(res.problems || []);
     setDirty(res.dirty);
     setRollback(res.rollback || null);
-    setPending(res.pending_confirmation ? { until: res.confirm_deadline } : null);
+    setPending(res.pending_confirmation ? { until: res.confirm_deadline, revision: res.pending_revision } : null);
   }, []);
 
   const reload = useCallback(async () => {
@@ -718,7 +718,7 @@ function ApplyBar({
 }: {
   config: any;
   dirty: boolean;
-  pending: { until?: string } | null;
+  pending: { until?: string; revision?: string } | null;
   errorCount: number;
   problems: Problem[];
   onFlush: () => Promise<void>;
@@ -793,7 +793,7 @@ function ApplyBar({
               setBusy(true);
               setError("");
               try {
-                await api.rollback();
+                await api.resolvePending("rollback", pending.revision);
                 await onReload();
               } catch (err) {
                 setError(err instanceof ApiError ? err.message : "Не удалось откатить изменения");
@@ -812,7 +812,7 @@ function ApplyBar({
               setBusy(true);
               setError("");
               try {
-                await api.confirm();
+                await api.resolvePending("confirm", pending.revision);
                 await onReload();
               } catch (err) {
                 setError(err instanceof ApiError ? err.message : "Не удалось подтвердить изменения");

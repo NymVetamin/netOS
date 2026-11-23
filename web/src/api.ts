@@ -40,6 +40,7 @@ export type ConfigResponse = {
   problems: Problem[];
   pending_confirmation: boolean;
   confirm_deadline?: string;
+  pending_revision?: string;
   rollback?: RollbackInfo;
   draft_version: number;
 };
@@ -356,8 +357,10 @@ export const api = {
       { comment, draft_version: draftVersion },
     );
   },
-  confirm: () => request<{ ok: boolean }>("POST", "/api/config/confirm"),
-  rollback: () => request<{ ok: boolean }>("POST", "/api/config/rollback"),
+  resolvePending: (action: "confirm" | "rollback", revision?: string) => {
+    if (!revision) throw new ApiError(409, "Не удалось определить ревизию; обновите страницу.");
+    return request<{ ok: boolean }>("POST", `/api/config/${action}`, undefined, { "If-Match": revision });
+  },
 
   catalog: (signal?: AbortSignal) => request<CatalogResponse>("GET", "/api/catalog", undefined, undefined, signal),
   componentUpdates: (signal?:AbortSignal) => request<import("./componentUpdates").ComponentUpdates>("GET","/api/components/updates",undefined,undefined,signal),
