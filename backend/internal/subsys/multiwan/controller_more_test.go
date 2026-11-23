@@ -522,15 +522,15 @@ func TestBalancePropagatesRouteDiscoveryFailure(t *testing.T) {
 	}
 }
 
-func TestTickRestoresNoLongerWantedRouteAndRunRestoresOnShutdown(t *testing.T) {
+func TestTickDropsRemovedWANAndRunRestoresOnShutdown(t *testing.T) {
 	r := &fakeRunner{}
 	c := New(r, t.TempDir(), &captureLogger{})
 	line := "default via 192.0.2.1 dev wan0 metric 100"
 	c.suppressed = map[string]string{"old": line}
 	c.states = map[string]*linkState{"old": {Down: true}}
 	c.tick(context.Background(), config.Default())
-	if len(c.suppressed) != 0 || len(c.states) != 0 || r.route == "" {
-		t.Fatalf("tick did not restore stale route: suppressed=%v states=%v route=%q", c.suppressed, c.states, r.route)
+	if len(c.suppressed) != 0 || len(c.states) != 0 || r.route != "" {
+		t.Fatalf("tick restored removed WAN route: suppressed=%v states=%v route=%q", c.suppressed, c.states, r.route)
 	}
 
 	c.suppressed = map[string]string{"shutdown": line}

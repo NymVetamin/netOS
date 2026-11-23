@@ -16,6 +16,54 @@ import (
 
 const multiWANTestNS = "netos-mwtest"
 
+func TestIntegrationRemovedWANStaysRemoved(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("NETOS_INTEGRATION=1 and root required")
+	}
+	if out, err := exec.Command("ip", "netns", "add", multiWANTestNS).CombinedOutput(); err != nil {
+		t.Fatalf("netns: %v %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", multiWANTestNS).Run() })
+	mustNS(t, "ip", "link", "add", "wan0", "type", "dummy")
+	mustNS(t, "ip", "link", "set", "wan0", "up")
+	for _, operation := range []string{"apply", "tick"} {
+		for _, state := range []string{"removed", "disabled", "enabled"} {
+			t.Run(operation+"/"+state, func(t *testing.T) {
+				mustNS(t, "ip", "route", "replace", "default", "dev", "wan0", "metric", "100")
+				line := strings.TrimSpace(mustNS(t, "ip", "route", "show", "default"))
+				mustNS(t, "ip", "route", "del", "default", "dev", "wan0", "metric", "100")
+				c := New(namespaceRunner{}, t.TempDir(), integrationLogger{t})
+				c.suppressed = map[string]string{"old": line}
+				if err := c.save(); err != nil {
+					t.Fatal(err)
+				}
+				cfg := config.Default()
+				cfg.Interfaces = []config.Interface{{ID: "i", Name: "wan0"}}
+				if state != "removed" {
+					cfg.WANs = []config.WAN{{ID: "old", Interface: "i", Enabled: state == "enabled", Proto: "static"}}
+				}
+				for range 2 {
+					if operation == "apply" {
+						if err := c.Apply(context.Background(), cfg); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						c.tick(context.Background(), cfg)
+					}
+					out := mustNS(t, "ip", "route", "show", "default")
+					if strings.Contains(out, "dev wan0") != (state == "enabled") {
+						t.Fatalf("state=%s routes=%s", state, out)
+					}
+					if err := c.Health(context.Background(), cfg); err != nil {
+						t.Fatal(err)
+					}
+				}
+				t.Log("kernel default, persisted suppression cleanup, Health and repeat PASS")
+			})
+		}
+	}
+}
+
 type namespaceRunner struct{}
 
 func (namespaceRunner) Run(_ context.Context, name string, args ...string) (string, error) {

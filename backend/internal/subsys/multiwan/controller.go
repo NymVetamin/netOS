@@ -150,23 +150,26 @@ func (c *Controller) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	for id, line := range c.suppressed {
 		wan, configured := configuredWANs[id]
-		if configured {
-			iface := interfaceName(cfg, wan)
-			if routeIface(line) != "" && routeIface(line) != iface {
-				continue
-			}
-			// WAN.Apply has already installed the new route. A failover snapshot
-			// from the previous metric or gateway must not restore the old default.
-			if (wan.Proto == "pppoe" || wan.Proto == "l2tp") && routeMetric(line) != wan.Metric {
-				continue
-			}
-			live, err := c.defaultRoute(ctx, iface)
-			if err != nil {
-				return err
-			}
-			if live != "" && live != line {
-				continue
-			}
+		if !configured || !wan.Enabled {
+			// WAN.Apply has already removed this uplink's routes. Its old
+			// failover snapshot must not resurrect the deleted configuration.
+			continue
+		}
+		iface := interfaceName(cfg, wan)
+		if routeIface(line) != "" && routeIface(line) != iface {
+			continue
+		}
+		// WAN.Apply has already installed the new route. A failover snapshot
+		// from the previous metric or gateway must not restore the old default.
+		if (wan.Proto == "pppoe" || wan.Proto == "l2tp") && routeMetric(line) != wan.Metric {
+			continue
+		}
+		live, err := c.defaultRoute(ctx, iface)
+		if err != nil {
+			return err
+		}
+		if live != "" && live != line {
+			continue
 		}
 		if err := c.restore(ctx, line); err != nil {
 			return fmt.Errorf("восстановление аплинка %s: %w", id, err)
@@ -425,9 +428,21 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 	// rebuild those tables even if the Multi-WAN switch is off. A second WAN
 	// still uses these tables to keep forwarded flows on their selected path.
 	enabledCount := 0
+	var restoreWANs map[string]bool
+	for id := range c.suppressed {
+		if !wanted[id] {
+			if restoreWANs == nil {
+				restoreWANs = make(map[string]bool)
+			}
+			restoreWANs[id] = false
+		}
+	}
 	for _, wan := range cfg.WANs {
 		if wan.Enabled {
 			enabledCount++
+			if _, needsRestore := restoreWANs[wan.ID]; needsRestore {
+				restoreWANs[wan.ID] = true
+			}
 		}
 	}
 	keepPPP := map[string]bool{}
@@ -462,9 +477,11 @@ func (c *Controller) tick(ctx context.Context, cfg *config.Config) {
 		if wanted[id] {
 			continue
 		}
-		if err := c.restore(ctx, line); err != nil {
-			c.Logger.Warnf("Multi-WAN: восстановление %s: %v", id, err)
-			continue
+		if restoreWANs[id] {
+			if err := c.restore(ctx, line); err != nil {
+				c.Logger.Warnf("Multi-WAN: восстановление %s: %v", id, err)
+				continue
+			}
 		}
 		delete(c.suppressed, id)
 		delete(c.states, id)

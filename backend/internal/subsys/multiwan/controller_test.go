@@ -234,7 +234,10 @@ func TestApplyRestoresRouteAfterDaemonCrash(t *testing.T) {
 	}
 	r := &fakeRunner{}
 	c := New(r, dir, testLogger{})
-	if err := c.Apply(context.Background(), config.Default()); err != nil {
+	cfg := config.Default()
+	cfg.Interfaces = []config.Interface{{ID: "if0", Name: "wan0"}}
+	cfg.WANs = []config.WAN{{ID: "primary", Interface: "if0", Enabled: true, Proto: "static"}}
+	if err := c.Apply(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(strings.Join(r.commands, "\n"), "route replace default via 192.0.2.1") {
