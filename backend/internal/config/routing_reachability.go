@@ -7,7 +7,7 @@ import (
 
 // Static configuration cannot prove reachability through DHCP or tunnels.
 // This check supplies a warning, never rejects such routes as invalid.
-func (c *Config) staticGatewayConnected(route StaticRoute, gateway netip.Addr, interfaceNames map[string]string, direct *directRouteIndex) bool {
+func (c *Config) staticGatewayConnected(route StaticRoute, gateway netip.Addr, interfaceNames map[string]string, prefixes map[string]netip.Prefix, direct *directRouteIndex) bool {
 	contains := func(raw, iface string) bool {
 		if route.Interface != "" && route.Interface != iface {
 			name, ok := interfaceNames[iface]
@@ -19,8 +19,13 @@ func (c *Config) staticGatewayConnected(route StaticRoute, gateway netip.Addr, i
 				return false
 			}
 		}
-		prefix, err := netip.ParsePrefix(raw)
-		return err == nil && prefix.Contains(gateway)
+		prefix, ok := prefixes[raw]
+		if !ok {
+			// An invalid prefix is the zero value and contains no address.
+			prefix, _ = netip.ParsePrefix(raw)
+			prefixes[raw] = prefix
+		}
+		return prefix.Contains(gateway)
 	}
 	for _, network := range c.Networks {
 		if network.Enabled && contains(network.RouterAddress, network.Interface) {

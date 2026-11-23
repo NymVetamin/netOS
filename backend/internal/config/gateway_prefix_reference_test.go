@@ -1,0 +1,43 @@
+package config
+
+import (
+	"net/netip"
+)
+
+// Static configuration cannot prove reachability through DHCP or tunnels.
+// This check supplies a warning, never rejects such routes as invalid.
+func (c *Config) oldStaticGatewayConnected(route StaticRoute, gateway netip.Addr, interfaceNames map[string]string, direct *directRouteIndex) bool {
+	contains := func(raw, iface string) bool {
+		if route.Interface != "" && route.Interface != iface {
+			name, ok := interfaceNames[iface]
+			if !ok {
+				name = c.InterfaceName(iface)
+				interfaceNames[iface] = name
+			}
+			if route.Interface != name {
+				return false
+			}
+		}
+		prefix, err := netip.ParsePrefix(raw)
+		return err == nil && prefix.Contains(gateway)
+	}
+	for _, network := range c.Networks {
+		if network.Enabled && contains(network.RouterAddress, network.Interface) {
+			return true
+		}
+	}
+	for _, wan := range c.WANs {
+		if wan.Enabled && (wan.Proto == "static" || wan.Underlay == "static") && contains(wan.Address, wan.Interface) {
+			return true
+		}
+	}
+	for _, server := range c.VPNServers {
+		if server.Enabled && route.Interface == "" && contains(server.Subnet, "") {
+			return true
+		}
+	}
+	if direct.entries == nil {
+		direct.build(c)
+	}
+	return direct.contains(staticTableKey(route.Table), route.Interface, gateway)
+}

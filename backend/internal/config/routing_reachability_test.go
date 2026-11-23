@@ -59,6 +59,7 @@ func TestStaticGatewayConnectedSourcesAndInterfaces(t *testing.T) {
 	c.VPNServers = []VPNServer{{Enabled: true, Subnet: "10.3.0.1/24"}}
 	c.Routing.Static = []StaticRoute{{Enabled: true, Destination: "10.4.0.0/24", Interface: "lan", Table: "main"}, {Enabled: true, Destination: "10.5.0.0/24", Interface: "lan"}, {Enabled: true, Destination: "10.6.0.0/24", Interface: "lan", Type: "blackhole"}, {Enabled: true, Destination: "10.7.0.0/24", Interface: "lan", Gateway: "10.0.0.2"}, {Enabled: true, Destination: "default", Interface: "lan"}}
 	names := map[string]string{}
+	prefixes := map[string]netip.Prefix{}
 	var direct directRouteIndex
 	for _, tc := range []struct {
 		ip, iface, table string
@@ -74,7 +75,7 @@ func TestStaticGatewayConnectedSourcesAndInterfaces(t *testing.T) {
 		{"2001:db8::2", "br0", "", true}, {"2001:db8:1::2", "br0", "", false}, {"10.9.0.2", "empty-alias", "", true},
 	} {
 		r := StaticRoute{Interface: tc.iface, Table: tc.table}
-		if got := c.staticGatewayConnected(r, netip.MustParseAddr(tc.ip), names, &direct); got != tc.want {
+		if got := c.staticGatewayConnected(r, netip.MustParseAddr(tc.ip), names, prefixes, &direct); got != tc.want {
 			t.Errorf("%+v got %t", tc, got)
 		}
 	}

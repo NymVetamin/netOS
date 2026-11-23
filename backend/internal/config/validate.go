@@ -1273,6 +1273,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 	// routeKeys — уже занятые сочетания «назначение + таблица + метрика».
 	routeKeys := map[string]string{}
 	interfaceNames := map[string]string{}
+	prefixes := map[string]netip.Prefix{}
 	type gatewayKey struct {
 		address netip.Addr
 		iface   string
@@ -1285,7 +1286,7 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		if connected, ok := reachability[key]; ok {
 			return connected
 		}
-		connected := c.staticGatewayConnected(route, address, interfaceNames, &direct)
+		connected := c.staticGatewayConnected(route, address, interfaceNames, prefixes, &direct)
 		reachability[key] = connected
 		return connected
 	}
