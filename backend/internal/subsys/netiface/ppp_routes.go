@@ -73,6 +73,33 @@ func pppRouteKey(route pppDefaultRoute) string {
 	return route.Interface + "|" + strconv.Itoa(route.Metric)
 }
 
+func changedPPPMetrics(wans []config.WAN, routes []pppDefaultRoute) map[string]bool {
+	type metrics struct {
+		first int
+		mixed bool
+	}
+	byInterface := make(map[string]metrics)
+	for _, route := range routes {
+		value, exists := byInterface[route.Interface]
+		if !exists {
+			value.first = route.Metric
+		} else if value.first != route.Metric {
+			value.mixed = true
+		}
+		byInterface[route.Interface] = value
+	}
+	changed := map[string]bool{}
+	for _, w := range wans {
+		if w.Proto != "pppoe" && w.Proto != "l2tp" {
+			continue
+		}
+		if value, exists := byInterface[PPPoEInterface(w.ID)]; exists && (value.mixed || value.first != w.Metric) {
+			changed[w.ID] = true
+		}
+	}
+	return changed
+}
+
 // recoverPPPMetric reads only a generated netOS pppd options file. This
 // seeds ownership when upgrading an existing installation without the ledger.
 func recoverPPPMetric(path string) (int, error) {

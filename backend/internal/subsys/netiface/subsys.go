@@ -1337,17 +1337,7 @@ func (s *WAN) Apply(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	changingPPPMetric := map[string]bool{}
-	for _, w := range cfg.WANs {
-		if w.Proto != "pppoe" && w.Proto != "l2tp" {
-			continue
-		}
-		for _, route := range ownedPPPRoutes {
-			if route.Interface == PPPoEInterface(w.ID) && route.Metric != w.Metric {
-				changingPPPMetric[w.ID] = true
-			}
-		}
-	}
+	changingPPPMetric := changedPPPMetrics(cfg.WANs, ownedPPPRoutes)
 	for _, w := range cfg.WANs {
 		name := ifaceName[w.Interface]
 		if !w.Enabled || name == "" {
