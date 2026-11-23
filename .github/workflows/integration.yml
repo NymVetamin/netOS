@@ -66,6 +66,12 @@ jobs:
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
             "$(command -v go)" test -p 1 ./internal/subsys/... -run "PPPoE|Integration" -skip "$ISOLATED" -v
 
+      - name: ошибки запуска после раннего отказа restore
+        working-directory: backend
+        run: |
+          sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
+            "$(command -v go)" test ./internal/manage -run '^TestIntegrationRestoreEarlyStartFailure$' -count=1 -v
+
       - name: интеграционные тесты в изолированном пространстве имён
         if: ${{ !cancelled() }}
         working-directory: backend

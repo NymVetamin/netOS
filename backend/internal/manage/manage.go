@@ -1029,11 +1029,15 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	// восстановления будет неоткуда.
 	safety, err := m.backup(ctx, "before-restore")
 	if err != nil {
-		_ = m.run(ctx, "systemctl", "start", "netosd")
+		if startErr := m.run(ctx, "systemctl", "start", "netosd"); startErr != nil {
+			return fmt.Errorf("%w; повторный запуск netosd после отмены восстановления: %w", err, startErr)
+		}
 		return err
 	}
 	if err := m.protectManagementUplink(ctx, uplink); err != nil {
-		_ = m.run(ctx, "systemctl", "start", "netosd")
+		if startErr := m.run(ctx, "systemctl", "start", "netosd"); startErr != nil {
+			return fmt.Errorf("сохранение management uplink перед восстановлением: %w; повторный запуск netosd после отмены восстановления: %w", err, startErr)
+		}
 		return fmt.Errorf("сохранение management uplink перед восстановлением: %w", err)
 	}
 	// Restore may need to install components before its selected DNS daemon
