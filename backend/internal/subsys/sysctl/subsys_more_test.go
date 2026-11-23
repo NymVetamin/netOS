@@ -197,6 +197,38 @@ func TestIPv6OffReapplyPreservesGlobalSwitchAndRepairsInterfaceDrift(t *testing.
 	}
 }
 
+func TestPassthroughRequiresGlobalIPv6Keys(t *testing.T) {
+	withSysctlPaths(t)
+	if err := os.MkdirAll(netClassPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	ctx := context.Background()
+	ipv6 := NewIPv6(nil)
+	check := func(wantError string) {
+		t.Helper()
+		for _, run := range []func(context.Context, *config.Config) error{ipv6.Apply, ipv6.Health} {
+			err := run(ctx, cfg)
+			if wantError == "" && err != nil || wantError != "" && (err == nil || !strings.Contains(err.Error(), wantError)) {
+				t.Errorf("mode %s: got %v, expected %q", cfg.IPv6.Mode, err, wantError)
+			}
+		}
+	}
+	cfg.IPv6.Mode = "off"
+	check("")
+	cfg.IPv6.Mode = "passthrough"
+	check("net.ipv6.conf.")
+	seedSysctls(t, ipv6.values(cfg))
+	check("")
+	const key = "net.ipv6.conf.default.accept_ra"
+	if err := os.Remove(sysctlPath(key)); err != nil {
+		t.Fatal(err)
+	}
+	check(key)
+	seedSysctls(t, map[string]string{key: ""})
+	check("")
+}
+
 func TestIPv6DottedInterface(t *testing.T) {
 	withSysctlPaths(t)
 	const name = "eth0.100"
@@ -266,7 +298,7 @@ func TestSysctlPrimitivesMissingWhitespaceAndReadErrors(t *testing.T) {
 	}
 	seedSysctls(t, map[string]string{"net.test.list": ""})
 	writeRawSysctl(t, "net.test.list", "1\t  2\n")
-	if err := checkValues(map[string]string{"net.test.list": "1 2", "net.optional.missing": "3"}); err != nil {
+	if err := checkValues(map[string]string{"net.test.list": "1 2", "net.optional.missing": "3"}, false); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(procSysPath, "net", "test", "list")
@@ -279,7 +311,7 @@ func TestSysctlPrimitivesMissingWhitespaceAndReadErrors(t *testing.T) {
 	if _, err := readSysctl("net.test.list"); err == nil {
 		t.Fatal("expected read error for directory")
 	}
-	if err := checkValues(map[string]string{"net.test.list": "1"}); err == nil {
+	if err := checkValues(map[string]string{"net.test.list": "1"}, false); err == nil {
 		t.Fatal("expected check read error")
 	}
 }

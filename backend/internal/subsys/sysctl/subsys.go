@@ -184,11 +184,11 @@ func (c *Core) Apply(ctx context.Context, cfg *config.Config) error {
 	if err := system.WriteFileAtomic(confPath, []byte(data), 0o644); err != nil {
 		return err
 	}
-	return applyValues(c.values(cfg))
+	return applyValues(c.values(cfg), writeSysctl)
 }
 
 func (c *Core) Health(ctx context.Context, cfg *config.Config) error {
-	return checkValues(c.values(cfg))
+	return checkValues(c.values(cfg), false)
 }
 
 // ---------------------------------------------------------------------------
@@ -280,11 +280,11 @@ func (s *IPv6) Plan(old, new *config.Config) ([]apply.Action, error) {
 }
 
 func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
-	data := renderSysctl(s.values(cfg))
+	values := s.values(cfg)
+	data := renderSysctl(values)
 	if err := system.WriteFileAtomic(ipv6ConfPath, []byte(data), 0o644); err != nil {
 		return err
 	}
-	values := s.values(cfg)
 	// Rewriting all.disable_ipv6=1 also disables IPv6 on lo, even when
 	// the global value already equals 1. Restoring lo below would recreate
 	// ::1 on every apply and interrupt loopback users/network discovery.
@@ -295,7 +295,11 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 			delete(values, disableAll)
 		}
 	}
-	if err := applyValues(values); err != nil {
+	write := writeSysctl
+	if cfg.IPv6.Mode != "off" {
+		write = writeRequiredSysctl
+	}
+	if err := applyValues(values, write); err != nil {
 		return err
 	}
 
@@ -328,17 +332,14 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
-	if err := checkValues(s.values(cfg)); err != nil {
-		if os.IsNotExist(err) {
-			// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
-			return nil
-		}
+	required := cfg.IPv6.Mode != "off"
+	if err := checkValues(s.values(cfg), required); err != nil {
 		return err
 	}
 	names, err := interfaceNames()
 	if err != nil {
 		// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
-		if os.IsNotExist(err) {
+		if !required && os.IsNotExist(err) {
 			return nil
 		}
 		return err
@@ -355,7 +356,7 @@ func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
 		for key, value := range values {
 			perInterface["net.ipv6.conf."+name+"."+key] = value
 		}
-		if err := checkValues(perInterface); err != nil && !os.IsNotExist(err) {
+		if err := checkValues(perInterface, false); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -432,11 +433,9 @@ func renderSysctl(values map[string]string) string {
 // Прямая запись заодно точнее: мы знаем, какие именно ключи нам принадлежат, и
 // не зависим от того, как та или иная версия sysctl разбирает файл.
 //
-// Отсутствующий ключ — не ошибка: nf_conntrack_max появляется только вместе с
-// модулем, а в контейнере часть параметров не существует вовсе. Молчать про
-// такое можно: файл в /etc/sysctl.d остаётся и подействует, когда ключ
-// появится.
-func applyValues(values map[string]string) error {
+// Необязательные ключи, например nf_conntrack_max, могут появиться после
+// загрузки модуля. Для passthrough глобальные параметры IPv6 нужны сразу.
+func applyValues(values map[string]string, write func(string, string) error) error {
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		keys = append(keys, k)
@@ -444,14 +443,14 @@ func applyValues(values map[string]string) error {
 	sortStrings(keys)
 
 	for _, key := range keys {
-		if err := writeSysctl(key, values[key]); err != nil {
+		if err := write(key, values[key]); err != nil {
 			return fmt.Errorf("параметр %s: %w", key, err)
 		}
 	}
 	return nil
 }
 
-func checkValues(values map[string]string) error {
+func checkValues(values map[string]string, required bool) error {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
@@ -460,7 +459,7 @@ func checkValues(values map[string]string) error {
 	for _, key := range keys {
 		out, err := readSysctl(key)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if !required && os.IsNotExist(err) {
 				continue
 			}
 			return fmt.Errorf("чтение параметра %s: %w", key, err)
@@ -481,6 +480,18 @@ func sysctlPath(key string) string {
 		}
 	}
 	return filepath.Join(procSysPath, strings.ReplaceAll(key, ".", "/"))
+}
+
+func writeRequiredSysctl(key, value string) error {
+	file, err := os.OpenFile(sysctlPath(key), os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(value); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func writeSysctl(key, value string) error {
