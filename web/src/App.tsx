@@ -292,8 +292,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const [saveError, setSaveError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [discarding, setDiscarding] = useState(false);
-  const discardInProgress = useRef(false);
+  const [draftLocked, setDraftLocked] = useState(false);
+  const draftEditLock = useRef(false);
   const [theme, setTheme] = useState<string>(
     () => localStorage.getItem("netos-theme") || "auto",
   );
@@ -382,9 +382,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const discard = useCallback(async () => {
     // Invalidate queued saves before waiting for the in-flight PUT. Otherwise
     // its late response (or a debounce timer) can recreate the discarded draft.
-    if (discardInProgress.current) return;
-    discardInProgress.current = true;
-    setDiscarding(true);
+    if (draftEditLock.current) return;
+    draftEditLock.current = true;
+    setDraftLocked(true);
     const generation = ++syncGeneration.current;
     pendingCfg.current = null;
     window.clearTimeout(saveTimer.current);
@@ -413,8 +413,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       applyServerState(res);
       setLoadError("");
     } finally {
-      discardInProgress.current = false;
-      setDiscarding(false);
+      draftEditLock.current = false;
+      setDraftLocked(false);
     }
   }, [applyServerState]);
 
@@ -482,7 +482,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   // текущего дерева, изменения сразу видны в интерфейсе.
   const patch = useCallback(
     (mutate: (draft: any) => void) => {
-      if (!canAccess(session, page, true) || discardInProgress.current) return;
+      if (!canAccess(session, page, true) || draftEditLock.current) return;
       setCfg((current: any) => {
         if (!current) return current;
         const next = structuredClone(current);
@@ -510,6 +510,25 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       await saving;
     } while (pendingCfg.current || tail !== saveChain.current);
   }, [flush]);
+
+  const applyDraft = async () => {
+    if (draftEditLock.current) return;
+    draftEditLock.current = true;
+    setDraftLocked(true);
+    try {
+      await flushNow();
+      try {
+        await api.apply("изменения из панели");
+      } finally {
+        // A lost response can follow a successful apply. Reload only once the
+        // draft has been saved, and keep the editor locked through this read.
+        await reload();
+      }
+    } finally {
+      draftEditLock.current = false;
+      setDraftLocked(false);
+    }
+  };
 
   const errors = problems.filter((p) => p.severity === "error");
 
@@ -634,7 +653,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           {!canAccess(session, page) ? <Notice tone="warn" title="Нет доступа к разделу" /> : !cfg ? (loadError ? null :
             <Spinner />
           ) : (
-            <fieldset disabled={discarding || (!canAccess(session, page, true) && !["dashboard", "map", "history", "diagnostics"].includes(page))} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <fieldset disabled={draftLocked || (!canAccess(session, page, true) && !["dashboard", "map", "history", "diagnostics"].includes(page))} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
               {page === "dashboard" && <Dashboard config={cfg} patch={patch} />}
               {page === "map" && <MapPage config={cfg} />}
               {page === "clients" && <Clients key={configGeneration} config={cfg} patch={patch} baseReservations={baseReservations} baseClientMACs={baseClientMACs} />}
@@ -668,6 +687,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           pending={pending}
           errorCount={errors.length}
           problems={problems}
+          onApply={applyDraft}
           onFlush={flushNow}
           onDiscard={discard}
           onReload={reload}
@@ -712,6 +732,7 @@ function ApplyBar({
   pending,
   errorCount,
   problems,
+  onApply,
   onFlush,
   onDiscard,
   onReload,
@@ -721,6 +742,7 @@ function ApplyBar({
   pending: { until?: string; revision?: string } | null;
   errorCount: number;
   problems: Problem[];
+  onApply: () => Promise<void>;
   onFlush: () => Promise<void>;
   onDiscard: () => Promise<void>;
   onReload: () => Promise<void>;
@@ -903,15 +925,7 @@ function ApplyBar({
             setError("");
             setPlan(null);
             try {
-              await onFlush();
-              try {
-                await api.apply("изменения из панели");
-              } finally {
-                // Network changes can lose the response after a successful
-                // apply or rollback. Refresh the authoritative draft/version
-                // even on failure, but never discard edits when flush failed.
-                await onReload();
-              }
+              await onApply();
             } catch (err) {
               setError(err instanceof ApiError ? err.message : "Применение не удалось");
             } finally {
