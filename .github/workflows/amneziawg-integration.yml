@@ -48,3 +48,11 @@ jobs:
         run: |
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 NETOS_AWG_INTEGRATION=1 \
             "$(command -v go)" test ./internal/subsys/vpnservers -run '^TestIntegration(WireGuard|AmneziaWG)ServerHandshake$' -count=1 -v
+
+      - name: Проверить статус выбранного peer в API
+        working-directory: backend
+        run: |
+          # Compile before isolation: the network namespace has no Internet.
+          sudo --preserve-env=PATH "$(command -v go)" test -c ./internal/api -o "$RUNNER_TEMP/netos-awg-api.test"
+          sudo unshare --net --mount env NETOS_AWG_INTEGRATION=1 \
+            "$RUNNER_TEMP/netos-awg-api.test" -test.run '^TestIntegrationSharedWireGuardStatus$' -test.v
