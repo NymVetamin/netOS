@@ -75,8 +75,8 @@ func TestIntegrationHostapdLifecycle(t *testing.T) {
 	cfg.WiFi = []config.WiFiRadio{{
 		ID: "integration", Device: device, Enabled: true, Band: "2.4", Channel: 1, Width: 20, Country: "US", TxPower: 5,
 		SSIDs: []config.WiFiSSID{
-			{ID: "open", SSID: "netOS-open", Enabled: true, Security: "open", Network: "wifi-net"},
-			{ID: "wpa2", SSID: "netOS-wpa2", Enabled: true, Security: "wpa2", Password: "integration-wpa2", Network: "wifi-net", Hidden: true},
+			{ID: "open", SSID: `netOS\open`, Enabled: true, Security: "open", Network: "wifi-net"},
+			{ID: "wpa2", SSID: "netOS-Дом", Enabled: true, Security: "wpa2", Password: "integration-wpa2", Network: "wifi-net", Hidden: true},
 			{ID: "wpa3", SSID: "netOS-wpa3", Enabled: true, Security: "wpa3", Password: "integration-wpa3", Network: "wifi-net", Isolate: true},
 			{ID: "mixed", SSID: "netOS-mixed", Enabled: true, Security: "wpa2/wpa3", Password: "integration-mixed", Network: "wifi-net"},
 		},

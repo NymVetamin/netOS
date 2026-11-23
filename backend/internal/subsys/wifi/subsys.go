@@ -489,7 +489,36 @@ func radioInfoMatches(info, device string, channel int, ssid string) bool {
 			}
 		}
 	}
-	return gotDevice == device && gotType == "AP" && (gotChannel == channel || channel == 0 && gotChannel > 0) && gotSSID == ssid
+	return gotDevice == device && gotType == "AP" && (gotChannel == channel || channel == 0 && gotChannel > 0) && iwSSIDMatches(gotSSID, ssid)
+}
+
+// iw print_ssid_escaped emits backslashes, non-printable bytes and edge
+// spaces as \xHH. Compare decoded bytes once, so a literal "\x41" stays literal.
+func iwSSIDMatches(printed, wanted string) bool {
+	pos := 0
+	for i := 0; i < len(wanted); i++ {
+		if pos >= len(printed) {
+			return false
+		}
+		value := printed[pos]
+		pos++
+		if value == '\\' {
+			if len(printed)-pos < 3 || printed[pos] != 'x' {
+				return false
+			}
+			var decoded [1]byte
+			_, err := hex.Decode(decoded[:], []byte(printed[pos+1:pos+3]))
+			if err != nil {
+				return false
+			}
+			value = decoded[0]
+			pos += 3
+		}
+		if value != wanted[i] {
+			return false
+		}
+	}
+	return pos == len(printed)
 }
 
 func txPowerMatches(info string, wanted int) bool {

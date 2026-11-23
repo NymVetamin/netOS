@@ -72,6 +72,17 @@ jobs:
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
             "$(command -v go)" test ./internal/manage -run '^TestIntegrationRestoreEarlyStartFailure$' -count=1 -v
 
+      - name: Wi-Fi с настоящими hostapd и iw
+        working-directory: backend
+        run: |
+          sudo apt-get install -y -qq hostapd iw wireless-regdb
+          if ! modinfo mac80211_hwsim >/dev/null 2>&1; then
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+          fi
+          modinfo mac80211_hwsim >/dev/null
+          sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
+            "$(command -v go)" test ./internal/subsys/wifi -run '^TestIntegrationHostapdLifecycle$' -count=1 -v
+
       - name: интеграционные тесты в изолированном пространстве имён
         if: ${{ !cancelled() }}
         working-directory: backend
