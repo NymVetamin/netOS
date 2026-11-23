@@ -987,8 +987,8 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 				fmt.Fprintln(m.Out, "Отменено.")
 				return nil
 			}
-			n := 0
-			if _, err := fmt.Sscanf(line, "%d", &n); err != nil || n < 1 || n > len(entries) {
+			n, err := strconv.Atoi(line)
+			if err != nil || n < 1 || n > len(entries) {
 				return fmt.Errorf("нет копии с номером %q", line)
 			}
 			selected = entries[n-1].path

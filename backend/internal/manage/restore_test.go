@@ -527,6 +527,22 @@ func TestResetPrintsCredentialsOnScreen(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsPartialBackupNumber(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "netos-backup.tar.gz"), []byte("unused"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"1foo", "1.9", "1 2"} {
+		m, _ := testManager()
+		m.BackupDir = dir
+		m.In = strings.NewReader(input + "\n")
+		err := m.Execute(context.Background(), []string{"restore"})
+		if err == nil || !strings.Contains(err.Error(), "нет копии с номером") {
+			t.Errorf("restore accepted the numeric prefix of %q: %v", input, err)
+		}
+	}
+}
+
 // Резервные копии без восстановления — половина механизма.
 func TestRestoreUnpacksChosenBackup(t *testing.T) {
 	m, out := testManager()
