@@ -68,7 +68,7 @@ export function Updates({ current, disabled, onBusyChange, onInstalled }: {
   const progress = useRef<HTMLDivElement>(null);
   const latest = releases?.[0];
   const newer = latest && compareVersions(latest.tag_name, current);
-  const developmentRelease = current === "dev" && !!latest && compareVersions(latest.tag_name, latest.tag_name) === 0;
+  const developmentRelease = !!latest && /^dev(?:-[0-9a-f]{7})?$/.test(current) && compareVersions(latest.tag_name, latest.tag_name) === 0;
   const active = !!operation || submitting;
   useEffect(() => { onBusyChange(active); return () => onBusyChange(false); }, [active, onBusyChange]);
   useEffect(() => {

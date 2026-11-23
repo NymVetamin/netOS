@@ -72,6 +72,18 @@ async def scenario(browser, mode):
     await expect(check).to_be_visible()
     await expect(update).to_have_count(0)
     await expect(page.get_by_role("button", name="Откат", exact=True)).to_have_count(0)
+    release_install = page.get_by_role("button", name="Установить релиз", exact=True)
+    for current, latest, offered in (
+        ("dev-f56884b", "v0.10", True),
+        ("dev", "v0.10", True),
+        ("dev-preview", "v0.10", False),
+        ("dev-f56884b", "v0.10-rc.1", False),
+    ):
+        state.update(current=current, latest=latest)
+        await page.reload()
+        await check.click()
+        await expect(page.get_by_text("Релиз 0.10", exact=True)).to_be_visible()
+        await expect(release_install).to_have_count(int(offered))
     newer, older = "v1.9007199254740993", "v1.9007199254740992"
     for current, latest, message in (
         (older, newer, f"Доступна версия {newer}"),
@@ -164,10 +176,9 @@ async def scenario(browser, mode):
         await check.click()
         await expect(page.get_by_text("Релиз 0.10", exact=True)).to_be_visible()
         await expect(update).to_have_count(0)
-    state["current"] = "dev"
+    state["current"] = "dev-f56884b"
     await page.reload(); await check.click()
     await expect(page.get_by_text("Установлена тестовая сборка. Доступен релиз v0.10.", exact=True)).to_be_visible()
-    release_install = page.get_by_role("button", name="Установить релиз", exact=True)
     await release_install.click()
     await expect(confirm).to_be_disabled()
     await page.get_by_role("button", name="Отмена", exact=True).click()
