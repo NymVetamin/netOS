@@ -128,14 +128,18 @@ func mergeRedactedSecrets(next, previous *config.Config) {
 	if previous == nil {
 		return
 	}
+	var sambaPasswords map[string]string
 	for i := range next.Samba.Users {
 		if next.Samba.Users[i].Password == "" {
-			for _, u := range previous.Samba.Users {
-				if u.ID == next.Samba.Users[i].ID {
-					next.Samba.Users[i].Password = u.Password
-					break
+			if sambaPasswords == nil {
+				sambaPasswords = make(map[string]string, len(previous.Samba.Users))
+				for _, u := range previous.Samba.Users {
+					if _, exists := sambaPasswords[u.ID]; !exists {
+						sambaPasswords[u.ID] = u.Password
+					}
 				}
 			}
+			next.Samba.Users[i].Password = sambaPasswords[next.Samba.Users[i].ID]
 		}
 	}
 	oldWANs := map[string]config.WAN{}
