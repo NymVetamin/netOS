@@ -155,38 +155,58 @@ func (s *Subsystem) apply(ctx context.Context, c *config.Config, prepared bool) 
 	if err != nil {
 		return err
 	}
-	if _, err = system.WriteFileAtomicIfChanged(candidate, data, 0600); err != nil {
-		return err
+	confMatches := system.AtomicFileMatches(conf, data, 0600)
+	validationPath := candidate
+	if confMatches {
+		if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+			validationPath = conf
+		}
 	}
-	defer os.Remove(candidate)
-	if _, err = s.Runner.Run(ctx, "/usr/local/bin/xray", "run", "-test", "-config", candidate); err != nil {
+	if validationPath == candidate {
+		if _, err = system.WriteFileAtomicIfChanged(candidate, data, 0600); err != nil {
+			return err
+		}
+		defer os.Remove(candidate)
+	}
+	if _, err = s.Runner.Run(ctx, "/usr/local/bin/xray", "run", "-test", "-config", validationPath); err != nil {
 		return fmt.Errorf("проверка SOCKS5: %w", err)
 	}
 	unitData := unitContents(conf)
 	applied := stamp(c, data)
-	changed := s.filesChanged(conf, unit, data, unitData, applied)
-	if _, err = system.WriteFileAtomicIfChanged(conf, data, 0600); err != nil {
-		return err
+	stampPath := filepath.Join(s.StateDir, "socks.applied")
+	unitMatches := system.AtomicFileMatches(unit, unitData, 0644)
+	stampMatches := system.AtomicFileMatches(stampPath, applied, 0600)
+	// Repair permissions without restarting a listener whose inputs still match.
+	changed := (!stampMatches && system.FileChanged(stampPath, applied)) ||
+		(!confMatches && system.FileChanged(conf, data)) ||
+		(!unitMatches && system.FileChanged(unit, unitData))
+	if !confMatches {
+		if err = system.WriteFileAtomic(conf, data, 0600); err != nil {
+			return err
+		}
 	}
-	if _, err = system.WriteFileAtomicIfChanged(unit, unitData, 0644); err != nil {
-		return err
+	if !unitMatches {
+		if err = system.WriteFileAtomic(unit, unitData, 0644); err != nil {
+			return err
+		}
 	}
 	if changed {
 		if _, err = s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
-	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", Unit)
-	if changed || strings.TrimSpace(active) != "active" {
+	if changed || s.Health(ctx, c) != nil {
 		if _, err = s.Runner.Run(ctx, "systemctl", "restart", Unit); err != nil {
 			return err
 		}
+		if err = s.Health(ctx, c); err != nil {
+			return err
+		}
 	}
-	if err = s.Health(ctx, c); err != nil {
-		return err
+	if !stampMatches {
+		return system.WriteFileAtomic(stampPath, applied, 0600)
 	}
-	_, err = system.WriteFileAtomicIfChanged(filepath.Join(s.StateDir, "socks.applied"), applied, 0600)
-	return err
+	return nil
 }
 func (s *Subsystem) Health(ctx context.Context, c *config.Config) error {
 	if !c.Socks.Enabled {

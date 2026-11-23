@@ -7,6 +7,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -199,6 +200,65 @@ func TestDisableAfterInterruptedCandidateWrite(t *testing.T) {
 		}
 		if _, err := os.Stat(candidate); !os.IsNotExist(err) {
 			t.Fatalf("candidate after disable: %v", err)
+		}
+	}
+}
+
+func TestUnchangedSocksValidatesLiveConfigAndChecksServiceOnce(t *testing.T) {
+	ctx := context.Background()
+	r := &fake{}
+	s := New(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	cfg := fixture()
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	conf, _ := s.paths()
+	validate := "/usr/local/bin/xray run -test -config " + conf
+	probe := "systemctl is-active " + Unit
+	for _, active := range []bool{true, false, true} {
+		r.calls, r.active = nil, active
+		if err := (AfterPreparation{s}).Apply(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{validate, probe}
+		if !active {
+			want = append(want, "systemctl restart "+Unit, probe)
+		}
+		if !slices.Equal(r.calls, want) {
+			t.Fatalf("active=%v: calls %v, want %v", active, r.calls, want)
+		}
+	}
+	r.calls, r.fail = nil, "-test"
+	if err := s.Apply(ctx, cfg); err == nil || !slices.Equal(r.calls, []string{validate}) {
+		t.Fatalf("invalid executable: calls=%v err=%v", r.calls, err)
+	}
+	r.fail = ""
+	candidate := filepath.Join(s.StateDir, "socks.candidate.json")
+	if err := os.WriteFile(candidate, []byte("interrupted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(candidate); !os.IsNotExist(err) {
+		t.Fatalf("candidate left after retry: %v", err)
+	}
+	if runtime.GOOS == "linux" {
+		for path, mode := range map[string]os.FileMode{
+			conf: 0600, filepath.Join(s.UnitDir, Unit): 0644, filepath.Join(s.StateDir, "socks.applied"): 0600,
+		} {
+			if err := os.Chmod(path, 0666); err != nil {
+				t.Fatal(err)
+			}
+			r.calls = nil
+			if err := s.Apply(ctx, cfg); err != nil || slices.Contains(r.calls, "systemctl restart "+Unit) {
+				t.Fatalf("mode repair: calls=%v err=%v", r.calls, err)
+			}
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != mode {
+				t.Fatalf("mode not repaired: %v", err)
+			}
 		}
 	}
 }
