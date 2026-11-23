@@ -13,11 +13,15 @@ async def main():
   cfg={'system':{'hostname':'router'},'interfaces':[{'id':'wan','name':'eth0','enabled':True}],'wans':[{'id':'wan','interface':'wan','enabled':True}],'networks':[],'channels':[],'vpn_servers':[],'traffic_monitor':{'enabled':True}}
   extra_domains=[]
   mixed_history=True
+  history_failure={'once':False}
   anchor=int(time.time())-46
   async def route(r):
    u=urlparse(r.request.url);path=u.path;q=parse_qs(u.query);body={};calls.append((path,q))
    if not path.startswith('/api/'):
     f=DIST/('index.html' if path=='/' else path.lstrip('/'));await r.fulfill(body=f.read_bytes(),content_type=mimetypes.guess_type(str(f))[0] or 'application/octet-stream');return
+   if path=='/api/statistics/realtime/history' and history_failure['once']:
+    history_failure['once']=False
+    await r.fulfill(status=503,json={'error':'fixture history failure'});return
    now=int(time.time());start=now-int(q.get('minutes',['1440'])[0])*60
    if path=='/api/session':body={'username':'admin','role':'admin','csrf_token':'test'}
    elif path=='/api/config':
@@ -74,6 +78,21 @@ async def main():
   await expect(page.get_by_role('img',name='График скорости в реальном времени')).to_have_count(2)
   assert any(path=='/api/statistics/realtime/history' and q.get('minutes')==['5'] for path,q in calls)
   await expect(page.locator('.monitor-clients').get_by_text('Never used',exact=True)).to_have_count(0)
+  # Selection and domain detail affect only the client query, not internet history.
+  await page.wait_for_timeout(200)
+  detail_start=len(calls)
+  await page.get_by_role('button',name='Подробнее',exact=True).click()
+  await expect(page.locator('.domain-legend li').filter(has_text='example.com')).to_have_text('example.com571.4%')
+  assert not any(path=='/api/statistics/realtime/history' for path,q in calls[detail_start:]),'details refetched internet history'
+  selection_start=len(calls)
+  laptop=page.locator('.monitor-clients label').filter(has_text='Laptop').get_by_role('checkbox')
+  async with page.expect_response('**/api/statistics/clients?*'):
+   await laptop.uncheck()
+  async with page.expect_response('**/api/statistics/clients?*'):
+   await laptop.check()
+  assert not any(path=='/api/statistics/realtime/history' for path,q in calls[selection_start:]),'selection refetched internet history'
+  assert sum(path=='/api/statistics/clients' for path,q in calls[selection_start:])==2
+  await page.get_by_role('button',name='Скрыть подробности',exact=True).click()
   # Hold freezes the curves, stops unused live/history requests, but keeps
   # domain detail/selection requests. Resume reloads the seconds missed on hold.
   await page.get_by_role('button',name='Пауза',exact=True).click()
@@ -213,6 +232,21 @@ async def main():
   live_calls=sum(path=='/api/statistics/realtime' for path,q in calls)
   await page.wait_for_timeout(5500)
   assert sum(path=='/api/statistics/realtime' for path,q in calls)==live_calls
+  # A failed history request is retried by the same 30-second poll.
+  history_failure['once']=True
+  await page.get_by_label('Период статистики').select_option('30')
+  await expect(page.get_by_text('Не удалось обновить скорость интернета',exact=True)).to_be_visible()
+  before_retry=sum(path=='/api/statistics/realtime/history' and q.get('minutes')==['30'] for path,q in calls)
+  await page.wait_for_timeout(31000)
+  await expect(page.get_by_text('Не удалось обновить скорость интернета',exact=True)).to_have_count(0)
+  assert sum(path=='/api/statistics/realtime/history' and q.get('minutes')==['30'] for path,q in calls)==before_retry+1
+  await page.goto('http://netos-ui.test/#channels')
+  await expect(page.get_by_role('heading',name='Интернет-каналы',exact=True)).to_be_visible()
+  return_start=len(calls)
+  await page.goto('http://netos-ui.test/#dashboard')
+  await expect(page.get_by_text('Трафик клиентов',exact=True)).to_be_visible()
+  await expect(page.locator('.monitor-clients').get_by_text('Speaker',exact=False)).to_be_visible()
+  assert any(path=='/api/statistics/realtime/history' for path,q in calls[return_start:])
   await page.set_viewport_size({'width':390,'height':844})
   assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
   assert not errors,errors

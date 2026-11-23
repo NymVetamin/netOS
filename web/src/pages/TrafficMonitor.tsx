@@ -28,14 +28,24 @@ export function TrafficMonitor({config,patch,interfaces}:{config:any;patch:(fn:(
  const current=useRealtimeTraffic(!custom&&!hold);
  const enabled=!!config.traffic_monitor?.enabled;
  const query=hold?`from=${Math.floor(hold.from)}&to=${Math.floor(hold.to)}`:custom?`from=${custom.from}&to=${custom.to}`:`minutes=${minutes}`;
+ const interfaceKey=interfaces.join(",");
+ useEffect(()=>{
+  if(hold)return;
+  let cancelled=false,busy=false;
+  const controller=new AbortController();
+  const load=async()=>{if(busy)return;busy=true;try{
+   const value=await api.secondHistory(query,controller.signal);if(!cancelled){setInternet(value);setError("")}
+  }catch{if(!cancelled)setError("Не удалось обновить скорость интернета")}finally{busy=false}};
+  void load();const timer=setInterval(load,30000);return()=>{cancelled=true;controller.abort();clearInterval(timer)};
+ },[query,interfaceKey,!!hold]);
  useEffect(()=>{
   let cancelled=false,busy=false;
   const controller=new AbortController();
-  const load=async()=>{if(busy)return;busy=true;await Promise.all([
-   hold?Promise.resolve():api.secondHistory(query,controller.signal).then(v=>{if(!cancelled){setInternet(v);setError("")}}).catch(()=>{if(!cancelled)setError("Не удалось обновить скорость интернета")}),
-   api.clientStatistics(query,selected||[],details,controller.signal).then(v=>{if(!cancelled){setClients(v);setClientError("")}}).catch(()=>{if(!cancelled)setClientError("Не удалось обновить историю клиентов")})
-  ]);busy=false;};void load();const timer=setInterval(load,30000);return()=>{cancelled=true;controller.abort();clearInterval(timer)};
- },[query,interfaces.join(","),(selected||[]).join(","),details]);
+  const load=async()=>{if(busy)return;busy=true;try{
+   const value=await api.clientStatistics(query,selected||[],details,controller.signal);if(!cancelled){setClients(value);setClientError("")}
+  }catch{if(!cancelled)setClientError("Не удалось обновить историю клиентов")}finally{busy=false}};
+  void load();const timer=setInterval(load,30000);return()=>{cancelled=true;controller.abort();clearInterval(timer)};
+ },[query,interfaceKey,(selected||[]).join(","),details]);
  const to=hold?.to||custom?.to||current.batches.at(-1)?.at||Math.floor(Date.now()/1000),from=hold?.from||custom?.from||to-minutes*60;
  const frames=hold?.frames||continueTrafficHistory(internet?.points||[],custom?[]:current.batches,(b:any)=>b.at,from,to);
  const recent=frames.map((b:any)=>({at:b.at,clients:(b.values||[]).filter((v:any)=>!v.id.startsWith("if:")).map((v:any)=>({id:v.id,name:v.name,rx:v.rx_bps,tx:v.tx_bps}))}));
