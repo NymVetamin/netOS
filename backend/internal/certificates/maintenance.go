@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
@@ -46,6 +47,7 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 	}
 	var first error
 	active := make(map[string]bool)
+	vpnIDs := make(map[string]bool, len(cfg.VPNServers))
 	if spec := cfg.System.Panel.TLS; spec.Mode == "acme" {
 		active[hostname(spec.Domain)] = true
 	}
@@ -53,6 +55,7 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 		first = err
 	}
 	for _, server := range cfg.VPNServers {
+		vpnIDs[server.ID] = true
 		if !server.Enabled {
 			continue
 		}
@@ -69,14 +72,19 @@ func (m *Manager) Refresh(ctx context.Context, cfg *config.Config, generated str
 			first = err
 		}
 	}
-	m.closeUnusedIssuers(active)
+	m.removeUnused(active, vpnIDs)
 	return first
 }
 
-func (m *Manager) closeUnusedIssuers(active map[string]bool) {
+func (m *Manager) removeUnused(active, vpnIDs map[string]bool) {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
+	for name := range m.status {
+		if id, vpn := strings.CutPrefix(name, "vpn:"); vpn && !vpnIDs[id] {
+			delete(m.status, name)
+		}
+	}
 	var retired []ACME
 	for domain, issuer := range m.issuers {
 		if !active[domain] {
