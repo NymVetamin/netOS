@@ -59,6 +59,29 @@ func TestRoutingValidationRejectsValuesThatWouldFailOrChangeMeaning(t *testing.T
 	}
 }
 
+func TestRoutingValidationRequiresUnicastNextHop(t *testing.T) {
+	for _, tc := range []struct {
+		routeType, gateway, iface string
+		enabled, wantError        bool
+	}{
+		{"", "", "", true, true},
+		{"unicast", "", "", true, true},
+		{"unicast", "", "", false, false},
+		{"unicast", "192.0.2.1", "", true, false},
+		{"unicast", "", "eth0", true, false},
+		{"blackhole", "", "", true, false},
+		{"unreachable", "", "", true, false},
+		{"prohibit", "", "", true, false},
+	} {
+		cfg := validRoutingConfig()
+		route := &cfg.Routing.Static[0]
+		route.Type, route.Gateway, route.Interface, route.Enabled = tc.routeType, tc.gateway, tc.iface, tc.enabled
+		if result := cfg.Validate(); result.HasErrors() != tc.wantError {
+			t.Errorf("%+v: unexpected validation result %+v", tc, result.Problems)
+		}
+	}
+}
+
 func TestRoutingValidationAcceptsMatchingIPv6Route(t *testing.T) {
 	cfg := validRoutingConfig()
 	cfg.Routing.Static[0].Destination = "2001:db8:1::/64"

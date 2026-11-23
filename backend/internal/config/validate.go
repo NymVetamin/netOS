@@ -1306,8 +1306,8 @@ func (c *Config) validateRouting(r *ValidationResult) {
 				r.warnf(path+".gateway", "достижимость шлюза %s не подтверждается настроенными подсетями: проверьте адрес и интерфейс; без динамического или прямого маршрута ядро может отклонить применение", route.Gateway)
 			}
 		}
-		if route.Gateway == "" && route.Interface == "" && route.Type == "" {
-			r.errf(path, "укажите шлюз, интерфейс или тип маршрута")
+		if route.Gateway == "" && route.Interface == "" && (route.Type == "" || (route.Enabled && route.Type == "unicast")) {
+			r.errf(path, "для обычного маршрута укажите шлюз или интерфейс")
 		}
 		if route.Interface != "" && !ValidInterfaceName(route.Interface) {
 			r.errf(path+".interface", "некорректное имя интерфейса")
