@@ -344,3 +344,36 @@ func TestFailedDeleteAndCreateRestoresRoutingTableCatalog(t *testing.T) {
 		t.Fatalf("previous channel unhealthy after delete/create failure: %v", err)
 	}
 }
+
+func TestXrayReloadAndRestartOnRepeatedApply(t *testing.T) {
+	s, _ := newTestSubsystem(t)
+	r := &serviceLifecycleRunner{s: s, active: map[string]bool{}, enabled: map[string]bool{}, routes: map[string]string{}}
+	s.Runner = r
+	ch := testXrayChannel()
+	if _, err := applyServiceChannel(s, ch, false); err != nil {
+		t.Fatal(err)
+	}
+	check := func(wantReload, wantRestart bool) {
+		t.Helper()
+		r.commands = nil
+		if _, err := applyServiceChannel(s, ch, true); err != nil {
+			t.Fatal(err)
+		}
+		commands := strings.Join(r.commands, "\n")
+		if strings.Contains(commands, "systemctl daemon-reload") != wantReload ||
+			strings.Contains(commands, "systemctl restart "+xrayUnitName(ch)) != wantRestart {
+			t.Fatalf("expected reload=%v restart=%v, commands: %s", wantReload, wantRestart, commands)
+		}
+	}
+	check(false, false)
+	ch.Name = "Renamed"
+	check(true, false)
+	ch.Config["mtu"] = 1420
+	check(true, true)
+	_, unit := s.xrayPaths(ch)
+	if err := os.WriteFile(unit, []byte("[Service]\nExecStart=/bin/false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(true, true)
+	check(false, false)
+}

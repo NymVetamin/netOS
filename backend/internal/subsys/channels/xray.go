@@ -160,8 +160,7 @@ func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, wasOwned, 
 		return false, fmt.Errorf("проверка конфигурации Xray: %w", err)
 	}
 	unit := []byte(renderXrayUnit(ch, confPath))
-	changed := system.FileChanged(confPath, conf) || system.FileChanged(unitPath, unit)
-	restart := system.FileChanged(confPath, conf) || system.UnitRuntimeChanged(unitPath, unit)
+	confChanged := system.FileChanged(confPath, conf)
 	if err := os.Rename(candidate, confPath); err != nil {
 		return false, err
 	}
@@ -169,11 +168,12 @@ func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, wasOwned, 
 	if err := os.Chmod(confPath, 0o600); err != nil {
 		return false, err
 	}
-	if err := writeFileIfChanged(unitPath, unit, 0o644); err != nil {
+	beforeUnit, unitChanged, err := updateChannelFile(unitPath, unit, 0o644)
+	if err != nil {
 		return false, err
 	}
 	unitName := xrayUnitName(ch)
-	if changed {
+	if confChanged || unitChanged {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return false, err
 		}
@@ -182,6 +182,7 @@ func (s *Subsystem) applyXray(ctx context.Context, ch config.Channel, wasOwned, 
 		return false, err
 	}
 	active, _ := s.Runner.Run(ctx, "systemctl", "is-active", unitName)
+	restart := confChanged || (unitChanged && system.UnitRuntimeContentChanged(beforeUnit, unit))
 	if restart || strings.TrimSpace(active) != "active" {
 		if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
 			return false, fmt.Errorf("запуск Xray: %w", err)
