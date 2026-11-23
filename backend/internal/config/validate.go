@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/netos-router/netos/internal/ethernet"
+	"math"
 	"net"
 	"net/mail"
 	"net/netip"
@@ -1320,6 +1321,8 @@ func (c *Config) validateRouting(r *ValidationResult) {
 		}
 		if route.Metric < 0 {
 			r.errf(path+".metric", "метрика не может быть отрицательной")
+		} else if int64(route.Metric) > math.MaxUint32 {
+			r.errf(path+".metric", "метрика не может превышать %d", int64(math.MaxUint32))
 		}
 		if route.Table != "" && !tables[route.Table] {
 			r.errf(path+".table", "неизвестная таблица %q", route.Table)
