@@ -148,7 +148,8 @@ func TestApplyRecordsActualRecovery(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("retry: %d %s", w.Code, w.Body.String())
 	}
-	w = serveAuthed(s.Routes(), http.MethodPost, "/api/config/confirm", nil, cookie, csrf)
+	revision, _ := s.Engine.PendingRevision()
+	w = serveRevisionAction(s.Routes(), "confirm", revision, cookie, csrf)
 	if w.Code != http.StatusOK {
 		t.Fatalf("confirm: %d %s", w.Code, w.Body.String())
 	}
@@ -222,7 +223,7 @@ func TestConfigConfirmAndDisconnectedManualRollback(t *testing.T) {
 		t.Fatalf("save while pending status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = serveAuthed(s.Routes(), http.MethodPost, "/api/config/confirm", nil, cookie, csrf)
+	w = serveRevisionAction(s.Routes(), "confirm", firstRevision, cookie, csrf)
 	if w.Code != http.StatusOK {
 		t.Fatalf("confirm status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -238,6 +239,7 @@ func TestConfigConfirmAndDisconnectedManualRollback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Simulate the browser connection disappearing during network restore.
 	req = httptest.NewRequest(http.MethodPost, "/api/config/rollback", nil).WithContext(ctx)
+	req.Header.Set("If-Match", strconv.FormatInt(secondRevision, 10))
 	req.AddCookie(cookie)
 	req.Header.Set(csrfHeader, csrf)
 	w = httptest.NewRecorder()

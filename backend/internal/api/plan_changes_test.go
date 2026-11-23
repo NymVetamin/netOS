@@ -144,12 +144,12 @@ func TestPlanDoesNotDescribeAnInFlightTransaction(t *testing.T) {
 	s.draftMu.Lock()
 	s.draftApplying = false
 	s.draftMu.Unlock()
-	applyDraft(t, s, cookie, csrf, "pending-plan-test")
+	revision := applyDraft(t, s, cookie, csrf, "pending-plan-test")
 	w = serveAuthed(s.Routes(), "POST", "/api/config/plan", nil, cookie, csrf)
 	if w.Code != 409 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	w = serveAuthed(s.Routes(), "POST", "/api/config/rollback", nil, cookie, csrf)
+	w = serveRevisionAction(s.Routes(), "rollback", revision, cookie, csrf)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}

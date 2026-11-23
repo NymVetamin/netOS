@@ -130,7 +130,8 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 			t.Fatalf("other user %s: %d %s", action, w.Code, w.Body.String())
 		}
 	}
-	w = serveAuthed(h, "POST", "/api/config/confirm", []byte(`{}`), cookie, "limited-csrf")
+	revision, _ := s.Engine.PendingRevision()
+	w = serveRevisionAction(h, "confirm", revision, cookie, "limited-csrf")
 	if w.Code != 200 {
 		t.Fatalf("private confirm: %d %s", w.Code, w.Body.String())
 	}

@@ -94,7 +94,7 @@ func TestClassifiedConfirmationThroughAuthenticatedAPI(t *testing.T) {
 				t.Fatal("configuration not applied")
 			}
 			if wantPending {
-				confirmed := serveAuthed(h, http.MethodPost, "/api/config/confirm", nil, cookie, csrf)
+				confirmed := serveRevisionAction(h, "confirm", result.Revision, cookie, csrf)
 				if confirmed.Code != http.StatusOK {
 					t.Fatalf("confirm: %d %s", confirmed.Code, confirmed.Body.String())
 				}

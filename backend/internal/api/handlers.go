@@ -1429,9 +1429,13 @@ func (s *Server) tryBeginDraftOperation() bool {
 
 // configOpMu serializes this check with every API and control-socket Apply.
 // The asynchronous timer can only remove the selected pending transaction.
-func (s *Server) matchesPendingRevision(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) matchesPendingRevision(w http.ResponseWriter, r *http.Request, required bool) bool {
 	values := r.Header.Values("If-Match")
 	if len(values) == 0 {
+		if required {
+			writeError(w, http.StatusPreconditionRequired, "укажите номер ожидающей ревизии в If-Match")
+			return false
+		}
 		return true
 	}
 	revision, deadline := s.Engine.PendingRevision()
@@ -1444,6 +1448,10 @@ func (s *Server) matchesPendingRevision(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
+	s.confirmPending(w, r, true)
+}
+
+func (s *Server) confirmPending(w http.ResponseWriter, r *http.Request, requireRevision bool) {
 	if !s.configOpMu.TryLock() {
 		writeError(w, 409, "операция применения уже выполняется")
 		return
@@ -1458,7 +1466,7 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "нет права подтверждать чужое применение")
 		return
 	}
-	if !s.matchesPendingRevision(w, r) {
+	if !s.matchesPendingRevision(w, r, requireRevision) {
 		return
 	}
 	revision, err := s.Engine.Confirm(s.Store.MarkActive)
@@ -1496,7 +1504,7 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "нет права подтверждать чужое применение")
 		return
 	}
-	if !s.matchesPendingRevision(w, r) {
+	if !s.matchesPendingRevision(w, r, true) {
 		return
 	}
 	// Restoring the previous network can terminate the very HTTP connection

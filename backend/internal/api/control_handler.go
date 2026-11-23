@@ -57,7 +57,7 @@ func (s *Server) localControlHandler() http.Handler {
 	}
 	mux.HandleFunc("GET /draft", root(draft))
 	mux.HandleFunc("POST /apply", root(draft))
-	mux.HandleFunc("POST /confirm", root(s.handleConfirm))
+	mux.HandleFunc("POST /confirm", root(func(w http.ResponseWriter, r *http.Request) { s.confirmPending(w, r, false) }))
 	mux.HandleFunc("GET /status", root(s.handleStatus))
 	return mux
 }

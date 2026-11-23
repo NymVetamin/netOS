@@ -339,8 +339,8 @@ func TestConfigurationRouteLifecycle(t *testing.T) {
 	if discardW.Code != http.StatusOK {
 		t.Fatalf("discard status=%d body=%s", discardW.Code, discardW.Body.String())
 	}
-	for _, path := range []string{"/api/config/confirm", "/api/config/rollback"} {
-		if w := serveAuthed(h, http.MethodPost, path, nil, cookie, csrf); w.Code != http.StatusConflict {
+	for _, path := range []string{"confirm", "rollback"} {
+		if w := serveRevisionAction(h, path, 1, cookie, csrf); w.Code != http.StatusConflict {
 			t.Fatalf("%s without pending operation status=%d body=%s", path, w.Code, w.Body.String())
 		}
 	}
