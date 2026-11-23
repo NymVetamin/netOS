@@ -837,6 +837,11 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	file, err := s.Maintenance.OpenBackup(name)
 	if err != nil {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) && !errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusInternalServerError, "чтение резервной копии: %v", err)
+			return
+		}
 		writeError(w, http.StatusNotFound, "резервная копия не найдена")
 		return
 	}
@@ -862,6 +867,11 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := s.Maintenance.DeleteBackup(name); err != nil {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) && !errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusInternalServerError, "удаление резервной копии: %v", err)
+			return
+		}
 		writeError(w, http.StatusNotFound, "резервная копия не найдена")
 		return
 	}
