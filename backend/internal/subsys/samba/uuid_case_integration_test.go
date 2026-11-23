@@ -128,7 +128,8 @@ func TestIntegrationVolumeUUIDCase(t *testing.T) {
 				t.Fatal(err)
 			}
 			run("systemctl", "daemon-reload")
-			run("systemctl", "reset-failed", unit)
+			// A missing-device job can time out without leaving the mount unit
+			// loaded or failed. Starting the corrected unit is the retry itself.
 			for repeat := 0; repeat < 2; repeat++ {
 				run("systemctl", "start", unit)
 				got := run("findmnt", "-rn", "-M", mount, "-o", "UUID")
