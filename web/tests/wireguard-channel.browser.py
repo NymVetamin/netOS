@@ -47,9 +47,10 @@ async def main():
    await expect(page.get_by_text("Конфигурация перенесена",exact=False)).to_be_visible()
    await expect(page.locator('input[placeholder="vpn.example.com:51820"]')).to_have_value("split.example:51821")
    await expect(page.get_by_text("не перенесён",exact=False)).to_have_count(0)
-  await file.set_input_files({"name":"bad.conf","mimeType":"text/plain","buffer":text.replace("10.9.0.2/32","10.9.0.2/99").encode()})
-  await expect(page.get_by_text("Нужен один IPv4-адрес туннеля с маской.",exact=True)).to_be_visible()
-  await expect(page.locator('input[placeholder="vpn.example.com:51820"]')).to_have_value("split.example:51821")
+  for bad in ("010.9.0.2/32", "10.9.0.2/032", "10.9.0.2/99"):
+   await file.set_input_files({"name":"bad.conf","mimeType":"text/plain","buffer":text.replace("10.9.0.2/32",bad).encode()})
+   await expect(page.get_by_text("Нужен один IPv4-адрес туннеля с маской.",exact=True)).to_be_visible()
+   await expect(page.locator('input[placeholder="vpn.example.com:51820"]')).to_have_value("split.example:51821")
   assert not state["errors"],state["errors"]
   output=Path(__file__).resolve().parents[2]/".codex/wireguard-form.png"
   await page.screenshot(path=str(output),full_page=True)

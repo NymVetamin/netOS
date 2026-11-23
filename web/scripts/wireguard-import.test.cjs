@@ -16,6 +16,12 @@ AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 0
 `;
 const parsed=parse(config);
+for (const address of ["010.2.0.2/32", "10.02.0.2/32", "10.2.0.2/032", "10.2.0.2/00"]) {
+  assert.throws(() => parse(config.replace("10.2.0.2/32", address)), /IPv4/, address);
+}
+for (const address of ["0.0.0.0/0", "255.255.255.255/32", "10.2.0.2/8"]) {
+  assert.equal(parse(config.replace("10.2.0.2/32", address)).config.address, address);
+}
 assert.equal(parsed.config.address,"10.2.0.2/32");assert.equal(parsed.config.persistent_keepalive,0);assert.equal(parsed.config.mtu,1380);assert.ok(!Object.hasOwn(parsed.config,"preshared_key"));
 assert.equal(parse(config+`PresharedKey=${key}`).config.preshared_key,key);
 for(const broken of [config+"[Peer]",config.replace("10.2.0.2/32","10.2.0.2/99"),config.replace("PrivateKey = "+key,"PrivateKey = bad"),config.replace("51820","99999"),config+"MTU=1\nMTU=2"]){assert.throws(()=>parse(broken));}

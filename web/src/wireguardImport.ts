@@ -43,7 +43,9 @@ export function parseWireGuardConfig(text: string) {
   const list = (value = "") => value.split(",").map(v => v.trim()).filter(Boolean);
   const ipv4 = (value: string) => {
     const [address, mask, extra] = value.split("/");
-    return extra === undefined && /^\d+$/.test(mask || "") && Number(mask) <= 32 && address.split(".").length === 4 && address.split(".").every(p => /^\d{1,3}$/.test(p) && Number(p) <= 255);
+    if (extra !== undefined || !/^(?:0|[1-9]\d?)$/.test(mask || "") || Number(mask) > 32) return false;
+    const octets = address.split(".");
+    return octets.length === 4 && octets.every(p => /^(?:0|[1-9]\d{0,2})$/.test(p) && Number(p) <= 255);
   };
   const addresses = list(iface.Address);
   const v4Addresses = addresses.filter(v => !v.includes(":"));
