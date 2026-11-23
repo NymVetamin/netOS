@@ -107,6 +107,7 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	wanted := map[string]config.WiFiRadio{}
 	radios := enabledRadios(cfg)
+	configs := make([][]byte, len(radios))
 	var bridges map[string]networkBridge
 	if len(radios) > 0 {
 		bridges = radioBridges(cfg)
@@ -115,11 +116,13 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	for _, item := range owned {
 		ownedIDs[item.ID] = item
 	}
-	for _, radio := range radios {
+	for i, radio := range radios {
 		wanted[radio.ID] = radio
-		if _, err := renderRadio(radio, bridges); err != nil {
+		conf, err := renderRadio(radio, bridges)
+		if err != nil {
 			return fmt.Errorf("радио %s: %w", radio.Device, err)
 		}
+		configs[i] = conf
 		confPath, unitPath := s.paths(radio)
 		if previous, ok := ownedIDs[radio.ID]; ok {
 			if previous.Unit != unitName(radio) {
@@ -138,9 +141,9 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	}
 	next := make([]ownedRadio, 0, len(wanted))
 	powerLimits := &radioPowerLimits{}
-	for _, radio := range radios {
+	for i, radio := range radios {
 		next = append(next, ownedRadio{ID: radio.ID, Unit: unitName(radio)})
-		if err := s.applyRadio(ctx, bridges, radio, powerLimits); err != nil {
+		if err := s.applyRadio(ctx, bridges, radio, configs[i], powerLimits); err != nil {
 			return s.cleanupNewRadios(ctx, next, owned, ownedIDs, fmt.Errorf("радио %s: %w", radio.Device, err))
 		}
 	}
@@ -174,12 +177,8 @@ func (s *Subsystem) cleanupNewRadios(ctx context.Context, attempted, owned []own
 	return errors.Join(failures...)
 }
 
-func (s *Subsystem) applyRadio(ctx context.Context, bridges map[string]networkBridge, radio config.WiFiRadio, powerLimits *radioPowerLimits) error {
+func (s *Subsystem) applyRadio(ctx context.Context, bridges map[string]networkBridge, radio config.WiFiRadio, conf []byte, powerLimits *radioPowerLimits) error {
 	confPath, unitPath := s.paths(radio)
-	conf, err := renderRadio(radio, bridges)
-	if err != nil {
-		return err
-	}
 	unit := []byte(renderUnit(radio, confPath, bridges))
 	confReady := wifiFileReady(confPath, conf, 0o600)
 	unitReady := wifiFileReady(unitPath, unit, 0o644)
