@@ -232,14 +232,22 @@ func mergeSecretMapAt(next, previous map[string]any, path string) {
 			}
 		case []any:
 			if oldList, ok := old.([]any); ok {
+				childPath := configChildPath(path, key)
+				skipID := secretConfigField(childPath, "id")
+				var byIdentity map[[2]string]map[string]any
 				for i, child := range typed {
 					if childMap, ok := child.(map[string]any); ok {
-						identity := childMap
-						childPath := configChildPath(path, key)
-						if secretConfigField(childPath, "id") {
-							identity = map[string]any{"name": childMap["name"], "email": childMap["email"]}
+						var oldMap map[string]any
+						field, identity := secretMapIdentity(childMap, skipID)
+						if field != "" {
+							if byIdentity == nil {
+								byIdentity = indexSecretMaps(oldList, skipID)
+							}
+							oldMap = byIdentity[[2]string{field, identity}]
+						} else if i < len(oldList) {
+							oldMap, _ = oldList[i].(map[string]any)
 						}
-						if oldMap := correspondingSecretMap(identity, oldList, i); oldMap != nil {
+						if oldMap != nil {
 							mergeSecretMapAt(childMap, oldMap, childPath)
 						}
 					}
@@ -256,25 +264,44 @@ func configChildPath(path, key string) string {
 	return path + "." + key
 }
 
-func correspondingSecretMap(child map[string]any, oldList []any, index int) map[string]any {
+// Index each field independently: matching uses the first nonempty identity
+// field of the new object, and the first old object with that value.
+func indexSecretMaps(oldList []any, skipID bool) map[[2]string]map[string]any {
+	result := make(map[[2]string]map[string]any)
+	for _, item := range oldList {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range []string{"id", "name", "email"} {
+			if field == "id" && skipID {
+				continue
+			}
+			value, ok := m[field].(string)
+			if !ok || value == "" {
+				continue
+			}
+			key := [2]string{field, value}
+			if _, exists := result[key]; !exists {
+				result[key] = m
+			}
+		}
+	}
+	return result
+}
+
+func secretMapIdentity(child map[string]any, skipID bool) (string, string) {
 	for _, field := range []string{"id", "name", "email"} {
+		if field == "id" && skipID {
+			continue
+		}
 		identity, ok := child[field].(string)
 		if !ok || identity == "" {
 			continue
 		}
-		for _, previous := range oldList {
-			oldMap, ok := previous.(map[string]any)
-			if ok && oldMap[field] == identity {
-				return oldMap
-			}
-		}
-		return nil
+		return field, identity
 	}
-	if index < len(oldList) {
-		oldMap, _ := oldList[index].(map[string]any)
-		return oldMap
-	}
-	return nil
+	return "", ""
 }
 
 // Presence follows exactly the same field classification as redaction. Array
