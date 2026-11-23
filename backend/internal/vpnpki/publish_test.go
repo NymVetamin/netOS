@@ -1,15 +1,120 @@
 package vpnpki
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"github.com/netos-router/netos/internal/config"
+	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 )
+
+func TestReconcileReusesAndRenewsCRL(t *testing.T) {
+	ctx := context.Background()
+	s := New(t.TempDir(), &p12Runner{})
+	server := fixture()
+	cfg := &config.Config{VPNServers: []config.VPNServer{server}}
+	sync := func() {
+		t.Helper()
+		if err := s.Reconcile(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync()
+	dir := s.Dir(server.ID)
+	path := filepath.Join(dir, "revoked.crl")
+	statePath := filepath.Join(dir, "state.json")
+	read := func(name string) []byte {
+		t.Helper()
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	stable := func() {
+		t.Helper()
+		stateData, crl := read(statePath), read(path)
+		stamp := time.Unix(1700000000, 0)
+		for _, p := range []string{path, statePath} {
+			if err := os.Chtimes(p, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s = New(s.Root, &p12Runner{})
+		sync()
+		if !bytes.Equal(stateData, read(statePath)) || !bytes.Equal(crl, read(path)) {
+			t.Fatal("repeated reconciliation replaced state or CRL")
+		}
+		for _, p := range []string{path, statePath} {
+			if info, err := os.Stat(p); err != nil || !info.ModTime().Equal(stamp) {
+				t.Fatalf("unexpected write to %s", filepath.Base(p))
+			}
+		}
+	}
+	stable()
+	st, err := s.load(server.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, signer, err := st.signer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
+		Number: big.NewInt(st.CRLNumber), ThisUpdate: now.Add(-6 * 24 * time.Hour), NextUpdate: now.Add(time.Hour),
+	}, ca, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, damaged := range []bool{false, true} {
+		if damaged {
+			der[len(der)-1] ^= 1
+		}
+		if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}), 0644); err != nil {
+			t.Fatal(err)
+		}
+		old := st.CRLNumber
+		sync()
+		st, err = s.load(server.ID, false)
+		if err != nil || st.CRLNumber != old+1 || !currentCRL(path, st, now) {
+			t.Fatalf("CRL was not renewed: %v", err)
+		}
+		// Corrupt the signature of an otherwise fresh, correctly numbered list.
+		block, _ := pem.Decode(read(path))
+		der = block.Bytes
+	}
+	cfg.VPNServers = nil
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx, cfg); err == nil {
+		t.Fatal("server deletion ignored the CRL publication error")
+	}
+	st, err = s.load(server.ID, false)
+	if err != nil || !st.Clients["phone"].Revoked {
+		t.Fatalf("publication failure lost the durable revocation: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	sync()
+	st, err = s.load(server.ID, false)
+	if err != nil || !st.Clients["phone"].Revoked || len(st.Revocations) != 1 || !currentCRL(path, st, now) {
+		t.Fatalf("server deletion lost revocation: %v", err)
+	}
+	stable()
+}
 
 func TestPublishAllowlistAndFailedWriteRecovery(t *testing.T) {
 	s := New(t.TempDir(), &p12Runner{})

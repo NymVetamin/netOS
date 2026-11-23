@@ -3,6 +3,7 @@
 package vpnpki
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -52,6 +53,7 @@ type state struct {
 	Clients     map[string]Client
 	Revocations []revocation
 	CRLNumber   int64
+	loadedCA    *x509.Certificate // validated when loading this snapshot; never serialized
 }
 type Store struct {
 	Root   string
@@ -93,7 +95,8 @@ func (s *Store) load(id string, create bool) (*state, error) {
 		if st.ServerID != id || st.Clients == nil {
 			return nil, fmt.Errorf("неверная идентичность хранилища сертификатов")
 		}
-		if _, _, err := st.signer(); err != nil {
+		st.loadedCA, _, err = st.signer()
+		if err != nil {
 			return nil, err
 		}
 		return &st, nil
@@ -270,6 +273,10 @@ func (s *Store) publish(st *state, server config.VPNServer, oc config.OcservServ
 	if err := system.WriteFileAtomic(filepath.Join(dir, "revoked.crl"), pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}), 0o644); err != nil {
 		return err
 	}
+	return s.publishAllowed(st, server, oc)
+}
+
+func (s *Store) publishAllowed(st *state, server config.VPNServer, oc config.OcservServerConfig) error {
 	var allowed []string
 	if server.Enabled && oc.UsesClientCertificates() {
 		for _, peer := range server.Peers {
@@ -280,7 +287,66 @@ func (s *Store) publish(st *state, server config.VPNServer, oc config.OcservServ
 		}
 	}
 	sort.Strings(allowed)
-	return publishStaticFile(filepath.Join(dir, "allowed"), []byte(strings.Join(allowed, "\n")+"\n"), 0o600)
+	return publishStaticFile(filepath.Join(s.Dir(st.ServerID), "allowed"), []byte(strings.Join(allowed, "\n")+"\n"), 0o600)
+}
+
+func (s *Store) reconcilePublished(st *state, server config.VPNServer, oc config.OcservServerConfig, changed bool) error {
+	if changed {
+		return s.publish(st, server, oc)
+	}
+	dir := s.Dir(st.ServerID)
+	if runtime.GOOS != "windows" {
+		for _, path := range []string{s.Root, dir} {
+			if info, err := os.Lstat(path); err != nil || info.Mode() != os.ModeDir|0700 {
+				return s.publish(st, server, oc)
+			}
+		}
+	}
+	info, err := os.Lstat(filepath.Join(dir, "state.json"))
+	if err != nil || !matchesPublishedMetadata(info, 0600) || !currentCRL(filepath.Join(dir, "revoked.crl"), st, time.Now()) {
+		return s.publish(st, server, oc)
+	}
+	if err := publishStaticFile(filepath.Join(dir, "ca.crt"), st.CA, 0644); err != nil {
+		return err
+	}
+	return s.publishAllowed(st, server, oc)
+}
+
+func currentCRL(path string, st *state, now time.Time) bool {
+	info, err := os.Lstat(path)
+	if st.loadedCA == nil || st.CRLNumber <= 0 || err != nil || !info.Mode().IsRegular() || !matchesPublishedMetadata(info, 0644) {
+		return false
+	}
+	// Bound reads of an unrelated file by the maximum size of our PEM output.
+	// Allow for issuer/signature, ASN.1 headers, serials, times and base64.
+	maxSize := int64(4096 + 4*len(st.CA))
+	for _, rev := range st.Revocations {
+		maxSize += int64(128 + 2*len(rev.Serial))
+	}
+	if info.Size() > maxSize {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	block, rest := pem.Decode(raw)
+	if block == nil || block.Type != "X509 CRL" || len(rest) != 0 || !bytes.HasPrefix(raw, []byte("-----BEGIN X509 CRL-----")) {
+		return false
+	}
+	crl, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil || crl.Number == nil || !crl.Number.IsInt64() || crl.Number.Int64() != st.CRLNumber ||
+		crl.ThisUpdate.After(now) || !crl.NextUpdate.After(now.Add(24*time.Hour)) ||
+		len(crl.RevokedCertificateEntries) != len(st.Revocations) {
+		return false
+	}
+	for i, entry := range crl.RevokedCertificateEntries {
+		rev := st.Revocations[i]
+		if entry.SerialNumber.String() != rev.Serial || entry.RevocationTime.Unix() != rev.At.Unix() || len(entry.Extensions) != 0 {
+			return false
+		}
+	}
+	return crl.CheckSignatureFrom(st.loadedCA) == nil
 }
 
 func publishStaticFile(path string, data []byte, perm os.FileMode) error {
@@ -313,6 +379,7 @@ func (s *Store) Sync(ctx context.Context, server config.VPNServer) error {
 		return err
 	}
 	wanted := map[string]bool{}
+	clientCount, revocationCount := len(st.Clients), len(st.Revocations)
 	for _, peer := range server.Peers {
 		wanted[peer.ID] = true
 		if _, ok := st.Clients[peer.ID]; !ok && create {
@@ -328,7 +395,7 @@ func (s *Store) Sync(ctx context.Context, server config.VPNServer) error {
 			revoke(st, id)
 		}
 	}
-	return s.publish(st, server, oc)
+	return s.reconcilePublished(st, server, oc, clientCount != len(st.Clients) || revocationCount != len(st.Revocations))
 }
 
 // Reconcile also visits removed servers: deletion permanently revokes their
@@ -378,10 +445,12 @@ func (s *Store) Reconcile(ctx context.Context, cfg *config.Config) error {
 		if err != nil {
 			return err
 		}
+		count := len(st.Revocations)
 		for id := range st.Clients {
 			revoke(st, id)
 		}
-		if err := s.publish(st, config.VPNServer{ID: st.ServerID}, config.OcservServerConfig{}); err != nil {
+		server := config.VPNServer{ID: st.ServerID}
+		if err := s.reconcilePublished(st, server, config.OcservServerConfig{}, count != len(st.Revocations)); err != nil {
 			return err
 		}
 	}
