@@ -157,12 +157,20 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	// имени сервера DoT провалится.
 	w("    tls-cert-bundle: \"/etc/ssl/certs/ca-certificates.crt\"")
 
+	upstreamByID := map[string]config.Upstream{}
+	enabledUpstreams := map[string]bool{}
+	for _, up := range cfg.DNS.Upstreams {
+		upstreamByID[up.ID] = up
+		if up.Enabled {
+			enabledUpstreams[up.ID] = true
+		}
+	}
 	u.renderStaticRecords(&b, cfg)
 	u.renderLocalZones(&b, cfg)
-	u.renderLocalZoneOverrides(&b, cfg)
+	u.renderLocalZoneOverrides(&b, cfg, enabledUpstreams)
 
 	w("")
-	u.renderForwardZones(&b, cfg)
+	u.renderForwardZones(&b, cfg, upstreamByID)
 
 	if cfg.DNS.AdvancedOptions != "" {
 		w("")
@@ -244,7 +252,7 @@ func (u *Unbound) renderLocalZones(b *strings.Builder, cfg *config.Config) {
 // 192.168.0.0/16 не разрешался вовсе — при полностью верном конфиге
 // перенаправления. transparent на конкретную зону возвращает разрешение
 // обычному пути, то есть нашему forward-zone.
-func (u *Unbound) renderLocalZoneOverrides(b *strings.Builder, cfg *config.Config) {
+func (u *Unbound) renderLocalZoneOverrides(b *strings.Builder, cfg *config.Config, enabledUpstreams map[string]bool) {
 	var zones []string
 	if backendLocalDNSNeeded(cfg) {
 		zones = localZones(cfg)
@@ -253,11 +261,8 @@ func (u *Unbound) renderLocalZoneOverrides(b *strings.Builder, cfg *config.Confi
 		if !rule.Enabled {
 			continue
 		}
-		for _, up := range cfg.DNS.Upstreams {
-			if up.ID == rule.Upstream && up.Enabled {
-				zones = append(zones, rule.Domains...)
-				break
-			}
+		if enabledUpstreams[rule.Upstream] {
+			zones = append(zones, rule.Domains...)
 		}
 	}
 	if len(zones) == 0 {
@@ -276,7 +281,7 @@ func (u *Unbound) renderLocalZoneOverrides(b *strings.Builder, cfg *config.Confi
 	}
 }
 
-func (u *Unbound) renderForwardZones(b *strings.Builder, cfg *config.Config) {
+func (u *Unbound) renderForwardZones(b *strings.Builder, cfg *config.Config, upstreamByID map[string]config.Upstream) {
 	w := func(format string, args ...any) { fmt.Fprintf(b, format+"\n", args...) }
 
 	// Локальные имена знает dnsmasq: он раздаёт адреса и потому единственный
@@ -288,11 +293,6 @@ func (u *Unbound) renderForwardZones(b *strings.Builder, cfg *config.Config) {
 			w("    forward-addr: 127.0.0.1@%d", dnsmasqLocalPort)
 			w("")
 		}
-	}
-
-	upstreamByID := map[string]config.Upstream{}
-	for _, up := range cfg.DNS.Upstreams {
-		upstreamByID[up.ID] = up
 	}
 
 	// Split-DNS: перечисленные домены уходят в отдельный апстрим.
