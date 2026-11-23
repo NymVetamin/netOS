@@ -26,3 +26,14 @@ test('access labels, delete guards and checks preserve includes semantics', () =
     assert.deepEqual(list, original);
   }
 });
+
+test('volume references preserve strict equality, duplicates and current configuration', () => {
+  const shared = {};
+  for (const values of [['used', 'used', '', undefined, null, NaN, 0, -0, shared], [], ['changed']]) {
+    const shares = values.map((volume, i) => ({volume, enabled: i % 2 === 0}));
+    const index = storageAccessIndex(shares);
+    for (const id of ['used', 'changed', '', undefined, null, NaN, 0, -0, shared, {}]) {
+      assert.equal(index.referencedVolumes.has(id), shares.some(sh => sh.volume === id));
+    }
+  }
+});
