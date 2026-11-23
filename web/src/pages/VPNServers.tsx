@@ -388,7 +388,11 @@ function PasswordPeers({ server, config, patch, empty }: any) {
     update((draft) => {
       draft.peers = draft.peers || [];
       const number = draft.peers.length + 1;
-      draft.peers.push({ id, name: `Клиент ${number}`, enabled: false, address, channel: "", credentials: { username: `user${number}`, password: "" }, comment: "" });
+      const usernames = new Set<string>();
+      for (const peer of draft.peers) usernames.add(peer.credentials?.username);
+      let loginNumber = number;
+      while (usernames.has(`user${loginNumber}`)) loginNumber++;
+      draft.peers.push({ id, name: `Клиент ${number}`, enabled: false, address, channel: "", credentials: { username: `user${loginNumber}`, password: "" }, comment: "" });
     });
   }
   useClientCreator(server.id, addPeer);

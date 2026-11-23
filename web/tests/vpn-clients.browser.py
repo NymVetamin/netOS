@@ -45,6 +45,10 @@ async def scenario(browser, mode):
                 "config": {"protocol": "reality"} if kind == "xray" else {}})
         for server in cfg["vpn_servers"]:
             server["subnet"] = f"10.{8+server['index']}.0.129/25"
+            if server["type"] in ("ocserv", "ikev2", "l2tp"):
+                server["peers"] = [{"id": "kept", "name": "Existing", "enabled": False,
+                                    "address": f"10.{8+server['index']}.0.140",
+                                    "credentials": {"username": "user2", "password": ""}}]
         peer["address"] = "10.9.0.130"
     if mode.startswith("sessions-"):
         kind = mode.removeprefix("sessions-")
@@ -261,7 +265,14 @@ async def scenario(browser, mode):
             expected_host = 131 if sid == "srv" else 130
             assert saved["peers"][-1]["address"] == f"10.{8+saved['index']}.0.{expected_host}"
             assert after == {key: value + (key == sid) for key, value in before.items()}, (sid, before, after)
+            if sid in ("ocserv", "ikev2", "l2tp"):
+                assert [p["credentials"]["username"] for p in saved["peers"]] == ["user2", "user3"], sid
             await expect(page.locator(f'[data-peers-of="{sid}"] .peer-card').last.locator(".xbody")).to_be_visible()
+        await page.locator(".card-sub details.addmenu > summary").click()
+        async with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("/api/config")):
+            await page.get_by_role("button", name="Добавить клиента на ikev2", exact=True).click()
+        saved = next(s for s in state["config"]["vpn_servers"] if s["id"] == "ikev2")
+        assert [p["credentials"]["username"] for p in saved["peers"]] == ["user2", "user3", "user4"]
         assert not errors, errors
         await page.set_viewport_size({"width": 390, "height": 844})
         await page.locator(".card-sub").screenshot(path="output/playwright/vpn-clients-menu-mobile.png")
