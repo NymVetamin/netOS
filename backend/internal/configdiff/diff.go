@@ -4,6 +4,7 @@ package configdiff
 
 import (
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 )
@@ -23,37 +24,41 @@ type Change struct {
 // ordered array without identities. The caller supplies its schema knowledge.
 func Diff(before, after any, identity func([]string) string) []Change {
 	changes := []Change{}
-	child := func(path []string, key string) []string { return append(append([]string{}, path...), key) }
-	add := func(path []string, kind string, a, b Value) { changes = append(changes, Change{path, kind, a, b}) }
+	if _, object := before.(map[string]any); object && reflect.DeepEqual(before, after) {
+		return changes
+	}
+	add := func(path []string, kind string, a, b Value) {
+		changes = append(changes, Change{slices.Clone(path), kind, a, b})
+	}
 	var walk func(Value, Value, []string)
 	walk = func(a, b Value, path []string) {
-		if a.Present == b.Present && reflect.DeepEqual(a.Data, b.Data) {
-			return
-		}
 		am, aMap := a.Data.(map[string]any)
 		bm, bMap := b.Data.(map[string]any)
 		if (aMap || bMap) && (a.Data == nil || aMap) && (b.Data == nil || bMap) {
-			keys := map[string]bool{}
-			for k := range am {
-				keys[k] = true
-			}
-			for k := range bm {
-				keys[k] = true
-			}
-			if len(keys) == 0 {
-				add(path, "change", a, b)
+			if len(am) == 0 && len(bm) == 0 {
+				if a.Present != b.Present || !reflect.DeepEqual(a.Data, b.Data) {
+					add(path, "change", a, b)
+				}
 				return
 			}
-			ordered := []string{}
-			for k := range keys {
+			ordered := make([]string, 0, max(len(am), len(bm)))
+			for k := range am {
 				ordered = append(ordered, k)
+			}
+			for k := range bm {
+				if _, exists := am[k]; !exists {
+					ordered = append(ordered, k)
+				}
 			}
 			sort.Strings(ordered)
 			for _, k := range ordered {
 				av, ap := am[k]
 				bv, bp := bm[k]
-				walk(Value{ap, av}, Value{bp, bv}, child(path, k))
+				walk(Value{ap, av}, Value{bp, bv}, append(path, k))
 			}
+			return
+		}
+		if a.Present == b.Present && reflect.DeepEqual(a.Data, b.Data) {
 			return
 		}
 		aa, aList := a.Data.([]any)
@@ -65,6 +70,7 @@ func Diff(before, after any, identity func([]string) string) []Change {
 			}
 			key := ""
 			if identity != nil {
+				path = slices.Clone(path)
 				key = identity(path)
 			}
 			ai, ax, ak := index(aa, key)
@@ -89,7 +95,7 @@ func Diff(before, after any, identity func([]string) string) []Change {
 				for _, id := range order {
 					av, ap := ax[id]
 					bv, bp := bx[id]
-					p := child(path, id)
+					p := append(path, id)
 					if !ap {
 						add(p, "add", Value{}, Value{true, bv})
 					}
@@ -117,7 +123,7 @@ func Diff(before, after any, identity func([]string) string) []Change {
 					if i < len(ba) {
 						bv = Value{true, ba[i]}
 					}
-					walk(av, bv, child(path, strconv.Itoa(i)))
+					walk(av, bv, append(path, strconv.Itoa(i)))
 				}
 				return
 			}

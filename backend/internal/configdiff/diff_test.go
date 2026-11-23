@@ -61,3 +61,36 @@ func FuzzDiffEqualAndReadOnly(f *testing.F) {
 		}
 	})
 }
+
+func TestDiffKeepsSiblingPathsAndIdentityPathsIndependent(t *testing.T) {
+	before := map[string]any{}
+	after := map[string]any{}
+	for _, name := range []string{"first", "second"} {
+		before[name] = []any{map[string]any{"id": "item", "value": 1}}
+		after[name] = []any{map[string]any{"id": "item", "value": 2}}
+	}
+	wrap := func(v any) any {
+		for i := 0; i < 5; i++ {
+			v = map[string]any{"x": v}
+		}
+		return v
+	}
+	var visited [][]string
+	changes := Diff(wrap(before), wrap(after), func(path []string) string {
+		visited = append(visited, path)
+		return "id"
+	})
+	if len(visited) != 2 || len(changes) != 2 {
+		t.Fatalf("visited %v, changes %v", visited, changes)
+	}
+	for i, name := range []string{"first", "second"} {
+		want := []string{"x", "x", "x", "x", "x", name}
+		if !reflect.DeepEqual(visited[i], want) || !reflect.DeepEqual(changes[i].Path, append(want, "item", "value")) {
+			t.Fatalf("overwritten path: %v, %v", visited, changes)
+		}
+	}
+	changes[0].Path[0] = "edited"
+	if visited[0][0] != "x" || changes[1].Path[0] != "x" {
+		t.Fatal("independent paths share mutable storage")
+	}
+}
