@@ -173,6 +173,49 @@ func (r addressRunner) RunInput(ctx context.Context, _ string, name string, args
 	return r.Run(ctx, name, args...)
 }
 
+func TestInitialLANSkipsExistingBridgePort(t *testing.T) {
+	old := sysClassNet
+	sysClassNet = t.TempDir()
+	t.Cleanup(func() { sysClassNet = old })
+	for _, path := range []string{"wan/device", "eth1/device", "eth1/brport"} {
+		if err := os.MkdirAll(filepath.Join(sysClassNet, path), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want string) {
+		t.Helper()
+		d, err := Detect(context.Background(), detectRunner{routes: "default dev wan"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := BuildInitial(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Validate().HasErrors() || len(cfg.WANs) != 1 || cfg.WANs[0].Interface != "if-wan" {
+			t.Fatalf("invalid startup configuration: %+v", cfg.WANs)
+		}
+		lan := ""
+		for _, iface := range cfg.Interfaces {
+			if iface.ID == "if-lan" {
+				lan = iface.Name
+			}
+		}
+		if lan != want || (len(cfg.Networks) > 0) != (want != "") {
+			t.Fatalf("candidates %v, LAN %q, want %q", d.LANCandidates, lan, want)
+		}
+	}
+	check("")
+	if err := os.MkdirAll(filepath.Join(sysClassNet, "eth2", "device"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	check("eth2")
+	if err := os.Remove(filepath.Join(sysClassNet, "eth1", "brport")); err != nil {
+		t.Fatal(err)
+	}
+	check("eth1")
+}
+
 func TestBuildInitialWithoutInterfacesKeepsSafeDefaults(t *testing.T) {
 	cfg, err := BuildInitial(&Detected{})
 	if err != nil {

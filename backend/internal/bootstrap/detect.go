@@ -95,7 +95,10 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 		// choosing a fresh or hwsim radio as factory LAN makes every daemon start
 		// fail while repeatedly disturbing the management uplink.
 		if name != d.WANInterface && len(addrs) == 0 && !isWirelessInterface(name) {
-			d.LANCandidates = append(d.LANCandidates, name)
+			// An existing bridge member normally has no address of its own.
+			if _, err := os.Lstat(filepath.Join(sysClassNet, name, "brport")); os.IsNotExist(err) {
+				d.LANCandidates = append(d.LANCandidates, name)
+			}
 		}
 	}
 
