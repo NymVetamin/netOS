@@ -76,8 +76,8 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 	if command == "tc filter show dev lan0 parent 1:" {
 		return "filter protocol all pref 100 flower dst_mac aa:bb:cc:dd:ee:ff classid 1:10", nil
 	}
-	if command == "tc filter show dev lan0 parent ffff:" {
-		return "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 64Kb action drop", nil
+	if command == "tc -raw filter show dev lan0 parent ffff:" {
+		return "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 64Kb [007d0000] action drop", nil
 	}
 	return "", nil
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -168,6 +169,24 @@ func (s *Subsystem) applyClientInterface(ctx context.Context, item clientInterfa
 	return nil
 }
 
+func (blocks trafficBlocks) matchesUploadPolicer(pref int, client config.Client) bool {
+	if client.UpKbit <= 0 {
+		return false
+	}
+	// tc -raw prints the police burst in scheduler ticks immediately after
+	// the MTU. Debian 13 rounds the duration up to a 64 ns Linux tick.
+	// Debian 12 truncates to whole microseconds before converting to ticks.
+	const ticksPerUsec = 1000.0 / 64
+	usec := 1e6 * (65536.0 / (float64(client.UpKbit) * 125))
+	ticks := uint32(math.Ceil(usec * ticksPerUsec))
+	legacy := uint32(math.Trunc(usec) * ticksPerUsec)
+	matches := func(burst uint32) bool {
+		return blocks.hasTokens(fmt.Sprintf("pref=%d", pref), "src_mac="+strings.ToLower(client.MAC),
+			"police", fmt.Sprintf("rate=%dkbit", client.UpKbit), "mtu=64kb", fmt.Sprintf("64kb=%08x", burst), "action=drop")
+	}
+	return matches(ticks) || (ticks != legacy && matches(legacy))
+}
+
 func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error {
 	items, err := desiredClientInterfaces(cfg)
 	if err != nil {
@@ -233,7 +252,7 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 			}
 		}
 		if len(item.Upload) > 0 {
-			filters, err := s.Runner.Run(ctx, "tc", "filter", "show", "dev", item.Name, "parent", "ffff:")
+			filters, err := s.Runner.Run(ctx, "tc", "-raw", "filter", "show", "dev", item.Name, "parent", "ffff:")
 			if err != nil {
 				return err
 			}
@@ -241,7 +260,7 @@ func (s *Subsystem) healthClients(ctx context.Context, cfg *config.Config) error
 			expectedMACs := make([]string, 0, len(item.Upload))
 			for index, client := range item.Upload {
 				expectedMACs = append(expectedMACs, strings.ToLower(client.MAC))
-				if !filterBlocks.hasTokens("pref", fmt.Sprint(100+index), "src_mac", strings.ToLower(client.MAC), "police", "rate", fmt.Sprintf("%dkbit", client.UpKbit), "mtu=64kb", "action=drop") {
+				if !filterBlocks.matchesUploadPolicer(100+index, client) {
 					return fmt.Errorf("лимит отдачи клиента %s на %s не соответствует конфигурации", client.MAC, item.Name)
 				}
 			}

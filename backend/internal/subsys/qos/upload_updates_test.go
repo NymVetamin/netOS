@@ -12,10 +12,10 @@ func TestUploadOnlyRateUpdatePreservesQueues(t *testing.T) {
 	for _, mode := range []string{"rate", "unchanged", "unknown root", "extra class", "wrong MAC", "missing ingress"} {
 		t.Run(mode, func(t *testing.T) {
 			outputs := map[string]string{
-				"tc -j qdisc show dev lan0":               `[{"kind":"noqueue","handle":"0:","root":true,"refcnt":2,"options":{}},{"kind":"ingress","handle":"ffff:","parent":"ffff:fff1","options":{}}]`,
-				"tc -j class show dev lan0":               `[]`,
-				"tc -j filter show dev lan0 parent ffff:": `[{"protocol":"all","pref":100,"kind":"flower","chain":0,"options":{"handle":1,"keys":{"src_mac":"02:00:00:00:00:02"},"not_in_hw":true,"actions":[{"order":1,"kind":"police","index":1,"control_action":{"type":"drop"},"overhead":0,"ref":1,"bind":1}]}}]`,
-				"tc filter show dev lan0 parent ffff:":    "filter protocol all pref 100 flower src_mac 02:00:00:00:00:02 action police rate 1000kbit burst 64Kb mtu 64Kb",
+				"tc -j qdisc show dev lan0":                 `[{"kind":"noqueue","handle":"0:","root":true,"refcnt":2,"options":{}},{"kind":"ingress","handle":"ffff:","parent":"ffff:fff1","options":{}}]`,
+				"tc -j class show dev lan0":                 `[]`,
+				"tc -j filter show dev lan0 parent ffff:":   `[{"protocol":"all","pref":100,"kind":"flower","chain":0,"options":{"handle":1,"keys":{"src_mac":"02:00:00:00:00:02"},"not_in_hw":true,"actions":[{"order":1,"kind":"police","index":1,"control_action":{"type":"drop"},"overhead":0,"ref":1,"bind":1}]}}]`,
+				"tc -raw filter show dev lan0 parent ffff:": "filter protocol all pref 100 flower src_mac 02:00:00:00:00:02 action police rate 1000kbit burst 64Kb mtu 64Kb [007d0000] action drop",
 			}
 			client := config.Client{MAC: "02:00:00:00:00:02", UpKbit: 500}
 			switch mode {
