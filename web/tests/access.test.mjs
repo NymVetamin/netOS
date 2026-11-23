@@ -51,6 +51,35 @@ function config(extraRules = [], patch = {}) {
 
 const zoneIfaces = { wan: ["ppp-wan1"] };
 
+test("interface prefixes cover exact interfaces and intersect VPN interface groups",()=>{
+  for(const [pattern,ifaces,want] of [
+    ['eth+',['eth1'],'y'],['eth+',['wlan0'],'n'],['eth+',['eth1','eth2'],'y'],
+    ['eth+',['eth1','wlan0'],'p'],['+',['eth1','vpns1+'],'y'],
+    ['vpns+',['vpns1+'],'y'],['vpns1+',['vpns+'],'p'],['vpns10',['vpns1+'],'p'],
+    ['vpns2+',['vpns1+'],'n'],['vpns1+',['vpns1+'],'y'],['eth*',['eth1'],'n'],
+    ['eth0',['eth0'],'y'],['eth0',['eth1'],'n'],['eth+',['eth'],'y'],['eth+',[],'none'],
+    ['eth+',[undefined],'n'],['eth+',['eth1',undefined],'p'],['eth+foo',['eth1foo'],'n'],
+  ]) {
+    const cfg={firewall:{enabled:true,zones:[{name:'wan',policy:'drop'}],rules:[{enabled:true,name:'prefix',zone:'global',flow:'in',action:'accept',interface:pattern}]}};
+    const matrix=accessMatrix(cfg,{wan:ifaces});
+    const got=matrix.cells[0]?.[matrix.destinations.findIndex(d=>d.id==='router')]?.verdict||'none';
+    assert.equal(got,want,`${pattern} on ${ifaces}`);
+  }
+});
+
+test("output prefixes follow generator destination-zone expansion and refresh",()=>{
+  const cfg=config();cfg.firewall.rules=[{enabled:true,name:'prefix output',zone:'global',flow:'forward',action:'accept',out_interface:'eth+'}];
+  assert.equal(cell(cfg,'Интернет','Камеры').verdict,'y');
+  cfg.firewall.rules[0].dst_zone='lan';
+  assert.equal(cell(cfg,'Интернет','Камеры').verdict,'n','generator expands DstZone with exact output selection');
+  cfg.firewall.rules[0].out_interface='eth0.40';
+  assert.equal(cell(cfg,'Интернет','Камеры').verdict,'y');
+  cfg.firewall.rules[0].dst_zone='';cfg.firewall.rules[0].out_interface='eth+';
+  assert.equal(cell(cfg,'Интернет','Камеры').verdict,'y');
+  cfg.interfaces[2].name='wlan0';
+  assert.equal(cell(cfg,'Интернет','Камеры').verdict,'n');
+});
+
 test("ACME HTTP-01 precedes global and zone drops and disappears when disabled", () => {
   const cfg = config([], {system:{panel:{tls:{mode:"acme"}}}});
   cfg.firewall.rules = [{enabled:true,name:"Deny all",zone:"global",flow:"any",action:"drop"}];

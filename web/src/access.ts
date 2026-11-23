@@ -207,13 +207,17 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
   if (flow === "forward" && r.dst_zone && r.dst_zone !== dst.zone) return "none";
 
   if (r.interface) {
-    if (!src.ifaces.includes(r.interface)) return "none";
-    if (src.ifaces.length > 1) part = true;
+    const match = matchInterfaces(r.interface, src.ifaces);
+    if (match === "none") return "none";
+    if (match === "part") part = true;
   }
 
   if (r.out_interface) {
-    if (!dst.ifaces.includes(r.out_interface)) return "none";
-    if (dst.ifaces.length > 1) part = true;
+    // DstZone expansion in the generator selects exact output names first.
+    const match = r.dst_zone ? (dst.ifaces.includes(r.out_interface) ? (dst.ifaces.length > 1 ? "part" : "full") : "none")
+      : matchInterfaces(r.out_interface, dst.ifaces);
+    if (match === "none") return "none";
+    if (match === "part") part = true;
   }
 
   const from = side(r.src_ip, src, [], parsedAddresses);
@@ -233,6 +237,23 @@ function matchRule(r: any, src: Entity, dst: Entity, flow: string, segments: Ent
 
   if ((r.protocol && r.protocol !== "any") || r.src_port || r.dst_port || r.src_mac || r.schedule) part = true;
   return part ? "part" : "full";
+}
+
+function matchInterfaces(pattern: string, interfaces: string[]): "full" | "part" | "none" {
+  if (typeof pattern !== "string") return "none";
+  const prefix = pattern.endsWith("+");
+  const name = prefix ? pattern.slice(0, -1) : pattern;
+  let any = false, all = interfaces.length > 0;
+  for (const iface of interfaces) {
+    if (typeof iface !== "string") { all = false; continue; }
+    const group = iface.endsWith("+");
+    const current = group ? iface.slice(0, -1) : iface;
+    const full = prefix ? current.startsWith(name) : !group && current === name;
+    const overlap = full || group && name.startsWith(current);
+    any ||= overlap;
+    all &&= full;
+  }
+  return all ? "full" : any ? "part" : "none";
 }
 
 // side сравнивает адрес из правила с точкой матрицы. Про зоны без подсети
