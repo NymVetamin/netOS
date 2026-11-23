@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
@@ -204,7 +205,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 		if actions, err := s.Plan(&next, &next); err != nil || len(actions) != 1 || !actions[0].Disruptive {
 			t.Fatalf("%s drift plan: %+v %v", drift, actions, err)
 		}
-		for range 2 {
+		for repeat := 0; repeat < 2; repeat++ {
 			if err := s.Apply(ctx, &next); err != nil {
 				t.Fatal(err)
 			}
@@ -213,6 +214,34 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 			}
 			if actions, err := s.Plan(&next, &next); err != nil || len(actions) != 0 {
 				t.Fatalf("repaired plan: %+v %v", actions, err)
+			}
+			if drift == "missing" && repeat == 0 {
+				// The client still has the removed server-side session. WG starts
+				// a fresh handshake after 10+5 seconds without authenticated replies.
+				before, _ := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+				started := time.Now()
+				probe, cancel := context.WithTimeout(ctx, 30*time.Second)
+				var pingErr error
+				var pingOutput string
+				recovered := false
+				for probe.Err() == nil {
+					pingOutput, pingErr = runner.Run(probe, "ip", "netns", "exec", netns, "ping", "-c", "1", "-W", "1", "10.253.97.1")
+					if pingErr == nil {
+						recovered = true
+						break
+					}
+					select {
+					case <-probe.Done():
+					case <-time.After(time.Second):
+					}
+				}
+				cancel()
+				after, _ := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+				if !recovered {
+					client, _ := runner.Run(ctx, "ip", "netns", "exec", netns, "wg", "show", clientName, "latest-handshakes")
+					t.Fatalf("peer traffic did not recover in %s: %v %s; server before=%q after=%q client=%q", time.Since(started), pingErr, pingOutput, before, after, client)
+				}
+				t.Logf("removed peer traffic recovered in %s; server handshakes before=%q after=%q", time.Since(started), before, after)
 			}
 			mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "2", "-W", "2", "10.253.97.1")
 		}
