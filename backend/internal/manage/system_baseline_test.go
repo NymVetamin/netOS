@@ -324,7 +324,12 @@ func TestCaptureSystemBaselineRejectsEveryMandatoryProbeFailure(t *testing.T) {
 }
 
 func TestReadSystemBaselineRejectsMalformedAndIncompleteState(t *testing.T) {
-	for name, content := range map[string]string{"malformed": "{", "incomplete": `{"version":1,"sysctl":{}}`, "null": `{"version":1,"iptables4":null,"sysctl":{}}`} {
+	for name, content := range map[string]string{
+		"malformed": "{", "incomplete": `{"version":1,"sysctl":{}}`, "null": `{"version":1,"iptables4":null,"sysctl":{}}`,
+		"missing target":  `{"version":2,"iptables4":"","sysctl":{},"timesyncd_config":{"exists":true}}`,
+		"invalid target":  `{"version":2,"iptables4":"","sysctl":{},"timesyncd_config":{"exists":true,"link_target":"AA=="}}`,
+		"unknown version": `{"version":3,"iptables4":"","sysctl":{}}`,
+	} {
 		t.Run(name, func(t *testing.T) {
 			m, _ := testManager()
 			sandbox(t, m)

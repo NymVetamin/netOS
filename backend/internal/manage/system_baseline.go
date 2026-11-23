@@ -1,6 +1,7 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,9 +25,10 @@ type serviceBaseline struct {
 }
 
 type fileBaseline struct {
-	Exists bool   `json:"exists"`
-	Mode   uint32 `json:"mode,omitempty"`
-	Data   []byte `json:"data,omitempty"`
+	LinkTarget []byte `json:"link_target,omitempty"`
+	Exists     bool   `json:"exists"`
+	Mode       uint32 `json:"mode,omitempty"`
+	Data       []byte `json:"data,omitempty"`
 }
 
 type systemBaseline struct {
@@ -157,6 +159,10 @@ func captureSystemBaseline(ctx context.Context, runner system.Runner, root strin
 	if b.TimesyncdConfig, err = captureFileBaseline(rooted(root, "/etc/systemd/timesyncd.conf.d/90-netos.conf")); err != nil {
 		return fmt.Errorf("снимок конфигурации timesyncd: %w", err)
 	}
+	if len(b.TimesyncdConfig.LinkTarget) != 0 {
+		// Older uninstallers must reject this snapshot before changing the host.
+		b.Version = 2
+	}
 
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
@@ -192,12 +198,19 @@ func commandState(ctx context.Context, runner system.Runner, verb, unit string) 
 }
 
 func captureFileBaseline(path string) (fileBaseline, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return fileBaseline{}, nil
 	}
 	if err != nil {
 		return fileBaseline{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return fileBaseline{}, err
+		}
+		return fileBaseline{Exists: true, LinkTarget: []byte(target)}, nil
 	}
 	if !info.Mode().IsRegular() {
 		return fileBaseline{}, fmt.Errorf("%s не является обычным файлом", path)
@@ -246,7 +259,10 @@ func (m *Manager) readSystemBaseline() (*systemBaseline, error) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil, err
 	}
-	if b.Version != 1 || fields.IPTables4 == nil || b.Sysctl == nil {
+	file := b.TimesyncdConfig
+	validVersion := b.Version == 1 && len(file.LinkTarget) == 0 ||
+		b.Version == 2 && file.Exists && len(file.LinkTarget) > 0 && bytes.IndexByte(file.LinkTarget, 0) < 0 && len(file.Data) == 0
+	if !validVersion || fields.IPTables4 == nil || b.Sysctl == nil {
 		return nil, errors.New("системный baseline неполон или имеет неизвестную версию")
 	}
 	return &b, nil
@@ -380,7 +396,11 @@ func (m *Manager) restoreBaselineHostSettings(ctx context.Context, b *systemBase
 		}
 	}
 	path := m.sys("/etc/systemd/timesyncd.conf.d/90-netos.conf")
-	if b.TimesyncdConfig.Exists {
+	if target := b.TimesyncdConfig.LinkTarget; len(target) > 0 {
+		if err := system.RestoreSymlinkAtomic(path, string(target)); err != nil {
+			return fmt.Errorf("восстановление ссылки timesyncd: %w", err)
+		}
+	} else if b.TimesyncdConfig.Exists {
 		mode := os.FileMode(b.TimesyncdConfig.Mode)
 		if mode == 0 {
 			mode = 0o644

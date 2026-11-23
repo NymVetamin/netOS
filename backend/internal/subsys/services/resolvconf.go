@@ -296,7 +296,7 @@ func RestoreSystemResolverFiles(root string) (bool, error) {
 	path := at(resolvConfPath)
 	switch state.Kind {
 	case "symlink":
-		if err := restoreSymlinkAtomic(path, state.Target); err != nil {
+		if err := system.RestoreSymlinkAtomic(path, state.Target); err != nil {
 			return false, err
 		}
 	case "file":
@@ -314,30 +314,6 @@ func RestoreSystemResolverFiles(root string) (bool, error) {
 		return false, err
 	}
 	return state.ResolvedEnabled, nil
-}
-
-func restoreSymlinkAtomic(path, target string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".netos-resolv-link-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Remove(tmpPath); err != nil {
-		return err
-	}
-	defer os.Remove(tmpPath)
-	if err := os.Symlink(target, tmpPath); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
 }
 
 // recoverSystemResolverWithoutState чинит только legacy-состояние, в котором

@@ -88,6 +88,31 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 	return stdout.String(), nil
 }
 
+// RestoreSymlinkAtomic replaces path with a symlink without following either target.
+func RestoreSymlinkAtomic(path, target string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".netos-resolv-link-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return err
+	}
+	defer os.Remove(tmpPath)
+	if err := os.Symlink(target, tmpPath); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 // WriteFileAtomic пишет файл через временный файл и rename, чтобы демон,
 // читающий конфиг в этот момент, никогда не увидел половину.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
