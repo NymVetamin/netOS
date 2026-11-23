@@ -54,6 +54,15 @@ export function ChannelsPage({ config, patch }: Props) {
   }, []);
   const [liveChannels, setLiveChannels] = useState<any[] | null>(null);
   const [liveError, setLiveError] = useState(false);
+  const liveByID = useMemo(() => {
+    const byID = new Map<any, any>();
+    for (const item of liveChannels || []) {
+      const id = item.id;
+      // Keep the first match, as Array.find did; NaN never matched ===.
+      if (!Number.isNaN(id) && !byID.has(id)) byID.set(id, item);
+    }
+    return byID;
+  }, [liveChannels]);
   useEffect(() => {
     let active = true;
     const unsubscribe = statusPolling.subscribe(5000, false, request => {
@@ -260,7 +269,7 @@ export function ChannelsPage({ config, patch }: Props) {
         {liveError && <Notice tone="warn" title="Не удалось обновить состояние каналов">{liveChannels === null ? "Состояние пока неизвестно." : "Показаны последние полученные данные; они могут быть устаревшими."} Повторная попытка выполняется автоматически.</Notice>}
         </div>
         <NATSettings.Provider value={{config, patch, awgServers}}>
-        <Live.Provider value={liveChannels}>
+        <Live.Provider value={liveByID}>
         <NeedFor.Provider value={needFor}>
         <Rows cols={["Канал", "Тип", "Интерфейс", "Проверка", "Состояние"]}>
         {channels.map((channel: any) => <Fragment key={channel.id}>
@@ -339,7 +348,7 @@ export function ChannelsPage({ config, patch }: Props) {
 const TYPE_NAMES: Record<string, string> = { wireguard: "WireGuard", amneziawg: "AmneziaWG", openconnect: "OpenConnect", xray: "Xray", ikev2: "IKEv2", l2tp: "L2TP" };
 
 // Живое состояние каналов из /api/status: его показывает строка самого канала.
-const Live = createContext<any[] | null>(null);
+const Live = createContext<ReadonlyMap<any, any> | null>(null);
 const NATSettings = createContext<(Props & { awgServers: ReadonlySet<any> }) | null>(null);
 // Компонент, без которого канал не работает (null — всё на месте).
 const NeedFor = createContext<(type: string) => string | null>(() => null);
@@ -348,7 +357,7 @@ function ChannelRow({ channel, installed, referenced, blocked, update, remove, c
   channel: any; installed: boolean; referenced: boolean; blocked?: boolean;
   update: (mutate: (channel: any) => void) => void; remove: () => void; children: ReactNode;
 }) {
-  const live = (useContext(Live) || []).find((item: any) => item.id === channel.id);
+  const live = useContext(Live)?.get(channel.id);
   const settings = useContext(NATSettings);
   const nat = settings ? channelNAT(settings.config, channel) : null;
   const kind = channelKind(channel, settings?.awgServers);

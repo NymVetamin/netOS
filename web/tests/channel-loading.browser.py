@@ -19,6 +19,9 @@ async def scenario(browser, mode):
     page = await browser.new_page()
     gate = asyncio.Event()
     errors, writes = [], []
+    live_entries = [{"id":"vpn","up":True,"interface":"first"},
+                    {"id":"vpn","up":False,"interface":"duplicate"}]
+    status_failed = False
     page.on("pageerror", lambda e: errors.append(str(e)))
     cfg = {"system":{"hostname":"test"},"interfaces":[],"networks":[],"policies":[],
            "components":[{"id":"xray","installed":True}],
@@ -42,6 +45,9 @@ async def scenario(browser, mode):
             await gate.wait()
             body = {"interfaces":[],"channels":[{"id":"vpn","name":"Xray test","interface":"tun-ch1","up":mode!="down","probe_down":mode=="down"}]}
             if mode == "error": status, body = 503,{"error":"unavailable"}
+            if mode == "refresh":
+                body = {"interfaces":[],"channels":live_entries}
+                if status_failed: status, body = 503,{"error":"unavailable"}
         await route.fulfill(status=status,json=body)
     await page.add_init_script(OPEN_ROWS)
     await page.route("**/*",route_request)
@@ -63,6 +69,21 @@ async def scenario(browser, mode):
     else:
         await expect(page.get_by_text("поднят",exact=True)).to_be_visible()
         await expect(page.get_by_text("нужен Xray",exact=True)).to_have_count(0)
+        if mode == "refresh":
+            summary = page.locator(".channel-xray .xsum")
+            await expect(summary.get_by_text("first", exact=True)).to_be_visible()
+            await expect(summary.get_by_text("duplicate", exact=True)).to_have_count(0)
+            live_entries = [{"id":"vpn","up":False,"probe_down":True,"interface":"fresh"}]
+            await expect(summary.get_by_text("fresh", exact=True)).to_be_visible(timeout=12000)
+            await expect(summary.get_by_text("проба не прошла", exact=True)).to_be_visible()
+            status_failed = True
+            await expect(page.get_by_text("Не удалось обновить состояние каналов", exact=True)).to_be_visible(timeout=12000)
+            await expect(summary.get_by_text("fresh", exact=True)).to_be_visible()
+            status_failed = False
+            live_entries = []
+            await expect(summary.get_by_text("включён", exact=True)).to_be_visible(timeout=12000)
+            await expect(page.get_by_text("Не удалось обновить состояние каналов", exact=True)).to_have_count(0)
+            live_entries = [{"id":"vpn","up":True,"interface":"returned"}]
         # Re-enter the page with a fresh, deliberately delayed catalog request.
         await page.goto("http://netos-ui.test/#components")
         await expect(page.get_by_role("heading",name="Компоненты",exact=True)).to_be_visible()
@@ -72,6 +93,8 @@ async def scenario(browser, mode):
         await expect(page.get_by_text("нужен Xray",exact=True)).to_have_count(0)
         gate.set()
         await expect(page.get_by_text("поднят",exact=True)).to_be_visible()
+        if mode == "refresh":
+            await expect(page.locator(".channel-xray .xsum").get_by_text("returned", exact=True)).to_be_visible()
     assert not errors, errors
     assert not writes, writes
     await page.close()
@@ -83,7 +106,7 @@ async def main():
         if not executable and os.name == "nt":
             executable = str(Path(os.environ["ProgramFiles"]) / "Google/Chrome/Application/chrome.exe")
         browser = await p.chromium.launch(headless=True, executable_path=executable)
-        for mode in ("healthy", "down", "missing", "error"):
+        for mode in ("healthy", "down", "missing", "error", "refresh"):
             await scenario(browser, mode)
         await browser.close()
 
