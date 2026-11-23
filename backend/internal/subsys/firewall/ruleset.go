@@ -358,16 +358,27 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	}
 
 	// 3. Содержимое цепочек.
+	type ruleGroup struct{ zone, flow string }
+	grouped := make(map[ruleGroup][]int, len(chains))
+	for _, c := range chains {
+		grouped[ruleGroup{c.zone.Name, c.hook.flow}] = nil
+	}
+	if len(chains) > 0 {
+		for i, r := range cfg.Firewall.Rules {
+			if !r.Enabled {
+				continue
+			}
+			key := ruleGroup{r.Zone, r.Flow}
+			if _, exists := grouped[key]; exists {
+				grouped[key] = append(grouped[key], i)
+			}
+		}
+	}
 	for _, c := range chains {
 		b.line("# --- %s: %s ---", c.chain, describeChain(c.zone, c.hook))
 
-		for _, r := range cfg.Firewall.Rules {
-			if !r.Enabled || r.Zone != c.zone.Name {
-				continue
-			}
-			if r.Flow != c.hook.flow {
-				continue
-			}
+		for _, index := range grouped[ruleGroup{c.zone.Name, c.hook.flow}] {
+			r := cfg.Firewall.Rules[index]
 			// Зона назначения разворачивается в выходные интерфейсы, поэтому
 			// одно правило панели может дать несколько строк в ядре.
 			if c.hook.flow == "forward" && r.DstZone != "" {
