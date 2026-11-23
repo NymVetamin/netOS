@@ -34,3 +34,42 @@ assert.deepEqual(include(natGroups,nat,config),natGroups);
 const jump=data(['-A INPUT -j LAN-FWD']);jump.families[0].tables[0].chains.push({name:'INPUT',rules:[]});
 assert.deepEqual(include(groups,jump,config),groups);
 console.log('includeAutomatic: order, duplicate IDs/references, disabled/draft rows, keys, repeated calls, immutability, IPv6, NAT, zone jumps PASS');
+
+const duplicateGroups = [
+ {key:'first',chain:'LAN-FWD',description:'first',items:[saved('a',0)]},
+ {key:'second',chain:'LAN-FWD',description:'second',items:[saved('b',1)]},
+];
+const dupeResult = include(duplicateGroups,data([line('extra')]),config);
+assert.deepEqual(ids(dupeResult[0].items),['a','extra']);
+assert.deepEqual(ids(dupeResult[1].items),['b']);
+const earlier = {families:[
+ {family:'IPv6',tables:[{name:'filter',chains:[{name:'LAN-FWD',rules:[line('v6')]}]}]},
+ {family:'IPv4',tables:[{name:'filter',chains:[{name:'LAN-FWD',rules:[line('v4')]}]}]},
+]};
+const reused = include([],earlier,config);
+assert.equal(reused.length,1);
+assert.equal(reused[0].key,'auto:IPv6:filter:LAN-FWD');
+assert.deepEqual(ids(reused[0].items),['v6','v4']);
+assert.deepEqual(include([],earlier,config),reused);
+const repeatedTables={families:[{family:'IPv4',tables:[
+ {name:'filter',chains:[{name:'LAN-FWD',rules:[line('one')]},{name:'EMPTY-IN',rules:[]}]},
+ {name:'filter',chains:[{name:'LAN-FWD',rules:[line('two')]}]},
+]}]};
+const repeatedResult=include([],repeatedTables,config);
+assert.equal(repeatedResult.length,1);
+assert.deepEqual(ids(repeatedResult[0].items),['one','two']);
+assert.deepEqual(include([],repeatedTables,config),repeatedResult);
+
+const crypto=require('node:crypto');
+for (const n of [16,512]) {
+ let reads=0;
+ const gs=Array.from({length:n},(_,i)=>({key:`g${i}`,get chain(){reads++;return `Z${i}-FWD`},description:'zone',items:[saved(`r${i}`,i)]}));
+ const chains=Array.from({length:n},(_,i)=>({get name(){reads++;return `Z${i}-FWD`},rules:[`-A Z${i}-FWD -j ACCEPT`,`-A Z${i}-FWD -j Z${n-1}-FWD`]}));
+ const input={families:[{family:'IPv4',tables:[{name:'filter',chains}]}]};
+ const ms=[];let result;
+ for(let repeat=0;repeat<(process.env.FIREWALL_BENCH?7:1);repeat++) {
+  reads=0;const start=performance.now();result=include(gs,input,config);ms.push(+(performance.now()-start).toFixed(3));
+ }
+ console.log(JSON.stringify({n,reads,ms,sha256:crypto.createHash('sha256').update(JSON.stringify(result)).digest('hex')}));
+ if(!process.env.FIREWALL_BENCH)assert.ok(reads<=12*n,`${reads} chain reads for ${n}`);
+}

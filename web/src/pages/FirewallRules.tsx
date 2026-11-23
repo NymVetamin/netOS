@@ -52,15 +52,21 @@ export type RuleGroup = {key:string; chain:string; description:string; items:{r:
 // rows in place, and retain the same group/row keys when the checkbox changes.
 export function includeAutomatic(groups:RuleGroup[], data:any, config:any, scope: "rules" | "nat" = "rules"):RuleGroup[] {
  const result=groups.map(g=>({...g,items:[...g.items]}));
+ const firstGroup=new Map<string,RuleGroup>();
+ for(const group of result) if(!firstGroup.has(group.chain)) firstGroup.set(group.chain,group);
  const ids:Record<string,string[]> = Object.fromEntries(Object.entries(data.rule_ids || {}).map(([line,values])=>[line,[...(values as string[])]]));
- for(const family of data.families || []) for(const table of family.tables || []) for(const chain of table.chains || []) {
-  if(scope === "nat" ? table.name !== "nat" : table.name === "nat" || ["PREROUTING","POSTROUTING"].includes(chain.name)) continue;
+ for(const family of data.families || []) for(const table of family.tables || []) {
+  if(scope === "nat" ? table.name !== "nat" : table.name === "nat") continue;
+  const chainNames=scope === "rules" ? new Set<string>((table.chains || []).map((chain:any)=>chain.name)) : undefined;
+  for(const chain of table.chains || []) {
+  if(scope === "rules" && ["PREROUTING","POSTROUTING"].includes(chain.name)) continue;
   const primary=family.family==='IPv4' && table.name===(scope === "nat" ? "nat" : "filter");
-  let group=primary ? result.find(g=>g.chain===chain.name) : undefined;
+  let group=primary ? firstGroup.get(chain.name) : undefined;
   if(!group) {
    if(!chain.rules.length)continue;
    group={key:`auto:${family.family}:${table.name}:${chain.name}`,chain:chain.name,description:`${chainTitle(chain.name,config)} · ${family.family}${table.name==='filter'?'':` · ${tableNames[table.name] || table.name}`}`,items:[]};
    result.push(group);
+   if(!firstGroup.has(group.chain)) firstGroup.set(group.chain,group);
   }
   const saved = new Map<string,number>();
   group.items.forEach((item,index)=>{if(!item.automatic && !saved.has(item.r.id)) saved.set(item.r.id,index)});
@@ -70,7 +76,7 @@ export function includeAutomatic(groups:RuleGroup[], data:any, config:any, scope
   chain.rules.forEach((line:string,index:number)=>{
    const id=family.family==='IPv4' ? ids[line]?.shift() : undefined;
    const target=describe(line,config).target;
-   if(scope === "rules" && table.chains.some((c:any)=>c.name===target) && /-(IN|FWD|OUT)$/.test(target)) return;
+   if(chainNames?.has(target) && /-(IN|FWD|OUT)$/.test(target)) return;
    const at=id ? saved.get(id) : undefined;
    if(id && at !== undefined) {
     if(!seen.has(id)) {
@@ -90,6 +96,7 @@ export function includeAutomatic(groups:RuleGroup[], data:any, config:any, scope
   });
   for(const automatic of pending) merged.push(automatic);
   group.items=merged;
+  }
  }
  return result.filter(g=>g.items.length);
 }
