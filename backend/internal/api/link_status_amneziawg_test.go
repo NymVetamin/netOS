@@ -38,6 +38,7 @@ func TestLiveLinksWireGuardKindsAndFreshness(t *testing.T) {
 				cfg := &config.Config{VPNServers: []config.VPNServer{{ID: "server", Index: 1, Type: "wireguard", Enabled: true, Config: map[string]any{}}}, Channels: []config.Channel{{ID: "channel", Index: 1, Type: "wireguard", Enabled: true, Config: map[string]any{}}}}
 				name := "wg-ch1"
 				if shared {
+					cfg.VPNServers[0].Peers = []config.VPNPeer{{ID: "peer", Enabled: true, Credentials: map[string]string{"public_key": "peer"}}}
 					cfg.Channels[0].WireGuardPeer = &config.WireGuardPeerChannel{ServerID: "server", ServerIndex: 1, PeerID: "peer"}
 					name = "wg-srv1"
 				}
@@ -103,8 +104,8 @@ func BenchmarkLiveLinksSharedWireGuard(b *testing.B) {
 			stats := make([]runtime.InterfaceStat, 0, n)
 			for i := 1; i <= n; i++ {
 				id := fmt.Sprint(i)
-				cfg.VPNServers = append(cfg.VPNServers, config.VPNServer{ID: id, Index: i, Type: "wireguard", Config: map[string]any{"amneziawg": map[string]any{}}})
-				cfg.Channels = append(cfg.Channels, config.Channel{ID: id, Type: "wireguard", Enabled: true, WireGuardPeer: &config.WireGuardPeerChannel{ServerID: id, ServerIndex: i}})
+				cfg.VPNServers = append(cfg.VPNServers, config.VPNServer{ID: id, Index: i, Type: "wireguard", Enabled: true, Peers: []config.VPNPeer{{ID: "peer", Enabled: true, Credentials: map[string]string{"public_key": "peer"}}}, Config: map[string]any{"amneziawg": map[string]any{}}})
+				cfg.Channels = append(cfg.Channels, config.Channel{ID: id, Type: "wireguard", Enabled: true, WireGuardPeer: &config.WireGuardPeerChannel{ServerID: id, ServerIndex: i, PeerID: "peer"}})
 				stats = append(stats, runtime.InterfaceStat{Name: fmt.Sprintf("wg-srv%d", i), Up: true})
 			}
 			// Accept either tool here to measure both revisions with identical

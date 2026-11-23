@@ -19,7 +19,7 @@ import (
 // Run in a disposable VM: unshare --mount --net env NETOS_AWG_INTEGRATION=1
 // ./api.test -test.run '^TestIntegrationSharedWireGuardStatus$' -test.v
 func TestIntegrationSharedWireGuardStatus(t *testing.T) {
-	if os.Getenv("NETOS_AWG_INTEGRATION") != "1" || os.Geteuid() != 0 {
+	if (os.Getenv("NETOS_AWG_INTEGRATION") != "1" && os.Getenv("NETOS_INTEGRATION") != "1") || os.Geteuid() != 0 {
 		t.Skip("explicit isolated root integration only")
 	}
 	for _, kind := range []string{"net", "mnt"} {
@@ -56,6 +56,9 @@ func TestIntegrationSharedWireGuardStatus(t *testing.T) {
 	remote("ip", "link", "set", "remote", "up")
 	for i, kind := range []string{"wireguard", "amneziawg"} {
 		t.Run(kind, func(t *testing.T) {
+			if kind == "amneziawg" && os.Getenv("NETOS_AWG_INTEGRATION") != "1" {
+				t.Skip("requires explicit AWG integration environment")
+			}
 			tool := "wg"
 			params := ""
 			if kind == "amneziawg" {
@@ -99,6 +102,12 @@ func TestIntegrationSharedWireGuardStatus(t *testing.T) {
 			run("ip", "link", "set", link, "up")
 			remote("ip", "link", "set", peer, "up")
 			cfg := &config.Config{VPNServers: []config.VPNServer{{ID: "server", Index: 1, Type: "wireguard", Enabled: true, Config: map[string]any{}}}, Channels: []config.Channel{{ID: "exit", Type: "wireguard", Enabled: true, WireGuardPeer: &config.WireGuardPeerChannel{ServerID: "server", ServerIndex: 1, PeerID: "peer"}}}}
+			_, idlePub := key()
+			run(tool, "set", link, "peer", idlePub, "allowed-ips", subnet+".3/32")
+			cfg.VPNServers[0].Peers = []config.VPNPeer{
+				{ID: "peer", Enabled: true, Credentials: map[string]string{"public_key": rpub}},
+				{ID: "idle", Enabled: true, Credentials: map[string]string{"public_key": idlePub}},
+			}
 			if kind == "amneziawg" {
 				cfg.VPNServers[0].Config["amneziawg"] = map[string]any{}
 			}
@@ -115,13 +124,18 @@ func TestIntegrationSharedWireGuardStatus(t *testing.T) {
 			run("ping", "-n", "-c", "2", "-W", "5", "-I", link, subnet+".2")
 			check(true)
 			check(true)
+			cfg.Channels[0].WireGuardPeer.PeerID = "idle"
+			check(false) // Another client's real handshake cannot activate this exit.
+			check(false)
+			cfg.Channels[0].WireGuardPeer.PeerID = "peer"
+			check(true)
 			s.ChannelHealth = downProbe(true)
 			check(false)
 			s.ChannelHealth = nil
 			check(true)
 			run("ip", "link", "del", link)
 			check(false) // stale collector snapshot, actual command failure
-			t.Log("native traffic, handshake, repeat, probe failure/recovery and missing link PASS")
+			t.Log("native traffic, selected/foreign peer handshake, repeat, probe failure/recovery and missing link PASS")
 		})
 	}
 }

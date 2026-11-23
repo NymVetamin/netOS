@@ -65,9 +65,25 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 	// Shared peer channels use their server's interface and have no independent
 	// AWG parameters. Build this lookup once per snapshot, not per channel.
 	awgServers := make(map[string]bool)
+	peerKeys := make(map[[2]string]string)
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && ch.Type == "wireguard" && ch.WireGuardPeer != nil {
+			ref := ch.WireGuardPeer
+			peerKeys[[2]string{ref.ServerID, ref.PeerID}] = ""
+		}
+	}
 	for _, server := range cfg.VPNServers {
 		if server.IsAmneziaWG() {
 			awgServers[server.ID] = true
+		}
+		if len(peerKeys) == 0 || !server.Enabled || server.Type != "wireguard" {
+			continue
+		}
+		for _, peer := range server.Peers {
+			key := [2]string{server.ID, peer.ID}
+			if _, wanted := peerKeys[key]; wanted && peer.Enabled {
+				peerKeys[key] = peer.Credentials["public_key"]
+			}
 		}
 	}
 	for _, ch := range cfg.Channels {
@@ -81,7 +97,12 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 			if ch.IsAmneziaWG() || (ch.WireGuardPeer != nil && awgServers[ch.WireGuardPeer.ServerID]) {
 				tool = "awg"
 			}
-			active = s.recentWireGuardHandshake(ctx, tool, name)
+			peerKey := ""
+			if ref := ch.WireGuardPeer; ref != nil {
+				peerKey = peerKeys[[2]string{ref.ServerID, ref.PeerID}]
+				active = peerKey != ""
+			}
+			active = active && s.recentWireGuardHandshake(ctx, tool, name, peerKey)
 		}
 		if active && ch.Type == "ikev2" {
 			active = s.establishedIKEv2Channel(ctx, ch.Index)
@@ -101,7 +122,7 @@ func (s *Server) establishedIKEv2Channel(ctx context.Context, index int) bool {
 	return err == nil && strings.Contains(out, "ESTABLISHED") && strings.Contains(out, "INSTALLED")
 }
 
-func (s *Server) recentWireGuardHandshake(ctx context.Context, tool, name string) bool {
+func (s *Server) recentWireGuardHandshake(ctx context.Context, tool, name, peerKey string) bool {
 	if s.Collector == nil || s.Collector.Runner == nil {
 		return false
 	}
@@ -111,7 +132,7 @@ func (s *Server) recentWireGuardHandshake(ctx context.Context, tool, name string
 	}
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 {
+		if len(fields) != 2 || (peerKey != "" && fields[0] != peerKey) {
 			continue
 		}
 		seconds, err := strconv.ParseInt(fields[1], 10, 64)
