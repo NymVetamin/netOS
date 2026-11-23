@@ -263,7 +263,6 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 			}
 		}
 	}
-	data, _ = json.Marshal(wanted)
 	if _, err = s.write("samba/volumes.json", data, 0600); err != nil {
 		return err
 	}
