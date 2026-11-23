@@ -17,11 +17,33 @@ import (
 )
 
 func TestIntegrationWireGuardServerHandshake(t *testing.T) {
+	testWireGuardServerHandshake(t, false)
+}
+
+func TestIntegrationAmneziaWGServerHandshake(t *testing.T) {
+	if os.Getenv("NETOS_AWG_INTEGRATION") != "1" {
+		t.Skip("NETOS_AWG_INTEGRATION=1 is required")
+	}
+	testWireGuardServerHandshake(t, true)
+}
+
+func testWireGuardServerHandshake(t *testing.T, amnezia bool) {
+	t.Helper()
+	tool, kind := "wg", "wireguard"
+	if amnezia {
+		tool, kind = "awg", "amneziawg"
+	}
 	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		if amnezia {
+			t.Fatal("AWG opt-in requires NETOS_INTEGRATION=1 and root")
+		}
 		t.Skip("NETOS_INTEGRATION=1 and root are required")
 	}
-	for _, bin := range []string{"ip", "wg", "ping", "iptables"} {
+	for _, bin := range []string{"ip", "wg", tool, "ping", "iptables"} {
 		if _, err := exec.LookPath(bin); err != nil {
+			if amnezia {
+				t.Fatalf("AWG prerequisite missing: %s", bin)
+			}
 			t.Skipf("нет %s", bin)
 		}
 	}
@@ -48,12 +70,20 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	root := t.TempDir()
 	s := New(runner, root)
 	cfg := config.Default()
-	cfg.Components = []config.Component{{ID: "wireguard", Installed: true}}
+	cfg.Components = []config.Component{{ID: kind, Installed: true}}
 	cfg.VPNServers = []config.VPNServer{{
 		ID: "integration", Index: serverIndex, Name: "Integration WG server", Enabled: true, Type: "wireguard",
 		Subnet: "10.253.97.1/24", Port: 51997, Config: map[string]any{"private_key": serverPrivate},
 		Peers: []config.VPNPeer{{ID: "client", Name: "Integration client", Enabled: true, Address: "10.253.97.2", Credentials: map[string]string{"public_key": clientPublic}}},
 	}}
+	clientExtra := ""
+	if amnezia {
+		cfg.VPNServers[0].Config["amneziawg"] = map[string]any{
+			"jc": 4, "jmin": 40, "jmax": 70, "s1": 15, "s2": 25,
+			"h1": "100", "h2": "300", "h3": "400", "h4": "500",
+		}
+		clientExtra = "Jc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 25\nH1 = 100\nH2 = 300\nH3 = 400\nH4 = 500\n"
+	}
 	if err := s.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +92,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	}
 
 	clientConf := filepath.Join(root, "client.conf")
-	body := fmt.Sprintf("[Interface]\nPrivateKey = %s\nListenPort = 51998\n\n[Peer]\nPublicKey = %s\nEndpoint = 192.0.2.1:51997\nAllowedIPs = 10.253.97.1/32\nPersistentKeepalive = 1\n", clientPrivate, serverPublic)
+	body := fmt.Sprintf("[Interface]\nPrivateKey = %s\nListenPort = 51998\n%s\n[Peer]\nPublicKey = %s\nEndpoint = 192.0.2.1:51997\nAllowedIPs = 10.253.97.1/32\nPersistentKeepalive = 1\n", clientPrivate, clientExtra, serverPublic)
 	if err := os.WriteFile(clientConf, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -78,14 +108,14 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "set", "lo", "up")
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "addr", "add", "192.0.2.2/30", "dev", clientVeth)
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "set", clientVeth, "up")
-	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "add", "name", clientName, "type", "wireguard")
-	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "wg", "syncconf", clientName, clientConf)
+	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "add", "name", clientName, "type", kind)
+	mustRunVPN(t, runner, "ip", "netns", "exec", netns, tool, "syncconf", clientName, clientConf)
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "addr", "add", "10.253.97.2/32", "dev", clientName)
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "link", "set", "dev", clientName, "up")
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ip", "route", "add", "10.253.97.1/32", "dev", clientName)
 	mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "2", "-W", "2", "10.253.97.1")
 
-	handshake, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+	handshake, err := runner.Run(ctx, tool, "show", serverName, "latest-handshakes")
 	if err != nil || strings.HasSuffix(strings.TrimSpace(handshake), "\t0") || strings.TrimSpace(handshake) == "" {
 		t.Fatalf("нет WireGuard handshake: %q (%v)", handshake, err)
 	}
@@ -93,6 +123,9 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	next.VPNServers = append([]config.VPNServer(nil), cfg.VPNServers...)
 	server := &next.VPNServers[0]
 	server.Config = map[string]any{"private_key": serverPrivate, "public_endpoint": "vpn.example:51997", "client_dns": []string{"192.0.2.53"}, "client_allowed_ips": []string{"198.51.100.0/24"}}
+	if amnezia {
+		server.Config["amneziawg"] = cfg.VPNServers[0].Config["amneziawg"]
+	}
 	server.Peers = append([]config.VPNPeer(nil), server.Peers...)
 	server.Peers[0].WireGuardProfile = &config.WireGuardClientProfile{UseRouterDNS: true, AllowedIPs: []string{"192.0.2.0/24"}}
 	if actions, err := s.Plan(cfg, &next); err != nil || len(actions) != 0 {
@@ -106,7 +139,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "2", "-W", "2", "10.253.97.1")
-		after, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+		after, err := runner.Run(ctx, tool, "show", serverName, "latest-handshakes")
 		if err != nil || after != handshake {
 			t.Fatalf("export edit reset handshake: %v", err)
 		}
@@ -139,7 +172,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "1", "-W", "2", "10.253.97.1")
-		after, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+		after, err := runner.Run(ctx, tool, "show", serverName, "latest-handshakes")
 		if err != nil || after != handshake {
 			t.Fatalf("rename reset handshake: %v", err)
 		}
@@ -153,7 +186,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	stored.VPNServers[0].Peers = append([]config.VPNPeer(nil), next.VPNServers[0].Peers...)
 	_, storedPublic := wgKeypair(t)
 	stored.VPNServers[0].Peers = append(stored.VPNServers[0].Peers, config.VPNPeer{ID: "stored", Name: "Disabled peer", Address: "10.253.97.3", Credentials: map[string]string{"public_key": storedPublic}})
-	livePeers, err := runner.Run(ctx, "wg", "show", serverName, "peers")
+	livePeers, err := runner.Run(ctx, tool, "show", serverName, "peers")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +200,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 		if err := s.Health(ctx, pair[1]); err != nil {
 			t.Fatal(err)
 		}
-		peers, err := runner.Run(ctx, "wg", "show", serverName, "peers")
+		peers, err := runner.Run(ctx, tool, "show", serverName, "peers")
 		if err != nil || peers != livePeers {
 			t.Fatalf("disabled peer changed live peers: %v", err)
 		}
@@ -185,7 +218,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 				t.Fatal(err)
 			}
 			mustRunVPN(t, runner, "ip", "netns", "exec", netns, "ping", "-c", "1", "-W", "2", "10.253.97.1")
-			after, err := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+			after, err := runner.Run(ctx, tool, "show", serverName, "latest-handshakes")
 			if err != nil || after != handshake {
 				t.Fatalf("channel edit reset handshake: %v", err)
 			}
@@ -195,9 +228,9 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 	// existing syncconf, then verify actual traffic and repeated application.
 	for _, drift := range []string{"missing", "extra"} {
 		if drift == "missing" {
-			mustRunVPN(t, runner, "wg", "set", serverName, "peer", clientPublic, "remove")
+			mustRunVPN(t, runner, tool, "set", serverName, "peer", clientPublic, "remove")
 		} else {
-			mustRunVPN(t, runner, "wg", "set", serverName, "peer", storedPublic, "allowed-ips", "10.253.97.3/32")
+			mustRunVPN(t, runner, tool, "set", serverName, "peer", storedPublic, "allowed-ips", "10.253.97.3/32")
 		}
 		if err := s.Health(ctx, &next); err == nil {
 			t.Fatalf("%s live peer drift passed Health", drift)
@@ -218,7 +251,7 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 			if drift == "missing" && repeat == 0 {
 				// The client still has the removed server-side session. WG starts
 				// a fresh handshake after 10+5 seconds without authenticated replies.
-				before, _ := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+				before, _ := runner.Run(ctx, tool, "show", serverName, "latest-handshakes")
 				started := time.Now()
 				probe, cancel := context.WithTimeout(ctx, 30*time.Second)
 				var pingErr error
@@ -236,9 +269,9 @@ func TestIntegrationWireGuardServerHandshake(t *testing.T) {
 					}
 				}
 				cancel()
-				after, _ := runner.Run(ctx, "wg", "show", serverName, "latest-handshakes")
+				after, _ := runner.Run(ctx, tool, "show", serverName, "latest-handshakes")
 				if !recovered {
-					client, _ := runner.Run(ctx, "ip", "netns", "exec", netns, "wg", "show", clientName, "latest-handshakes")
+					client, _ := runner.Run(ctx, "ip", "netns", "exec", netns, tool, "show", clientName, "latest-handshakes")
 					t.Fatalf("peer traffic did not recover in %s: %v %s; server before=%q after=%q client=%q", time.Since(started), pingErr, pingOutput, before, after, client)
 				}
 				t.Logf("removed peer traffic recovered in %s; server handshakes before=%q after=%q", time.Since(started), before, after)

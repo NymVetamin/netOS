@@ -1,0 +1,50 @@
+name: amneziawg-integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  peer-drift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Установить модуль из репозитория проекта
+        run: |
+          # Reuse the exact pinned key and apt source used by netOS.
+          sudo python3 - <<'PY'
+          import ast
+          import pathlib
+          import re
+          source = pathlib.Path('backend/internal/subsys/components/amneziawg.go').read_text()
+          key = re.search(r'const amneziaKey = `([^`]+)`', source).group(1)
+          repo = ast.literal_eval(re.search(r'const amneziaList = ("[^\n]+")', source).group(1))
+          pathlib.Path('/etc/apt/keyrings').mkdir(exist_ok=True)
+          pathlib.Path('/etc/apt/keyrings/netos-amnezia.asc').write_text(key)
+          pathlib.Path('/etc/apt/sources.list.d/netos-amnezia.list').write_text(repo)
+          PY
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "linux-headers-$(uname -r)" amneziawg-dkms amneziawg-tools wireguard-tools iproute2 iptables iputils-ping
+          sudo modprobe amneziawg
+          sudo modinfo amneziawg
+          awg --version
+          # Like integration.yml, allow temporary test configuration paths.
+          for profile in /etc/apparmor.d/wg /etc/apparmor.d/awg; do
+            if [ -f "$profile" ]; then
+              sudo apparmor_parser -r -C "$profile"
+            fi
+          done
+
+      - name: Проверить handshake, drift и восстановление трафика
+        working-directory: backend
+        run: |
+          sudo --preserve-env=PATH env NETOS_INTEGRATION=1 NETOS_AWG_INTEGRATION=1 \
+            "$(command -v go)" test ./internal/subsys/vpnservers -run '^TestIntegration(WireGuard|AmneziaWG)ServerHandshake$' -count=1 -v
