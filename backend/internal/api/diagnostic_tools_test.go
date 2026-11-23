@@ -258,3 +258,24 @@ func BenchmarkDiagnosticTorch(b *testing.B) {
 		})
 	}
 }
+
+func TestDiagnosticDNSQueryNames(t *testing.T) {
+	longLabel := strings.Repeat("a", 63)
+	longName := strings.Repeat(longLabel+".", 3) + strings.Repeat("b", 61)
+	for _, name := range []string{"_dmarc.example.org", "example.org.", "key._domainkey.example.org.", ".", longName, longName + ".", "2001:db8::1"} {
+		cmd, err := buildDiagnosticCommand(diagnosticInput{Kind: "dns", Host: name, QueryType: "TXT"})
+		if err != nil || cmd.name != "dig" || strings.Join(cmd.args, " ") != "+time=2 +tries=1 -q "+name+" -t TXT" {
+			t.Errorf("query %q: %v, %v", name, cmd.args, err)
+		}
+	}
+	for _, name := range []string{"", "example..org", ".example", "example.org..", longLabel+"a.example", longName+"x.", "-name", "@server", "two names"} {
+		if _, err := buildDiagnosticCommand(diagnosticInput{Kind: "dns", Host: name}); err == nil {
+			t.Errorf("accepted invalid name %q", name)
+		}
+	}
+	for _, kind := range []string{"ping", "mtr", "traceroute", "iperf"} {
+		if _, err := buildDiagnosticCommand(diagnosticInput{Kind: kind, Host: "_dmarc.example.org"}); err == nil {
+			t.Errorf("%s accepted DNS-only name", kind)
+		}
+	}
+}

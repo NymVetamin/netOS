@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -58,6 +59,30 @@ func diagnosticHost(host string) bool {
 	return len(host) <= 253 && !strings.Contains(host, "..") && (net.ParseIP(host) != nil || probeHostname.MatchString(host))
 }
 
+var diagnosticDNSLabel = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
+
+func diagnosticDNSName(name string) bool {
+	if name == "." {
+		return true
+	}
+	if len(name) == 0 || len(name) > 254 || name[0] == '-' {
+		return false
+	}
+	if net.ParseIP(name) != nil {
+		return true
+	}
+	name = strings.TrimSuffix(name, ".")
+	if len(name) > 253 {
+		return false
+	}
+	for label := range strings.SplitSeq(name, ".") {
+		if !diagnosticDNSLabel.MatchString(label) {
+			return false
+		}
+	}
+	return true
+}
+
 // Every field becomes one argv element; no shell, filenames or user-supplied flags.
 func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 	c := diagnosticCommand{duration: 30 * time.Second}
@@ -76,7 +101,7 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 			return bad("интерфейс не найден")
 		}
 	}
-	if in.Kind == "ping" || in.Kind == "traceroute" || in.Kind == "mtr" || in.Kind == "dns" || (in.Kind == "iperf" && in.Mode != "server") {
+	if in.Kind == "ping" || in.Kind == "traceroute" || in.Kind == "mtr" || (in.Kind == "iperf" && in.Mode != "server") {
 		if !diagnosticHost(in.Host) {
 			return bad("укажите IP-адрес или имя узла")
 		}
@@ -118,6 +143,9 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 		}
 		c.args = append(c.args, "--", in.Host)
 	case "dns":
+		if !diagnosticDNSName(in.Host) {
+			return bad("укажите IP-адрес или имя DNS-записи")
+		}
 		if in.QueryType == "" {
 			in.QueryType = "A"
 		}
