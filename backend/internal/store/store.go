@@ -247,6 +247,32 @@ func (s *Store) MarkActive(id int64) error {
 	return tx.Commit()
 }
 
+// RollbackActive возвращает прежнюю ревизию, только пока указанная пара
+// остаётся активной и замещённой. Читатели видят обе записи одновременно.
+func (s *Store) RollbackActive(failedID, previousID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE revisions
+		SET state = CASE id WHEN ?1 THEN ?3 ELSE ?4 END,
+		    applied_at = CASE id WHEN ?2 THEN ?5 ELSE applied_at END
+		WHERE (id = ?1 AND state = ?4) OR (id = ?2 AND state = ?6)`,
+		failedID, previousID, StateRolledBack, StateActive, time.Now().Unix(), StateSuperseded)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 2 {
+		return fmt.Errorf("ревизии %d и %d больше не образуют пару для отката", failedID, previousID)
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SetRevisionState(id int64, state string) error {
 	result, err := s.db.Exec(`UPDATE revisions SET state = ? WHERE id = ?`, state, id)
 	if err != nil {

@@ -398,10 +398,7 @@ func (m *Manager) activatePanelRevision(ctx context.Context, targetID, previousI
 		return nil
 	}
 
-	if err := st.SetRevisionState(targetID, store.StateRolledBack); err != nil {
-		return fmt.Errorf("новая панель не запустилась (%v), не удалось пометить ревизию откаченной: %w", activationErr, err)
-	}
-	if err := st.MarkActive(previousID); err != nil {
+	if err := st.RollbackActive(targetID, previousID); err != nil {
 		return fmt.Errorf("новая панель не запустилась (%v), не удалось вернуть ревизию %d: %w", activationErr, previousID, err)
 	}
 	if err := m.restartAndWaitReady(ctx, previousID, panelReadyAttempts(previous.Config)); err != nil {

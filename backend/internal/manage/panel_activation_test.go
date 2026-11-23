@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,6 +106,47 @@ func TestInternalPanelActivationRollsBackWhenTargetNeverBecomesReady(t *testing.
 	rolled, rolledErr := st.Revision(target)
 	if activeErr != nil || active.ID != previous || rolledErr != nil || rolled.State != store.StateRolledBack {
 		t.Fatalf("active=%+v activeErr=%v target=%+v targetErr=%v", active, activeErr, rolled, rolledErr)
+	}
+}
+
+func TestPanelRollbackWriteFailureKeepsActiveRevision(t *testing.T) {
+	m, target, previous := panelActivationFixture(t)
+	db, err := sql.Open("sqlite", m.sys(m.Database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(fmt.Sprintf(`CREATE TRIGGER reject_restore BEFORE UPDATE OF state ON revisions
+		WHEN NEW.id = %d AND NEW.state = 'active' BEGIN SELECT RAISE(ABORT, 'restore failed'); END`, previous))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Run = func(context.Context, command) error { return fmt.Errorf("restart failed") }
+	err = m.activatePanelRevision(context.Background(), target, previous)
+	if err == nil || !strings.Contains(err.Error(), "restore failed") {
+		t.Fatalf("missing database failure: %v", err)
+	}
+	st, err := store.Open(m.sys(m.Database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	active, err := st.ActiveRevision()
+	if err != nil || active.ID != target {
+		t.Fatalf("failed rollback changed active revision: %+v, %v", active, err)
+	}
+	if _, err := db.Exec("DROP TRIGGER reject_restore"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RollbackActive(target, -1); err == nil {
+		t.Fatal("rollback accepted a missing previous revision")
+	}
+	if err := st.RollbackActive(target, previous); err != nil {
+		t.Fatalf("retry after database recovery: %v", err)
+	}
+	active, err = st.ActiveRevision()
+	if err != nil || active.ID != previous {
+		t.Fatalf("retry did not restore previous revision: %+v, %v", active, err)
 	}
 }
 
