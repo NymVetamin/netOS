@@ -3,6 +3,7 @@ package eventlog
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,54 @@ func TestMergeHistoryOrderTiesAndEmpty(t *testing.T) {
 		}
 		if again, _, _ := l.Since(Access, p.Epoch, p.Latest); again.Reset || len(again.Events) != 0 {
 			t.Fatal("import repeats after acknowledgment", again)
+		}
+	}
+}
+
+func TestHistoryKeepsNewestAcrossTopicsAtPageLimit(t *testing.T) {
+	for _, importVPN := range []bool{false, true} {
+		live, history := New(), New()
+		at := time.UnixMilli(1000)
+		for i := 0; i < Size; i++ {
+			live.Add(at, Services, Info, "service", strconv.Itoa(i))
+		}
+		live.Add(at, VPN, Info, "vpn", "latest")
+		before, _, _ := live.Since("all", "", 0)
+		history.Add(at, Services, Info, "history", "older")
+		if importVPN {
+			history.Add(at, VPN, Info, "history", "also older")
+		}
+		live.MergeHistory(history)
+		after, _, _ := live.Since("all", before.Epoch, before.Latest)
+		if !after.Reset || len(after.Events) != Size {
+			t.Fatalf("invalid snapshot: reset=%v count=%d", after.Reset, len(after.Events))
+		}
+		for i, e := range after.Events {
+			if e.Message != before.Events[i].Message {
+				t.Fatalf("importVPN=%v row %d: got %q, want %q", importVPN, i, e.Message, before.Events[i].Message)
+			}
+		}
+	}
+}
+
+func TestHistoryPreservesSourceOrderAcrossRefills(t *testing.T) {
+	live := New()
+	at := time.UnixMilli(1000)
+	live.Add(at, Access, Info, "", "live")
+	for _, label := range []string{"first", "second"} {
+		history := New()
+		history.Add(at, Services, Info, "", label+" service")
+		history.Add(at, VPN, Info, "", label+" vpn")
+		live.MergeHistory(history)
+	}
+	page, _, _ := live.Since("all", "", 0)
+	want := []string{"live", "first vpn", "first service", "second vpn", "second service"}
+	if len(page.Events) != len(want) {
+		t.Fatal(page)
+	}
+	for i, message := range want {
+		if page.Events[i].Message != message {
+			t.Fatalf("row %d: got %q, want %q", i, page.Events[i].Message, message)
 		}
 	}
 }

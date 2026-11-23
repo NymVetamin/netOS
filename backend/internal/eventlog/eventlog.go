@@ -36,6 +36,7 @@ const (
 )
 
 type Event struct {
+	order   int64  // Stable order within a millisecond, independent of cursor resets.
 	Seq     uint64 `json:"seq"`
 	Time    int64  `json:"time"` // Unix milliseconds
 	Topic   string `json:"topic"`
@@ -74,11 +75,12 @@ func (r *ring) newer(after uint64, out []Event) []Event {
 }
 
 type Log struct {
-	epoch   string
-	mu      sync.Mutex
-	seq     uint64
-	rings   map[string]*ring
-	changed chan struct{}
+	oldestOrder int64 // Each history import precedes existing events at equal times.
+	epoch       string
+	mu          sync.Mutex
+	seq         uint64
+	rings       map[string]*ring
+	changed     chan struct{}
 }
 
 func New() *Log {
@@ -101,7 +103,7 @@ func (l *Log) Add(at time.Time, topic, level, source, message string) {
 		return
 	}
 	l.seq++
-	r.add(Event{Seq: l.seq, Time: at.UnixMilli(), Topic: topic, Level: level, Source: source, Message: message})
+	r.add(Event{Seq: l.seq, order: int64(l.seq), Time: at.UnixMilli(), Topic: topic, Level: level, Source: source, Message: message})
 	close(l.changed)
 	l.changed = make(chan struct{})
 }
@@ -124,7 +126,7 @@ func (l *Log) MergeHistory(history *Log) {
 	byTopic := make(map[string][]Event)
 	for _, topic := range Topics {
 		if r := history.rings[topic]; r.count > 0 {
-			byTopic[topic] = r.newer(0, nil)
+			byTopic[topic] = r.newer(0, make([]Event, 0, r.count))
 		}
 	}
 	history.mu.Unlock()
@@ -133,31 +135,43 @@ func (l *Log) MergeHistory(history *Log) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var merged []Event
+	total := 0
+	for topic, events := range byTopic {
+		total += len(events) + l.rings[topic].count
+	}
+	merged := make([]Event, 0, total)
 	for _, topic := range Topics {
 		if len(byTopic[topic]) > 0 {
 			merged = l.rings[topic].newer(0, merged)
 		}
 	}
+	liveCount := len(merged)
 	for _, topic := range Topics {
 		merged = append(merged, byTopic[topic]...)
 	}
-	// These copies get new public sequences below. Use their temporary Seq
-	// as a tie rank so O(H log H) sorting preserves live-before-history ties
-	// and each source's newest-first order without a second ordering pass.
-	for i := range merged {
-		merged[i].Seq = uint64(len(merged) - i)
+	for i := liveCount; i < len(merged); i++ {
+		merged[i].Seq = 0 // Imported copy has no cursor in this log yet.
 	}
 	slices.SortFunc(merged, func(a, b Event) int {
 		if c := cmp.Compare(b.Time, a.Time); c != 0 {
 			return c
 		}
-		return cmp.Compare(b.Seq, a.Seq)
+		if (a.Seq == 0) != (b.Seq == 0) {
+			if a.Seq == 0 {
+				return 1
+			}
+			return -1
+		}
+		return cmp.Compare(b.order, a.order)
 	})
 	counts := make(map[string]int)
 	kept := merged[:0]
 	for _, e := range merged {
 		if counts[e.Topic] < Size {
+			if e.Seq == 0 {
+				l.oldestOrder--
+				e.order = l.oldestOrder
+			}
 			kept = append(kept, e)
 			counts[e.Topic]++
 		}
@@ -215,7 +229,7 @@ func (l *Log) Since(topic, epoch string, after uint64) (Page, <-chan struct{}, b
 			if c := cmp.Compare(b.Time, a.Time); c != 0 {
 				return c
 			}
-			return cmp.Compare(b.Seq, a.Seq)
+			return cmp.Compare(b.order, a.order)
 		})
 	} else if topic == "all" {
 		// New events of every ring are newest-first; the union needs one order.
