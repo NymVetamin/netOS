@@ -8,7 +8,8 @@ const QOS_CLASSES: Record<string, string> = { besteffort: "без приорит
 export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
   const qos = config.qos || { enabled: false, wans: [] };
   const enabledWANs = (config.wans || []).filter((wan: any) => wan.enabled);
-  const allAdded = enabledWANs.length === (qos.wans || []).length;
+  const selectedWANs = new Set((qos.wans || []).map((item: any) => item.wan));
+  const allAdded = enabledWANs.every((wan: any) => selectedWANs.has(wan.id));
   function toggle(enabled: boolean) {
     patch((draft) => {
       draft.qos = draft.qos || { enabled: false, wans: [] };
@@ -70,9 +71,15 @@ export function TrafficPage({ config, patch }: { config: any; patch: Patch }) {
                   <span className="dim">{QOS_CLASSES[item.diffserv || "diffserv4"]}</span>]}
               >
                 <div className="form-grid">
-                  <Cap label="Аплинк"><select aria-label={`Аплинк QoS ${index + 1}`} value={item.wan} onChange={(e) => patch((d) => (d.qos.wans[index].wan = e.target.value))}>
+                  <Cap label="Аплинк"><select aria-label={`Аплинк QoS ${index + 1}`} value={item.wan} onChange={(e) => {
+                    const wan = e.target.value;
+                    patch((d) => {
+                      if (wan && d.qos.wans.some((other: any, i: number) => i !== index && other.wan === wan)) return;
+                      d.qos.wans[index].wan = wan;
+                    });
+                  }}>
                         <option value="">— выберите —</option>
-                        {enabledWANs.map((wan: any) => <option key={wan.id} value={wan.id}>{wan.name || wan.id}</option>)}
+                        {enabledWANs.map((wan: any) => <option key={wan.id} value={wan.id} disabled={wan.id !== item.wan && selectedWANs.has(wan.id)}>{wan.name || wan.id}</option>)}
                       </select></Cap>
                   <Cap label="Отдача, Кбит/с"><input aria-label={`Отдача QoS ${index + 1}, Кбит/с`} type="number" min={64} max={10000000} value={item.upload_kbit || 0} onChange={(e) => patch((d) => (d.qos.wans[index].upload_kbit = Number(e.target.value)))} /></Cap>
                   <Cap label="Загрузка, Кбит/с"><input aria-label={`Загрузка QoS ${index + 1}, Кбит/с`} type="number" min={64} max={10000000} value={item.download_kbit || 0} onChange={(e) => patch((d) => (d.qos.wans[index].download_kbit = Number(e.target.value)))} /></Cap>
