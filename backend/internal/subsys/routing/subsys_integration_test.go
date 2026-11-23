@@ -5,9 +5,11 @@ package routing
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,6 +18,52 @@ import (
 )
 
 const routingTestNS = "netos-rttest"
+
+func TestIntegrationStaticRouteMetricBounds(t *testing.T) {
+	if os.Getenv("NETOS_INTEGRATION") != "1" || os.Geteuid() != 0 || strconv.IntSize != 64 {
+		t.Skip("NETOS_INTEGRATION=1, root and 64-bit integers required")
+	}
+	mustRoutingHost(t, "ip", "netns", "add", routingTestNS)
+	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", routingTestNS).Run() })
+	runner := &routingCountingRunner{}
+	s := New(runner)
+	for _, tc := range []struct{ family, destination string }{{"-4", "198.51.100.0/24"}, {"-6", "2001:db8:fee::/48"}} {
+		t.Run(tc.family, func(t *testing.T) {
+			cfg := config.Default()
+			maximum := int64(math.MaxUint32)
+			cfg.Routing.Static = []config.StaticRoute{{ID: "metric-bound", Enabled: true, Destination: tc.destination, Type: "blackhole", Metric: int(maximum + 1)}}
+			for range 2 {
+				if !cfg.Validate().HasErrors() {
+					t.Fatal("overflow passed validation")
+				}
+				if out, err := runner.Run(context.Background(), "ip", tc.family, "route", "add", "blackhole", tc.destination, "metric", strconv.FormatInt(maximum+1, 10)); err == nil {
+					t.Fatalf("iproute2 accepted overflow: %s", out)
+				}
+			}
+			cfg.Routing.Static[0].Metric = int(maximum)
+			if v := cfg.Validate(); v.HasErrors() {
+				t.Fatalf("maximum rejected: %+v", v.Problems)
+			}
+			for repeat := 0; repeat < 2; repeat++ {
+				before := runner.routeMutations
+				if err := s.applyRoutes(context.Background(), cfg); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Health(context.Background(), cfg); err != nil {
+					t.Fatal(err)
+				}
+				if repeat > 0 && before != runner.routeMutations {
+					t.Fatal("repeat rewrote maximum-metric route")
+				}
+				out := mustRoutingNS(t, "ip", tc.family, "route", "show", "table", "all", "proto", "static")
+				if !strings.Contains(out, tc.destination) || !strings.Contains(out, "metric 4294967295") {
+					t.Fatalf("kernel route: %s", out)
+				}
+			}
+			t.Log("overflow rejected; maximum applied, healthy and repeated without rewriting")
+		})
+	}
+}
 
 type routingNamespaceRunner struct{}
 
