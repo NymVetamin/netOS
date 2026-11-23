@@ -212,11 +212,22 @@ rollback_and_cleanup() {
         if [ "$keep_live_baseline" = "0" ]; then
             restore_path "$BASELINE_DIR" baseline-dir
         fi
-        systemctl daemon-reload >/dev/null 2>&1
+        if ! systemctl daemon-reload >/dev/null 2>&1; then
+            restore_failed=1
+            warn "не удалось перечитать юниты systemd при восстановлении"
+        fi
         if [ "$PREVIOUS_ENABLED" = "1" ]; then
-            systemctl enable netosd >/dev/null 2>&1
+            if ! systemctl enable netosd >/dev/null 2>&1; then
+                restore_failed=1
+                warn "не удалось вернуть автозапуск netosd"
+            fi
         else
-            systemctl disable netosd >/dev/null 2>&1
+            if ! systemctl disable netosd >/dev/null 2>&1; then
+                case "$(systemctl show netosd --property=LoadState --value)" in
+                    not-found) ;; # No unit after rollback of a fresh install.
+                    *) restore_failed=1; warn "не удалось отключить автозапуск netosd" ;;
+                esac
+            fi
         fi
         rm -f /run/netosd.ready
     fi

@@ -45,7 +45,7 @@ done
 touch "$root/bin" # A file in place of the parent directory makes copying fail.
 rollback() (
     set +e
-    false
+    (exit "${1:-1}")
     rollback_and_cleanup
 )
 if rollback > "$root/first.log" 2>&1; then exit 1; fi
@@ -87,6 +87,46 @@ cmp "$CONF_DIR" "$INSTALL_TXN/conf-dir"
 [[ $(cat "$INSTALL_TXN/binary") == previous ]]
 rm "$root/bin"
 mkdir "$root/bin"
+(
+    original_snapshot=$INSTALL_TXN
+    for failure in daemon-reload enable disable; do
+        for PREVIOUS_ACTIVE in 0 1; do
+            INSTALL_TXN="$root/systemd-$failure-$PREVIOUS_ACTIVE"
+            cp -a -- "$original_snapshot" "$INSTALL_TXN"
+            PREVIOUS_ENABLED=0
+            [[ $failure != enable ]] || PREVIOUS_ENABLED=1
+            systemctl() {
+                [[ $1 != show ]] || { echo loaded; return 0; }
+                [[ $1 != "$failure" ]]
+            }
+            wait_netosd_ready() { return 0; }
+            if rollback 17 > "$root/systemd.log" 2>&1; then exit 1; else [[ $? == 17 ]]; fi
+            [[ -d "$INSTALL_TXN" ]] || { echo "$failure: lost rollback snapshot" >&2; exit 1; }
+            cmp "$BIN_PATH" "$INSTALL_TXN/binary"
+            grep -F "$INSTALL_TXN" "$root/systemd.log" >/dev/null
+            systemctl() { :; }
+            if rollback > "$root/systemd-retry.log" 2>&1; then exit 1; fi
+            [[ ! -e "$INSTALL_TXN" ]]
+        done
+    done
+    PREVIOUS_ENABLED=0 PREVIOUS_ACTIVE=0
+    for load_state in not-found loaded ''; do
+        INSTALL_TXN="$root/systemd-missing-${load_state:-empty}"
+        cp -a -- "$original_snapshot" "$INSTALL_TXN"
+        systemctl() {
+            case "$1" in
+                disable) return 1 ;;
+                show) printf '%s\n' "$load_state"; return 1 ;;
+            esac
+        }
+        if rollback > "$root/missing.log" 2>&1; then exit 1; fi
+        if [[ $load_state == not-found ]]; then
+            [[ ! -e "$INSTALL_TXN" ]]
+        else
+            [[ -d "$INSTALL_TXN" ]]
+        fi
+    done
+)
 (
     cp -a -- "$INSTALL_TXN" "$root/active-snapshot"
     INSTALL_TXN="$root/active-snapshot"
