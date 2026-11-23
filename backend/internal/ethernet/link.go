@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/netos-router/netos/internal/system"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -139,7 +140,24 @@ func set(ctx context.Context, run Run, name string, current, want Settings) erro
 
 // Apply preserves the exact original negotiation settings before any mutation.
 // Passing no modes restores all owned ports (rollback or uninstall).
-func Apply(ctx context.Context, run Run, path string, modes map[string]string) (result error) {
+func Apply(ctx context.Context, run Run, path string, modes map[string]string) error {
+	return apply(ctx, run, path, modes, "/sys/class/net")
+}
+
+func missingPort(classNet, name string) bool {
+	if name == "." || !filepath.IsLocal(name) || filepath.Base(name) != name {
+		return false
+	}
+	root, err := os.OpenRoot(classNet)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	_, err = root.Lstat(name)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func apply(ctx context.Context, run Run, path string, modes map[string]string, classNet string) (result error) {
 	baseline := map[string]Settings{}
 	raw, err := os.ReadFile(path)
 	if err == nil {
@@ -205,11 +223,17 @@ func Apply(ctx context.Context, run Run, path string, modes map[string]string) (
 		}
 	}
 	for name, original := range baseline {
-		if modes[name] != "" {
+		mode, configured := modes[name]
+		if mode != "" {
 			continue
 		}
 		cur, err := Read(ctx, run, name)
 		if err != nil {
+			if !configured && ctx.Err() == nil && missingPort(classNet, name) {
+				delete(baseline, name)
+				dirty = true
+				continue
+			}
 			return err
 		}
 		changed := !same(cur, original)

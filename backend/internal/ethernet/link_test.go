@@ -220,7 +220,13 @@ func TestBatchUnchangedPortsPersistsPartialProgress(t *testing.T) {
 	}
 	check([]string{"eth0", "eth1", "eth2"})
 	visited, failAt = nil, 2
-	if err := Apply(ctx, run, path, nil); !errors.Is(err, readFailure) {
+	classNet := t.TempDir()
+	for name := range modes {
+		if err := os.Mkdir(filepath.Join(classNet, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := apply(ctx, run, path, nil, classNet); !errors.Is(err, readFailure) {
 		t.Fatal(err)
 	}
 	delete(modes, visited[0])
@@ -234,4 +240,48 @@ func TestBatchUnchangedPortsPersistsPartialProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(nil)
+}
+
+func TestRestoreMissingPortRequiresConfirmedRemoval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ports.json")
+	classNet := t.TempDir()
+	const saved = `{"eth9":{}}`
+	if err := os.WriteFile(path, []byte(saved), 0600); err != nil {
+		t.Fatal(err)
+	}
+	readFailure := errors.New("ethtool failed")
+	calls := 0
+	run := func(context.Context, string, ...string) (string, error) {
+		calls++
+		return "", readFailure
+	}
+	ctx := context.Background()
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	for _, tc := range []struct {
+		ctx   context.Context
+		modes map[string]string
+		root  string
+	}{
+		{ctx, nil, filepath.Join(classNet, "unavailable")},
+		{ctx, map[string]string{"eth9": ""}, classNet},
+		{ctx, map[string]string{"eth9": "auto"}, classNet},
+		{canceled, nil, classNet},
+	} {
+		if err := apply(tc.ctx, run, path, tc.modes, tc.root); !errors.Is(err, readFailure) {
+			t.Fatalf("lost driver error: %v", err)
+		}
+		if raw, err := os.ReadFile(path); err != nil || string(raw) != saved {
+			t.Fatalf("lost recovery data: %s, %v", raw, err)
+		}
+	}
+	calls = 0
+	for i := 0; i < 2; i++ {
+		if err := apply(ctx, run, path, nil, classNet); err != nil {
+			t.Fatal(err)
+		}
+		if raw, err := os.ReadFile(path); err != nil || string(raw) != "{}" || calls != 1 {
+			t.Fatalf("journal %s, calls %d, error %v", raw, calls, err)
+		}
+	}
 }
