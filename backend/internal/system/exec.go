@@ -148,7 +148,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 // and permissions already match. A symlink or another non-regular target is
 // always replaced atomically rather than followed.
 func WriteFileAtomicIfChanged(path string, data []byte, perm os.FileMode) (bool, error) {
-	if atomicFileMatches(path, data, perm) {
+	if AtomicFileMatches(path, data, perm) {
 		return false, nil
 	}
 	if err := WriteFileAtomic(path, data, perm); err != nil {
@@ -157,7 +157,8 @@ func WriteFileAtomicIfChanged(path string, data []byte, perm os.FileMode) (bool,
 	return true, nil
 }
 
-func atomicFileMatches(path string, data []byte, perm os.FileMode) bool {
+// AtomicFileMatches checks the content and mode without following symlinks.
+func AtomicFileMatches(path string, data []byte, perm os.FileMode) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) {
 		return false

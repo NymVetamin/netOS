@@ -599,6 +599,100 @@ func TestPPPoEFakeServiceLifecycleIsIdempotentAndCleans(t *testing.T) {
 	}
 }
 
+func TestPPPoERetryAfterPartialWriteAndRestartFailure(t *testing.T) {
+	oldUnits, oldConfs := systemdUnitDir, pppoeConfDir
+	root := t.TempDir()
+	systemdUnitDir, pppoeConfDir = filepath.Join(root, "units"), root
+	t.Cleanup(func() { systemdUnitDir, pppoeConfDir = oldUnits, oldConfs })
+	ctx := context.Background()
+	w := config.WAN{ID: "retry", Name: "uplink"}
+	if err := os.WriteFile(systemdUnitDir, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reloads, restarts := 0, 0
+	failure := errors.New("restart failed")
+	runner := netifaceRunnerFunc(func(_ context.Context, name string, args ...string) (string, error) {
+		switch args[0] {
+		case "daemon-reload":
+			reloads++
+		case "is-enabled":
+			return "enabled", nil
+		case "is-active":
+			return "active", nil
+		case "restart":
+			restarts++
+			if restarts == 1 {
+				return "", failure
+			}
+		default:
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		return "", nil
+	})
+	apply := func() error { return NewWAN(runner).ensurePPPoE(ctx, w, "eth-test") }
+	if err := apply(); err == nil || reloads != 0 || restarts != 0 {
+		t.Fatalf("unit write failure: %v, reloads=%d restarts=%d", err, reloads, restarts)
+	}
+	if err := os.Remove(systemdUnitDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(); !errors.Is(err, failure) {
+		t.Fatalf("restart failure: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := apply(); err != nil || restarts != 2 || reloads != 2 {
+			t.Fatalf("retry: %v, reloads=%d restarts=%d", err, reloads, restarts)
+		}
+	}
+}
+
+func TestPPPoECleanupOrphanedPendingFile(t *testing.T) {
+	oldUnits, oldConfs := systemdUnitDir, pppoeConfDir
+	systemdUnitDir, pppoeConfDir = t.TempDir(), t.TempDir()
+	t.Cleanup(func() { systemdUnitDir, pppoeConfDir = oldUnits, oldConfs })
+	orphan := pppoeConfPath("removed") + ".pending"
+	keep := pppoeConfPath("keep") + ".pending"
+	other := pppoeConfPath("removed") + ".backup"
+	for _, path := range []string{keep, other} {
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(orphan, 0700); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(orphan, "occupied")
+	if err := os.WriteFile(child, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := func() error {
+		return NewWAN(&netifaceServiceRunner{}).cleanupPPPoE(context.Background(), map[string]bool{"keep": true})
+	}
+	if err := cleanup(); err == nil {
+		t.Fatal("orphan removal failure ignored")
+	}
+	if err := os.Remove(child); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(orphan); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphan, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan retained: %v", err)
+	}
+	for _, path := range []string{keep, other} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestL2TPFakeServiceLifecycleIsIdempotentAndCleans(t *testing.T) {
 	root := t.TempDir()
 	oldUnits, oldConfs := systemdUnitDir, pppoeConfDir

@@ -123,20 +123,39 @@ WantedBy=multi-user.target
 func (s *WAN) ensurePPPoE(ctx context.Context, w config.WAN, iface string) error {
 	confPath := pppoeConfPath(w.ID)
 	conf := []byte(renderPPPoEConf(w, iface))
-	// 0600: в файле пароль от провайдера.
-	confChanged, err := system.WriteFileAtomicIfChanged(confPath, conf, 0o600)
-	if err != nil {
-		return fmt.Errorf("запись конфигурации PPPoE: %w", err)
-	}
-
 	unitName := pppoeUnitName(w.ID)
 	unitPath := filepath.Join(systemdUnitDir, unitName)
 	unit := []byte(pppoeUnit(w, iface, confPath))
-	unitChanged, err := system.WriteFileAtomicIfChanged(unitPath, unit, 0o644)
-	if err != nil {
-		return fmt.Errorf("запись юнита PPPoE: %w", err)
+	confChanged := !system.AtomicFileMatches(confPath, conf, 0600)
+	unitChanged := !system.AtomicFileMatches(unitPath, unit, 0644)
+	// Файлы могут совпадать уже после неудачного reload или restart.
+	// Маркер переживает перезапуск netosd и не содержит параметров провайдера.
+	pendingPath := confPath + ".pending"
+	info, err := os.Lstat(pendingPath)
+	pending := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if pending && !info.Mode().IsRegular() {
+		return fmt.Errorf("маркер применения PPPoE %s не является обычным файлом", pendingPath)
+	}
+	needsRestart := pending || confChanged || unitChanged
+	if needsRestart && !pending {
+		if err := system.WriteFileAtomic(pendingPath, nil, 0600); err != nil {
+			return fmt.Errorf("подготовка применения PPPoE: %w", err)
+		}
+	}
+	if confChanged {
+		if err := system.WriteFileAtomic(confPath, conf, 0600); err != nil {
+			return fmt.Errorf("запись конфигурации PPPoE: %w", err)
+		}
 	}
 	if unitChanged {
+		if err := system.WriteFileAtomic(unitPath, unit, 0644); err != nil {
+			return fmt.Errorf("запись юнита PPPoE: %w", err)
+		}
+	}
+	if unitChanged || pending {
 		if _, err := s.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
@@ -150,11 +169,14 @@ func (s *WAN) ensurePPPoE(ctx context.Context, w config.WAN, iface string) error
 	// Рвать установленную сессию без причины нельзя: переподключение к
 	// провайдеру занимает секунды и меняет внешний адрес. Перезапускаем только
 	// когда изменились параметры или клиент не работает.
-	if !unitChanged && !confChanged && s.unitActive(ctx, unitName) {
+	if !needsRestart && s.unitActive(ctx, unitName) {
 		return nil
 	}
 	if _, err := s.Runner.Run(ctx, "systemctl", "restart", unitName); err != nil {
 		return fmt.Errorf("запуск PPPoE на %s: %w", iface, err)
+	}
+	if needsRestart {
+		return os.Remove(pendingPath)
 	}
 	return nil
 }
@@ -214,13 +236,16 @@ func (s *WAN) cleanupPPPoE(ctx context.Context, wanted map[string]bool) error {
 		}
 		changed = true
 	}
-	confs, err := filepath.Glob(filepath.Join(pppoeConfDir, "pppoe-*.conf"))
+	confs, err := filepath.Glob(filepath.Join(pppoeConfDir, "pppoe-*.conf*"))
 	if err != nil {
 		return err
 	}
 	for _, confPath := range confs {
 		base := filepath.Base(confPath)
-		id := strings.TrimSuffix(strings.TrimPrefix(base, "pppoe-"), ".conf")
+		id, owned := strings.CutSuffix(strings.TrimSuffix(strings.TrimPrefix(base, "pppoe-"), ".pending"), ".conf")
+		if !owned {
+			continue
+		}
 		if wanted[id] {
 			continue
 		}

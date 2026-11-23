@@ -52,6 +52,41 @@ func TestIntegrationManagedPPPoELifecycle(t *testing.T) {
 	if got := managedUnitPID(t, pppoeUnitName(w.ID)); got != pid {
 		t.Fatalf("idempotent PPPoE Apply restarted the live session: %s -> %s", pid, got)
 	}
+	cfg.WANs[0].Name += " updated"
+	injected := fmt.Errorf("injected daemon-reload failure")
+	s.Runner = netifaceRunnerFunc(func(ctx context.Context, name string, args ...string) (string, error) {
+		if name == "systemctl" && len(args) == 1 && args[0] == "daemon-reload" {
+			return "", injected
+		}
+		return runner.Run(ctx, name, args...)
+	})
+	if err := s.Apply(ctx, cfg); err == nil || !strings.Contains(err.Error(), injected.Error()) {
+		t.Fatalf("reload failure: %v", err)
+	}
+	if got := managedUnitPID(t, pppoeUnitName(w.ID)); got != pid {
+		t.Fatalf("failed reload interrupted PPPoE: %s -> %s", pid, got)
+	}
+	// Another service may reload systemd while the old pppd still runs.
+	if _, err := runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+		t.Fatal(err)
+	}
+	s.Runner = runner
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Health(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	restarted := managedUnitPID(t, pppoeUnitName(w.ID))
+	if restarted == pid {
+		t.Fatal("retry kept the old PPPoE process")
+	}
+	if err := s.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if managedUnitPID(t, pppoeUnitName(w.ID)) != restarted {
+		t.Fatal("completed retry restarted PPPoE twice")
+	}
 	if err := s.Apply(ctx, emptyWANConfig()); err != nil {
 		t.Fatal(err)
 	}
