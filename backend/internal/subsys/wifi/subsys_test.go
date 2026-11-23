@@ -170,3 +170,39 @@ func TestRegulatoryReloadPrecedesAPRestart(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRejectsHostapdDeviceCollision(t *testing.T) {
+	cfg := wifiConfig()
+	second := cfg.WiFi[0]
+	second.ID, second.Device = "radio1", "wlan0-n1"
+	second.SSIDs = second.SSIDs[:1]
+	cfg.WiFi = append(cfg.WiFi, second)
+	text, err := RenderHostapd(cfg)
+	if err != nil || !strings.Contains(text, "\nbss=wlan0-n1\n") || !strings.Contains(text, "\ninterface=wlan0-n1\n") {
+		t.Fatalf("expected overlapping hostapd interfaces, error %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if !cfg.Validate().HasErrors() {
+			t.Fatal("accepted interface=wlan0-n1 alongside bss=wlan0-n1")
+		}
+		cfg.WiFi[0], cfg.WiFi[1] = cfg.WiFi[1], cfg.WiFi[0]
+	}
+	cfg.WiFi[1].Enabled = false
+	if !cfg.Validate().HasErrors() {
+		t.Fatal("disabled physical device name reused as a BSS")
+	}
+	cfg.WiFi[0].SSIDs[1].Enabled = false
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("inactive BSS still reserves its name: %v", result.Problems)
+	}
+	cfg.WiFi[0].SSIDs[1].Enabled = true
+	cfg.WiFi[0].Enabled = false
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("disabled radio still generates a BSS: %v", result.Problems)
+	}
+	cfg.WiFi[0].Enabled, cfg.WiFi[1].Enabled = true, true
+	cfg.WiFi[1].Device = "wlan1"
+	if result := cfg.Validate(); result.HasErrors() {
+		t.Fatalf("rename did not resolve collision: %v", result.Problems)
+	}
+}

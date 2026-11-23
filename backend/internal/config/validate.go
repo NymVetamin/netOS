@@ -3407,7 +3407,12 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 		bridgeNetworks[network.ID] = bridgeInterfaces[network.Interface]
 	}
 	radioIDs := map[string]bool{}
-	devices := map[string]bool{}
+	devices := make(map[string]int, len(c.WiFi))
+	for i, radio := range c.WiFi {
+		if _, seen := devices[radio.Device]; !seen {
+			devices[radio.Device] = i
+		}
+	}
 	for i, radio := range c.WiFi {
 		path := fmt.Sprintf("wifi[%d]", i)
 		if radio.ID == "" || radioIDs[radio.ID] {
@@ -3418,10 +3423,9 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 			r.errf(path+".device", "не выбрано радиоустройство")
 		} else if len(radio.Device) > 15 || strings.ContainsAny(radio.Device, " /\\\r\n\t") {
 			r.errf(path+".device", "некорректное имя радиоустройства")
-		} else if devices[radio.Device] {
+		} else if devices[radio.Device] != i {
 			r.errf(path+".device", "радиоустройство уже используется")
 		}
-		devices[radio.Device] = true
 		switch radio.Band {
 		case "2.4":
 			// The renderer always enables 802.11n, while channel 14 is an
@@ -3471,9 +3475,16 @@ func (c *Config) validateWiFi(r *ValidationResult) {
 				enabledSSIDs++
 			}
 		}
+		if radio.Enabled && len(devices) > 1 {
+			for bss := 1; bss < enabledSSIDs; bss++ {
+				name := radio.Device + "-n" + strconv.Itoa(bss)
+				if owner, exists := devices[name]; exists {
+					r.errf(path+".device", "имя дополнительного интерфейса %q занято радио %q", name, c.WiFi[owner].ID)
+				}
+			}
+		}
 		if enabledSSIDs > 1 {
-			lastBSS := fmt.Sprintf("%s-n%d", radio.Device, enabledSSIDs-1)
-			if len(lastBSS) > 15 {
+			if len(radio.Device)+len("-n")+len(strconv.Itoa(enabledSSIDs-1)) > 15 {
 				r.errf(path+".device", "имя устройства слишком длинное для %d Wi-Fi-сетей", enabledSSIDs)
 			}
 		}
