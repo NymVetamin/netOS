@@ -1851,12 +1851,22 @@ func localClientInterfaces(cfg *config.Config) map[string]bool {
 	if cfg == nil {
 		return out
 	}
+	wanted := map[string]bool{}
 	for _, network := range cfg.Networks {
-		if !network.Enabled {
-			continue
+		if network.Enabled {
+			wanted[network.Interface] = true
 		}
-		if name := cfg.InterfaceName(network.Interface); name != "" {
-			out[name] = true
+	}
+	for _, iface := range cfg.Interfaces {
+		if len(wanted) == 0 {
+			break
+		}
+		if wanted[iface.ID] {
+			// InterfaceName uses the first match, even if its name is empty.
+			delete(wanted, iface.ID)
+			if iface.Name != "" {
+				out[iface.Name] = true
+			}
 		}
 	}
 	return out
