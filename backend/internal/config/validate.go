@@ -1940,6 +1940,8 @@ func (c *Config) validateDNS(r *ValidationResult) {
 	channelOwner := map[string]string{}
 	secure := 0
 	enabledUpstreams := 0
+	warnMissingRoot := c.DNS.Enabled && (c.DNS.Provider == "dnsmasq" || c.DNS.Provider == "dnsproxy")
+	rootUpstreams := map[string]bool{}
 	upstreamIDs := map[string]bool{}
 	unboundHasPlain := false
 	unboundHasDoT := false
@@ -1948,6 +1950,9 @@ func (c *Config) validateDNS(r *ValidationResult) {
 		path := fmt.Sprintf("dns.upstreams[%d]", i)
 		if u.Enabled {
 			enabledUpstreams++
+			if warnMissingRoot {
+				rootUpstreams[u.ID] = true
+			}
 		}
 		if c.DNS.Enabled && u.Enabled && c.DNS.Provider == "dnsmasq" && u.Type == "plain" {
 			host, _, _ := strings.Cut(u.Address, "#")
@@ -2063,6 +2068,10 @@ func (c *Config) validateDNS(r *ValidationResult) {
 
 	splitIDs := map[string]bool{}
 	for i, rule := range c.DNS.SplitRules {
+		// Match the renderer: an enabled split with domains owns this upstream.
+		if rule.Enabled && rule.Upstream != "" && len(rule.Domains) > 0 {
+			delete(rootUpstreams, rule.Upstream)
+		}
 		path := fmt.Sprintf("dns.split_rules[%d]", i)
 		if rule.ID == "" || splitIDs[rule.ID] {
 			r.errf(path+".id", "пустой или повторяющийся идентификатор правила")
@@ -2107,6 +2116,9 @@ func (c *Config) validateDNS(r *ValidationResult) {
 				}
 			}
 		}
+	}
+	if warnMissingRoot && enabledUpstreams > 0 && len(rootUpstreams) == 0 {
+		r.warnf("dns.upstreams", "все включённые DNS-серверы выделены правилам split-DNS: остальные внешние имена не будут разрешаться; добавьте отдельный сервер для остальных доменов")
 	}
 	blocklistURLs := map[string]int{}
 	for i, blocklist := range c.DNS.Blocklists {
