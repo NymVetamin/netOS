@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,5 +55,29 @@ func TestClientsExcludeWANNeighbors(t *testing.T) {
 	}
 	if reachable := byMAC["aa:bb:cc:dd:ee:02"]; !reachable.Online || reachable.Source != "arp" {
 		t.Fatalf("подтверждённый сосед не показан в сети: %+v", reachable)
+	}
+}
+
+func TestClientsKeepInterfaceOfSelectedARPAddress(t *testing.T) {
+	leases := filepath.Join(t.TempDir(), "dnsmasq.leases")
+	if err := os.WriteFile(leases, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &clientsRunner{}
+	c := NewCollector(runner, leases)
+	for _, tc := range []struct {
+		first, second, ip, iface string
+		online                   bool
+	}{
+		{"REACHABLE", "STALE", "10.1.0.7", "lan1", true},
+		{"STALE", "REACHABLE", "10.2.0.8", "lan2", true},
+		{"DELAY", "PROBE", "10.1.0.7", "lan1", true},
+		{"STALE", "STALE", "10.1.0.7", "lan1", false},
+	} {
+		runner.neighbors = fmt.Sprintf("10.1.0.7 dev lan1 lladdr aa:bb:cc:dd:ee:01 %s\n10.2.0.8 dev lan2 lladdr aa:bb:cc:dd:ee:01 %s\n", tc.first, tc.second)
+		got, err := c.Clients(context.Background(), map[string]bool{"lan1": true, "lan2": true})
+		if err != nil || len(got) != 1 || got[0].IP != tc.ip || got[0].Interface != tc.iface || got[0].Online != tc.online || got[0].Source != "arp" {
+			t.Errorf("%s/%s: got %+v, err=%v", tc.first, tc.second, got, err)
+		}
 	}
 }

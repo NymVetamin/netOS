@@ -419,7 +419,6 @@ func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool
 		// никто. Подтверждённым считаем только то, что ядро проверило.
 		reachable := a.State == "REACHABLE" || a.State == "DELAY" || a.State == "PROBE"
 		if cl, ok := byMAC[a.MAC]; ok {
-			cl.Interface = a.Interface
 			// Вторая запись ARP для того же MAC — это ещё один адрес того же
 			// устройства, а не аренда: источником «DHCP и ARP» она делать
 			// запись не должна. И актуальным считаем адрес подтверждённый, а
@@ -429,6 +428,9 @@ func (c *Collector) Clients(ctx context.Context, localInterfaces map[string]bool
 			}
 			if cl.IP == "" || (cl.Source == "arp" && reachable && !cl.Online) {
 				cl.IP = a.IP
+				cl.Interface = a.Interface
+			} else if cl.Source == "both" {
+				cl.Interface = a.Interface
 			}
 			cl.Online = cl.Online || reachable
 			continue
