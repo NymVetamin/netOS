@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -329,5 +330,48 @@ func TestLegacyPermissiveFirewallDump(t *testing.T) {
 		if got := permissiveFirewallDump(tc.dump); got != tc.want {
 			t.Fatalf("dump %q got %v want %v", tc.dump, got, tc.want)
 		}
+	}
+}
+
+func TestOldFirewallCheckpointRequiresCompleteRestore(t *testing.T) {
+	for _, tc := range []struct {
+		name, v4, v6 string
+		hasV6, valid bool
+	}{
+		{"empty with IPv6", "", "", true, false},
+		{"empty IPv4 only", "", "", false, true},
+		{"complete", emptyFirewall4, emptyFilter + emptyMangle, true, true},
+		{"only v4 captured", emptyFirewall4, "", false, true},
+		{"partial v4", emptyFilter, emptyFilter + emptyMangle, true, false},
+		{"partial v6", emptyFirewall4, emptyFilter, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := testManager()
+			sandbox(t, m)
+			b := &systemBaseline{Version: 1, IPTables4: tc.v4, IPTables6: tc.v6, IPTables6Exists: tc.hasV6}
+			data, err := json.Marshal(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := m.sys(uninstallFirewallCheckpoint)
+			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, []byte(fmt.Sprintf("%x\n", sha256.Sum256(data))), 0600); err != nil {
+				t.Fatal(err)
+			}
+			m.Output = func(context.Context, string, ...string) (string, error) { return "", exec.ErrNotFound }
+			m.Run = func(context.Context, command) error { return exec.ErrNotFound }
+			err = m.restoreBaselineFirewall(context.Background(), b)
+			if tc.valid && err != nil || !tc.valid && (!errors.Is(err, exec.ErrNotFound) || !strings.Contains(err.Error(), "утилит")) {
+				t.Fatalf("old checkpoint: %v", err)
+			}
+			if err = m.recordUninstallFirewallRestored(b); err != nil {
+				t.Fatal(err)
+			}
+			if err = m.restoreBaselineFirewall(context.Background(), b); err != nil {
+				t.Fatalf("current checkpoint: %v", err)
+			}
+		})
 	}
 }

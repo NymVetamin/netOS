@@ -26,9 +26,9 @@ func InvalidateUninstallCheckpoint(root string) error {
 	return err
 }
 
-func firewallCheckpointDigest(b *systemBaseline) []byte {
+func firewallCheckpointDigest(b *systemBaseline) string {
 	data, _ := json.Marshal(b)
-	return []byte(fmt.Sprintf("%x\n", sha256.Sum256(data)))
+	return fmt.Sprintf("%x\n", sha256.Sum256(data))
 }
 
 func (m *Manager) recordUninstallFirewallRestored(b *systemBaseline) error {
@@ -39,7 +39,7 @@ func (m *Manager) recordUninstallFirewallRestored(b *systemBaseline) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	return system.WriteFileAtomic(path, firewallCheckpointDigest(b), 0600)
+	return system.WriteFileAtomic(path, []byte("v2 "+firewallCheckpointDigest(b)), 0600)
 }
 
 func permissiveFirewallDump(dump string) bool {
@@ -66,6 +66,24 @@ func permissiveFirewallDump(dump string) bool {
 	return !inTable
 }
 
+func legacyRestoredAllTables(snapshot string, ipv4 bool) bool {
+	if strings.TrimSpace(snapshot) == "" {
+		return ipv4 // Only the old IPv4 default also cleared mangle.
+	}
+	filter, nat, mangle := missingFirewallTables(snapshot, ipv4)
+	return filter == "" && nat == "" && mangle == ""
+}
+
+func (m *Manager) uninstallFirewallFailure(ctx context.Context, b *systemBaseline, stage string, cause error) error {
+	if m.uninstallFirewallAlreadyRestored(ctx, b, cause) {
+		return nil
+	}
+	if errors.Is(cause, exec.ErrNotFound) || errors.Is(cause, os.ErrNotExist) {
+		return fmt.Errorf("%s: восстановление firewall не подтверждено; восстановите отсутствующую утилиту и повторите удаление: %w", stage, cause)
+	}
+	return fmt.Errorf("%s: %w", stage, cause)
+}
+
 // A previous uninstall may have purged iptables before losing its SSH session.
 // Missing tools alone never prove that firewall restoration succeeded. Allow
 // retry only for an empty baseline and a verifiably permissive current firewall.
@@ -77,8 +95,12 @@ func (m *Manager) uninstallFirewallAlreadyRestored(ctx context.Context, b *syste
 	// A completed restore is durable before package purge. A retry must not
 	// require a utility that the same uninstall successfully purged. The digest
 	// binds the checkpoint to this baseline; a later Apply removes it.
-	if data, err := os.ReadFile(m.sys(uninstallFirewallCheckpoint)); err == nil && string(data) == string(firewallCheckpointDigest(b)) {
-		return true
+	if data, err := os.ReadFile(m.sys(uninstallFirewallCheckpoint)); err == nil {
+		digest := firewallCheckpointDigest(b)
+		stored, versioned := strings.CutPrefix(string(data), "v2 ")
+		if stored == digest {
+			return versioned || (legacyRestoredAllTables(b.IPTables4, true) && (!b.IPTables6Exists || legacyRestoredAllTables(b.IPTables6, false)))
+		}
 	}
 	if !permissiveFirewallDump(b.IPTables4) || !permissiveFirewallDump(b.IPTables6) {
 		return false

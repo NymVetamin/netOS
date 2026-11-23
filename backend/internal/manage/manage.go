@@ -1468,8 +1468,10 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	if err := monitor.Clear(ctx, m.Output); err != nil {
 		return err
 	}
-	if err := firewall.ClearBridgeIPv6(ctx, m.Output); err != nil && !m.uninstallFirewallAlreadyRestored(ctx, baseline, err) {
-		return fmt.Errorf("удаление Ethernet-фильтра IPv6: %w", err)
+	if err := firewall.ClearBridgeIPv6(ctx, m.Output); err != nil {
+		if failure := m.uninstallFirewallFailure(ctx, baseline, "удаление Ethernet-фильтра IPv6", err); failure != nil {
+			return failure
+		}
 	}
 	m.removeVirtualInterfaces(ctx)
 	if err := ethernet.Apply(ctx, m.Output, filepath.Join(m.StateDir, "owned-links.ethernet.json"), nil); err != nil {

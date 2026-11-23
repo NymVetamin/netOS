@@ -269,8 +269,8 @@ func (m *Manager) readSystemBaseline() (*systemBaseline, error) {
 }
 
 // iptables-restore only flushes tables mentioned in its input.
-func baselineFirewallRules(snapshot string, ipv4 bool) string {
-	filter, nat, mangle := emptyFilter, emptyNAT, emptyMangle
+func missingFirewallTables(snapshot string, ipv4 bool) (filter, nat, mangle string) {
+	filter, nat, mangle = emptyFilter, emptyNAT, emptyMangle
 	if !ipv4 {
 		nat = ""
 	}
@@ -286,8 +286,16 @@ func baselineFirewallRules(snapshot string, ipv4 bool) string {
 			continue
 		}
 		if filter == "" && nat == "" && mangle == "" {
-			return snapshot
+			break
 		}
+	}
+	return filter, nat, mangle
+}
+
+func baselineFirewallRules(snapshot string, ipv4 bool) string {
+	filter, nat, mangle := missingFirewallTables(snapshot, ipv4)
+	if filter == "" && nat == "" && mangle == "" {
+		return snapshot
 	}
 	separator := ""
 	if snapshot != "" && !strings.HasSuffix(snapshot, "\n") {
@@ -299,10 +307,7 @@ func baselineFirewallRules(snapshot string, ipv4 bool) string {
 func (m *Manager) restoreBaselineFirewall(ctx context.Context, b *systemBaseline) error {
 	rules4 := baselineFirewallRules(b.IPTables4, true)
 	if err := m.Run(ctx, command{name: "iptables-restore", stdin: rules4, feedStdin: true}); err != nil {
-		if m.uninstallFirewallAlreadyRestored(ctx, b, err) {
-			return nil
-		}
-		return fmt.Errorf("восстановление IPv4 firewall: %w", err)
+		return m.uninstallFirewallFailure(ctx, b, "восстановление IPv4 firewall", err)
 	}
 	if b.IPTables6Exists {
 		rules6 := baselineFirewallRules(b.IPTables6, false)
