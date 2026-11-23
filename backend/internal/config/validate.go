@@ -1572,7 +1572,7 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		validatePortSpec(r, path+".src_port", rule.SrcPort)
 		validatePortSpec(r, path+".dst_port", rule.DstPort)
 		if rule.SrcMAC != "" {
-			if _, err := net.ParseMAC(rule.SrcMAC); err != nil {
+			if mac, err := net.ParseMAC(rule.SrcMAC); err != nil || len(mac) != 6 {
 				r.errf(path+".src_mac", "некорректный MAC-адрес")
 			}
 		}
@@ -2748,7 +2748,7 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 		validateCIDR(r, path+".dst_ip", p.DstIP)
 		validatePortSpec(r, path+".dst_port", p.DstPort)
 		if p.SrcMAC != "" {
-			if _, err := net.ParseMAC(p.SrcMAC); err != nil {
+			if mac, err := net.ParseMAC(p.SrcMAC); err != nil || len(mac) != 6 {
 				r.errf(path+".src_mac", "некорректный MAC-адрес")
 			}
 		}
