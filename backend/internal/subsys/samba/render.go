@@ -171,6 +171,15 @@ test "$(/usr/bin/findmnt -rn -T "$1/." -t noautofs -o UUID | /usr/bin/tr '[:uppe
 
 func mountText(v config.StorageVolume, uid, gid string) string {
 	fs := v.Filesystem
+	// Match libblkid/udev spelling even when the configured UUID uses a
+	// different case. This must also work while the volume is unplugged.
+	uuid := v.UUID
+	switch fs {
+	case "vfat", "exfat", "ntfs":
+		uuid = strings.ToUpper(uuid)
+	case "ext2", "ext3", "ext4":
+		uuid = strings.ToLower(uuid)
+	}
 	options := "nodev,nosuid,noexec"
 	if fs == "ntfs" {
 		fs = "ntfs-3g"
@@ -178,7 +187,7 @@ func mountText(v config.StorageVolume, uid, gid string) string {
 	if v.Filesystem == "ntfs" || v.Filesystem == "vfat" || v.Filesystem == "exfat" {
 		options += ",uid=" + uid + ",gid=" + gid + ",fmask=0117,dmask=0007"
 	}
-	return fmt.Sprintf("[Unit]\nDescription=netOS USB volume\nJobTimeoutSec=10s\n[Mount]\nWhat=/dev/disk/by-uuid/%s\nWhere=%s\nType=%s\nOptions=%s\nTimeoutSec=10s\n", v.UUID, MountPath(v), fs, options)
+	return fmt.Sprintf("[Unit]\nDescription=netOS USB volume\nJobTimeoutSec=10s\n[Mount]\nWhat=/dev/disk/by-uuid/%s\nWhere=%s\nType=%s\nOptions=%s\nTimeoutSec=10s\n", uuid, MountPath(v), fs, options)
 }
 func automountText(v config.StorageVolume) string {
 	return fmt.Sprintf("[Unit]\nDescription=netOS USB automount\n[Automount]\nWhere=%s\nDirectoryMode=0755\nTimeoutIdleSec=60\n[Install]\nWantedBy=multi-user.target\n", MountPath(v))

@@ -83,6 +83,13 @@ jobs:
           sudo --preserve-env=PATH env NETOS_INTEGRATION=1 \
             "$(command -v go)" test ./internal/subsys/wifi -run '^TestIntegrationHostapdLifecycle$' -count=1 -v
 
+      - name: UUID накопителей и настоящее монтирование
+        working-directory: backend
+        run: |
+          sudo apt-get install -y -qq e2fsprogs dosfstools exfatprogs ntfs-3g
+          sudo --preserve-env=PATH env NETOS_STORAGE_INTEGRATION=1 \
+            "$(command -v go)" test ./internal/subsys/samba -run '^TestIntegrationVolumeUUIDCase$' -count=1 -v
+
       - name: интеграционные тесты в изолированном пространстве имён
         if: ${{ !cancelled() }}
         working-directory: backend
