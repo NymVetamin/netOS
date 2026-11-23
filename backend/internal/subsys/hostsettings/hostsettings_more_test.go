@@ -326,6 +326,53 @@ func TestApplyNTPRetriesStaleServers(t *testing.T) {
 	}
 }
 
+func TestPlanChecksLoadedNTPServers(t *testing.T) {
+	const query = "timedatectl show-timesync --property=SystemNTPServers --value"
+	for _, tc := range []struct {
+		name, loaded            string
+		disabled, missing, fail bool
+		wantAction, wantQuery   bool
+	}{
+		{name: "stale", loaded: "old.example", wantAction: true, wantQuery: true},
+		{name: "matching", wantQuery: true},
+		{name: "unavailable", fail: true, wantAction: true, wantQuery: true},
+		{name: "missing file", missing: true, wantAction: true},
+		{name: "disabled", disabled: true, missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			base := &hostRunner{ntpServers: tc.loaded}
+			s := testSubsystem(t, base)
+			if tc.disabled {
+				cfg.System.NTP.Enabled = false
+				base.timesyncActive, base.timesyncEnabled = "inactive", "disabled"
+			}
+			if !tc.missing {
+				writeExpectedNTP(t, s, cfg)
+			}
+			if tc.fail {
+				s.Runner = &failingHostRunner{base: base, fail: query}
+			}
+			actions, err := s.Plan(cfg, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, action := range actions {
+				if action.Target == "синхронизация времени" {
+					found = true
+					if tc.fail && !strings.Contains(action.Detail, "проверка серверов времени") {
+						t.Fatalf("missing probe error: %+v", action)
+					}
+				}
+			}
+			if found != tc.wantAction || (!tc.fail && hasCommand(base.commands, query) != tc.wantQuery) {
+				t.Fatalf("actions=%v commands=%v", actions, base.commands)
+			}
+		})
+	}
+}
+
 func TestApplyNTPFilesystemAndDisableFailures(t *testing.T) {
 	t.Run("remove nonempty path", func(t *testing.T) {
 		runner := &hostRunner{timesyncActive: "inactive", timesyncEnabled: "disabled"}

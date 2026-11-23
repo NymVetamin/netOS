@@ -68,10 +68,20 @@ func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([
 	if s.timezoneDrift(ctx, new) {
 		actions = append(actions, apply.Action{Kind: "update", Target: "часовой пояс", Detail: new.System.Timezone})
 	}
-	if s.ntpDrift(ctx, new) {
+	ntpChanged := s.ntpDrift(ctx, new)
+	var probeErr error
+	if !ntpChanged && new.System.NTP.Enabled {
+		var match bool
+		match, probeErr = s.ntpServersMatch(ctx, new)
+		ntpChanged = !match
+	}
+	if ntpChanged {
 		detail := "синхронизация времени отключается"
 		if new.System.NTP.Enabled {
 			detail = "серверы: " + strings.Join(new.System.NTP.Servers, ", ")
+		}
+		if probeErr != nil {
+			detail = probeErr.Error()
 		}
 		actions = append(actions, apply.Action{Kind: "update", Target: "синхронизация времени", Detail: detail})
 	}
