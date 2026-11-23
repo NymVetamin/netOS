@@ -120,7 +120,7 @@ func (s *Subsystem) timezoneDrift(ctx context.Context, cfg *config.Config) bool 
 }
 
 func (s *Subsystem) renderNTP(cfg *config.Config) []byte {
-	return []byte("# Сгенерировано netOS. Правки будут перезаписаны.\n[Time]\nNTP=" +
+	return []byte("# Сгенерировано netOS. Правки будут перезаписаны.\n[Time]\nNTP=\nNTP=" +
 		strings.Join(cfg.System.NTP.Servers, " ") + "\nFallbackNTP=\n")
 }
 
