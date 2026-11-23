@@ -56,6 +56,28 @@ async def main():
         await page.route("**/*",route_request)
         await page.goto("http://netos-ui.test/#dashboard")
         await expect(page.get_by_text("3 / 12",exact=True)).to_be_visible()
+        uplink = page.locator(".tile").filter(has=page.get_by_text("Аплинк", exact=True))
+        await expect(uplink.locator(".value")).to_have_text("Не настроен")
+        cfg["wans"] = [{"id":"wan","interface":"lan0","enabled":True}]
+        status["wans"] = [{"id":"wan","interface":"lan0","link_up":True,"probe_down":True,"up":False}]
+        await page.reload()
+        await expect(uplink.locator(".value")).to_have_text("Нет связи")
+        await expect(uplink.locator(".note")).to_have_text("lan0")
+        cfg["wans"][0]["proto"] = "pppoe"
+        status["wans"] = [{"id":"wan","interface":"ppp-wan","link_up":False,"up":False}]
+        await page.reload()
+        await expect(uplink.locator(".value")).to_have_text("Нет связи")
+        await expect(uplink.locator(".note")).to_have_text("ppp-wan")
+        status["wans"].append({"id":"spare","interface":"lan1","up":True})
+        await expect(uplink.locator(".value")).to_have_text("На связи",timeout=10000)
+        await expect(uplink.locator(".note")).to_have_text("lan1")
+        del status["wans"]
+        await page.reload()
+        await expect(uplink.locator(".value")).to_have_text("Нет данных")
+        cfg["wans"] = []
+        status["wans"] = None
+        await page.reload()
+        await expect(uplink.locator(".value")).to_have_text("Не настроен")
         cells = page.locator("table tbody tr td:first-child").filter(has=page.locator("span.mono"))
         await expect(cells).to_have_text(["lan1", "unknown0", "lan0Первый порт"])
         await expect(page.get_by_text("12.5 %",exact=True)).to_be_visible()

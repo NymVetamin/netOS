@@ -50,8 +50,9 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
   }, [statusPolling, wanInterfaces.join(",")]);
 
   const interfaces: any[] = status?.interfaces || [];
-  const wanNames = new Set(wanInterfaces);
-  const wan = interfaces.find((i) => wanNames.has(i.name));
+  const wans = status?.wans;
+  const wan = wans?.find((item: any) => item.up) ?? wans?.[0];
+  const wanState = wan ? (wan.up ? "На связи" : "Нет связи") : (wans === undefined ? "Нет данных" : "Не настроен");
   const clients = status?.client_summary;
 
   return (
@@ -74,8 +75,8 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
         <Tile
           icon="globe"
           label="Аплинк"
-          value={wan ? (wan.up ? "На связи" : "Нет связи") : "Не настроен"}
-          note={wan?.name}
+          value={wanState}
+          note={wan?.interface}
           tone={wan?.up ? "ok" : "danger"}
           small
         />
