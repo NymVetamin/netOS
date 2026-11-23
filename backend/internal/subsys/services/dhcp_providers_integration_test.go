@@ -33,7 +33,9 @@ func TestDHCPProviderSyntax(t *testing.T) {
 	if binary, err := exec.LookPath("dhcpd"); err == nil {
 		conf := filepath.Join(dir, "dhcpd.conf")
 		leases := filepath.Join(dir, "dhcpd.leases")
-		if err := os.WriteFile(conf, []byte(NewISCDHCP(nil).Render(cfg)), 0o600); err != nil {
+		isc := iscCollisionConfig()
+		isc.Interfaces = cfg.Interfaces
+		if err := os.WriteFile(conf, []byte(NewISCDHCP(nil).Render(isc)), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(leases, nil, 0o600); err != nil {

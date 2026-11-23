@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,6 +30,50 @@ func TestISCDHCPRender(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("в конфиге ISC нет %q:\n%s", want, out)
 		}
+	}
+}
+
+func iscCollisionConfig() *config.Config {
+	cfg := providerTestConfig()
+	for i, id := range []string{"pc_1", "pc-1", "pc.1", "PC-1", "blocked-1"} {
+		cfg.DHCP.Reservations = append(cfg.DHCP.Reservations, config.Reservation{
+			ID: id, Enabled: true, MAC: fmt.Sprintf("02:00:00:00:01:%02x", i),
+			IP: fmt.Sprintf("192.168.50.%d", 30+i), Network: "office", Hostname: "client",
+		})
+	}
+	return cfg
+}
+
+func TestISCDHCPKeepsDistinctReservationsAndBlockedHosts(t *testing.T) {
+	cfg := iscCollisionConfig()
+	d := NewISCDHCP(nil)
+	out := d.Render(cfg)
+	if out != d.Render(cfg) {
+		t.Fatal("unstable config")
+	}
+	names := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "host ") {
+			name := strings.Fields(line)[1]
+			if names[name] {
+				t.Fatalf("duplicate host %s", name)
+			}
+			names[name] = true
+		}
+	}
+	if len(names) != len(cfg.DHCP.Reservations)+1 || !names["netos-printer"] || !names["netos-blocked-1"] {
+		t.Fatal(names)
+	}
+	for _, r := range cfg.DHCP.Reservations {
+		if !strings.Contains(out, fmt.Sprintf("hardware ethernet %s;\n  fixed-address %s;\n  option host-name %q;", r.MAC, r.IP, r.Hostname)) {
+			t.Fatalf("missing reservation %s", r.ID)
+		}
+	}
+	cfg.DHCP.Reservations[1].Enabled = false
+	after := d.Render(cfg)
+	if !strings.Contains(after, "host netos-pc-1 {\n  hardware ethernet 02:00:00:00:01:01;") ||
+		strings.Contains(after, "hardware ethernet 02:00:00:00:01:00;") {
+		t.Fatal("disabled reservation still owns its declaration")
 	}
 }
 

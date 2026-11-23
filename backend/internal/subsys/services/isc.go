@@ -115,9 +115,13 @@ func (d *ISCDHCP) Render(cfg *config.Config) string {
 		w("")
 	}
 	blocked := map[string]bool{}
-	for _, cl := range cfg.Clients {
+	hostNames := make(map[string]bool)
+	for i, cl := range cfg.Clients {
 		if cl.Blocked {
 			blocked[strings.ToLower(cl.MAC)] = true
+			if cl.MAC != "" {
+				hostNames[fmt.Sprintf("blocked-%d", i+1)] = true
+			}
 		}
 	}
 	for _, res := range cfg.DHCP.Reservations {
@@ -127,7 +131,14 @@ func (d *ISCDHCP) Render(cfg *config.Config) string {
 		if blocked[strings.ToLower(res.MAC)] {
 			continue
 		}
-		w("host netos-%s {", safeDHCPName(res.ID))
+		name := safeDHCPName(res.ID)
+		if hostNames[name] {
+			// A separate namespace keeps the encoded ID distinct from every legacy name.
+			w("host netosres-%x {", res.ID)
+		} else {
+			hostNames[name] = true
+			w("host netos-%s {", name)
+		}
 		w("  hardware ethernet %s;", res.MAC)
 		w("  fixed-address %s;", res.IP)
 		if res.Hostname != "" {
