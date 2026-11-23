@@ -2,8 +2,11 @@ package netiface
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -64,6 +67,83 @@ func TestExplicitMTURestoresOriginalAcrossRestart(t *testing.T) {
 	}
 	if mtu != 8942 || len(s.mtuBaseline) != 0 {
 		t.Fatalf("after restore: mtu=%d baseline=%v", mtu, s.mtuBaseline)
+	}
+}
+
+func TestCaptureMTUBaselinesPublishesBatchAndRetries(t *testing.T) {
+	newFakeNet(t, "p1", "p2", "p3")
+	path := filepath.Join(t.TempDir(), "owned")
+	file := path + ".mtu-baseline.json"
+	cfg := &config.Config{Interfaces: []config.Interface{
+		{Name: "p1", MTU: 1400}, {Name: "p2", MTU: 1400}, {Name: "p3", MTU: 1400},
+	}}
+	readFailure := errors.New("read failed")
+	var reads []string
+	fail := true
+	s := &Interfaces{OwnedPath: path}
+	s.Runner = netifaceRunnerFunc(func(_ context.Context, cmd string, args ...string) (string, error) {
+		if cmd != "ip" || len(args) != 5 || strings.Join(args[:4], " ") != "-o link show dev" {
+			t.Fatalf("unexpected mutation before capture: %s %v", cmd, args)
+		}
+		name := args[4]
+		reads = append(reads, name)
+		if fail {
+			if _, err := os.Stat(file); !os.IsNotExist(err) {
+				t.Fatalf("intermediate baseline published before reading %s: %v", name, err)
+			}
+			if name == "p3" {
+				return "", readFailure
+			}
+		}
+		return "1: port: <UP> mtu 150" + name[1:], nil
+	})
+	if err := s.Apply(context.Background(), cfg); !errors.Is(err, readFailure) {
+		t.Fatalf("Apply error = %v", err)
+	}
+	checkFile := func(want string) {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		if err != nil || string(data) != want {
+			t.Fatalf("baseline = %q, %v; want %s", data, err, want)
+		}
+	}
+	checkFile(`{"p1":1501,"p2":1502}`)
+	fail = false
+	if err := s.loadMTUBaseline(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.captureMTUBaselines(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		checkFile(`{"p1":1501,"p2":1502,"p3":1503}`)
+	}
+	if !reflect.DeepEqual(reads, []string{"p1", "p2", "p3", "p3"}) {
+		t.Fatalf("unexpected MTU reads: %v", reads)
+	}
+}
+
+func TestMTUBaselineWriteErrorStopsApply(t *testing.T) {
+	newFakeNet(t, "eth5")
+	root := t.TempDir()
+	// A regular file in the directory path makes publication fail on every OS.
+	parent := filepath.Join(root, "state")
+	s := &Interfaces{OwnedPath: filepath.Join(parent, "owned")}
+	s.Runner = netifaceRunnerFunc(func(_ context.Context, cmd string, args ...string) (string, error) {
+		if cmd != "ip" || strings.Join(args, " ") != "-o link show dev eth5" {
+			t.Fatalf("unexpected command: %s %v", cmd, args)
+		}
+		if err := os.WriteFile(parent, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return "1: eth5: <UP> mtu 1500", nil
+	})
+	cfg := &config.Config{Interfaces: []config.Interface{{Name: "eth5", MTU: 1400}}}
+	if err := s.Apply(context.Background(), cfg); err == nil {
+		t.Fatal("Apply accepted an unwritable baseline")
+	}
+	if s.mtuBaseline["eth5"] != 1500 {
+		t.Fatal("Apply failed before capture")
 	}
 }
 

@@ -221,23 +221,30 @@ func (s *Interfaces) saveMTUBaseline() error {
 }
 
 func (s *Interfaces) captureMTUBaselines(ctx context.Context, cfg *config.Config) error {
+	changed := false
+	var readErr error
 	for _, iface := range cfg.Interfaces {
 		if iface.MTU <= 0 || s.mtuBaseline[iface.Name] > 0 || !linkExists(iface.Name) {
 			continue
 		}
 		out, err := s.Runner.Run(ctx, "ip", "-o", "link", "show", "dev", iface.Name)
 		if err != nil {
-			return fmt.Errorf("read MTU of %s: %w", iface.Name, err)
+			readErr = fmt.Errorf("read MTU of %s: %w", iface.Name, err)
+			break
 		}
 		_, mtu, _ := parseLinkState(out)
 		if mtu > 0 && mtu != iface.MTU {
 			s.mtuBaseline[iface.Name] = mtu
-			if err := s.saveMTUBaseline(); err != nil {
-				return err
-			}
+			changed = true
 		}
 	}
-	return nil
+	// Preserve the captured prefix even when a later read fails.
+	if changed {
+		if err := s.saveMTUBaseline(); err != nil {
+			return err
+		}
+	}
+	return readErr
 }
 
 func (s *Interfaces) applyInterfaceMTU(ctx context.Context, iface config.Interface) error {
