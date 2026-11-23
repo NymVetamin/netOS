@@ -581,6 +581,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 	componentSubsystem.DeferSambaRemoval = true
 	componentSubsystem.ExternalMigrationPath = filepath.Join(filepath.Dir(stateDir), "external-ownership-v1")
 	interfaces := netiface.NewInterfaces(runner)
+	interfaces.CurrentConfig = engine.Current
 	networkConfig := netconf.New(runner, logger)
 	networkConfig.PrepareOwnership = interfaces.PrepareOwnership
 	firewallSubsystem := firewall.New(runner, stateDir)

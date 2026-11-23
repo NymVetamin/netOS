@@ -8,6 +8,7 @@
 package netiface
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -37,6 +38,8 @@ type Interfaces struct {
 	// имени (br-, vl-), а имя задаёт администратор — мост «br1» под правило не
 	// попадал и оставался в ip a навсегда.
 	OwnedPath string
+	// CurrentConfig supplies bridge identities still needed if Apply rolls back.
+	CurrentConfig func() *config.Config
 
 	// owned — список из OwnedPath, прочитанный в начале Apply.
 	owned       map[string]bool
@@ -272,18 +275,31 @@ func (s *Interfaces) bridgeMACs(cfg *config.Config) (map[string]string, error) {
 	}
 	path := s.OwnedPath + ".macs"
 	data, err := os.ReadFile(path)
+	var saved map[string]string
 	if err == nil {
-		if err := json.Unmarshal(data, &macs); err != nil {
+		if err := json.Unmarshal(data, &saved); err != nil {
 			return nil, fmt.Errorf("чтение MAC мостов: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	if macs == nil {
-		macs = map[string]string{}
+	if s.CurrentConfig != nil {
+		if current := s.CurrentConfig(); current != nil {
+			for _, iface := range current.Interfaces {
+				if mac, ok := saved[iface.ID]; ok && iface.Type == "bridge" && iface.ID != "" {
+					macs[iface.ID] = mac
+				}
+			}
+		}
 	}
 	for _, iface := range cfg.Interfaces {
-		if iface.Type != "bridge" || iface.MAC != "" || iface.ID == "" {
+		if iface.Type != "bridge" || iface.ID == "" {
+			continue
+		}
+		if mac, ok := saved[iface.ID]; ok {
+			macs[iface.ID] = mac
+		}
+		if iface.MAC != "" {
 			continue
 		}
 		if _, err := net.ParseMAC(macs[iface.ID]); err == nil {
@@ -302,12 +318,12 @@ func (s *Interfaces) bridgeMACs(cfg *config.Config) (map[string]string, error) {
 		}
 		macs[iface.ID] = address
 	}
-	data, err = json.Marshal(macs)
+	encoded, err := json.Marshal(macs)
 	if err != nil {
 		return nil, err
 	}
-	if system.FileChanged(path, data) {
-		if err := system.WriteFileAtomic(path, data, 0o600); err != nil {
+	if !bytes.Equal(data, encoded) {
+		if err := system.WriteFileAtomic(path, encoded, 0o600); err != nil {
 			return nil, err
 		}
 	}

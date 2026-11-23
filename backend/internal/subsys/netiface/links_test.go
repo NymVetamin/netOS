@@ -2,9 +2,11 @@ package netiface
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -36,6 +38,60 @@ func TestBridgeMACSurvivesRenameAndRestart(t *testing.T) {
 	parsed, parseErr := net.ParseMAC(macs["new-bridge"])
 	if err != nil || parseErr != nil || parsed[0]&3 != 2 || macs["new-bridge"] == existing {
 		t.Fatalf("new bridge did not get a unique local unicast MAC: %v %v", macs, err)
+	}
+}
+
+func TestBridgeMACRetentionAcrossRollback(t *testing.T) {
+	const mac = "02:11:22:33:44:55"
+	path := filepath.Join(t.TempDir(), "owned")
+	file := path + ".macs"
+	if err := os.WriteFile(file, []byte(`{"old":"02:11:22:33:44:55","stale":"bad"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auto := &config.Config{Interfaces: []config.Interface{{ID: "old", Type: "bridge"}}}
+	manual := &config.Config{Interfaces: []config.Interface{{ID: "old", Type: "bridge", MAC: "02:99:88:77:66:55"}}}
+	empty := &config.Config{}
+	check := func(previous, next *config.Config, want map[string]string) {
+		t.Helper()
+		s := &Interfaces{OwnedPath: path, CurrentConfig: func() *config.Config { return previous }}
+		got, err := s.bridgeMACs(next)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("bridge MACs = %v, %v; want %v", got, err, want)
+		}
+		data, err := os.ReadFile(file)
+		var persisted map[string]string
+		if err != nil || json.Unmarshal(data, &persisted) != nil || !reflect.DeepEqual(persisted, want) {
+			t.Fatalf("persisted MACs = %s, %v; want %v", data, err, want)
+		}
+	}
+	keep := map[string]string{"old": mac}
+	check(nil, manual, keep)
+	check(manual, auto, keep)
+	check(auto, empty, keep)
+	check(empty, auto, keep)
+	check(auto, empty, keep)
+	check(empty, empty, map[string]string{})
+	check(nil, empty, map[string]string{})
+
+	newFakeNet(t)
+	s := &Interfaces{OwnedPath: path, Runner: &linkRunner{}}
+	if err := os.WriteFile(file, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(context.Background(), empty); err == nil {
+		t.Fatal("Apply accepted corrupt bridge MAC storage")
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "{" {
+		t.Fatalf("Apply changed corrupt storage: %q, %v", data, err)
+	}
+	if err := os.WriteFile(file, []byte(`{"old":"02:11:22:33:44:55"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(context.Background(), empty); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "{}" {
+		t.Fatalf("Apply retained obsolete MACs: %q, %v", data, err)
 	}
 }
 
