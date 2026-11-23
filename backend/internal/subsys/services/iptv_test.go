@@ -55,6 +55,101 @@ type iptvRunner struct {
 	fail   bool
 }
 
+type iptvReloadRunner struct {
+	iptvRunner
+	failReload bool
+}
+
+func (r *iptvReloadRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := r.iptvRunner.Run(ctx, name, args...)
+	if r.failReload && name == "systemctl" && slices.Equal(args, []string{"daemon-reload"}) {
+		return "", fmt.Errorf("reload failed")
+	}
+	return out, err
+}
+
+func TestIPTVRetryUnitRemoval(t *testing.T) {
+	ctx := context.Background()
+	c := iptvFixture()
+	c.IPTV.Enabled = false
+	r := &iptvReloadRunner{failReload: true}
+	s := NewIPTV(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	conf, unit := s.paths()
+	if err := os.WriteFile(unit, s.unit(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx, c); err == nil {
+		t.Fatal("reload failure hidden")
+	}
+	if _, err := os.Stat(unit); !os.IsNotExist(err) {
+		t.Fatal("unit still present", err)
+	}
+	// A restarted daemon must recover using only persisted state.
+	next := NewIPTV(r, s.StateDir)
+	next.UnitDir = s.UnitDir
+	r.calls = nil
+	if err := os.WriteFile(unit, []byte("foreign"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := next.Apply(ctx, c); err == nil || len(r.calls) != 0 {
+		t.Fatal("accepted foreign unit", err, r.calls)
+	}
+	if err := os.Remove(unit); err != nil {
+		t.Fatal(err)
+	}
+	if err := next.Apply(ctx, c); err == nil {
+		t.Fatal("lost pending reload after restart")
+	}
+	r.failReload = false
+	for i := 0; i < 2; i++ {
+		if err := next.Apply(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(r.calls, []string{"systemctl daemon-reload", "systemctl daemon-reload"}) {
+		t.Fatal(r.calls)
+	}
+	for _, path := range []string{conf, unit, filepath.Join(s.StateDir, "iptv.links")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("remaining file", path, err)
+		}
+	}
+}
+
+func TestIPTVEnableAfterInterruptedRemoval(t *testing.T) {
+	ctx := context.Background()
+	c := iptvFixture()
+	r := &iptvReloadRunner{failReload: true}
+	s := NewIPTV(r, t.TempDir())
+	s.UnitDir = t.TempDir()
+	s.links = func([]iptvLink) (string, error) { return "live links", nil }
+	s.VIFPath = filepath.Join(s.StateDir, "vifs")
+	if err := os.WriteFile(s.VIFPath, []byte("0 up0\n1 br0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, unit := s.paths()
+	if err := os.WriteFile(unit, s.unit(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c.IPTV.Enabled = false
+	if err := s.Apply(ctx, c); err == nil {
+		t.Fatal("missing reload error")
+	}
+	c.IPTV.Enabled = true
+	r.failReload = false
+	if err := s.Apply(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := os.ReadFile(filepath.Join(s.StateDir, "iptv.links")); err != nil || string(state) != "live links" {
+		t.Fatal("enable did not replace the removal marker", err)
+	}
+	r.calls = nil
+	if err := s.Reconcile(ctx, c); err != nil || len(r.calls) != 0 {
+		t.Fatal("stable link after recovery", err, r.calls)
+	}
+}
+
 func (r *iptvRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	line := name + " " + strings.Join(args, " ")
 	r.calls = append(r.calls, line)
