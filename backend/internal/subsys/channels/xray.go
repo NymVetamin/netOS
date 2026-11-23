@@ -34,16 +34,8 @@ func RenderXray(ch config.Channel) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Clone the user-provided outbound before assigning the internal tag. The
-	// original config remains byte-for-byte suitable for revisions and UI edits.
-	encoded, err := json.Marshal(xr.Outbound)
-	if err != nil {
-		return nil, fmt.Errorf("кодирование outbound Xray: %w", err)
-	}
-	var outbound map[string]any
-	if err := json.Unmarshal(encoded, &outbound); err != nil {
-		return nil, err
-	}
+	// XrayConfig decoded the outbound and its nested maps for this call.
+	outbound := xr.Outbound
 	outbound["tag"] = "proxy"
 	// The proxy's own sockets must not re-enter DNS channel policy when the
 	// selected outbound connects to the same DNS endpoint as the resolver.

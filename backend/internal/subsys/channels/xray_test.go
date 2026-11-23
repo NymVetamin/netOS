@@ -98,3 +98,21 @@ func TestRenderWireGuardDoesNotAllowGlobalNetworkMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderXrayPreservesNestedSocketOptionsOnRetry(t *testing.T) {
+	ch := testXrayChannel()
+	stream := ch.Config["outbound"].(map[string]any)["streamSettings"].(map[string]any)
+	options := map[string]any{"mark": 42, "domainStrategy": "UseIP"}
+	stream["sockopt"] = options
+	for _, strategy := range []string{"UseIP", "UseIP", "AsIs"} {
+		options["domainStrategy"] = strategy
+		out, err := RenderXray(ch)
+		if err != nil || !strings.Contains(string(out), `"domainStrategy": "`+strategy+`"`) || options["mark"] != 42 {
+			t.Fatalf("socket options after render: %v, error: %v", options, err)
+		}
+	}
+	ch.Config["outbound"] = "invalid"
+	if _, err := RenderXray(ch); err == nil {
+		t.Fatal("invalid outbound accepted")
+	}
+}
