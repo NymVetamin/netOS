@@ -178,4 +178,5 @@ jobs:
           bash scripts/tests/installer-panel-address.sh
           sudo unshare -mn -- bash scripts/tests/installer-bridge.sh
           bash scripts/tests/installer-source.sh
+          bash scripts/tests/installer-checksum.sh
           shellcheck --severity=warning install.sh scripts/dev-push.sh

@@ -527,7 +527,7 @@ else
     # недоверенный релиз, а не повод ослабить проверку.
     curl -4 -fsSL --retry 2 -o "$TMP.sha256" "$URL.sha256" \
         || die "контрольная сумма бинарника недоступна — установка отменена"
-    EXPECTED=$(awk 'NR == 1 && $1 ~ /^[0-9a-fA-F]{64}$/ {print tolower($1)}' "$TMP.sha256")
+    EXPECTED=$(awk 'NR == 1 && length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ {print tolower($1)}' "$TMP.sha256")
     [ -n "$EXPECTED" ] || die "файл контрольной суммы имеет неверный формат"
     ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
     [ "$EXPECTED" = "$ACTUAL" ] || die "контрольная сумма не совпадает — загрузка повреждена"
