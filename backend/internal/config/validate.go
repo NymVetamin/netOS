@@ -888,6 +888,7 @@ func (c *Config) validateNetworks(r *ValidationResult) {
 	ifaceIDs := c.interfaceIDs()
 	zones := c.zoneNames()
 	channels := c.usableChannelIDs()
+	seenIDs := make(map[string]bool, len(c.Networks))
 
 	type seg struct {
 		name   string
@@ -897,6 +898,10 @@ func (c *Config) validateNetworks(r *ValidationResult) {
 
 	for i, n := range c.Networks {
 		path := fmt.Sprintf("networks[%d]", i)
+		if seenIDs[n.ID] {
+			r.errf(path+".id", "дубликат идентификатора сегмента %q", n.ID)
+		}
+		seenIDs[n.ID] = true
 		if n.Name == "" {
 			r.errf(path+".name", "пустое имя сегмента")
 		}
