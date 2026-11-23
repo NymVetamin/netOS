@@ -13,6 +13,23 @@ vm.runInNewContext(compiled, { exports, URL, atob, TextDecoder, Uint8Array });
 const { parseXrayLink } = exports;
 const encode = value => Buffer.from(value).toString("base64url");
 const vmess = value => "vmess://" + encode(JSON.stringify(value));
+
+test("VMess retains TLS ALPN order and duplicates across repeated imports", () => {
+  const base = { add: "vpn.example.com", port: 443, id: "user", net: "grpc", path: "main", tls: "tls" };
+  for (const [alpn, expected] of [["h2", ["h2"]], [" h2, http/1.1, h2 ,", ["h2", "http/1.1", "h2"]]]) {
+    for (let i = 0; i < 2; i++) {
+      const out = JSON.parse(JSON.stringify(parseXrayLink(vmess({ ...base, alpn }))));
+      assert.deepEqual(out.streamSettings.tlsSettings.alpn, expected);
+      assert.deepEqual(out.streamSettings.grpcSettings, { serviceName: "main" });
+    }
+  }
+  for (const alpn of [undefined, ""]) {
+    assert.equal(parseXrayLink(vmess({ ...base, alpn })).streamSettings.tlsSettings.alpn, undefined);
+  }
+  assert.equal(parseXrayLink(vmess({ ...base, tls: "none", alpn: "h2" })).streamSettings.tlsSettings, undefined);
+  assert.throws(() => parseXrayLink(vmess({ ...base, alpn: 123 })));
+  assert.equal(parseXrayLink(vmess(base)).streamSettings.tlsSettings.alpn, undefined);
+});
 const xhttpLink = params => "vless://01234567-89ab-cdef-0123-456789abcdef@cdn.example.com:443?" + new URLSearchParams({ type: "xhttp", security: "tls", ...params });
 
 test("Shadowsocks labels do not change server settings in either link format", () => {

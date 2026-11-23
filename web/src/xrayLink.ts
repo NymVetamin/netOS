@@ -8,7 +8,7 @@ export function parseXrayLink(value: string): any {
     const alterId = Number(data.aid || 0);
     if (!Number.isInteger(alterId) || alterId < 0) throw new Error("Некорректный alterId");
     const outbound: any = { protocol: "vmess", settings: { vnext: [{ address: data.add, port, users: [{ id: data.id, alterId, security: data.scy || "auto" }] }] } };
-    outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp, pcs: data.pcs, vcn: data.vcn });
+    outbound.streamSettings = streamSettings(data.net || "tcp", data.tls || "none", { host: data.host, path: data.path, sni: data.sni, serviceName: data.path, fingerprint: data.fp, alpn: data.alpn, pcs: data.pcs, vcn: data.vcn });
     return outbound;
   }
   if (value.startsWith("ss://")) {
