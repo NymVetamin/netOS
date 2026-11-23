@@ -40,7 +40,7 @@ type LAN struct {
 	// lines. All three are bounded by lanStateLimit.
 	leases   map[string]lease
 	reasons  map[[2]string]wifiNote // interface and normalized MAC
-	mismatch map[string]time.Time
+	mismatch map[[2]string]time.Time // interface and normalized MAC
 }
 
 type lease struct{ ip, host string }
@@ -116,13 +116,14 @@ func (l *LAN) wifi(at time.Time, line string, log *Log) {
 		log.Add(at, WiFi, Info, source, msg)
 	case "AP-STA-POSSIBLE-PSK-MISMATCH":
 		// hostapd reports every retry of the handshake; one attempt is one event.
-		if last, ok := l.mismatch[addr]; ok && at.Sub(last) < 30*time.Second {
+		key := [2]string{iface, addr}
+		if last, ok := l.mismatch[key]; ok && at.Sub(last) < 30*time.Second {
 			return
 		}
 		if l.mismatch == nil || len(l.mismatch) >= lanStateLimit {
-			l.mismatch = map[string]time.Time{}
+			l.mismatch = map[[2]string]time.Time{}
 		}
-		l.mismatch[addr] = at
+		l.mismatch[key] = at
 		log.Add(at, WiFi, Warning, source, who+": неверный пароль Wi-Fi")
 	}
 }
