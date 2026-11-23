@@ -45,9 +45,16 @@ func TestIntegrationMACFilterValidation(t *testing.T) {
 	for _, alternative := range []string{"02-00-00-00-00-01", "0200.0000.0001"} {
 		t.Logf("alternative six-byte syntax %s parser result: %v", alternative, parse(alternative))
 	}
-	for _, mac := range []string{"02:00:00:00:00:00:00:01", strings.Repeat("00:", 19) + "01"} {
+	for _, tc := range []struct{ mac, corrected string }{
+		{"02:00:00:00:00:00:00:01", valid},
+		{strings.Repeat("00:", 19) + "01", valid},
+		{"02-00-00-00-00-01", "02-00-00-00-00-01"},
+		{"0200.0000.0001", "0200.0000.0001"},
+	} {
+		mac := tc.mac
+		invalid := mac != tc.corrected
 		t.Run(mac, func(t *testing.T) {
-			if err := parse(mac); err == nil {
+			if err := parse(mac); invalid && err == nil {
 				t.Fatal("oversized MAC accepted by iptables")
 			}
 			s, cookie, csrf, _ := transactionServer(t)
@@ -81,7 +88,7 @@ func TestIntegrationMACFilterValidation(t *testing.T) {
 			cfg.Firewall.Rules = append(cfg.Firewall.Rules, config.FirewallRule{ID: "mac-test", Enabled: true, Zone: "global", Flow: "in", Action: "drop", SrcMAC: mac})
 			cfg.Policies = []config.Policy{{ID: "mac-policy", Enabled: true, Channel: config.InternetBlockChannel, SrcMAC: mac}}
 			index := len(cfg.Firewall.Rules) - 1
-			for repeat := 0; repeat < 2; repeat++ {
+			for repeat := 0; invalid && repeat < 2; repeat++ {
 				w := request(http.MethodPost, "/api/config/validate", &cfg, "")
 				var result config.ValidationResult
 				if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || !result.HasErrors() {
@@ -96,8 +103,8 @@ func TestIntegrationMACFilterValidation(t *testing.T) {
 					t.Fatalf("invalid save: %d %s", w.Code, w.Body.String())
 				}
 			}
-			cfg.Firewall.Rules[index].SrcMAC = valid
-			cfg.Policies[0].SrcMAC = valid
+			cfg.Firewall.Rules[index].SrcMAC = tc.corrected
+			cfg.Policies[0].SrcMAC = tc.corrected
 			checked := request(http.MethodPost, "/api/config/validate", &cfg, "")
 			var validation config.ValidationResult
 			if checked.Code != 200 || json.Unmarshal(checked.Body.Bytes(), &validation) != nil || validation.HasErrors() {
@@ -125,7 +132,7 @@ func TestIntegrationMACFilterValidation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Log("oversized MAC rejected by native parser/API; corrected rule applied and repeated on Linux")
+			t.Log("MAC validation, save, native apply/Health and repeated apply PASS")
 		})
 	}
 }

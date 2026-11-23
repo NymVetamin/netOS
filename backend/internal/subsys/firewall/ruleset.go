@@ -17,6 +17,7 @@ package firewall
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -729,7 +730,7 @@ func selectors(r config.FirewallRule) string {
 		fmt.Fprintf(&s, " -m set --match-set %s dst", policy.FirewallSetName(r.DstIPSet))
 	}
 	if r.SrcMAC != "" {
-		fmt.Fprintf(&s, " -m mac --mac-source %s", r.SrcMAC)
+		fmt.Fprintf(&s, " -m mac --mac-source %s", filterMAC(r.SrcMAC))
 	}
 	if r.SrcPort != "" {
 		fmt.Fprintf(&s, " -m multiport --sports %s", r.SrcPort)
@@ -747,6 +748,18 @@ func selectors(r config.FirewallRule) string {
 		fmt.Fprintf(&s, " -m comment --comment %q", truncate(r.Name, 240))
 	}
 	return s.String()
+}
+
+// iptables accepts colon notation, while validation also accepts the other
+// six-byte forms understood by net.ParseMAC. Preserve invalid input for the
+// existing validation/error path instead of silently changing its meaning.
+func filterMAC(value string) string {
+	if strings.ContainsAny(value, "-.") {
+		if mac, err := net.ParseMAC(value); err == nil && len(mac) == 6 {
+			return mac.String()
+		}
+	}
+	return value
 }
 
 func scheduleMatch(s config.Schedule) string {
@@ -1379,7 +1392,7 @@ func policySelectors(cfg *config.Config, p config.Policy) (string, bool) {
 	}
 	s.WriteString(source)
 	if p.SrcMAC != "" {
-		fmt.Fprintf(&s, " -m mac --mac-source %s", strings.ToLower(p.SrcMAC))
+		fmt.Fprintf(&s, " -m mac --mac-source %s", strings.ToLower(filterMAC(p.SrcMAC)))
 	}
 	if p.Protocol != "" && p.Protocol != "any" {
 		fmt.Fprintf(&s, " -p %s", p.Protocol)
