@@ -21,6 +21,22 @@ func TestNormalizeAssignsStableUniqueWANIndexes(t *testing.T) {
 	}
 }
 
+func TestLegacyWANIndexesPreserveExplicitValues(t *testing.T) {
+	cfg := Default()
+	cfg.Version = Version - 1
+	for _, index := range []int{0, 2, -1, 0, 2, 1, 0, 1000} {
+		cfg.WANs = append(cfg.WANs, WAN{Index: index})
+	}
+	for pass := 0; pass < 2; pass++ {
+		cfg.Normalize()
+		for i, want := range []int{3, 2, -1, 4, 2, 1, 5, 1000} {
+			if got := cfg.WANs[i].Index; got != want {
+				t.Fatalf("pass %d, WAN %d: got %d, want %d", pass, i, got, want)
+			}
+		}
+	}
+}
+
 func TestBalanceRequiresPositiveWeightsAndUniqueIndexes(t *testing.T) {
 	cfg := Default()
 	cfg.MultiWAN.Enabled = true

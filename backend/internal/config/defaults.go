@@ -391,15 +391,14 @@ func (c *Config) Normalize() {
 				usedWANIndexes[wan.Index] = true
 			}
 		}
+		nextIndex := 1
 		for i := range c.WANs {
 			if c.WANs[i].Index == 0 {
-				for candidate := 1; ; candidate++ {
-					if !usedWANIndexes[candidate] {
-						c.WANs[i].Index = candidate
-						usedWANIndexes[candidate] = true
-						break
-					}
+				for usedWANIndexes[nextIndex] {
+					nextIndex++
 				}
+				c.WANs[i].Index = nextIndex
+				nextIndex++
 			}
 			if c.WANs[i].Metric == 0 {
 				c.WANs[i].Metric = 100 + i
