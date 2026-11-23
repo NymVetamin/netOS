@@ -23,6 +23,7 @@ func (b *builder) iptvAccess(c *config.Config) {
 		}
 	}
 	igmp(up, "0.0.0.0/0")
+	var sources []string
 	for _, n := range c.IPTVNetworks() {
 		iface := c.InterfaceName(n.Interface)
 		prefix, err := netip.ParsePrefix(n.RouterAddress)
@@ -30,7 +31,11 @@ func (b *builder) iptvAccess(c *config.Config) {
 			continue
 		}
 		igmp(iface, prefix.Masked().String())
-		for _, source := range c.IPTV.SourceNetworks() {
+		if sources == nil {
+			// SourceNetworks returns a non-nil slice, including for invalid sources.
+			sources = c.IPTV.SourceNetworks()
+		}
+		for _, source := range sources {
 			b.line("-A FORWARD -i %s -o %s%s -p udp -m iprange --dst-range 224.0.1.0-239.255.255.255 -m comment --comment %q -j ACCEPT", up, iface, sourceMatch(source), "IPTV: поток провайдера")
 		}
 	}
