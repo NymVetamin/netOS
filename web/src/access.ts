@@ -90,6 +90,12 @@ export function accessMatrix(config: any, zoneIfaces: Record<string, string[]>):
   const destinations = [...internet, ...segments, ...vpn, router];
   const globalRules: RuleGroups = { in: [], forward: [] };
   const zoneRules = new Map<any, RuleGroups>();
+  // The generator inserts HTTP-01 before saved global rules (Config.UsesACME).
+  if (sources.length && config.firewall?.enabled && (
+    config.system?.panel?.tls?.mode === "acme" || (config.vpn_servers || []).some((server: any) =>
+      server.enabled && server.config?.tls?.mode === "acme" && (server.type === "ocserv" ||
+        server.type === "xray" && ["vless", "trojan", "hysteria"].includes(server.config?.protocol)))
+  )) globalRules.in.push({ name: "ACME HTTP-01", action: "accept", protocol: "tcp", dst_port: "80" });
   if (sources.length && config.firewall?.enabled) for (const r of config.firewall.rules || []) {
     if (!r.enabled || r.action === "continue" || !appliesToNew(r)) continue;
     if (r.zone === "global") {

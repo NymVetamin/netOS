@@ -51,6 +51,39 @@ function config(extraRules = [], patch = {}) {
 
 const zoneIfaces = { wan: ["ppp-wan1"] };
 
+test("ACME HTTP-01 precedes global and zone drops and disappears when disabled", () => {
+  const cfg = config([], {system:{panel:{tls:{mode:"acme"}}}});
+  cfg.firewall.rules = [{enabled:true,name:"Deny all",zone:"global",flow:"any",action:"drop"}];
+  for (const from of ["Интернет", "Офис"]) {
+    const access=cell(cfg,from,"Роутер");
+    assert.equal(access.verdict,"p");
+    assert.ok(access.exceptions.some(text=>text.includes("ACME HTTP-01")&&text.includes("TCP 80")));
+  }
+  assert.equal(cell(cfg,"Интернет","Офис").verdict,"n");
+  cfg.firewall.rules.unshift({enabled:true,name:"Deny HTTP",zone:"global",flow:"in",action:"drop",protocol:"tcp",dst_port:"80"});
+  assert.equal(cell(cfg,"Интернет","Роутер").verdict,"p");
+  cfg.firewall.rules[1].action="accept";
+  assert.equal(cell(cfg,"Интернет","Роутер").verdict,"y","earlier ACME shadows the later TCP/80 drop");
+  cfg.firewall.rules[1].action="drop";
+  cfg.system.panel.tls.mode="selfsigned";
+  assert.equal(cell(cfg,"Интернет","Роутер").verdict,"n");
+  cfg.system.panel.tls.mode="acme";
+  assert.equal(cell(cfg,"Интернет","Роутер").verdict,"p");
+  cfg.firewall.enabled=false;
+  assert.equal(cell(cfg,"Интернет","Роутер").verdict,"y");
+});
+
+test("ACME is needed only by enabled certificate-using VPN protocols",()=>{
+  for(const [type,protocol,wanted] of [["ocserv","",true],["xray","vless",true],["xray","trojan",true],["xray","hysteria",true],["xray","reality",false],["xray","",false],["xray","shadowsocks",false],["wireguard","",false]]) {
+    const cfg=config();cfg.firewall.rules=[];
+    cfg.vpn_servers=[{id:"vpn",name:"VPN",enabled:true,type,config:{...(type==="xray"?{protocol}:{}),tls:{mode:"acme"}}}];
+    const hasACME=()=>cell(cfg,"Интернет","Роутер").exceptions.some(text=>text.includes("ACME HTTP-01"));
+    assert.equal(hasACME(),wanted,`${type}/${protocol}`);
+    cfg.vpn_servers[0].enabled=false;assert.equal(hasACME(),false);
+    cfg.vpn_servers[0].enabled=true;cfg.vpn_servers[0].config.tls.mode="custom";assert.equal(hasACME(),false);
+  }
+});
+
 test("address sets restrict rules and empty sets match nothing", () => {
   const cfg = config([{ name: "Set access", enabled: true, zone: "global", flow: "forward", action: "accept", dst_ipset: "targets" }]);
   cfg.firewall.ipsets = [{ id: "targets", entries: [] }];
