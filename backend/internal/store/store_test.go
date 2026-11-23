@@ -169,6 +169,29 @@ func TestSessionsAndAuditAreBounded(t *testing.T) {
 	}
 }
 
+func TestPruneAuditKeepsNewestIDsAcrossGaps(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "netos.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.PruneAudit(2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO audit(id,at,action) VALUES (2,4,'a'),(9,1,'b'),(50,1,'c')`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := st.PruneAudit(2); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := st.ListAudit(10)
+		if err != nil || len(rows) != 2 || rows[0].ID != 50 || rows[1].ID != 9 {
+			t.Fatalf("prune %d: rows=%+v, err=%v", i, rows, err)
+		}
+	}
+}
+
 func TestExpiredSessionTokensAreReportedForCSRFRemoval(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "netos.db"))
 	if err != nil {

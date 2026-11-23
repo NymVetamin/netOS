@@ -727,8 +727,8 @@ func (s *Store) PruneAudit(keep int) error {
 	if keep < 1 {
 		return fmt.Errorf("число сохраняемых записей аудита должно быть положительным")
 	}
-	_, err := s.db.Exec(`DELETE FROM audit WHERE id NOT IN (
-		SELECT id FROM audit ORDER BY id DESC LIMIT ?
+	_, err := s.db.Exec(`DELETE FROM audit WHERE id <= (
+		SELECT id FROM audit ORDER BY id DESC LIMIT 1 OFFSET ?
 	)`, keep)
 	return err
 }
