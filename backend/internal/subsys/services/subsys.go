@@ -507,7 +507,7 @@ func (s *DNS) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	defer s.M.releaseBlocklists()
 	serviceTx, err := snapshotDNSDomainTransition(ctx, s.M, cfg)
 	if err != nil {
-		return err
+		return blockTx.rollbackAfter(err)
 	}
 	defer func() {
 		if retErr == nil {

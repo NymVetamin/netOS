@@ -345,6 +345,39 @@ func TestBlocklistProviderChangeAfterSnapshot(t *testing.T) {
 	}
 }
 
+func TestDNSBlocklistRollbackOnSnapshotFailure(t *testing.T) {
+	useProviderPaths(t)
+	m := NewManager(newProviderRunner())
+	m.Resolv.Root = t.TempDir()
+	cfg := dnsDomainPolicyConfig("unbound")
+	cfg.DNS.Blocklists = blocklistTestConfig("unbound").DNS.Blocklists
+	m.Blocklist.Fetch = func(context.Context, string, string) ([]byte, error) {
+		return []byte("ads.example\n"), nil
+	}
+	if err := os.MkdirAll(dnsmasqConfPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dns := NewDNS(m)
+	if err := dns.Apply(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), dnsmasqConfPath) {
+		t.Fatalf("expected snapshot failure for %s: %v", dnsmasqConfPath, err)
+	}
+	for _, path := range []string{unboundBlocklistPath, blocklistCachePath(cfg.DNS.Blocklists[0].URL), blocklistStatusPath()} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("failed apply left %s: %v", path, err)
+		}
+	}
+	if err := os.Remove(dnsmasqConfPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := dns.Apply(context.Background(), cfg); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	data, err := os.ReadFile(unboundBlocklistPath)
+	if err != nil || !bytes.Contains(data, []byte("ads.example")) {
+		t.Fatalf("retry did not publish blocklist: %q, %v", data, err)
+	}
+}
+
 func TestDNSBlocklistFailureRestoresProviderAndCacheBytes(t *testing.T) {
 	useProviderPaths(t)
 	r := newProviderRunner()
