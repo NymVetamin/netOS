@@ -249,7 +249,8 @@ func TestConfigureChangesMACWhileDownAndRestoresRequestedState(t *testing.T) {
 		return "", nil
 	})
 	iface := config.Interface{ID: "eth", Name: "eth-test", Type: "physical", Enabled: true, MAC: "02:00:00:00:00:02"}
-	if err := NewInterfaces(runner).configure(context.Background(), &config.Config{Interfaces: []config.Interface{iface}}, iface, true); err != nil {
+	cfg := &config.Config{Interfaces: []config.Interface{iface}}
+	if err := NewInterfaces(runner).configure(context.Background(), cfg, iface, newInterfaceApplyLookup(cfg)); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(commands, "\n")
@@ -273,7 +274,8 @@ func TestConfigureDoesNotBounceLinkWhenMACAlreadyMatches(t *testing.T) {
 		return "", nil
 	})
 	iface := config.Interface{ID: "eth", Name: "eth-test", Type: "physical", Enabled: true, MAC: "02:00:00:00:00:02"}
-	if err := NewInterfaces(runner).configure(context.Background(), &config.Config{Interfaces: []config.Interface{iface}}, iface, true); err != nil {
+	cfg := &config.Config{Interfaces: []config.Interface{iface}}
+	if err := NewInterfaces(runner).configure(context.Background(), cfg, iface, newInterfaceApplyLookup(cfg)); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(commands, "\n")

@@ -108,3 +108,47 @@ func BenchmarkApplyInterfaceStates(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkApplyBridgeMemberLookup(b *testing.B) {
+	for _, n := range []int{16, 512} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			root := b.TempDir()
+			oldNet, oldVLAN := sysClassNet, procNetVLAN
+			sysClassNet, procNetVLAN = filepath.Join(root, "net"), filepath.Join(root, "vlan")
+			b.Cleanup(func() { sysClassNet, procNetVLAN = oldNet, oldVLAN })
+			cfg := &config.Config{}
+			bridge := config.Interface{ID: "bridge", Name: "br0", Type: "bridge", Enabled: true, MAC: "02:00:00:00:00:01"}
+			if err := os.MkdirAll(filepath.Join(sysClassNet, "br0", "bridge"), 0755); err != nil {
+				b.Fatal(err)
+			}
+			for i := 0; i < n; i++ {
+				name := fmt.Sprintf("eth%d", i)
+				if err := os.MkdirAll(filepath.Join(sysClassNet, name), 0755); err != nil {
+					b.Fatal(err)
+				}
+				cfg.Interfaces = append(cfg.Interfaces, config.Interface{ID: name, Name: name, Type: "physical", Enabled: true})
+				bridge.Members = append(bridge.Members, name)
+			}
+			cfg.Interfaces = append(cfg.Interfaces, bridge)
+			r := &linkRunner{}
+			s := NewInterfaces(r)
+			s.OwnedPath = filepath.Join(root, "owned")
+			if err := os.WriteFile(s.OwnedPath, []byte("br0\n"), 0600); err != nil {
+				b.Fatal(err)
+			}
+			if err := s.Apply(context.Background(), cfg); err != nil {
+				b.Fatal(err)
+			}
+			calls := 0
+			b.ReportAllocs()
+			for b.Loop() {
+				r.commands = nil
+				if err := s.Apply(context.Background(), cfg); err != nil {
+					b.Fatal(err)
+				}
+				calls += len(r.commands)
+			}
+			b.ReportMetric(float64(calls)/float64(b.N), "commands/op")
+		})
+	}
+}

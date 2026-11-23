@@ -168,9 +168,9 @@ func (s *Interfaces) Apply(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	enabled := cfg.InterfaceStates()
+	lookup := newInterfaceApplyLookup(cfg)
 	for _, iface := range cfg.Interfaces {
-		if err := s.configure(ctx, cfg, iface, enabled[iface.ID]); err != nil {
+		if err := s.configure(ctx, cfg, iface, lookup); err != nil {
 			return err
 		}
 	}
@@ -385,7 +385,7 @@ func (s *Interfaces) ensure(ctx context.Context, cfg *config.Config, iface confi
 }
 
 // configure применяет параметры и членство в бридже/bond.
-func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface config.Interface, enabled bool) error {
+func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface config.Interface, lookup interfaceApplyLookup) error {
 	if !linkExists(iface.Name) {
 		// Физический порт может отсутствовать: сетевую карту вынули или
 		// переименовали. Это не повод валить всё применение.
@@ -451,7 +451,8 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 		}
 	}
 
-	for _, member := range cfg.InterfaceNames(iface.Members) {
+	members := lookup.names(iface.Members)
+	for _, member := range members {
 		if !linkExists(member) {
 			continue
 		}
@@ -475,7 +476,7 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 			return fmt.Errorf("добавление %s в %s: %w", member, iface.Name, err)
 		}
 		memberState := "down"
-		if cfg.InterfaceNameEnabled(member) {
+		if lookup.enabledNames[member] {
 			memberState = "up"
 		}
 		if _, err := s.Runner.Run(ctx, "ip", "link", "set", member, memberState); err != nil {
@@ -497,12 +498,12 @@ func (s *Interfaces) configure(ctx context.Context, cfg *config.Config, iface co
 	// Порт, выведенный из моста в панели, обязан из него выйти и в системе:
 	// иначе он остаётся подчинённым, его адрес не работает, а администратор
 	// видит в панели свободный порт.
-	if err := s.releaseFormerMembers(ctx, cfg, iface); err != nil {
+	if err := s.releaseFormerMembers(ctx, cfg, iface, members); err != nil {
 		return err
 	}
 
 	state := "up"
-	if !enabled {
+	if !lookup.enabled[iface.ID] {
 		state = "down"
 	}
 	if _, err := s.Runner.Run(ctx, "ip", "link", "set", iface.Name, state); err != nil {
@@ -633,12 +634,12 @@ func (s *Interfaces) removeStale(ctx context.Context, cfg *config.Config) error 
 // releaseFormerMembers выводит из моста или агрегации порты, которых больше нет
 // в её составе. Без этого снятая в панели галочка не доходила до системы:
 // порт оставался подчинённым, а его собственный адрес не работал.
-func (s *Interfaces) releaseFormerMembers(ctx context.Context, cfg *config.Config, iface config.Interface) error {
+func (s *Interfaces) releaseFormerMembers(ctx context.Context, cfg *config.Config, iface config.Interface, members []string) error {
 	if iface.Type != "bridge" && iface.Type != "bond" {
 		return nil
 	}
 	keep := map[string]bool{}
-	for _, name := range cfg.InterfaceNames(iface.Members) {
+	for _, name := range members {
 		keep[name] = true
 	}
 	if len(iface.Members) == 0 {
