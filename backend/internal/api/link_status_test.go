@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,56 @@ import (
 type handshakeRunner struct{ timestamp int64 }
 
 type downProbe bool
+
+type wanAddressRunner struct {
+	handshakeRunner
+	devices []string
+}
+
+func (r *wanAddressRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	if name != "ip" || len(args) != 6 || !slices.Equal(args[:5], []string{"-4", "-o", "addr", "show", "dev"}) {
+		return "", fmt.Errorf("unexpected command %s %v", name, args)
+	}
+	r.devices = append(r.devices, args[5])
+	return "inet 192.0.2.1/24", nil
+}
+
+func TestWANStatusUsesFirstPortAndRefreshesEachSnapshot(t *testing.T) {
+	cfg := &config.Config{
+		Interfaces: []config.Interface{{ID: "p", Name: "eth0"}, {ID: "p", Name: "duplicate"}},
+		WANs: []config.WAN{
+			{ID: "off", Interface: "p"},
+			{ID: "first", Enabled: true, Interface: "p"},
+			{ID: "unknown", Enabled: true, Interface: "absent"},
+			{ID: "dsl", Enabled: true, Proto: "pppoe"},
+			{ID: "vpn", Enabled: true, Proto: "l2tp"},
+		},
+	}
+	runner := &wanAddressRunner{}
+	server := &Server{Collector: &runtime.Collector{Runner: runner}}
+	for _, port := range []string{"eth0", "eth2", ""} {
+		cfg.Interfaces[0].Name = port
+		runner.devices = nil
+		rows, _ := server.liveLinks(context.Background(), cfg, nil)
+		if len(rows) != 4 {
+			t.Fatalf("WAN rows: %v", rows)
+		}
+		var devices []string
+		for i, name := range []string{port, "", "ppp-dsl", "ppp-vpn"} {
+			address := ""
+			if name != "" {
+				devices = append(devices, name)
+				address = "192.0.2.1/24"
+			}
+			if rows[i]["interface"] != name || rows[i]["address"] != address || rows[i]["id"] != cfg.WANs[i+1].ID {
+				t.Fatalf("row %d: %v", i, rows[i])
+			}
+		}
+		if !slices.Equal(runner.devices, devices) {
+			t.Fatalf("address queries %v, want %v", runner.devices, devices)
+		}
+	}
+}
 
 func (d downProbe) ProbeDown(string) bool { return bool(d) }
 

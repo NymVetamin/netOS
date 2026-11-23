@@ -20,19 +20,27 @@ func (s *Server) liveLinks(ctx context.Context, cfg *config.Config, stats []runt
 	for _, stat := range stats {
 		up[stat.Name] = stat.Up
 	}
+	var namesByID map[string]string
 	for _, wan := range cfg.WANs {
 		if !wan.Enabled {
 			continue
 		}
 		name := ""
-		for _, iface := range cfg.Interfaces {
-			if iface.ID == wan.Interface {
-				name = iface.Name
-				break
-			}
-		}
 		if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
 			name = "ppp-" + wan.ID
+		} else if len(cfg.WANs) == 1 {
+			name = cfg.InterfaceName(wan.Interface)
+		} else {
+			if namesByID == nil {
+				namesByID = make(map[string]string, len(cfg.Interfaces))
+				for i := range cfg.Interfaces {
+					port := &cfg.Interfaces[i]
+					if _, exists := namesByID[port.ID]; !exists {
+						namesByID[port.ID] = port.Name
+					}
+				}
+			}
+			name = namesByID[wan.Interface]
 		}
 		probeDown := s.WANHealth != nil && s.WANHealth.ProbeDown(wan.ID)
 		address := ""

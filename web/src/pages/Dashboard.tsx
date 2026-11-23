@@ -15,15 +15,18 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
   const [status, setStatus] = useState<any>(null);
   const [statusError, setStatusError] = useState(false);
   const hasSegments = !!config.networks?.length;
+  const needsPortNames = useMemo(() => hasSegments || !!config.wans?.some(
+    (wan: any) => wan.enabled && wan.proto !== "pppoe" && wan.proto !== "l2tp"
+  ), [config.wans, hasSegments]);
   const { labelsByName, namesByID } = useMemo(() => {
     const labels = new Map<string, string>();
     const names = new Map<string, string>();
     for (const { id, name, label } of config.interfaces || []) {
       if (!labels.has(name)) labels.set(name, label);
-      if (hasSegments && !names.has(id)) names.set(id, name);
+      if (needsPortNames && !names.has(id)) names.set(id, name);
     }
     return { labelsByName: labels, namesByID: names };
-  }, [config.interfaces, hasSegments]);
+  }, [config.interfaces, needsPortNames]);
 
   const liveByName = useMemo(() => {
     const ports = new Map<string, any>();
@@ -37,7 +40,7 @@ export function Dashboard({ config, patch }: { config: any; patch: (change: (dra
 
   const wanInterfaces = (config.wans || [])
     .filter((w: any) => w.enabled)
-    .map((w: any) => wanInterfaceName(config, w));
+    .map((w: any) => wanInterfaceName(config, w, namesByID));
 
   useEffect(() => {
     let cancelled = false;
@@ -217,7 +220,8 @@ export function interfaceName(config: any, id: string): string {
   return iface?.name || id;
 }
 
-export function wanInterfaceName(config: any, wan: any): string {
+export function wanInterfaceName(config: any, wan: any, namesByID?: ReadonlyMap<string,string>): string {
   if (wan.proto === "pppoe" || wan.proto === "l2tp") return `ppp-${wan.id}`;
+  if (namesByID) return namesByID.get(wan.interface) || wan.interface;
   return interfaceName(config, wan.interface);
 }
