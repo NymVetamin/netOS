@@ -39,7 +39,7 @@ type LAN struct {
 	// already had is not news. reasons/mismatch join hostapd's neighbouring
 	// lines. All three are bounded by lanStateLimit.
 	leases   map[string]lease
-	reasons  map[string]wifiNote
+	reasons  map[[2]string]wifiNote // interface and normalized MAC
 	mismatch map[string]time.Time
 }
 
@@ -58,7 +58,7 @@ const mac = `([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})`
 
 var (
 	hostapdLine   = regexp.MustCompile(`^(\S+): (AP-STA-CONNECTED|AP-STA-DISCONNECTED|AP-STA-POSSIBLE-PSK-MISMATCH) ` + mac)
-	hostapdReason = regexp.MustCompile(`^\S+: STA ` + mac + ` IEEE 802\.11: (deauthenticated|disassociated)(?: due to (.+))?$`)
+	hostapdReason = regexp.MustCompile(`^(\S+): STA ` + mac + ` IEEE 802\.11: (deauthenticated|disassociated)(?: due to (.+))?$`)
 
 	dnsmasqDHCP   = regexp.MustCompile(`\b(DHCPACK|DHCPRELEASE|DHCPNAK)\(([^)]+)\) (\S+) ` + mac + `(?: (.+))?`)
 	dnsmasqNoFree = regexp.MustCompile(`\bDHCPDISCOVER\(([^)]+)\) ` + mac + ` no address available`)
@@ -86,9 +86,9 @@ func (l *LAN) wifi(at time.Time, line string, log *Log) {
 	defer l.mu.Unlock()
 	if m := hostapdReason.FindStringSubmatch(line); m != nil {
 		if l.reasons == nil || len(l.reasons) >= lanStateLimit {
-			l.reasons = map[string]wifiNote{}
+			l.reasons = map[[2]string]wifiNote{}
 		}
-		l.reasons[strings.ToLower(m[1])] = wifiNote{wifiReasons[m[3]], at}
+		l.reasons[[2]string{m[1], strings.ToLower(m[2])}] = wifiNote{wifiReasons[m[4]], at}
 		return
 	}
 	m := hostapdLine.FindStringSubmatch(line)
@@ -108,10 +108,11 @@ func (l *LAN) wifi(at time.Time, line string, log *Log) {
 		log.Add(at, WiFi, Info, source, who+" подключился")
 	case "AP-STA-DISCONNECTED":
 		msg := who + " отключился"
-		if note, ok := l.reasons[addr]; ok && at.Sub(note.at) < 3*time.Second && note.text != "" {
+		key := [2]string{iface, addr}
+		if note, ok := l.reasons[key]; ok && at.Sub(note.at) < 3*time.Second && note.text != "" {
 			msg += ": " + note.text
 		}
-		delete(l.reasons, addr)
+		delete(l.reasons, key)
 		log.Add(at, WiFi, Info, source, msg)
 	case "AP-STA-POSSIBLE-PSK-MISMATCH":
 		// hostapd reports every retry of the handshake; one attempt is one event.
