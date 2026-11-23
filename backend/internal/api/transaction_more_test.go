@@ -47,7 +47,7 @@ func TestImmediateApplySurvivesCommitFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Engine.ApplyWithCommit(context.Background(), old, oldID, false, st.MarkActive); err != nil {
+	if _, err := s.Engine.ApplyWithCommit(context.Background(), old, oldID, false, nil, st.MarkActive); err != nil {
 		t.Fatal(err)
 	}
 	next := *old

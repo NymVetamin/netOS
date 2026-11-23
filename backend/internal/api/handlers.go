@@ -1258,6 +1258,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	base := s.Engine.Current()
+	version := &s.draftVersion
 	cfg := s.draft
 	if usesPrivateDraft(r) {
 		if roleOf(r) == "limited" {
@@ -1271,12 +1273,13 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			r = withPanelAccess(r, currentUser.Role, currentAccess)
 		}
 		d := s.privateDraftLocked(userOf(r))
+		version = &d.Version
 		if req.DraftVersion != d.Version {
 			s.draftMu.Unlock()
 			writeError(w, 409, "версия черновика изменилась; применение не началось, обновите настройки и проверьте изменения")
 			return
 		}
-		if !sameConfig(d.Base, s.Engine.Current()) {
+		if !sameConfig(d.Base, base) {
 			s.draftMu.Unlock()
 			writeError(w, 409, "применённая конфигурация изменилась; применение не началось, отмените устаревший черновик и повторите изменения")
 			return
@@ -1312,7 +1315,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if cfg == nil {
-			cfg = s.Engine.Current()
+			cfg = base
 		}
 	}
 	s.draftApplying = true
@@ -1330,9 +1333,6 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInsufficientStorage, "недостаточно места для безопасного применения конфигурации: %v", err)
 		return
 	}
-
-	// Новое применение отменяет прошлое предупреждение об откате.
-	s.Engine.ClearRollback()
 
 	username := userOf(r)
 	revID, err := s.Store.CreateRevision(cfg, username, req.Comment)
@@ -1352,17 +1352,28 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	// подтверждения или собственного отката независимо от соединения браузера.
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	result, err := s.Engine.ApplyWithCommit(managementContext(applyCtx, r), cfg, revID, true, s.Store.MarkActive)
-	if errors.Is(err, apply.ErrPendingConfirmation) {
-		// Здесь ничего не менялось: предыдущая транзакция всё ещё ждёт
-		// подтверждения. Сообщать об откате было бы неправдой.
+	stale := errors.New("конфигурация изменилась во время отката; обновите настройки")
+	check := func() error {
+		s.draftMu.Lock()
+		defer s.draftMu.Unlock()
+		if *version != req.DraftVersion || s.Engine.Current() != base {
+			return stale
+		}
+		s.Engine.ClearRollback()
+		return nil
+	}
+	result, err := s.Engine.ApplyWithCommit(managementContext(applyCtx, r), cfg, revID, true, check, s.Store.MarkActive)
+	if errors.Is(err, apply.ErrPendingConfirmation) || errors.Is(err, stale) {
 		_ = s.Store.SetRevisionState(revID, store.StateFailed)
 		_ = s.Store.Audit(store.AuditEntry{
 			User: username, Action: "apply", Target: strconv.FormatInt(revID, 10),
 			Detail: err.Error(), SourceIP: clientIP(r), Success: false,
 		})
-		writeError(w, http.StatusConflict,
-			"%v: подтвердите или откатите его, конфигурация не менялась", err)
+		if errors.Is(err, stale) {
+			writeError(w, http.StatusConflict, "%v", err)
+		} else {
+			writeError(w, http.StatusConflict, "%v: подтвердите или откатите его, конфигурация не менялась", err)
+		}
 		return
 	}
 	if err != nil {

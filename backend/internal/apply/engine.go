@@ -417,14 +417,21 @@ var ErrRestored = errors.New("система возвращена к прежн�
 // cfg.System.Panel.CommitTimeout. Первое применение при загрузке системы
 // подтверждения не требует: подтверждать некому.
 func (e *Engine) Apply(ctx context.Context, cfg *config.Config, revision int64, needConfirm bool) (*Result, error) {
-	return e.ApplyWithCommit(ctx, cfg, revision, needConfirm, nil)
+	return e.ApplyWithCommit(ctx, cfg, revision, needConfirm, nil, nil)
 }
 
 // ApplyWithCommit persists an immediately active revision before publishing Current.
+// check, when provided, verifies the caller's snapshot after any concurrent rollback.
 // A change awaiting confirmation is persisted separately by Confirm.
-func (e *Engine) ApplyWithCommit(ctx context.Context, cfg *config.Config, revision int64, needConfirm bool, commit func(int64) error) (*Result, error) {
+func (e *Engine) ApplyWithCommit(ctx context.Context, cfg *config.Config, revision int64, needConfirm bool, check func() error, commit func(int64) error) (*Result, error) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
+
+	if check != nil {
+		if err := check(); err != nil {
+			return nil, err
+		}
+	}
 
 	if cfg == nil {
 		return nil, fmt.Errorf("конфигурация не задана")
