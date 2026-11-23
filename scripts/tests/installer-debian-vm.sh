@@ -75,12 +75,18 @@ for mode in fresh repeat; do
 set -euo pipefail
 # The installer prints credentials; keep its complete log inside the guest.
 (
-    for _ in $(seq 1 120); do
+    deadline=$((SECONDS + 120))
+    while [ "$SECONDS" -lt "$deadline" ]; do
         date -u +%T
         readlink /etc/resolv.conf || true
-        cat /etc/resolv.conf || true
+        sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' /etc/resolv.conf || true
         resolvectl dns 2>&1 || true
         ip -4 route
+        if timeout 2 getent ahostsv4 deb.debian.org; then
+            echo 'DNS lookup PASS'
+        else
+            echo 'DNS lookup FAIL'
+        fi
         sleep 1
     done
 ) >"/root/network-$MODE.log" 2>&1 &
@@ -91,7 +97,7 @@ if ! NETOS_BINARY_URL=http://10.0.2.2:18080/netosd-linux-amd64 bash /tmp/install
     # Only synthetic guest data exists here; still omit credential-bearing lines.
     sed -E '/[Пп]ароль|[Pp]assword|[Tt]oken|[Ss]ecret|[Pp]rivate[Kk]ey/d' \
         "/root/install-$MODE.log" | tail -80
-    tail -100 "/root/network-$MODE.log"
+    cat "/root/network-$MODE.log"
     echo "FAIL: $MODE install (private log retained inside guest)"; exit 1
 fi
 test "$(sha256sum /usr/local/bin/netosd | awk '{print $1}')" = "$EXPECTED_SHA"
