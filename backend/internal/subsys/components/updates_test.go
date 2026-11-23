@@ -361,3 +361,47 @@ func TestSharedPackageInvalidatesAffectedCachedComponents(t *testing.T) {
 		t.Fatalf("shared PPP cache not invalidated: %v", rows)
 	}
 }
+
+func TestRemovalSelectionKeepsVersionsWithoutEnablingUpgrade(t *testing.T) {
+	ctx := context.Background()
+	for _, status := range []string{"ri", "pi"} {
+		t.Run(status, func(t *testing.T) {
+			r := &updateTestRunner{}
+			s := New(r, testLogger{})
+			rows, err := s.CheckUpdates(ctx, "unbound")
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := rows["unbound"]
+			r.inventory = "unbound\tii \t1.0\nunbound-anchor\t" + status + " \t1.0\n"
+			rows, err = s.CheckUpdates(ctx, "unbound")
+			row := rows["unbound"]
+			if err != nil || row.Error != "" || len(row.Packages) != 2 || row.Installed != "1.0" || row.Available != "1.1" {
+				t.Fatalf("versions after selection %s: %+v %v", status, row, err)
+			}
+			if row.Token == "" || row.UpdateAvailable || row.Packages[0].UpdateAvailable || row.Packages[1].Installed != "1.0" {
+				t.Fatalf("unexpected package state: %+v", row)
+			}
+			m := NewUpdateManager(s, filepath.Join(t.TempDir(), "updates.json"))
+			for _, token := range []string{original.Token, row.Token} {
+				if s.Upgrade(ctx, "unbound", token) == nil || m.runUpdates(ctx, []UpdateRequest{{ID: "unbound", Token: token}}) == nil {
+					t.Fatal("component with removal selection admitted to upgrade")
+				}
+			}
+			for _, call := range r.calls {
+				if strings.Contains(call, " install ") {
+					t.Fatalf("unexpected install: %s", call)
+				}
+			}
+			normal := "unbound-anchor\tii \t1.0\n"
+			marked := "unbound-anchor\t" + status + " \t0.9\n"
+			for _, lines := range []string{normal + marked, marked + normal, normal} {
+				r.inventory = "unbound\tii \t1.0\n" + lines
+				rows, err := s.CheckUpdates(ctx, "unbound")
+				if err != nil || rows["unbound"].Token != original.Token || !rows["unbound"].UpdateAvailable {
+					t.Fatalf("normal selection: %+v, %v", rows, err)
+				}
+			}
+		})
+	}
+}

@@ -55,8 +55,9 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 		return nil, err
 	}
 	type packageState struct {
-		version string
-		held    bool
+		version            string
+		held               bool
+		selectedForRemoval bool
 	}
 	installed := map[string]packageState{}
 	for _, info := range config.Catalog {
@@ -68,27 +69,44 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 	}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) == 3 && (f[1] == "ii" || f[1] == "hi") {
-			if previous, wanted := installed[f[0]]; wanted {
-				installed[f[0]] = packageState{version: f[2], held: previous.held || f[1] == "hi"}
+		if len(f) != 3 {
+			continue
+		}
+		previous, wanted := installed[f[0]]
+		if !wanted {
+			continue
+		}
+		switch f[1] {
+		case "ii", "hi":
+			installed[f[0]] = packageState{version: f[2], held: previous.held || f[1] == "hi"}
+		case "ri", "pi":
+			// A same-name installed architecture already eligible for updates
+			// keeps its version and eligibility regardless of inventory order.
+			if previous.version == "" || previous.selectedForRemoval {
+				installed[f[0]] = packageState{version: f[2], selectedForRemoval: true}
 			}
 		}
 	}
 	packages := map[string]bool{}
-	complete := map[string]bool{}
+	// Only complete components appear here. Keep removal selections visible
+	// without admitting the component (including its other packages) to upgrades.
+	upgradable := map[string]bool{}
 	for _, info := range config.Catalog {
 		if selected(info.ID) && !info.External && len(info.Packages) > 0 {
 			all := true
+			selectedForRemoval := false
 			for _, p := range info.Packages {
-				if installed[p].version == "" {
+				state := installed[p]
+				if state.version == "" {
 					all = false
 					break
 				}
+				selectedForRemoval = selectedForRemoval || state.selectedForRemoval
 			}
 			if !all {
 				continue
 			}
-			complete[info.ID] = true
+			upgradable[info.ID] = !selectedForRemoval
 			for _, p := range info.Packages {
 				packages[p] = true
 			}
@@ -143,7 +161,8 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 				row.UpdateAvailable = known && cmp > 0
 			}
 		} else {
-			if !complete[info.ID] {
+			eligible, complete := upgradable[info.ID]
+			if !complete {
 				continue
 			}
 			for _, p := range info.Packages {
@@ -157,7 +176,7 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 					row.Error = fmt.Sprintf("нет доступной версии пакета %s в репозитории", p)
 				}
 				pkg := PackageUpdate{Name: p, Installed: v, Available: candidate}
-				if candidate != "" && candidate != v && !state.held {
+				if eligible && candidate != "" && candidate != v && !state.held {
 					cmp, checked := comparisons[p]
 					if !checked {
 						_, e := s.Runner.Run(ctx, "dpkg", "--compare-versions", candidate, "gt", v)
