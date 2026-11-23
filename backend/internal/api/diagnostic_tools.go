@@ -55,10 +55,6 @@ type diagnosticCommand struct {
 	interfaces []string
 }
 
-func diagnosticHost(host string) bool {
-	return len(host) <= 253 && !strings.Contains(host, "..") && (net.ParseIP(host) != nil || probeHostname.MatchString(host))
-}
-
 var diagnosticDNSLabel = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 
 func diagnosticDNSName(name string) bool {
@@ -101,9 +97,20 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 			return bad("интерфейс не найден")
 		}
 	}
+	family := "-4"
 	if in.Kind == "ping" || in.Kind == "traceroute" || in.Kind == "mtr" || (in.Kind == "iperf" && in.Mode != "server") {
-		if !diagnosticHost(in.Host) {
+		if len(in.Host) > 253 || strings.Contains(in.Host, "..") {
 			return bad("укажите IP-адрес или имя узла")
+		}
+		ip := net.ParseIP(in.Host)
+		if ip == nil {
+			if !probeHostname.MatchString(in.Host) {
+				return bad("укажите IP-адрес или имя узла")
+			}
+		} else if ip.To4() == nil {
+			family = "-6"
+		} else if strings.Contains(in.Host, ":") {
+			in.Host = ip.String() // IPv4-mapped literals need an IPv4 target with -4.
 		}
 	}
 	switch in.Kind {
@@ -117,7 +124,7 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 		if in.Count < 1 || in.Count > 30 || in.Size < 16 || in.Size > 1472 {
 			return bad("ping: 1–30 пакетов, размер 16–1472 байт")
 		}
-		c.name, c.args = "ping", []string{"-4", "-n", "-c", strconv.Itoa(in.Count), "-W", "2", "-s", strconv.Itoa(in.Size)}
+		c.name, c.args = "ping", []string{family, "-n", "-c", strconv.Itoa(in.Count), "-W", "2", "-s", strconv.Itoa(in.Size)}
 		c.duration = time.Duration(in.Count+5) * time.Second
 		if in.Interface != "" {
 			c.args = append(c.args, "-I", in.Interface)
@@ -131,12 +138,12 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 			return bad("максимальный TTL: 1–64")
 		}
 		c.duration = 75 * time.Second
-		c.name, c.args = "traceroute", []string{"-4", "-n", "-m", strconv.Itoa(in.TTL), "-w", "1", "-q", "1"}
+		c.name, c.args = "traceroute", []string{family, "-n", "-m", strconv.Itoa(in.TTL), "-w", "1", "-q", "1"}
 		if in.Interface != "" {
 			c.args = append(c.args, "-i", in.Interface)
 		}
 		if in.Kind == "mtr" {
-			c.name, c.args = "mtr", []string{"-4", "-n", "-r", "-w", "-c", "5", "-m", strconv.Itoa(in.TTL)}
+			c.name, c.args = "mtr", []string{family, "-n", "-r", "-w", "-c", "5", "-m", strconv.Itoa(in.TTL)}
 			if in.Interface != "" {
 				c.args = append(c.args, "-I", in.Interface)
 			}
@@ -174,8 +181,11 @@ func buildDiagnosticCommand(in diagnosticInput) (diagnosticCommand, error) {
 		if in.Mbps < 1 || in.Mbps > 10000 {
 			return bad("скорость: 1–10000 Мбит/с")
 		}
-		c.name, c.args = "iperf3", []string{"-4", "--forceflush", "-p", strconv.Itoa(in.Port)}
+		c.name, c.args = "iperf3", []string{family, "--forceflush", "-p", strconv.Itoa(in.Port)}
 		if in.Bind != "" {
+			if family == "-6" {
+				return bad("для IPv6-цели выберите локальный адрес автоматически")
+			}
 			if !diagnosticLocalIP(in.Bind) {
 				return bad("выберите локальный IPv4-адрес")
 			}

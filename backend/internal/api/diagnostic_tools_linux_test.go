@@ -109,6 +109,44 @@ func TestDiagnosticLinuxCommands(t *testing.T) {
 	}
 }
 
+func TestDiagnosticLinuxIPv6Targets(t *testing.T) {
+	diagnosticLinux(t)
+	for _, kind := range []string{"ping", "traceroute", "mtr"} {
+		t.Run(kind, func(t *testing.T) {
+			for range 2 {
+				out := diagnosticExecute(t, diagnosticInput{Kind: kind, Host: "::1", Interface: "lo", Count: 1, TTL: 3})
+				if len(out) == 0 {
+					t.Fatal("empty IPv6 diagnostic output")
+				}
+			}
+		})
+	}
+	for _, udp := range []bool{false, true} {
+		listener, err := net.Listen("tcp6", "[::1]:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		listener.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		server := exec.CommandContext(ctx, "iperf3", "-6", "-B", "::1", "-s", "-1", "-p", strconv.Itoa(port))
+		if err := server.Start(); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		func() {
+			defer cancel()
+			defer server.Wait()
+			defer server.Process.Kill()
+			time.Sleep(200 * time.Millisecond)
+			out := diagnosticExecute(t, diagnosticInput{Kind: "iperf", Host: "::1", Port: port, Duration: 1, Mbps: 1, UDP: udp, Reverse: true})
+			if !bytes.Contains(out, []byte("receiver")) {
+				t.Fatal(string(out))
+			}
+		}()
+	}
+}
+
 func TestDiagnosticLinuxLifecycle(t *testing.T) {
 	diagnosticLinux(t)
 	s := &Server{}
