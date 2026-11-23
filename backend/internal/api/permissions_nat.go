@@ -58,6 +58,14 @@ func mergeNetworkNAT(previous, visible, incoming *config.Config) (config.Firewal
 	}
 	result := previous.Firewall
 	result.NAT = append([]config.NATRule(nil), previous.Firewall.NAT...)
+	positions := make(map[string][]int, len(result.NAT))
+	masquerades := make(map[string]bool)
+	for i, rule := range result.NAT {
+		positions[rule.ID] = append(positions[rule.ID], i)
+		if rule.Direction != "destination" && rule.Source == "" && rule.ToSource == "" {
+			masquerades[rule.Interface] = true
+		}
+	}
 	old := map[string]config.NATRule{}
 	manual := map[string]bool{}
 	for _, rule := range visible.Firewall.NAT {
@@ -68,6 +76,7 @@ func mergeNetworkNAT(previous, visible, incoming *config.Config) (config.Firewal
 	}
 	seen := map[string]bool{}
 	isWANMasquerade := wanMasqueradeMatcher(previous)
+	var expectedNew map[config.NATRule]bool
 	for _, rule := range incoming.Firewall.NAT {
 		if seen[rule.ID] {
 			return deny()
@@ -82,36 +91,43 @@ func mergeNetworkNAT(previous, visible, incoming *config.Config) (config.Firewal
 			if rule.Enabled != existing.Enabled && (!existing.System || !isWANMasquerade(existing) || manual[existing.Interface]) {
 				return deny()
 			}
-			for i := range result.NAT {
-				if result.NAT[i].ID == rule.ID {
-					result.NAT[i].Enabled = rule.Enabled
-				}
+			for _, i := range positions[rule.ID] {
+				result.NAT[i].Enabled = rule.Enabled
 			}
 			continue
 		}
-		valid := false
-		for _, wan := range incoming.WANs {
-			iface := wanDevice(incoming, wan)
-			if iface == "" || manual[iface] {
-				continue
+		if expectedNew == nil {
+			if len(incoming.WANs) == 0 {
+				return deny()
 			}
-			expected := config.NATRule{ID: "wan-nat-" + wan.ID, Name: fmt.Sprintf("NAT аплинка «%s»", wan.Name), System: true, Enabled: rule.Enabled, Direction: "source", Interface: iface}
-			if reflect.DeepEqual(rule, expected) {
-				valid = true
-				break
+			expectedNew = make(map[config.NATRule]bool, len(incoming.WANs))
+			names := make(map[string]string, len(incoming.Interfaces))
+			for _, port := range incoming.Interfaces {
+				if _, exists := names[port.ID]; !exists {
+					names[port.ID] = port.Name
+				}
+			}
+			for _, wan := range incoming.WANs {
+				iface := names[wan.Interface]
+				if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
+					iface = "ppp-" + wan.ID
+				}
+				if iface == "" || manual[iface] {
+					continue
+				}
+				expectedNew[config.NATRule{ID: "wan-nat-" + wan.ID, Name: fmt.Sprintf("NAT аплинка «%s»", wan.Name), System: true, Direction: "source", Interface: iface}] = true
 			}
 		}
-		if !valid {
+		candidate := rule
+		candidate.Enabled = false
+		if !expectedNew[candidate] {
 			return deny()
 		}
-		for _, existing := range result.NAT {
-			if existing.ID == rule.ID {
-				return deny()
-			}
-			if existing.Interface == rule.Interface && existing.Direction != "destination" && existing.Source == "" && existing.ToSource == "" {
-				return deny()
-			}
+		if len(positions[rule.ID]) != 0 || masquerades[rule.Interface] {
+			return deny()
 		}
+		positions[rule.ID] = []int{len(result.NAT)}
+		masquerades[rule.Interface] = true
 		result.NAT = append(result.NAT, rule)
 	}
 	for id := range old {
