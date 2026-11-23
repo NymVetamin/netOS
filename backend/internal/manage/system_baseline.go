@@ -268,16 +268,36 @@ func (m *Manager) readSystemBaseline() (*systemBaseline, error) {
 	return &b, nil
 }
 
+// iptables-restore only flushes tables mentioned in its input.
+func baselineFirewallRules(snapshot string, ipv4 bool) string {
+	filter, nat, mangle := emptyFilter, emptyNAT, emptyMangle
+	if !ipv4 {
+		nat = ""
+	}
+	for line := range strings.Lines(snapshot) {
+		switch strings.TrimSpace(line) {
+		case "*filter":
+			filter = ""
+		case "*nat":
+			nat = ""
+		case "*mangle":
+			mangle = ""
+		default:
+			continue
+		}
+		if filter == "" && nat == "" && mangle == "" {
+			return snapshot
+		}
+	}
+	separator := ""
+	if snapshot != "" && !strings.HasSuffix(snapshot, "\n") {
+		separator = "\n"
+	}
+	return snapshot + separator + filter + nat + mangle
+}
+
 func (m *Manager) restoreBaselineFirewall(ctx context.Context, b *systemBaseline) error {
-	// Empty iptables-save output is valid on a fresh host. Empty restore input
-	// is a no-op, so explicitly clear the tables managed by netOS.
-	rules4, rules6 := b.IPTables4, b.IPTables6
-	if strings.TrimSpace(rules4) == "" {
-		rules4 = emptyFirewall4
-	}
-	if strings.TrimSpace(rules6) == "" {
-		rules6 = emptyFirewall6
-	}
+	rules4 := baselineFirewallRules(b.IPTables4, true)
 	if err := m.Run(ctx, command{name: "iptables-restore", stdin: rules4, feedStdin: true}); err != nil {
 		if m.uninstallFirewallAlreadyRestored(ctx, b, err) {
 			return nil
@@ -285,6 +305,7 @@ func (m *Manager) restoreBaselineFirewall(ctx context.Context, b *systemBaseline
 		return fmt.Errorf("восстановление IPv4 firewall: %w", err)
 	}
 	if b.IPTables6Exists {
+		rules6 := baselineFirewallRules(b.IPTables6, false)
 		if err := m.Run(ctx, command{name: "ip6tables-restore", stdin: rules6, feedStdin: true}); err != nil {
 			return fmt.Errorf("восстановление IPv6 firewall: %w", err)
 		}

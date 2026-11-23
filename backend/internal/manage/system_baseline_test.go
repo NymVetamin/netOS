@@ -176,7 +176,7 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := systemBaseline{
-		Version: 1, IPTables4: "ORIGINAL4\n", IPTables6: "ORIGINAL6\n", IPTables6Exists: true,
+		Version: 1, IPTables4: "# ORIGINAL4\n" + emptyFirewall4, IPTables6: "# ORIGINAL6\n" + emptyFilter + emptyMangle, IPTables6Exists: true,
 		StaticRoutes4:   []string{"10.0.0.0/8 via 192.0.2.1 dev eth0 proto static"},
 		PolicyRules4:    []string{"20123: from 10.0.0.0/8 lookup foreign"},
 		Sysctl:          map[string]string{"net/ipv4/ip_forward": "7"},
@@ -231,10 +231,10 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 		if c.name == "ip" && contains(c.args, "delete") && len(c.args) > 0 {
 			deleted[c.args[len(c.args)-1]] = true
 		}
-		if c.name == "iptables-restore" && c.stdin == "ORIGINAL4\n" {
+		if c.name == "iptables-restore" && c.stdin == b.IPTables4 {
 			restored4 = true
 		}
-		if c.name == "ip6tables-restore" && c.stdin == "ORIGINAL6\n" {
+		if c.name == "ip6tables-restore" && c.stdin == b.IPTables6 {
 			restored6 = true
 		}
 		joined := c.name + " " + strings.Join(c.args, " ")
@@ -575,6 +575,28 @@ func TestRestoreBaselineFirewallClearsEmptySnapshot(t *testing.T) {
 	}
 	if !fed["ip6tables-restore"] || !fed["iptables-restore"] {
 		t.Fatalf("не обе семьи восстановлены: %v", fed)
+	}
+}
+
+func TestBaselineFirewallPreservesSavedSections(t *testing.T) {
+	for _, tc := range []struct {
+		name, snapshot, missing string
+		ipv4                    bool
+	}{
+		{"empty IPv4", "", emptyFirewall4, true},
+		{"empty IPv6", "", emptyFilter + emptyMangle, false},
+		{"comment", "# *filter", "\n" + emptyFirewall4, true},
+		{"only NAT", emptyNAT, emptyFilter + emptyMangle, true},
+		{"IPv6 filter", strings.TrimSuffix(emptyFilter, "\n"), "\n" + emptyMangle, false},
+		{"all captured", "# counters\n" + emptyMangle + emptyNAT + emptyFilter, "", true},
+		{"foreign table", "*raw\n:INPUT ACCEPT [0:0]\nCOMMIT\n" + emptyMangle, emptyFilter, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := baselineFirewallRules(tc.snapshot, tc.ipv4)
+			if got != tc.snapshot+tc.missing || baselineFirewallRules(got, tc.ipv4) != got {
+				t.Fatalf("unexpected restore input: %q", got)
+			}
+		})
 	}
 }
 
