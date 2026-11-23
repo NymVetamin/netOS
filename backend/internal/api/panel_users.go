@@ -83,7 +83,7 @@ func (s *Server) handlePanelUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "дождитесь завершения применения настроек")
 		return
 	}
-	err := s.Store.SavePanelUser(req.PanelUser, hash, r.Method == http.MethodPost, remove, userOf(r), clientIP(r))
+	changed, err := s.Store.SavePanelUser(req.PanelUser, hash, r.Method == http.MethodPost, remove, userOf(r), clientIP(r))
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrLastAdmin):
@@ -95,6 +95,8 @@ func (s *Server) handlePanelUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	delete(s.privateDrafts, req.Username)
+	if changed {
+		delete(s.privateDrafts, req.Username)
+	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

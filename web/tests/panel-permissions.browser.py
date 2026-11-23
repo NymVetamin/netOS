@@ -70,7 +70,7 @@ async def scenario(browser, mode):
 
 async def users_scenario(browser):
     page=await browser.new_page(viewport={"width":1440,"height":1000})
-    errors=[]; users=[{"username":"admin","role":"admin","enabled":True,"permissions":{}}]
+    errors=[]; updates=[]; users=[{"username":"admin","role":"admin","enabled":True,"permissions":{}}]
     page.on("pageerror",lambda e:errors.append(str(e)))
     cfg={"system":{"hostname":"router","ntp":{"enabled":False,"servers":[]}},"interfaces":[],"networks":[],"channels":[],"policies":[]}
     async def route_request(route):
@@ -84,6 +84,7 @@ async def users_scenario(browser):
         elif path=="/api/panel-users":
             if req.method=="POST":
                 user=req.post_data_json;assert user.pop("password")=="temporary-test-password";users.append(user)
+            if req.method=="PUT": updates.append(req.post_data_json)
             body=users if req.method=="GET" else {"ok":True}
         elif path=="/api/status":body={"interfaces":[],"channels":[]}
         await route.fulfill(json=body,content_type="application/json")
@@ -120,7 +121,15 @@ async def users_scenario(browser):
     await listing.locator('tr').filter(has_text='operator').get_by_role('button',name='Изменить',exact=True).click()
     await expect(page.get_by_label('Логин пользователя панели',exact=True)).to_have_value('operator')
     await expect(page.get_by_label('Логин пользователя панели',exact=True)).to_be_disabled()
-    await page.get_by_role('button',name='Отмена',exact=True).click()
+    save=page.get_by_role('button',name='Сохранить пользователя',exact=True)
+    await save.click()
+    await expect(save).to_have_count(0)
+    assert not updates,updates
+    await listing.locator('tr').filter(has_text='operator').get_by_role('button',name='Изменить',exact=True).click()
+    await page.get_by_label('Просмотр: Карта сети',exact=True).uncheck()
+    await save.click()
+    await expect(save).to_have_count(0)
+    assert len(updates)==1 and updates[0]["permissions"]["map"]=="none",updates
     await expect(page.locator('section.card',has=page.get_by_role('heading',name='Пользователи панели',exact=True)).get_by_role('button',name='Добавить',exact=True)).to_be_enabled()
     assert not errors,errors
     await page.close();print("user form PASS")

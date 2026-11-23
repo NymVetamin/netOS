@@ -53,7 +53,7 @@ func TestWiFiHardwareAuthenticatedRoutes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			u := store.PanelUser{Username: tc.name, Role: "limited", PanelAccess: store.PanelAccess{Enabled: tc.enabled, Permissions: map[string]string{tc.section: tc.level}}}
-			if err := s.Store.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
+			if _, err := s.Store.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
 				t.Fatal(err)
 			}
 			token := "wifi-test-" + tc.name

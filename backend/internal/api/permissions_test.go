@@ -61,7 +61,7 @@ func TestScopedConfigRejectsHiddenChanges(t *testing.T) {
 func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 	s, _, _, _ := transactionServer(t)
 	u := store.PanelUser{Username: "operator", Role: "limited", PanelAccess: store.PanelAccess{Enabled: true, Permissions: map[string]string{"system": "manage"}}}
-	if err := s.Store.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
+	if _, err := s.Store.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Store.CreateSession("limited-token", "operator", "test", time.Hour); err != nil {
@@ -116,7 +116,7 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 	}
 	other := u
 	other.Username = "other"
-	if err := s.Store.SavePanelUser(other, "hash", true, false, "admin", "test"); err != nil {
+	if _, err := s.Store.SavePanelUser(other, "hash", true, false, "admin", "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Store.CreateSession("other-token", "other", "test", time.Hour); err != nil {
@@ -145,12 +145,55 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 		t.Fatalf("private version reused: %+v", response)
 	}
 	u.Enabled = false
-	if err := s.Store.SavePanelUser(u, "", false, false, "admin", "test"); err != nil {
+	if _, err := s.Store.SavePanelUser(u, "", false, false, "admin", "test"); err != nil {
 		t.Fatal(err)
 	}
 	w = serveAuthed(h, "GET", "/api/config", nil, cookie, "")
 	if w.Code != 401 {
 		t.Fatalf("disabled session: %d", w.Code)
+	}
+}
+
+func TestRepeatPanelUserUpdatePreservesSessionAndDraft(t *testing.T) {
+	s, cookie, csrf, _ := transactionServer(t)
+	u := store.PanelUser{Username: "operator", Role: "limited", PanelAccess: store.PanelAccess{
+		Enabled: true, Permissions: map[string]string{"system": "manage"},
+	}}
+	if _, err := s.Store.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Store.CreateSession("operator-token", u.Username, "test", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	draft := s.privateDraftLocked(u.Username)
+	draft.Config, draft.Version = config.Default(), 7
+	draft.Config.System.Hostname = "my-unsaved-change"
+	h := s.Routes()
+	save := func() {
+		t.Helper()
+		body, err := json.Marshal(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := serveAuthed(h, "PUT", "/api/panel-users", body, cookie, csrf)
+		if w.Code != 200 {
+			t.Fatalf("save: %d %s", w.Code, w.Body.String())
+		}
+	}
+	for i := 0; i < 2; i++ {
+		save()
+		if _, err := s.Store.SessionUser("operator-token"); err != nil {
+			t.Errorf("unchanged access revoked session: %v", err)
+		}
+		if s.privateDrafts[u.Username] != draft || draft.Version != 7 || draft.Config.System.Hostname != "my-unsaved-change" {
+			t.Error("unchanged access discarded draft")
+		}
+		u.Permissions["network"] = "none"
+	}
+	u.Permissions["system"] = "view"
+	save()
+	if _, err := s.Store.SessionUser("operator-token"); err == nil || s.privateDrafts[u.Username] != nil {
+		t.Fatal("changed permissions kept session or draft")
 	}
 }
 

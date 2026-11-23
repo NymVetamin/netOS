@@ -23,6 +23,14 @@ export function PanelUsers() {
   useEffect(() => { void reload(); }, []);
   async function save() {
     if (!form) return;
+    if (!creating && !form.password) {
+      const original = users.find(user => user.username === form.username);
+      if (original?.role === form.role && original.enabled === form.enabled &&
+          Object.keys(PANEL_SECTIONS).every(key => (original.permissions?.[key] || "none") === (form.permissions?.[key] || "none"))) {
+        setForm(null);
+        return;
+      }
+    }
     setBusy(true); setError("");
     try { await api.savePanelUser(form, creating); setForm(null); await reload(); }
     catch (e) { setError(e instanceof Error ? e.message : "Не удалось сохранить пользователя"); }

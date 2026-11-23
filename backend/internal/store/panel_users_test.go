@@ -12,10 +12,10 @@ func TestPanelUserLastAdminAndSessionRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := PanelUser{Username: "admin", Role: "limited", PanelAccess: PanelAccess{Enabled: true, Permissions: map[string]string{"clients": "manage"}}}
-	if err := s.SavePanelUser(u, "", false, false, "admin", "test"); !errors.Is(err, ErrLastAdmin) {
+	if _, err := s.SavePanelUser(u, "", false, false, "admin", "test"); !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("demote last admin: %v", err)
 	}
-	if err := s.SavePanelUser(u, "", false, true, "admin", "test"); !errors.Is(err, ErrLastAdmin) {
+	if _, err := s.SavePanelUser(u, "", false, true, "admin", "test"); !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("delete last admin: %v", err)
 	}
 	current, err := s.UserByName("admin")
@@ -23,14 +23,14 @@ func TestPanelUserLastAdminAndSessionRevocation(t *testing.T) {
 		t.Fatalf("rollback failed: %+v %v", current, err)
 	}
 	u.Username = "operator"
-	if err := s.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
+	if _, err := s.SavePanelUser(u, "hash", true, false, "admin", "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateSession("token", "operator", "test", time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	u.Enabled = false
-	if err := s.SavePanelUser(u, "", false, false, "admin", "test"); err != nil {
+	if _, err := s.SavePanelUser(u, "", false, false, "admin", "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SessionUser("token"); err == nil {
@@ -40,7 +40,7 @@ func TestPanelUserLastAdminAndSessionRevocation(t *testing.T) {
 	if err != nil || access.Enabled || access.Permissions["clients"] != "manage" {
 		t.Fatalf("access: %+v %v", access, err)
 	}
-	if err := s.SavePanelUser(u, "", false, true, "admin", "test"); err != nil {
+	if _, err := s.SavePanelUser(u, "", false, true, "admin", "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.UserByName("operator"); !errors.Is(err, ErrNotFound) {
@@ -72,5 +72,23 @@ func TestPanelAccessBackfillIsIdempotent(t *testing.T) {
 	a, err = s.PanelAccess("admin")
 	if err != nil || a.Enabled {
 		t.Fatalf("migration reset access: %+v %v", a, err)
+	}
+}
+
+func TestPanelPasswordChangeRevokesSessionWithIdenticalAccess(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.CreateUser("admin", "old-hash", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateSession("token", "admin", "test", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	u := PanelUser{Username: "admin", Role: "admin", PanelAccess: PanelAccess{Enabled: true}}
+	changed, err := s.SavePanelUser(u, "new-hash", false, false, "admin", "test")
+	if err != nil || !changed {
+		t.Fatalf("password change: %v, %v", changed, err)
+	}
+	if _, err := s.SessionUser("token"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoked session: %v", err)
 	}
 }
