@@ -35,3 +35,25 @@ func TestIsolationEmptyAndProxyDestinationToggle(t *testing.T) {
 		t.Fatal("disabled isolated server generated rules")
 	}
 }
+
+func TestIsolationSkipsEqualIDsBeforeLinkingSource(t *testing.T) {
+	cfg := config.Default()
+	cfg.VPNServers = nil
+	cfg.Networks = []config.Network{
+		{ID: "dup", Enabled: true, Zone: "lan", Isolated: true, RouterAddress: "192.0.2.1/24"},
+		{ID: "dup", Enabled: true, Zone: "lan", RouterAddress: "198.51.100.1/24"},
+	}
+	var empty builder
+	empty.isolation(cfg)
+	if empty.String() != "" {
+		t.Fatalf("equal IDs created a chain: %s", empty.String())
+	}
+	cfg.Networks = append(cfg.Networks, config.Network{ID: "other", Enabled: true, Zone: "lan", RouterAddress: "203.0.113.1/24"})
+	var rules builder
+	rules.isolation(cfg)
+	text := rules.String()
+	if strings.Count(text, ":LAN-ISOLATION ") != 1 || strings.Count(text, "-A FORWARD ") != 2 ||
+		strings.Contains(text, "198.51.100.0/24") || strings.Count(text, "-j REJECT") != 2 {
+		t.Fatalf("unexpected links or pairs: %s", text)
+	}
+}

@@ -587,14 +587,13 @@ func (b *builder) portForwardAccept(cfg *config.Config, chain string) {
 // policies early. Each source enters only its own zone's isolation chain.
 func (b *builder) isolation(cfg *config.Config) {
 	segments := cfg.InternalSegments()
-	hasIsolation := false
+	var isolatedSegments []config.InternalSegment
 	for _, segment := range segments {
 		if segment.Isolated {
-			hasIsolation = true
-			break
+			isolatedSegments = append(isolatedSegments, segment)
 		}
 	}
-	if !hasIsolation {
+	if len(isolatedSegments) == 0 {
 		return
 	}
 	declared := map[string]bool{}
@@ -603,21 +602,23 @@ func (b *builder) isolation(cfg *config.Config) {
 			continue
 		}
 		chain := ChainName(source.Zone, "ISOLATION")
-		var destinations []config.InternalSegment
-		for _, destination := range segments {
-			if source.ID != destination.ID && (source.Isolated || destination.Isolated) {
-				destinations = append(destinations, destination)
-			}
+		destinations := isolatedSegments
+		if source.Isolated {
+			destinations = segments
 		}
-		if len(destinations) == 0 {
-			continue
-		}
-		if !declared[chain] {
-			b.line(":%s - [0:0]", chain)
-			declared[chain] = true
-		}
-		b.line("-A FORWARD -s %s -j %s", source.Subnet, chain)
+		linked := false
 		for _, destination := range destinations {
+			if source.ID == destination.ID {
+				continue
+			}
+			if !linked {
+				if !declared[chain] {
+					b.line(":%s - [0:0]", chain)
+					declared[chain] = true
+				}
+				b.line("-A FORWARD -s %s -j %s", source.Subnet, chain)
+				linked = true
+			}
 			isolated := destination.Name
 			if source.Isolated {
 				isolated = source.Name
