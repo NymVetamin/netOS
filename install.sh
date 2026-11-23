@@ -704,7 +704,7 @@ if [ "$UPGRADE" = "1" ]; then
     # Глобального адреса может не быть вовсе: аплинк ещё не поднялся, машина
     # стоит за NAT без внешнего адреса. Печатать "https://:8443" нельзя — по
     # такой ссылке никуда не попадёшь, а выглядит она как поломка установки.
-    PANEL_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    PANEL_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR == 1 {split($4, addr, "/"); print addr[1]}')
     [ -n "$PANEL_IP" ] || PANEL_IP=$(hostname)
     echo "  Панель: ${B}https://${PANEL_IP}:${PANEL_PORT}${R}"
 else
