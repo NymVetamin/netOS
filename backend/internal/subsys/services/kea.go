@@ -99,14 +99,14 @@ func (d *KeaDHCP) render(cfg *config.Config, requirePools bool) (string, error) 
 	blocked := map[string]bool{}
 	for _, cl := range cfg.Clients {
 		if cl.Blocked {
-			blocked[strings.ToLower(cl.MAC)] = true
+			blocked[dhcpMACKey(cl.MAC)] = true
 		}
 	}
 	for _, res := range cfg.DHCP.Reservations {
 		if !res.Enabled {
 			continue
 		}
-		if blocked[strings.ToLower(res.MAC)] {
+		if len(blocked) > 0 && blocked[dhcpMACKey(res.MAC)] {
 			continue
 		}
 		id := subnetID[res.Network]

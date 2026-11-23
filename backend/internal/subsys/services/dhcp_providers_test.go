@@ -92,6 +92,37 @@ func TestKeaDHCPRender(t *testing.T) {
 	}
 }
 
+func TestBlockedReservationMACSpellings(t *testing.T) {
+	for name, render := range map[string]func(*config.Config) string{
+		"ISC": NewISCDHCP(nil).Render, "Kea": NewKeaDHCP(nil).Render,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := providerTestConfig()
+			cfg.Clients[0].MAC = "02:aa:11:bb:22:cc"
+			res := cfg.DHCP.Reservations[0]
+			res.ID, res.IP, res.MAC = "blocked", "192.168.50.11", cfg.Clients[0].MAC
+			cfg.DHCP.Reservations = append(cfg.DHCP.Reservations, res)
+			want := render(cfg)
+			if strings.Contains(want, res.IP) || !strings.Contains(want, cfg.Clients[0].MAC) ||
+				!strings.Contains(want, cfg.DHCP.Reservations[0].IP) {
+				t.Fatal("invalid canonical fixture")
+			}
+			for _, mac := range []string{"02-AA-11-BB-22-CC", "02aa.11bb.22cc", "02:AA:11:BB:22:CC"} {
+				cfg.DHCP.Reservations[1].MAC = mac
+				if got := render(cfg); got != want {
+					t.Errorf("blocked reservation differs for %s", mac)
+				}
+				cfg.Clients[0].Blocked = false
+				got := render(cfg)
+				if !strings.Contains(got, res.IP) || cfg.DHCP.Reservations[1].MAC != mac {
+					t.Errorf("unblocked reservation lost for %s", mac)
+				}
+				cfg.Clients[0].Blocked = true
+			}
+		})
+	}
+}
+
 func TestKeaUnitCreatesRequiredRuntimeDirectory(t *testing.T) {
 	unit := renderKeaUnit()
 	if !strings.Contains(unit, "RuntimeDirectory=kea") {

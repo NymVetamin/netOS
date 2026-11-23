@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -118,7 +119,7 @@ func (d *ISCDHCP) Render(cfg *config.Config) string {
 	hostNames := make(map[string]bool)
 	for i, cl := range cfg.Clients {
 		if cl.Blocked {
-			blocked[strings.ToLower(cl.MAC)] = true
+			blocked[dhcpMACKey(cl.MAC)] = true
 			if cl.MAC != "" {
 				hostNames[fmt.Sprintf("blocked-%d", i+1)] = true
 			}
@@ -128,7 +129,7 @@ func (d *ISCDHCP) Render(cfg *config.Config) string {
 		if !res.Enabled {
 			continue
 		}
-		if blocked[strings.ToLower(res.MAC)] {
+		if len(blocked) > 0 && blocked[dhcpMACKey(res.MAC)] {
 			continue
 		}
 		name := safeDHCPName(res.ID)
@@ -172,6 +173,17 @@ func iscOptionValue(code, value string) string {
 		return value
 	}
 }
+
+// DHCP reservations also accept hyphenated and dotted hardware addresses.
+func dhcpMACKey(mac string) string {
+	if strings.ContainsAny(mac, "-.") {
+		if addr, err := net.ParseMAC(mac); err == nil {
+			return addr.String()
+		}
+	}
+	return strings.ToLower(mac)
+}
+
 func safeDHCPName(v string) string {
 	var b strings.Builder
 	for _, r := range v {
