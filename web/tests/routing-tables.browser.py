@@ -15,6 +15,8 @@ async def scenario(browser, mode):
     cfg = {"system": {"hostname": "test"}, "interfaces": [], "networks": [], "policies": [], "components": [],
            "routing": {"static": [], "tables": [], "rules": []},
            "channels": [{"id": "vpn", "index": 1, "type": "xray", "name": "Xray test"}]}
+    cfg["interfaces"] = [{"id":"port0","name":"eth0","label":" Uplink "},
+                         {"id":"duplicate","name":"eth0","label":"Second"}]
     live = {"rules": "0: from all lookup local\n10001: from all fwmark 0x1001 lookup netos-ch1\n20000: from all lookup 3001\n32766: from all lookup main",
             "routes": "", "parsed": [
                 {"table": "main", "type": "unicast", "destination": "default", "interface": "eth0", "origin": "dhcp"},
@@ -51,12 +53,20 @@ async def scenario(browser, mode):
         await tables.get_by_role("row").filter(has_text="netos-ch1").get_by_role("button").click()
         await expect(page.get_by_role("combobox",name="Показать таблицу маршрутизации")).to_have_value("netos-ch1")
         await expect(page.get_by_text("blackhole default",exact=True)).to_be_visible()
-        await expect(page.get_by_text("eth0",exact=True)).to_have_count(0)
+        await expect(page.get_by_text("Uplink (eth0)",exact=True)).to_have_count(0)
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("3001")
         await expect(page.get_by_text("Действующих маршрутов нет.",exact=True)).to_be_visible()
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("constructor")
         await expect(page.get_by_text("eth1",exact=True)).to_be_visible()
         await page.get_by_role("combobox",name="Показать таблицу маршрутизации").select_option("all")
+        await expect(page.get_by_text("Uplink (eth0)",exact=True)).to_be_visible()
+        await expect(page.get_by_text("Second (eth0)",exact=True)).to_have_count(0)
+        cfg["interfaces"] = [{"id":"port0","name":"eth0","label":"Renamed"}]
+        await page.reload()
+        await expect(page.get_by_text("Renamed (eth0)",exact=True)).to_be_visible()
+        await expect(page.get_by_text("Uplink (eth0)",exact=True)).to_have_count(0)
+        cfg["interfaces"] = []
+        await page.reload()
         await expect(page.get_by_text("eth0",exact=True)).to_be_visible()
     assert not writes, writes
     assert not errors, errors

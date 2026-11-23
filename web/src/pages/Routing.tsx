@@ -1,4 +1,4 @@
-import { interfaceDisplay, interfaceLabel } from "../interfaceDisplay";
+import { interfaceLabel } from "../interfaceDisplay";
 import { channelNATInterface } from "../channelNAT";
 import { useEffect, useMemo, useState } from "react";
 import { api, RouteEntry } from "../api";
@@ -14,12 +14,12 @@ type Patch = (mutate: (draft: any) => void) => void;
 // is easy to get wrong, and a wrong one fails only when the route is applied.
 type RouteInterface = { name: string; label: string; inactive?: string };
 
-export function routeInterfaceOptions(config: any): RouteInterface[] {
+export function routeInterfaceOptions(config: any, labels?: ReadonlyMap<string, string>): RouteInterface[] {
   const out = new Map<string, RouteInterface>();
   const add = (name: string, label: string, inactive?: string) => {
     if (name && !out.has(name)) out.set(name, { name, label, inactive });
   };
-  for (const { name, label } of config.interfaces || []) add(name, interfaceLabel(name, label));
+  for (const { name, label } of config.interfaces || []) add(name, labels?.get(name) ?? interfaceLabel(name, label));
   for (const w of config.wans || []) {
     if (w.proto === "pppoe" || w.proto === "l2tp") add(`ppp-${w.id}`, `ppp-${w.id} — сессия аплинка «${w.name || w.id}»`);
   }
@@ -82,7 +82,14 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
   const automatic = useMemo(() => automaticTables(observed, routing.tables || [], config.channels || []),
     [observed, routing.tables, config.channels]);
   const displayedRoutes = (live?.parsed || []).filter(r => selectedTable === "all" || canonicalTable(r.table || "main") === selectedTable);
-  const ifaces = routeInterfaceOptions(config);
+  const interfaceLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const { name, label } of config.interfaces || []) {
+      if (!labels.has(name)) labels.set(name, interfaceLabel(name, label));
+    }
+    return labels;
+  }, [config.interfaces]);
+  const ifaces = routeInterfaceOptions(config, interfaceLabels);
   const ifaceByName = new Map(ifaces.map(o => [o.name, o]));
 
   return (
@@ -131,7 +138,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                 key={r.id}
                 id={r.id}
                 cells={[<><strong>{r.name}</strong>{inactive && <div className="dim">{inactive}</div>}</>, <span className="mono">{r.destination || "—"}</span>,
-                  r.type && r.type !== "unicast" ? <span className="dim">{ROUTE_TYPE[r.type] || r.type}</span> : <span className="mono">{r.gateway || interfaceDisplay(config, r.interface) || "—"}</span>,
+                  r.type && r.type !== "unicast" ? <span className="dim">{ROUTE_TYPE[r.type] || r.type}</span> : <span className="mono">{r.gateway || interfaceLabels.get(r.interface) || r.interface || "—"}</span>,
                   <span className="mono">{r.table || "основная"}</span>]}
                 toggle={<Switch
                         checked={r.enabled}
@@ -515,7 +522,7 @@ export function RoutingPage({ config, patch }: { config: any; patch: Patch }) {
                     <td className="mono">{canonicalTable(r.table || "main")}</td>
                     <td className="mono">{r.type && r.type !== "unicast" ? `${r.type} ${r.destination}` : r.destination}</td>
                     <td className="mono">{r.gateway || <span className="faint">напрямую</span>}</td>
-                    <td className="mono">{interfaceDisplay(config, r.interface)}</td>
+                    <td className="mono">{interfaceLabels.get(r.interface) ?? r.interface}</td>
                     <td className="mono">{r.metric || <span className="faint">—</span>}</td>
                     <td>{originBadge(r.origin)}</td>
                   </tr>
