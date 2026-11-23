@@ -29,7 +29,7 @@ export function parseXrayLink(value: string): any {
     requireText(pass, "В ссылке нет пароля");
     const port = parsePort(url.port || (url.protocol === "http:" ? "80" : "1080"));
     return { protocol: url.protocol === "socks5:" ? "socks" : "http", settings: { servers: [{
-      address: serverAddress(url), port, users: [{ user, pass }],
+      address: serverAddress(url.hostname), port, users: [{ user, pass }],
     }] } };
   }
   const port = parsePort(url.port);
@@ -42,7 +42,7 @@ export function parseXrayLink(value: string): any {
   const user = decodeURIComponent(url.username);
   requireText(user, "В ссылке нет идентификатора пользователя или пароля");
   if (protocol === "vless" && !isUUID(user)) throw new Error("Идентификатор пользователя VLESS должен быть UUID");
-  const server: any = { address: serverAddress(url), port };
+  const server: any = { address: serverAddress(url.hostname), port };
   if (protocol === "vless") server.users = [{ id: user, encryption: url.searchParams.get("encryption") || "none", ...(url.searchParams.get("flow") ? { flow: url.searchParams.get("flow") } : {}) }];
   else server.password = user;
   const settings = protocol === "vless" ? { vnext: [server] } : { servers: [server] };
@@ -55,15 +55,16 @@ export function parseXrayLink(value: string): any {
   }) };
 }
 
-function serverAddress(url: URL): string {
-  return url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
+function serverAddress(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
 function hysteriaOutbound(url: URL): any {
   const auth = decodeURIComponent(url.username + (url.password ? `:${url.password}` : ""));
   requireText(auth, "В ссылке нет пароля Hysteria 2");
   const query = url.searchParams;
-  const tls: any = { serverName: query.get("sni") || url.hostname };
+  const address = serverAddress(url.hostname);
+  const tls: any = { serverName: query.get("sni") || address };
   const insecure = query.get("insecure");
   if (insecure !== null && insecure !== "0" && insecure !== "1") throw new Error("Параметр insecure должен быть 0 или 1");
   const pin = query.get("pinSHA256");
@@ -103,7 +104,7 @@ function hysteriaOutbound(url: URL): any {
       stream.finalmask = { ...stream.finalmask, udp: [{ type: "salamander", settings: { password } }] };
     }
   }
-  return { protocol: "hysteria", settings: { version: 2, address: url.hostname, port: parsePort(url.port || "443") }, streamSettings: stream };
+  return { protocol: "hysteria", settings: { version: 2, address, port: parsePort(url.port || "443") }, streamSettings: stream };
 }
 
 function streamSettings(network: string, security: string, options: any): any {
@@ -133,7 +134,7 @@ function shadowsocksOutbound(credentials: string, endpoint: string): any {
   const split = credentials.indexOf(":");
   const lastColon = endpoint.lastIndexOf(":");
   if (split < 1 || lastColon < 1) throw new Error("Некорректная Shadowsocks-ссылка");
-  const method = credentials.slice(0, split), password = credentials.slice(split + 1), address = endpoint.slice(0, lastColon);
+  const method = credentials.slice(0, split), password = credentials.slice(split + 1), address = serverAddress(endpoint.slice(0, lastColon));
   requireText(method, "В ссылке нет метода шифрования");
   requireText(password, "В ссылке нет пароля");
   requireText(address, "В ссылке нет сервера");

@@ -42,6 +42,23 @@ test("VLESS and Trojan import IPv6 addresses without URI brackets", () => {
   }
 });
 
+test("Shadowsocks and Hysteria import IPv6 host and port separately", () => {
+  const credentials = "aes-128-gcm:p@ss:word";
+  const endpoint = "[2001:db8::17]:8443";
+  for (const link of ["ss://" + encode(credentials + "@" + endpoint), "ss://" + encode(credentials) + "@" + endpoint]) {
+    const server = parseXrayLink(link).settings.servers[0];
+    assert.equal(server.address, "2001:db8::17");
+    assert.equal(server.port, 8443);
+    assert.equal(server.password, "p@ss:word");
+  }
+  for (const sni of ["", "vpn.example.test"]) {
+    const out = parseXrayLink("hysteria2://secret@" + endpoint + "?sni=" + sni);
+    assert.equal(out.settings.address, "2001:db8::17");
+    assert.equal(out.settings.port, 8443);
+    assert.equal(out.streamSettings.tlsSettings.serverName, sni || "2001:db8::17");
+  }
+});
+
 test("XHTTP import preserves mode, complete extra JSON and TLS ALPN", () => {
   const extra = { scMaxEachPostBytes: "20000", scMinPostsIntervalMs: "7", xPaddingBytes: "100-1000",
     xPaddingObfsMode: true, xPaddingKey: "hash", xPaddingHeader: "X-Client-Ver", xPaddingPlacement: "queryInHeader",
