@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -21,6 +22,50 @@ type Device struct {
 	Children    []Device    `json:"children,omitempty"`
 	Available   bool        `json:"available"`
 	Reason      string      `json:"reason,omitempty"`
+}
+
+func checkVolumeDevices(volumes []config.StorageVolume, devices []Device) error {
+	byUUID := make(map[string][]int, len(devices))
+	byMount := make(map[string][]int)
+	for i := range devices {
+		d := &devices[i]
+		key := strings.ToLower(d.UUID)
+		byUUID[key] = append(byUUID[key], i)
+		for _, mount := range d.Mountpoints {
+			if mount != "" {
+				byMount[mount] = append(byMount[mount], i)
+			}
+		}
+	}
+	for _, v := range volumes {
+		path := MountPath(v)
+		foreign := len(devices)
+		for _, i := range byMount[path] {
+			if !strings.EqualFold(devices[i].UUID, v.UUID) {
+				foreign = i
+				break
+			}
+		}
+		// Report the first failing device in lsblk order for this volume.
+		for _, i := range byUUID[strings.ToLower(v.UUID)] {
+			if i >= foreign {
+				break
+			}
+			d := &devices[i]
+			if !d.Available || d.Filesystem != v.Filesystem {
+				return fmt.Errorf("том %s: %s (файловая система %s)", v.UUID, d.Reason, d.Filesystem)
+			}
+			for _, m := range d.Mountpoints {
+				if m != "" && m != path {
+					return fmt.Errorf("том %s уже подключён в %s", v.UUID, m)
+				}
+			}
+		}
+		if foreign < len(devices) {
+			return fmt.Errorf("в каталоге %s подключён другой том %s", path, devices[foreign].UUID)
+		}
+	}
+	return nil
 }
 
 func Devices(ctx context.Context, r system.Runner) ([]Device, error) {

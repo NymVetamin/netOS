@@ -2,6 +2,7 @@ package samba
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -177,6 +178,43 @@ func TestApplyRemovesChangedAndMissingVolumesInOwnershipOrder(t *testing.T) {
 		}
 		if !slices.Equal(checked, want) {
 			t.Fatalf("removal checks %v, want %v", checked, want)
+		}
+	}
+}
+
+func TestApplyChecksCurrentMountsInDeviceOrder(t *testing.T) {
+	r := newRunner()
+	s := testSubsystem(t, r)
+	c := fixture()
+	v := c.Samba.Volumes[0]
+	path := MountPath(v)
+	own := Device{UUID: strings.ToLower(v.UUID), Type: "part", Filesystem: v.Filesystem, Mountpoints: []string{"", path}}
+	foreign := Device{UUID: "BBBB", Type: "disk", Filesystem: "ext4", Mountpoints: []string{path}}
+	otherPath := own
+	otherPath.Mountpoints = []string{"", "/srv/netos/other", path}
+	for _, tc := range []struct {
+		devices []Device
+		want    string
+	}{
+		{[]Device{otherPath, foreign}, fmt.Sprintf("том %s уже подключён в /srv/netos/other", v.UUID)},
+		{[]Device{foreign, otherPath}, fmt.Sprintf("в каталоге %s подключён другой том BBBB", path)},
+		{[]Device{own, foreign}, fmt.Sprintf("в каталоге %s подключён другой том BBBB", path)},
+		{[]Device{own, own}, fmt.Sprintf("том %s: UUID повторяется на нескольких устройствах (файловая система %s)", v.UUID, v.Filesystem)},
+		{[]Device{own}, ""},
+		{nil, ""},
+	} {
+		raw, err := json.Marshal(map[string][]Device{"blockdevices": tc.devices})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.devices, r.calls = string(raw), nil
+		err = s.Apply(context.Background(), c)
+		if tc.want == "" {
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if err == nil || err.Error() != tc.want || len(r.calls) != 1 || !strings.HasPrefix(r.calls[0], "lsblk ") {
+			t.Fatalf("want %q before mutations, got %v, calls %v", tc.want, err, r.calls)
 		}
 	}
 }

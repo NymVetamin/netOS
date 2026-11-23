@@ -158,24 +158,8 @@ func (s *Subsystem) Apply(ctx context.Context, c *config.Config) error {
 		if e != nil {
 			return e
 		}
-		for _, v := range wanted {
-			for _, d := range devices {
-				for _, m := range d.Mountpoints {
-					if m == MountPath(v) && !strings.EqualFold(d.UUID, v.UUID) {
-						return fmt.Errorf("в каталоге %s подключён другой том %s", m, d.UUID)
-					}
-				}
-				if strings.EqualFold(d.UUID, v.UUID) {
-					if !d.Available || d.Filesystem != v.Filesystem {
-						return fmt.Errorf("том %s: %s (файловая система %s)", v.UUID, d.Reason, d.Filesystem)
-					}
-					for _, m := range d.Mountpoints {
-						if m != "" && m != MountPath(v) {
-							return fmt.Errorf("том %s уже подключён в %s", v.UUID, m)
-						}
-					}
-				}
-			}
+		if err := checkVolumeDevices(wanted, devices); err != nil {
+			return err
 		}
 	}
 	// Validate the new configuration before stopping the currently working
