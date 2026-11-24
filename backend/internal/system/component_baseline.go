@@ -378,7 +378,7 @@ func RestoreComponentPackages(ctx context.Context, r Runner, root, ownershipDir 
 	}
 	if len(archives) > 0 {
 		sort.Strings(archives)
-		ctx, release, err := holdPackageDaemons(ctx)
+		release, err := holdDaemons()
 		if err != nil {
 			return err
 		}

@@ -3,7 +3,9 @@ package system
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 )
 
 // Systemd управляет юнитами внешних демонов (dnsmasq, unbound, hostapd, ...).
@@ -315,7 +317,7 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 	}
 	// Демонов запускает netOS собственными юнитами, поэтому postinst пакета
 	// запускать их не должен: у него для этого нет ни конфига, ни причины.
-	ctx, release, err := holdPackageDaemons(ctx)
+	release, err := holdDaemons()
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +347,7 @@ func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr er
 	if len(versions) == 0 {
 		return nil
 	}
-	ctx, release, err := holdPackageDaemons(ctx)
+	release, err := holdDaemons()
 	if err != nil {
 		return err
 	}
@@ -386,9 +388,33 @@ const daemonPolicyScript = "#!/bin/sh\n" +
 	"# Демонами управляет netOS собственными юнитами.\n" +
 	"exit 101\n"
 
-type daemonPolicyFileKey struct{}
+type heldDaemonPolicy struct {
+	path  string
+	file  os.FileInfo
+	users int
+}
 
-// holdPackageDaemons запрещает запуск демонов на время установки пакета и возвращает
+var daemonPolicyMu sync.Mutex
+var activeDaemonPolicy *heldDaemonPolicy
+
+// Called under daemonPolicyMu. The returned release is specific to this inode.
+func (p *heldDaemonPolicy) acquire() func() {
+	p.users++
+	return sync.OnceFunc(func() {
+		daemonPolicyMu.Lock()
+		defer daemonPolicyMu.Unlock()
+		p.users--
+		if p.users != 0 || activeDaemonPolicy != p {
+			return
+		}
+		if ownedFileMatches(p.path, []byte(daemonPolicyScript), 0755, p.file) {
+			_ = os.Remove(p.path)
+		}
+		activeDaemonPolicy = nil
+	})
+}
+
+// holdDaemons запрещает запуск демонов на время установки пакета и возвращает
 // функцию, снимающую запрет.
 //
 // Без этого пакет поднимает штатного демона со своим конфигом сразу после
@@ -402,10 +428,55 @@ type daemonPolicyFileKey struct{}
 //
 // Чужой policy-rc.d не трогаем: он принадлежит не нам, и вернуть его на место
 // после подмены надёжно нельзя. Запрет в этом случае просто не ставится.
-func holdPackageDaemons(ctx context.Context) (context.Context, func(), error) {
-	file, release, err := acquireDaemonPolicy()
-	if file != nil {
-		ctx = context.WithValue(ctx, daemonPolicyFileKey{}, file)
+func holdDaemons() (func(), error) {
+	daemonPolicyMu.Lock()
+	defer daemonPolicyMu.Unlock()
+	if info, err := os.Lstat(PolicyRCPath); err == nil {
+		if p := activeDaemonPolicy; p != nil && p.path == PolicyRCPath && os.SameFile(info, p.file) {
+			return p.acquire(), nil
+		}
+		return func() {}, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
-	return ctx, release, err
+	path, content := PolicyRCPath, []byte(daemonPolicyScript)
+	var original os.FileInfo
+	err := publishFileAtomic(path, content, 0755, func(staged, dest string) error {
+		// Stat the open staged file so identity is captured before publication.
+		f, err := os.Open(staged)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		original, err = f.Stat()
+		if err != nil {
+			return err
+		}
+		return os.Link(staged, dest)
+	})
+	if os.IsExist(err) {
+		return func() {}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	activeDaemonPolicy = &heldDaemonPolicy{path: path, file: original}
+	return activeDaemonPolicy.acquire(), nil
+}
+
+// RemoveLeftoverDaemonPolicy removes a ban left by a netosd killed during apt;
+// otherwise every later package on the machine installs with its daemons
+// stopped. Called at daemon start, before any package operation of its own.
+// Only a byte-identical copy of our script is removed: an edited or foreign
+// policy-rc.d belongs to the administrator.
+func RemoveLeftoverDaemonPolicy() error {
+	daemonPolicyMu.Lock()
+	defer daemonPolicyMu.Unlock()
+	if activeDaemonPolicy != nil || !AtomicFileMatches(PolicyRCPath, []byte(daemonPolicyScript), 0755) {
+		return nil
+	}
+	if err := os.Remove(PolicyRCPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

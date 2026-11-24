@@ -79,25 +79,18 @@ func main() {
 	}
 
 	var (
-		dbPath        = flag.String("db", "/var/lib/netos/netos.db", "путь к базе данных")
-		dryRun        = flag.Bool("dry-run", false, "показать действия, ничего не применяя")
-		verbose       = flag.Bool("v", false, "подробный журнал выполняемых команд")
-		showPlan      = flag.Bool("plan", false, "показать план применения и выйти")
-		render        = flag.String("render", "", renderFlagHelp())
-		initOnly      = flag.Bool("init", false, "создать стартовую конфигурацию и выйти")
-		applyNow      = flag.Bool("apply", false, "применить активную конфигурацию и выйти")
-		captureBase   = flag.Bool("capture-system-baseline", false, "сохранить состояние системы до первой установки и выйти")
-		showPort      = flag.Bool("panel-port", false, "показать фактический порт панели и выйти")
-		showVersion   = flag.Bool("version", false, "показать версию и выйти")
-		releasePolicy = flag.Bool("release-package-policy", false, "снять оставленную netOS политику установки пакетов и выйти")
+		dbPath      = flag.String("db", "/var/lib/netos/netos.db", "путь к базе данных")
+		dryRun      = flag.Bool("dry-run", false, "показать действия, ничего не применяя")
+		verbose     = flag.Bool("v", false, "подробный журнал выполняемых команд")
+		showPlan    = flag.Bool("plan", false, "показать план применения и выйти")
+		render      = flag.String("render", "", renderFlagHelp())
+		initOnly    = flag.Bool("init", false, "создать стартовую конфигурацию и выйти")
+		applyNow    = flag.Bool("apply", false, "применить активную конфигурацию и выйти")
+		captureBase = flag.Bool("capture-system-baseline", false, "сохранить состояние системы до первой установки и выйти")
+		showPort    = flag.Bool("panel-port", false, "показать фактический порт панели и выйти")
+		showVersion = flag.Bool("version", false, "показать версию и выйти")
 	)
 	flag.Parse()
-	if *releasePolicy {
-		if err := system.RecoverDaemonPolicy(); err != nil {
-			log.Fatalf("уборка политики запуска служб: %v", err)
-		}
-		return
-	}
 	logger := &stdLogger{}
 	daemonMode := !*dryRun && !*showPlan && *render == "" && !*initOnly && !*applyNow && !*captureBase && !*showPort && !*showVersion
 	if daemonMode {
@@ -105,14 +98,14 @@ func main() {
 		// маркер снимает сам новый процесс: команды обслуживания ждут готовой
 		// конфигурации, а не только существующего PID.
 		_ = os.Remove(readyPath)
-		if err := system.RecoverDaemonPolicy(); err != nil {
-			logger.Warnf("уборка политики запуска служб после установки: %v", err)
-		}
 		// Разовые команды могут работать рядом с демоном, пока он ещё пишет .tmp-*.
 		for _, dir := range []string{filepath.Dir(*dbPath), stateDir} {
 			if err := system.CleanupAtomicTemps(dir); err != nil {
 				logger.Warnf("уборка незавершённых временных файлов в %s: %v", dir, err)
 			}
+		}
+		if err := system.RemoveLeftoverDaemonPolicy(); err != nil {
+			logger.Warnf("уборка оставленного policy-rc.d: %v", err)
 		}
 	}
 	if *showVersion {
