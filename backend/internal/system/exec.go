@@ -7,6 +7,7 @@ package system
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,21 +70,30 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 
 	var stdout, stderr bytes.Buffer
 	var policyFile *os.File
-	if name == "apt-get" {
+	if name == "apt-get" || name == "dpkg" {
 		policyFile, _ = ctx.Value(daemonPolicyFileKey{}).(*os.File)
-		if policyFile != nil {
+		if policyFile != nil && name == "apt-get" {
 			// Keep the shared lock in dpkg and its maintainer scripts if the
 			// calling netOS process is killed while the installation continues.
 			args = append([]string{"-o", "APT::Keep-Fds::=3"}, args...)
 		}
 	}
+	var inherited []*os.File
+	if policyFile != nil {
+		inherited = append(inherited, policyFile)
+	}
+	options, _ := ctx.Value(packageCommandOptionsKey{}).(*packageCommandOptions)
+	if options != nil && name == options.name {
+		args, inherited = options.prepare(args, inherited)
+	}
 	command := func() *exec.Cmd {
 		cmd := exec.CommandContext(ctx, name, args...)
-		if policyFile != nil {
-			cmd.ExtraFiles = []*os.File{policyFile}
-		}
+		cmd.ExtraFiles = inherited
 		if name == "apt-cache" || name == "apt-get" || name == "dpkg" || name == "dpkg-query" {
 			cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l")
+			if options != nil && name == options.name {
+				cmd.Env = append(cmd.Env, options.env...)
+			}
 		}
 		if input != "" {
 			cmd.Stdin = strings.NewReader(input)
@@ -103,6 +113,9 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())
+		}
+		if options != nil && name == options.name && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+			err = errors.Join(err, ctx.Err())
 		}
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
 	}

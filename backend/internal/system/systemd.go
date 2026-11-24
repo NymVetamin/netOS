@@ -305,10 +305,15 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 			missing = append(missing, pkg)
 		}
 	}
-	if len(missing) == 0 {
+	path := p.receiptPath("install", pkgs)
+	pending, err := receiptExists(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) == 0 && !pending {
 		return nil, nil
 	}
-	if refresh != nil {
+	if refresh != nil && !pending {
 		if err := refresh(); err != nil {
 			return nil, err
 		}
@@ -331,7 +336,10 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 		}
 	}()
 	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--no-install-recommends"}, missing...)
-	if _, err := p.R.Run(ctx, "apt-get", args...); err != nil {
+	if pending {
+		args = nil // A retry may configure only the recorded participants.
+	}
+	if err := p.changePackages(ctx, path, pkgs, args); err != nil {
 		return nil, fmt.Errorf("установка пакетов %s: %w", strings.Join(missing, ", "), err)
 	}
 	return missing, nil
