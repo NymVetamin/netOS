@@ -157,6 +157,23 @@ func WriteFileAtomicIfChanged(path string, data []byte, perm os.FileMode) (bool,
 	return true, nil
 }
 
+// OpenSameRegular opens a reader only for the regular file identified by expected.
+func OpenSameRegular(path string, expected os.FileInfo) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|atomicCompareFlags, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil && (!info.Mode().IsRegular() || !os.SameFile(info, expected)) {
+		err = fmt.Errorf("file changed: %s", path)
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 // AtomicFileMatches checks the content and mode without following symlinks.
 func AtomicFileMatches(path string, data []byte, perm os.FileMode) bool {
 	info, err := os.Lstat(path)

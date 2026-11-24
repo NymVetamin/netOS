@@ -15,7 +15,7 @@ const dnsLogLimit = 4 << 20
 
 // RotateDNSLog is called under the apply lock, so the writer cannot change
 // between choosing the rotation method and reopening the file.
-func RotateDNSLog(ctx context.Context, cfg *config.Config, runner system.Runner) error {
+func RotateDNSLog(ctx context.Context, cfg *config.Config, runner system.Runner, truncate func(*os.File, os.FileInfo, int64) error) error {
 	var reopen func() error
 	if cfg != nil && cfg.DNS.Enabled && cfg.DNS.QueryLog &&
 		(cfg.DNS.Provider == "dnsmasq" || dnsFrontendNeeded(cfg)) {
@@ -24,10 +24,10 @@ func RotateDNSLog(ctx context.Context, cfg *config.Config, runner system.Runner)
 			return err
 		}
 	}
-	return rotateDNSLog("/var/log/netos/dns.log", dnsLogLimit, reopen)
+	return rotateDNSLog("/var/log/netos/dns.log", dnsLogLimit, reopen, truncate)
 }
 
-func rotateDNSLog(path string, limit int64, reopen func() error) error {
+func rotateDNSLog(path string, limit int64, reopen func() error, truncate func(*os.File, os.FileInfo, int64) error) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -83,9 +83,10 @@ func rotateDNSLog(path string, limit int64, reopen func() error) error {
 	// A pre-existing oversized log must not cause an unbounded copy.
 	start := max(int64(0), info.Size()-limit)
 	_, copyErr := io.Copy(archive, io.NewSectionReader(f, start, info.Size()-start))
-	if err := errors.Join(copyErr, archive.Close()); err != nil {
+	archived, statErr := archive.Stat()
+	if err := errors.Join(copyErr, statErr, archive.Close()); err != nil {
 		_ = os.Remove(path + ".1")
 		return err
 	}
-	return f.Truncate(0)
+	return truncate(f, archived, start)
 }

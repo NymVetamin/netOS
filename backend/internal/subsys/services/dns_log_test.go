@@ -10,7 +10,7 @@ import (
 
 func TestDNSLogCopyTruncate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dns.log")
-	if err := rotateDNSLog(path, 16, nil); err != nil {
+	if err := rotateDNSLog(path, 16, nil, truncateDNSFixture); err != nil {
 		t.Fatal(err)
 	}
 	writer, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -23,7 +23,7 @@ func TestDNSLogCopyTruncate(t *testing.T) {
 		if _, err := writer.WriteString(text[:8]); err != nil {
 			t.Fatal(err)
 		}
-		if err := rotateDNSLog(path, 16, nil); err != nil {
+		if err := rotateDNSLog(path, 16, nil, truncateDNSFixture); err != nil {
 			t.Fatal(err)
 		}
 		info, _ := os.Stat(path)
@@ -33,7 +33,7 @@ func TestDNSLogCopyTruncate(t *testing.T) {
 		if _, err := writer.WriteString(text[8:]); err != nil {
 			t.Fatal(err)
 		}
-		if err := rotateDNSLog(path, 16, nil); err != nil {
+		if err := rotateDNSLog(path, 16, nil, truncateDNSFixture); err != nil {
 			t.Fatal(err)
 		}
 		info, _ = os.Stat(path)
@@ -64,7 +64,7 @@ func TestDNSLogReopenFailureAndRetry(t *testing.T) {
 	}
 	original, _ := os.Stat(path)
 	failure := errors.New("signal failed")
-	if err := rotateDNSLog(path, 8, func() error { return failure }); !errors.Is(err, failure) {
+	if err := rotateDNSLog(path, 8, func() error { return failure }, truncateDNSFixture); !errors.Is(err, failure) {
 		t.Fatalf("signal failure hidden: %v", err)
 	}
 	current, _ := os.Stat(path)
@@ -77,7 +77,7 @@ func TestDNSLogReopenFailureAndRetry(t *testing.T) {
 			t.Fatalf("old log lost: %q %v", got, err)
 		}
 		return os.WriteFile(path, []byte("new\n"), 0o600)
-	}); err != nil {
+	}, truncateDNSFixture); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
@@ -104,7 +104,7 @@ func TestDNSLogCopyBoundedAndFailurePreservesSource(t *testing.T) {
 	if err := os.WriteFile(path+".3/block", []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := rotateDNSLog(path, 4, nil); err == nil {
+	if err := rotateDNSLog(path, 4, nil, truncateDNSFixture); err == nil {
 		t.Fatal("expected archive failure")
 	}
 	info, _ := os.Stat(path)
@@ -116,7 +116,7 @@ func TestDNSLogCopyBoundedAndFailurePreservesSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := rotateDNSLog(path, 4, nil); err != nil {
+	if err := rotateDNSLog(path, 4, nil, truncateDNSFixture); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path + ".1")
@@ -124,3 +124,5 @@ func TestDNSLogCopyBoundedAndFailurePreservesSource(t *testing.T) {
 		t.Fatalf("oversized log copy: %q", got)
 	}
 }
+
+func truncateDNSFixture(f *os.File, _ os.FileInfo, _ int64) error { return f.Truncate(0) }

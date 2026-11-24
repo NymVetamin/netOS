@@ -310,13 +310,14 @@ func main() {
 		return "dnsmasq"
 	}
 	traffic := runtime.NewTrafficHistory("/var/lib/netos/traffic-history.json", collector)
+	panel := api.New(st, engine, collector, logger)
 	go traffic.Run(ctx)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
 			err := engine.Maintain(ctx, func(current *config.Config) error {
-				return services.RotateDNSLog(ctx, current, runner)
+				return services.RotateDNSLog(ctx, current, runner, panel.DNSLogTail.CopyTruncate)
 			})
 			if err != nil && ctx.Err() == nil {
 				logger.Errorf("ротация DNS-журнала: %v", err)
@@ -328,7 +329,6 @@ func main() {
 			}
 		}
 	}()
-	panel := api.New(st, engine, collector, logger)
 	panel.UseEvents(events)
 	panel.Certificates = certificateManager
 	panel.PKI = clientPKI

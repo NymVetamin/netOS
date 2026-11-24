@@ -133,7 +133,7 @@ const dnsLogPath = "/var/log/netos/dns.log"
 func (s *Server) tailDNSLog(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	var tail runtime.DNSFileTail
+	tail := &s.DNSLogTail
 	defer tail.Close()
 	for {
 		select {

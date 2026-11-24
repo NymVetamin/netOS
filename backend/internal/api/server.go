@@ -49,6 +49,7 @@ type ComponentProbe interface {
 
 // Server — веб-панель.
 type Server struct {
+	DNSLogTail    runtime.DNSFileTail
 	diagnostics   diagnosticManager
 	Certificates  *certificates.Manager
 	PKI           *vpnpki.Store
