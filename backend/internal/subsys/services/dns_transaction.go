@@ -67,16 +67,21 @@ func snapshotDNSDomainTransition(ctx context.Context, m *Manager, cfg *config.Co
 	return tx, nil
 }
 
-func snapshotDNSUnit(ctx context.Context, runner system.Runner, unit string) (dnsUnitSnapshot, error) {
+func readDNSUnitProperties(ctx context.Context, runner system.Runner, unit string) (map[string]string, error) {
 	out, err := runner.Run(ctx, "systemctl", "show", "--all", "--property=LoadState,ActiveState,UnitFileState", unit)
-	if err != nil {
-		return dnsUnitSnapshot{}, fmt.Errorf("снимок DNS-службы %s: %w", unit, err)
-	}
 	props := map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
 			props[key] = value
 		}
+	}
+	return props, err
+}
+
+func snapshotDNSUnit(ctx context.Context, runner system.Runner, unit string) (dnsUnitSnapshot, error) {
+	props, err := readDNSUnitProperties(ctx, runner, unit)
+	if err != nil {
+		return dnsUnitSnapshot{}, fmt.Errorf("снимок DNS-службы %s: %w", unit, err)
 	}
 	load, active := props["LoadState"], props["ActiveState"]
 	enabled, hasFileState := props["UnitFileState"]

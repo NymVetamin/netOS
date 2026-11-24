@@ -18,11 +18,24 @@ type resolvRunner struct {
 	active     bool
 	enabled    bool
 	failEnable bool
+	enableMode string
 }
 
 func (r *resolvRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	command := name + " " + strings.Join(args, " ")
 	switch {
+	case command == "systemctl show --all --property=LoadState,ActiveState,UnitFileState systemd-resolved.service":
+		active, enabled := "inactive", "disabled"
+		if r.active {
+			active = "active"
+		}
+		if r.enabled {
+			enabled = "enabled"
+			if r.enableMode != "" {
+				enabled = r.enableMode
+			}
+		}
+		return fmt.Sprintf("ActiveState=%s\nLoadState=loaded\nUnitFileState=%s\n", active, enabled), nil
 	case strings.HasPrefix(command, "systemctl is-active systemd-resolved"):
 		if r.active {
 			return "active\n", nil
@@ -30,6 +43,9 @@ func (r *resolvRunner) Run(_ context.Context, name string, args ...string) (stri
 		return "inactive\n", nil
 	case strings.HasPrefix(command, "systemctl is-enabled systemd-resolved"):
 		if r.enabled {
+			if r.enableMode != "" {
+				return r.enableMode, nil
+			}
 			return "enabled\n", nil
 		}
 		return "disabled\n", nil
@@ -39,12 +55,19 @@ func (r *resolvRunner) Run(_ context.Context, name string, args ...string) (stri
 	case strings.HasPrefix(command, "systemctl stop"):
 		r.active = false
 	case strings.HasPrefix(command, "systemctl disable"):
-		r.enabled = false
-	case strings.HasPrefix(command, "systemctl enable --now"):
+		if r.enableMode != "enabled-runtime" || strings.Contains(command, " --runtime ") {
+			r.enabled = false
+		}
+	case strings.HasPrefix(command, "systemctl enable "):
 		if r.failEnable {
 			return "", fmt.Errorf("injected enable failure")
 		}
-		r.active, r.enabled = true, true
+		r.enabled = true
+		if strings.Contains(command, " --now ") {
+			r.active = true
+		}
+	case strings.HasPrefix(command, "systemctl start "):
+		r.active = true
 	}
 	return "", nil
 }
@@ -207,6 +230,62 @@ func TestSystemResolverReleaseFailureKeepsRetryState(t *testing.T) {
 	}
 	if !r.active || !r.enabled {
 		t.Fatal("retry did not restore systemd-resolved")
+	}
+}
+
+func TestReleaseRestoresActivationSeparatelyFromEnablement(t *testing.T) {
+	for _, tc := range []struct {
+		active, enabled bool
+		mode            string
+	}{
+		{true, false, ""}, {false, true, ""}, {true, true, ""}, {false, false, ""},
+		{true, true, "enabled-runtime"}, {false, true, "enabled-runtime"},
+	} {
+		t.Run(fmt.Sprintf("active=%t/enabled=%t/%s", tc.active, tc.enabled, tc.mode), func(t *testing.T) {
+			ctx := context.Background()
+			r := &resolvRunner{active: tc.active, enabled: tc.enabled, enableMode: tc.mode}
+			u := NewSystemResolver(r)
+			u.Root = t.TempDir()
+			for range 2 {
+				if err := u.Apply(ctx, resolvConfig()); err != nil {
+					t.Fatal(err)
+				}
+				if r.active || r.enabled {
+					t.Fatalf("takeover left service active=%t enabled=%t", r.active, r.enabled)
+				}
+				if err := u.Release(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if r.active != tc.active || r.enabled != tc.enabled {
+					t.Fatalf("release restored active=%t enabled=%t", r.active, r.enabled)
+				}
+				if tc.mode == "enabled-runtime" && !r.did("systemctl enable --runtime ") {
+					t.Fatal("runtime enablement became persistent")
+				}
+				count := len(r.commands)
+				if err := u.Release(ctx); err != nil || len(r.commands) != count {
+					t.Fatalf("repeated release performed work: %v, %v", err, r.commands[count:])
+				}
+			}
+		})
+	}
+}
+
+func TestReleaseLegacyResolverState(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		r := &resolvRunner{}
+		u := NewSystemResolver(r)
+		u.Root = t.TempDir()
+		state := u.path(resolvStatePath)
+		if err := os.MkdirAll(filepath.Dir(state), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(state, []byte(fmt.Sprintf(`{"kind":"absent","resolved_enabled":%t}`, enabled)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := u.Release(context.Background()); err != nil || r.active != enabled || r.enabled != enabled {
+			t.Fatalf("legacy flag %t: active=%t enabled=%t err=%v", enabled, r.active, r.enabled, err)
+		}
 	}
 }
 

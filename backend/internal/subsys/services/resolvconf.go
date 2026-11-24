@@ -54,9 +54,10 @@ type resolvState struct {
 	// Target — цель симлинка, Content — содержимое обычного файла.
 	Target  string `json:"target,omitempty"`
 	Content string `json:"content,omitempty"`
-	// ResolvedEnabled помнит, работал ли systemd-resolved: включать обратно
-	// то, что было выключено и до netOS, — значит менять чужую машину.
-	ResolvedEnabled bool `json:"resolved_enabled"`
+	// Older versions and management recovery use the combined active-or-enabled flag.
+	ResolvedEnabled bool   `json:"resolved_enabled"`
+	ResolvedActive  bool   `json:"resolved_active,omitempty"`
+	UnitFileState   string `json:"resolved_unit_file_state,omitempty"`
 }
 
 func (u *SystemResolver) path(p string) string {
@@ -102,6 +103,13 @@ func (u *SystemResolver) Apply(ctx context.Context, cfg *config.Config) error {
 	// resolv.conf под себя. Гасится он после того, как запомнено его исходное
 	// состояние, и только здесь — то есть после того, как выбранный резолвер
 	// уже поднят: иначе машина осталась бы без имён посреди применения.
+	// Runtime enablement has separate links under /run/systemd/system.
+	mode, _ := u.Runner.Run(ctx, "systemctl", "is-enabled", resolvedUnit)
+	if strings.TrimSpace(mode) == "enabled-runtime" {
+		if _, err := u.Runner.Run(ctx, "systemctl", "disable", "--runtime", resolvedUnit); err != nil {
+			return err
+		}
+	}
 	if err := u.Systemd.Disable(ctx, resolvedUnit); err != nil {
 		return fmt.Errorf("остановка %s: %w", resolvedUnit, err)
 	}
@@ -144,7 +152,24 @@ func (u *SystemResolver) capture(ctx context.Context) error {
 		return err
 	}
 
-	state := resolvState{ResolvedEnabled: u.resolvedEnabled(ctx)}
+	var state resolvState
+	props, err := readDNSUnitProperties(ctx, u.Runner, resolvedUnit)
+	loadState, activeState := props["LoadState"], props["ActiveState"]
+	state.UnitFileState = props["UnitFileState"]
+	if loadState != "not-found" {
+		if err != nil {
+			return fmt.Errorf("чтение состояния %s: %w", resolvedUnit, err)
+		}
+		if loadState == "" || activeState == "" || state.UnitFileState == "" {
+			return fmt.Errorf("неполное состояние %s", resolvedUnit)
+		}
+	}
+	state.ResolvedActive = activeState == "active" || activeState == "activating" || activeState == "reloading"
+	state.ResolvedEnabled = state.ResolvedActive
+	switch state.UnitFileState {
+	case "enabled", "enabled-runtime", "alias", "indirect":
+		state.ResolvedEnabled = true
+	}
 	path := u.path(resolvConfPath)
 	switch info, err := os.Lstat(path); {
 	case err != nil && os.IsNotExist(err):
@@ -174,47 +199,36 @@ func (u *SystemResolver) capture(ctx context.Context) error {
 	return system.WriteFileAtomic(statePath, data, 0o600)
 }
 
-// resolvedEnabled сообщает, работал ли systemd-resolved до нас.
-func (u *SystemResolver) resolvedEnabled(ctx context.Context) bool {
-	if u.Systemd.IsActive(ctx, resolvedUnit) {
-		return true
-	}
-	out, _ := u.Runner.Run(ctx, "systemctl", "is-enabled", resolvedUnit)
-	switch strings.TrimSpace(out) {
-	case "enabled", "enabled-runtime", "alias", "indirect":
-		return true
-	}
-	return false
-}
-
-// Release возвращает системе её резолвер. Вызывается, когда DNS выключен в
-// панели, и при удалении netOS: подсистема владеет файлом целиком, а значит
-// обязана уметь его отдать.
+// Release returns the resolver file and the captured service state together.
 func (u *SystemResolver) Release(ctx context.Context) error {
-	statePath := u.path(resolvStatePath)
-	stateData, stateReadErr := os.ReadFile(statePath)
-	if stateReadErr != nil && !os.IsNotExist(stateReadErr) {
-		return stateReadErr
-	}
-	resolvedWanted, err := RestoreSystemResolverFiles(u.Root)
-	if err != nil {
-		return err
-	}
-	// Включённым обратно оказывается только то, что работало до netOS.
-	if resolvedWanted {
-		if _, err := u.Runner.Run(ctx, "systemctl", "enable", "--now", resolvedUnit); err != nil {
-			// Preserve retryability: RestoreSystemResolverFiles removes the state
-			// only after restoring files, but a failed service enable is still an
-			// incomplete release.
-			if stateReadErr == nil {
-				if rbErr := system.WriteFileAtomic(statePath, stateData, 0o600); rbErr != nil {
-					return fmt.Errorf("включение %s: %v; восстановление state: %w", resolvedUnit, err, rbErr)
-				}
-			}
-			return fmt.Errorf("включение %s: %w", resolvedUnit, err)
+	_, err := restoreSystemResolverFiles(u.Root, func(state resolvState) error {
+		if !state.ResolvedEnabled {
+			return nil
 		}
-	}
-	return nil
+		args := []string{"enable"}
+		switch state.UnitFileState {
+		case "": // Legacy state only records active OR enabled.
+			args = append(args, "--now")
+		case "enabled", "enabled-runtime":
+			if state.UnitFileState == "enabled-runtime" {
+				args = append(args, "--runtime")
+			}
+			if state.ResolvedActive {
+				args = append(args, "--now")
+			}
+		default:
+			if !state.ResolvedActive {
+				return nil
+			}
+			args = []string{"start"}
+		}
+		_, err := u.Runner.Run(ctx, "systemctl", append(args, resolvedUnit)...)
+		if err != nil {
+			return fmt.Errorf("восстановление %s: %w", resolvedUnit, err)
+		}
+		return nil
+	})
+	return err
 }
 
 func (u *SystemResolver) Health(ctx context.Context, cfg *config.Config) error {
@@ -271,6 +285,10 @@ func (u *SystemResolver) Health(ctx context.Context, cfg *config.Config) error {
 // файл, который он возвращает, обязаны остаться одним и тем же — поэтому
 // логика живёт здесь, рядом с захватом, а не переписывается в уборке заново.
 func RestoreSystemResolverFiles(root string) (bool, error) {
+	return restoreSystemResolverFiles(root, nil)
+}
+
+func restoreSystemResolverFiles(root string, restoreService func(resolvState) error) (bool, error) {
 	at := func(p string) string {
 		if root == "" {
 			return p
@@ -309,6 +327,11 @@ func RestoreSystemResolverFiles(root string) (bool, error) {
 		}
 	default:
 		return false, fmt.Errorf("неизвестный kind resolver state %q", state.Kind)
+	}
+	if restoreService != nil {
+		if err := restoreService(state); err != nil {
+			return false, err
+		}
 	}
 	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
 		return false, err
