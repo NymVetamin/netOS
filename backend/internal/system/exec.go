@@ -85,6 +85,11 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 		}
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
 	}
+	// A successful child exit does not guarantee that copying its output
+	// finished before cancellation. Another process may have inherited a pipe.
+	if err := ctx.Err(); err != nil {
+		return stdout.String(), fmt.Errorf("%s: %w", name, err)
+	}
 	return stdout.String(), nil
 }
 
