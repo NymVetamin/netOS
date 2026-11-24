@@ -210,41 +210,43 @@ func (p *Packages) resumePackages(ctx context.Context, items []interruptedPackag
 	ctx = context.WithValue(ctx, packageCommandOptionsKey{}, &opts)
 	// Each postinst may enqueue a handler. Refresh only after a mutation,
 	// sharing that inventory across verification and the next decision.
-	live, awaited, err := p.retryInventory(ctx)
-	if err != nil {
-		return err
-	}
+	versions := make(map[string]string, len(items))
 	for _, item := range items {
 		id := item.Name + ":" + item.Arch
-		if !packageNamePattern.MatchString(id) || item.Version == "" || live[id].version != item.Version {
-			return fmt.Errorf("пакет %s изменился после прерывания", id)
+		if !packageNamePattern.MatchString(id) || item.Version == "" {
+			return fmt.Errorf("некорректная запись о пакете %s", id)
 		}
+		versions[id] = item.Version
 	}
-	for _, item := range items {
-		id := item.Name + ":" + item.Arch
-		current := live[id]
-		if current.version != item.Version {
-			return fmt.Errorf("изменилась версия %s", id)
-		}
-		switch current.status {
-		case "install ok installed", "hold ok installed":
-			continue
-		case "install ok unpacked", "install ok half-configured":
-		default:
-			return fmt.Errorf("состояние %s требует проверки: %s", id, current.status)
-		}
-		if awaited != "" {
-			return fmt.Errorf("dpkg ожидает обработчик %s", awaited)
-		}
-		if _, err := p.R.Run(ctx, "dpkg", "--no-triggers", "--configure", id); err != nil {
-			return err
-		}
-		live, awaited, err = p.retryInventory(ctx)
+	configured, triggered := map[string]bool{}, map[string]bool{}
+	var live map[string]retryPackageState
+	for {
+		var waits []packageTriggerWait
+		live, waits, err = p.retryInventory(ctx)
 		if err != nil {
 			return err
 		}
-		if live[id].status != "install ok installed" || live[id].version != item.Version {
-			return fmt.Errorf("пакет %s остался в состоянии %s, версия %s", id, live[id].status, live[id].version)
+		action, id, err := nextPackageAction(live, waits, items, versions)
+		if err != nil {
+			return err
+		}
+		if action == "" {
+			break
+		}
+		if action == "--configure" {
+			if configured[id] {
+				return fmt.Errorf("dpkg не завершил настройку %s", id)
+			}
+			configured[id] = true
+			clear(triggered) // The next postinst may legitimately enqueue the same handler.
+		} else {
+			if triggered[id] {
+				return fmt.Errorf("dpkg повторно ожидает обработчик %s", id)
+			}
+			triggered[id] = true
+		}
+		if _, err = p.R.Run(ctx, "dpkg", "--no-triggers", action, id); err != nil {
+			return err
 		}
 	}
 	for _, target := range targets {
@@ -257,26 +259,74 @@ func (p *Packages) resumePackages(ctx context.Context, items []interruptedPackag
 	return nil
 }
 
-type retryPackageState struct{ version, status string }
+type retryPackageState struct{ id, version, status string }
+type packageTriggerWait struct{ waiter, handler string }
 
-func (p *Packages) retryInventory(ctx context.Context) (map[string]retryPackageState, string, error) {
+// Dpkg can invoke a dependency's awaited trigger even for an explicitly
+// named --configure with --no-triggers. Resolve the proven handler first.
+func nextPackageAction(live map[string]retryPackageState, waits []packageTriggerWait, items []interruptedPackage, versions map[string]string) (action, id string, err error) {
+	for _, item := range items {
+		key := item.Name + ":" + item.Arch
+		s := live[key]
+		if s.version != item.Version {
+			return "", "", fmt.Errorf("пакет %s изменился после прерывания", key)
+		}
+		switch s.status {
+		case "install ok installed", "hold ok installed":
+			continue
+		case "install ok unpacked", "install ok half-configured", "install ok triggers-awaited", "install ok triggers-pending":
+		default:
+			return "", "", fmt.Errorf("состояние %s требует проверки: %s", key, s.status)
+		}
+		if id == "" {
+			id = key
+		}
+	}
+	if id == "" {
+		return "", "", nil
+	}
+	var handler string
+	for _, wait := range waits {
+		s := live[wait.handler]
+		if versions[wait.waiter] == "" || versions[s.id] == "" || versions[s.id] != s.version || s.status != "install ok triggers-pending" {
+			return "", "", fmt.Errorf("%s ожидает обработчик %s; адресное восстановление остановлено", wait.waiter, wait.handler)
+		}
+		if handler == "" {
+			handler = s.id
+		}
+	}
+	if handler != "" {
+		return "--triggers-only", handler, nil
+	}
+	switch live[id].status {
+	case "install ok triggers-pending":
+		return "--triggers-only", id, nil
+	case "install ok triggers-awaited":
+		return "", "", fmt.Errorf("неизвестен ожидаемый обработчик %s", id)
+	default:
+		return "--configure", id, nil
+	}
+}
+
+func (p *Packages) retryInventory(ctx context.Context) (map[string]retryPackageState, []packageTriggerWait, error) {
 	const format = "-f=${Package}\t${Architecture}\t${Version}\t${Status}\t${Triggers-Awaited}\n"
 	out, err := p.R.Run(ctx, "dpkg-query", "-W", format)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	live := map[string]retryPackageState{}
-	var awaited string
+	var waits []packageTriggerWait
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
 		f := strings.Split(line, "\t")
 		if len(f) != 5 {
-			return nil, "", fmt.Errorf("некорректная строка dpkg-query")
+			return nil, nil, fmt.Errorf("некорректная строка dpkg-query")
 		}
-		state := retryPackageState{f[2], f[3]}
-		live[f[0]+":"+f[1]] = state
+		id := f[0] + ":" + f[1]
+		state := retryPackageState{id, f[2], f[3]}
+		live[id] = state
 		// An unqualified multiarch target cannot prove which instance the
 		// administrator selected. Require an exact architecture in that case.
 		if _, exists := live[f[0]]; exists {
@@ -284,9 +334,9 @@ func (p *Packages) retryInventory(ctx context.Context) (map[string]retryPackageS
 		} else {
 			live[f[0]] = state
 		}
-		if awaited == "" {
-			awaited = strings.TrimSpace(f[4])
+		for _, handler := range strings.Fields(f[4]) {
+			waits = append(waits, packageTriggerWait{id, handler})
 		}
 	}
-	return live, awaited, nil
+	return live, waits, nil
 }

@@ -57,7 +57,7 @@ func TestRetryInterruptedDebianInstall(t *testing.T) {
 	t.Setenv("DPKG_ADMINDIR", adm)
 	t.Setenv("DPKG_FORCE", "script-chrootless")
 	withTestPolicyPath(t)
-	unpack := func(name, version, postinst string) {
+	unpack := func(name, version, postinst string, triggers ...string) {
 		t.Helper()
 		pkg := filepath.Join(dir, name+version)
 		control := filepath.Join(pkg, "DEBIAN")
@@ -66,6 +66,9 @@ func TestRetryInterruptedDebianInstall(t *testing.T) {
 		}
 		write(filepath.Join(control, "control"), fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: QA <qa@example.invalid>\nDescription: retry fixture\n", name, version), 0644)
 		write(filepath.Join(control, "postinst"), "#!/bin/sh\nset -eu\ntest -n \"$DPKG_ROOT\" && test \"$DPKG_ROOT\" != / || exit 1\n"+postinst+"\n", 0755)
+		if len(triggers) > 0 {
+			write(filepath.Join(control, "triggers"), strings.Join(triggers, "\n")+"\n", 0644)
+		}
 		archive := pkg + ".deb"
 		command("dpkg-deb", "--build", pkg, archive)
 		command("dpkg", "--root="+root, "--unpack", archive)
@@ -127,4 +130,40 @@ echo end >>"$DPKG_ROOT/events"`
 			t.Fatal(marker, err)
 		}
 	}
+	t.Run("required trigger", func(t *testing.T) {
+		const listener = "netos-qa-listener"
+		const provider = "netos-qa-provider"
+		const consumer = "netos-qa-consumer"
+		const activate = "dpkg-trigger --await netos-qa-event"
+		unpack(listener, "2", `echo "$1" >> "$DPKG_ROOT/handler"`, "interest netos-qa-event")
+		command("dpkg", "--no-triggers", "--configure", listener)
+		unpack(provider, "1", activate)
+		unpack(consumer, "1", "exit 0")
+		command("dpkg", "--no-triggers", "--configure", provider)
+		items := []interruptedPackage{{provider, "all", "1"}, {consumer, "all", "1"}}
+		for i := 0; i < 2; i++ {
+			if err := p.resumePackages(ctx, items, []string{consumer}); err == nil {
+				t.Fatal("ran a foreign handler")
+			}
+		}
+		log := filepath.Join(root, "handler")
+		if data, err := os.ReadFile(log); err != nil || string(data) != "configure\n" {
+			t.Fatalf("foreign handler %q, %v", data, err)
+		}
+		items = append(items, interruptedPackage{listener, "all", "2"})
+		for i := 0; i < 3; i++ {
+			if i == 1 {
+				unpack(provider, "1", activate)
+			} // Enqueue again inside the real recovery loop.
+			if err := p.resumePackages(ctx, items, []string{consumer}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if data, err := os.ReadFile(log); err != nil || string(data) != "configure\ntriggered\ntriggered\n" {
+			t.Fatalf("own handler %q, %v", data, err)
+		}
+		if status(provider) != "install ok installed" || status(foreign) != "install ok unpacked" {
+			t.Fatal("unexpected final package state")
+		}
+	})
 }
