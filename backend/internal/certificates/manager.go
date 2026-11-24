@@ -23,15 +23,9 @@ import (
 )
 
 type ACME interface {
-	Certificate(context.Context) (*tls.Certificate, error)
+	GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error)
 	HTTPHandler(http.Handler) http.Handler
-	Close()
-}
-
-type domainIssuer struct {
-	contact string
-	client  ACME
-	handler http.Handler
+	TLSConfig() *tls.Config
 }
 
 type Factory func(cache, domain, email string) (ACME, error)
@@ -59,7 +53,9 @@ type Manager struct {
 	PrepareHTTP   func(context.Context) (func(), error)
 	op            sync.Mutex
 	mu            sync.RWMutex
-	issuers       map[string]domainIssuer
+	issuers       map[string]ACME
+	issuerEmails  map[string]string // email each issuer registered with
+	handlers     map[string]http.Handler
 	status        map[string]Status
 	httpServer    *http.Server
 	httpFallback  http.Handler
@@ -67,19 +63,10 @@ type Manager struct {
 }
 
 func New(dir string, factory Factory) *Manager {
-	return &Manager{Dir: dir, Factory: factory, Listen: net.Listen, HTTPAddress: ":80", issuers: map[string]domainIssuer{}, status: map[string]Status{}}
+	return &Manager{Dir: dir, Factory: factory, Listen: net.Listen, HTTPAddress: ":80", issuers: map[string]ACME{}, issuerEmails: map[string]string{}, handlers: map[string]http.Handler{}, status: map[string]Status{}}
 }
 
 func (m *Manager) Close() error {
-	m.op.Lock()
-	defer m.op.Unlock()
-	m.mu.Lock()
-	issuers := m.issuers
-	m.issuers = make(map[string]domainIssuer)
-	m.mu.Unlock()
-	for _, issuer := range issuers {
-		issuer.client.Close()
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.httpServer != nil {
@@ -120,15 +107,12 @@ func (m *Manager) Status() []Status {
 
 func hostname(value string) string { return strings.TrimSuffix(strings.ToLower(value), ".") }
 
-func ParseTLSPair(certPEM, keyPEM []byte, name string) (*tls.Certificate, error) {
+func ParsePair(certPEM, keyPEM []byte, name string) (*Pair, error) {
 	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("сертификат и закрытый ключ не образуют пару")
 	}
-	leaf := pair.Leaf
-	if leaf == nil {
-		leaf, err = x509.ParseCertificate(pair.Certificate[0])
-	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
 		return nil, fmt.Errorf("некорректный сертификат")
 	}
@@ -162,15 +146,6 @@ func ParseTLSPair(certPEM, keyPEM []byte, name string) (*tls.Certificate, error)
 			return nil, fmt.Errorf("сертификат не покрывает адрес %s", name)
 		}
 	}
-	pair.Leaf = leaf
-	return &pair, nil
-}
-
-func ParsePair(certPEM, keyPEM []byte, name string) (*Pair, error) {
-	pair, err := ParseTLSPair(certPEM, keyPEM, name)
-	if err != nil {
-		return nil, err
-	}
 	var chain []byte
 	for _, der := range pair.Certificate {
 		chain = append(chain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
@@ -179,7 +154,7 @@ func ParsePair(certPEM, keyPEM []byte, name string) (*Pair, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pair{Certificate: chain, Key: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), Leaf: pair.Leaf}, nil
+	return &Pair{Certificate: chain, Key: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), Leaf: leaf}, nil
 }
 
 func ReadPair(certFile, keyFile, name string) (*Pair, error) {
@@ -244,7 +219,7 @@ func (m *Manager) challenge(w http.ResponseWriter, r *http.Request) {
 		host = h
 	}
 	m.mu.RLock()
-	handler := m.issuers[hostname(host)].handler
+	handler := m.handlers[hostname(host)]
 	fallback := m.httpFallback
 	m.mu.RUnlock()
 	w.Header().Set("Cache-Control", "no-store")
@@ -263,14 +238,13 @@ func (m *Manager) acme(ctx context.Context, domain, email string) (*Pair, error)
 	domain = hostname(domain)
 	m.mu.RLock()
 	issuer := m.issuers[domain]
+	if m.issuerEmails[domain] != email {
+		// autocert keeps the account it registered; a new email needs a new
+		// manager, whose cache directory is derived from that email below.
+		issuer = nil
+	}
 	m.mu.RUnlock()
-	if issuer.client == nil || issuer.contact != email {
-		if issuer.client != nil {
-			m.mu.Lock()
-			delete(m.issuers, domain)
-			m.mu.Unlock()
-			issuer.client.Close()
-		}
+	if issuer == nil {
 		if m.Factory == nil {
 			return nil, fmt.Errorf("ACME недоступен")
 		}
@@ -279,13 +253,18 @@ func (m *Manager) acme(ctx context.Context, domain, email string) (*Pair, error)
 			identity = "no-email"
 		}
 		digest := sha256.Sum256([]byte(identity))
-		client, err := m.Factory(filepath.Join(m.Dir, "acme", hex.EncodeToString(digest[:8])), domain, email)
+		var err error
+		issuer, err = m.Factory(filepath.Join(m.Dir, "acme", hex.EncodeToString(digest[:8])), domain, email)
 		if err != nil {
 			return nil, err
 		}
-		issuer = domainIssuer{email, client, client.HTTPHandler(http.NotFoundHandler())}
+		// HTTPHandler enables HTTP-01 inside autocert. It must be constructed
+		// before GetCertificate, not lazily on the first challenge request.
+		handler := issuer.HTTPHandler(http.NotFoundHandler())
 		m.mu.Lock()
 		m.issuers[domain] = issuer
+		m.issuerEmails[domain] = email
+		m.handlers[domain] = handler
 		m.mu.Unlock()
 	}
 	if err := m.startHTTP(); err != nil {
@@ -300,26 +279,41 @@ func (m *Manager) acme(ctx context.Context, domain, email string) (*Pair, error)
 		}
 	}
 	defer cleanup()
-	cert, err := issuer.client.Certificate(ctx)
-	if err != nil {
-		m.mu.Lock()
-		delete(m.issuers, domain)
-		m.mu.Unlock()
-		issuer.client.Close()
-		return nil, fmt.Errorf("выпуск/продление сертификата %s: %w", domain, err)
+	type result struct {
+		cert *tls.Certificate
+		err  error
 	}
-	if cert == nil || len(cert.Certificate) == 0 {
-		return nil, fmt.Errorf("ACME вернул пустой сертификат")
+	done := make(chan result, 1)
+	go func() {
+		cert, err := issuer.GetCertificate(&tls.ClientHelloInfo{ServerName: domain, SupportedVersions: []uint16{tls.VersionTLS13, tls.VersionTLS12}, SignatureSchemes: []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256, tls.PSSWithSHA256}, SupportedCurves: []tls.CurveID{tls.X25519, tls.CurveP256}, CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}})
+		done <- result{cert, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-done:
+		if res.err != nil {
+			// A failed registration retains its original contact in autocert.
+			// Allow a corrected email/configuration to take effect on retry.
+			m.mu.Lock()
+			delete(m.issuers, domain)
+			delete(m.handlers, domain)
+			m.mu.Unlock()
+			return nil, fmt.Errorf("выпуск/продление сертификата %s: %w", domain, res.err)
+		}
+		if res.cert == nil || len(res.cert.Certificate) == 0 {
+			return nil, fmt.Errorf("ACME вернул пустой сертификат")
+		}
+		var chain []byte
+		for _, der := range res.cert.Certificate {
+			chain = append(chain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
+		}
+		key, err := x509.MarshalPKCS8PrivateKey(res.cert.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		return ParsePair(chain, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), domain)
 	}
-	var chain []byte
-	for _, der := range cert.Certificate {
-		chain = append(chain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
-	}
-	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePair(chain, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), domain)
 }
 
 func (m *Manager) record(name string, pair *Pair, err error) {

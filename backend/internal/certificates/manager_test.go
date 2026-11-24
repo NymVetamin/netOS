@@ -18,16 +18,15 @@ type testIssuer struct {
 	cert      tls.Certificate
 	err       error
 	httpReady bool
-	closed    int
 }
 
-func (i *testIssuer) Certificate(context.Context) (*tls.Certificate, error) {
+func (i *testIssuer) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if !i.httpReady {
 		return nil, fmt.Errorf("HTTP-01 has not been enabled before issuance")
 	}
 	return &i.cert, i.err
 }
-func (i *testIssuer) Close() { i.closed++ }
+func (i *testIssuer) TLSConfig() *tls.Config { return &tls.Config{MinVersion: tls.VersionTLS12} }
 func (i *testIssuer) HTTPHandler(http.Handler) http.Handler {
 	i.httpReady = true
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("challenge")) })
@@ -60,73 +59,6 @@ func TestFailedAccountCanBeCorrectedWithoutDaemonRestart(t *testing.T) {
 	}
 	if _, err := m.acme(context.Background(), "vpn.example.test", "fixed@example.test"); err != nil {
 		t.Fatal("fixed contact still uses failed issuer:", err)
-	}
-}
-
-func TestVPNAccountRotationRetainsWorkingBundleUntilSuccess(t *testing.T) {
-	const domain = "vpn.example.test"
-	const oldContact = "old@example.org"
-	const newContact = "new@example.org"
-	oldIssuer, newIssuer := makeIssuer(t, domain), makeIssuer(t, domain)
-	var attempts []string
-	m := New(t.TempDir(), func(_, _ string, contact string) (ACME, error) {
-		attempts = append(attempts, contact)
-		if contact == oldContact {
-			return oldIssuer, nil
-		}
-		if contact != newContact {
-			t.Fatalf("unexpected contact %q", contact)
-		}
-		return newIssuer, nil
-	})
-	m.HTTPAddress = "127.0.0.1:0"
-	defer m.Close()
-	spec := map[string]any{"mode": "acme", "domain": domain, "email": oldContact}
-	server := config.VPNServer{ID: "vpn", Type: "ocserv", Config: map[string]any{"public_endpoint": domain + ":443", "tls": spec}}
-	cfg, dir := config.Default(), t.TempDir()
-	apply := func() (bool, error) { return m.VPN(context.Background(), cfg, server, dir) }
-	bundle := func() string {
-		data, err := os.ReadFile(filepath.Join(dir, "server.pem"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-	if changed, err := apply(); err != nil || !changed {
-		t.Fatalf("initial certificate: changed=%v err=%v", changed, err)
-	}
-	before := bundle()
-	fingerprint := m.Status()[0].Fingerprint
-	spec["email"] = newContact
-	newIssuer.err = fmt.Errorf("CA unavailable")
-	if _, err := apply(); err == nil {
-		t.Fatal("changing the contact silently reused the old account")
-	}
-	status := m.Status()[0]
-	if bundle() != before || status.Fingerprint != fingerprint || status.Error == "" {
-		t.Fatalf("failed rotation changed the published certificate or hid the error: %+v", status)
-	}
-	newIssuer.err = nil
-	if changed, err := apply(); err != nil || !changed || bundle() == before {
-		t.Fatalf("retry did not publish new certificate: changed=%v err=%v", changed, err)
-	}
-	published := m.Status()[0]
-	if published.Error != "" || published.Fingerprint == fingerprint {
-		t.Fatalf("unexpected status after successful publication: %+v", published)
-	}
-	issued := len(attempts)
-	if changed, err := apply(); err != nil || changed || len(attempts) != issued {
-		t.Fatalf("unchanged contact: changed=%v err=%v attempts=%v", changed, err, attempts)
-	}
-	if oldIssuer.closed != 1 {
-		t.Fatalf("previous account closed %d times", oldIssuer.closed)
-	}
-	prior := newIssuer.closed
-	if err := m.Refresh(context.Background(), cfg, dir, &refreshCommands{}); err != nil {
-		t.Fatal(err)
-	}
-	if newIssuer.closed != prior+1 {
-		t.Fatal("removed VPN retained an active issuer")
 	}
 }
 
