@@ -472,6 +472,47 @@ func TestHoldDaemonsPreservesDanglingPolicyLink(t *testing.T) {
 	}
 }
 
+func TestOverlappingDaemonPolicyHolds(t *testing.T) {
+	path := withTestPolicyPath(t)
+	hold := func() func() {
+		t.Helper()
+		release, err := holdDaemons()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(release)
+		return release
+	}
+	for _, reverse := range []bool{false, true} {
+		first, second := hold(), hold()
+		if reverse {
+			first, second = second, first
+		}
+		first()
+		first()
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("surviving hold lost its policy: %v", err)
+		}
+		second()
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("last release left policy: %v", err)
+		}
+	}
+	old := hold()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	current := hold()
+	old()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("old release removed new policy: %v", err)
+	}
+	current()
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("new policy cleanup: %v", err)
+	}
+}
+
 func TestReleasePreservesChangedDaemonPolicy(t *testing.T) {
 	for _, mode := range []string{"edited", "replaced", "copy", "link"} {
 		t.Run(mode, func(t *testing.T) {

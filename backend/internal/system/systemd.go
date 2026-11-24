@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // Systemd управляет юнитами внешних демонов (dnsmasq, unbound, hostapd, ...).
@@ -366,6 +367,37 @@ func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr er
 // fake Runner держали временный запрет внутри своей песочницы.
 var PolicyRCPath = "/usr/sbin/policy-rc.d"
 
+const daemonPolicyScript = "#!/bin/sh\n" +
+	"# Создано netOS на время установки пакета и удаляется сразу после неё.\n" +
+	"# Демонами управляет netOS собственными юнитами.\n" +
+	"exit 101\n"
+
+type heldDaemonPolicy struct {
+	path  string
+	file  os.FileInfo
+	users int
+}
+
+var daemonPolicyMu sync.Mutex
+var activeDaemonPolicy *heldDaemonPolicy
+
+// Called under daemonPolicyMu. The returned release is specific to this inode.
+func (p *heldDaemonPolicy) acquire() func() {
+	p.users++
+	return sync.OnceFunc(func() {
+		daemonPolicyMu.Lock()
+		defer daemonPolicyMu.Unlock()
+		p.users--
+		if p.users != 0 || activeDaemonPolicy != p {
+			return
+		}
+		if ownedFileMatches(p.path, []byte(daemonPolicyScript), 0755, p.file) {
+			_ = os.Remove(p.path)
+		}
+		activeDaemonPolicy = nil
+	})
+}
+
 // holdDaemons запрещает запуск демонов на время установки пакета и возвращает
 // функцию, снимающую запрет.
 //
@@ -381,16 +413,17 @@ var PolicyRCPath = "/usr/sbin/policy-rc.d"
 // Чужой policy-rc.d не трогаем: он принадлежит не нам, и вернуть его на место
 // после подмены надёжно нельзя. Запрет в этом случае просто не ставится.
 func holdDaemons() (func(), error) {
-	if _, err := os.Lstat(PolicyRCPath); err == nil {
+	daemonPolicyMu.Lock()
+	defer daemonPolicyMu.Unlock()
+	if info, err := os.Lstat(PolicyRCPath); err == nil {
+		if p := activeDaemonPolicy; p != nil && p.path == PolicyRCPath && os.SameFile(info, p.file) {
+			return p.acquire(), nil
+		}
 		return func() {}, nil
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	script := "#!/bin/sh\n" +
-		"# Создано netOS на время установки пакета и удаляется сразу после неё.\n" +
-		"# Демонами управляет netOS собственными юнитами.\n" +
-		"exit 101\n"
-	path, content := PolicyRCPath, []byte(script)
+	path, content := PolicyRCPath, []byte(daemonPolicyScript)
 	var original os.FileInfo
 	err := publishFileAtomic(path, content, 0755, func(staged, dest string) error {
 		// Stat the open staged file so identity is captured before publication.
@@ -411,9 +444,6 @@ func holdDaemons() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	return func() {
-		if ownedFileMatches(path, content, 0755, original) {
-			_ = os.Remove(path)
-		}
-	}, nil
+	activeDaemonPolicy = &heldDaemonPolicy{path: path, file: original}
+	return activeDaemonPolicy.acquire(), nil
 }
