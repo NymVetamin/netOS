@@ -325,9 +325,8 @@ export function ComponentsPage({
                             {update.packages
                               .filter((p) => p.update_available)
                               .map(
-                                (p) => p.installed === p.available
-                                  ? `${p.name}: ${p.available}`
-                                  : `${p.name}: ${p.installed} → ${p.available}`,
+                                (p) =>
+                                  `${p.name}: ${p.installed} → ${p.available}`,
                               )
                               .join("; ")}
                           </small>
@@ -348,7 +347,7 @@ export function ComponentsPage({
                           disabled={busy || !!update.error}
                           onClick={() => void perform(c.id, update.token)}
                         >
-                          {update.resume ? "Продолжить" : "Обновить"}
+                          Обновить
                         </button>
                       )}
                   <Switch

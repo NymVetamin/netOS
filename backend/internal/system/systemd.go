@@ -305,15 +305,10 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 			missing = append(missing, pkg)
 		}
 	}
-	path := p.receiptPath("install", pkgs)
-	pending, err := receiptExists(path)
-	if err != nil {
-		return nil, err
-	}
-	if len(missing) == 0 && !pending {
+	if len(missing) == 0 {
 		return nil, nil
 	}
-	if refresh != nil && !pending {
+	if refresh != nil {
 		if err := refresh(); err != nil {
 			return nil, err
 		}
@@ -335,18 +330,18 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 			resultErr = fmt.Errorf("%v; сохранение списка установленных пакетов: %w", resultErr, err)
 		}
 	}()
-	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--no-install-recommends"}, missing...)
-	if pending {
-		args = nil // A retry may configure only the recorded participants.
+	if err := finishInterruptedPackages(ctx, p.R); err != nil {
+		return nil, err
 	}
-	if err := p.changePackages(ctx, path, pkgs, args); err != nil {
+	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--no-install-recommends"}, missing...)
+	if _, err := p.R.Run(ctx, "apt-get", args...); err != nil {
 		return nil, fmt.Errorf("установка пакетов %s: %w", strings.Join(missing, ", "), err)
 	}
 	return missing, nil
 }
 
 // Upgrade installs explicit repository candidates and preserves package ownership.
-func (p *Packages) Upgrade(ctx context.Context, component string, versions []string, receiptKey string) (resultErr error) {
+func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr error) {
 	if len(versions) == 0 {
 		return nil
 	}
@@ -364,13 +359,21 @@ func (p *Packages) Upgrade(ctx context.Context, component string, versions []str
 			resultErr = fmt.Errorf("%v; package ownership: %w", resultErr, err)
 		}
 	}()
-	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--only-upgrade", "--no-remove", "--no-install-recommends"}, versions...)
-	if receiptKey != "" {
-		args = nil
+	if resultErr = finishInterruptedPackages(ctx, p.R); resultErr != nil {
+		return resultErr
 	}
-	ctx = context.WithValue(ctx, upgradeReceiptKey{}, receiptKey)
-	resultErr = p.changePackages(ctx, p.receiptPath("upgrade", []string{component}), versions, args)
+	_, resultErr = p.R.Run(ctx, "apt-get", append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--only-upgrade", "--no-remove", "--no-install-recommends"}, versions...)...)
 	return resultErr
+}
+
+// finishInterruptedPackages completes a dpkg run cut short by a timeout or a
+// crash: apt-get refuses to work until it is done, and with nothing pending
+// the command does nothing. Runs under the daemon policy, like apt-get.
+func finishInterruptedPackages(ctx context.Context, r Runner) error {
+	if _, err := r.Run(ctx, "dpkg", "--configure", "-a"); err != nil {
+		return fmt.Errorf("завершение прерванной установки пакетов: %w", err)
+	}
+	return nil
 }
 
 // PolicyRCPath — скрипт, у которого Debian спрашивает разрешения, прежде чем

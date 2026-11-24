@@ -239,7 +239,7 @@ func (m *UpdateManager) runUpdates(ctx context.Context, requests []UpdateRequest
 		needed := infos[r.ID].External
 		for i := range row.Packages {
 			p := &row.Packages[i]
-			p.UpdateAvailable = p.UpdateAvailable && (row.Resume || !updated[p.Name])
+			p.UpdateAvailable = p.UpdateAvailable && !updated[p.Name]
 			needed = needed || p.UpdateAvailable
 		}
 		m.Subsystem.Progress.Start("update", r.ID)

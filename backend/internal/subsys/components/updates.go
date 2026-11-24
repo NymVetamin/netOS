@@ -24,8 +24,6 @@ type PackageUpdate struct {
 	Available       string `json:"available"`
 }
 type ComponentUpdate struct {
-	receiptKey      string
-	Resume          bool `json:"resume,omitempty"`
 	release         *externalRelease
 	Token           string          `json:"token,omitempty"`
 	Installed       string          `json:"installed,omitempty"`
@@ -62,34 +60,13 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 		selectedForRemoval bool
 	}
 	installed := map[string]packageState{}
-	resumeVersions := map[string]map[string]string{}
-	resumeKeys := map[string]string{}
-	receiptErrors := map[string]error{}
 	for _, info := range config.Catalog {
 		if selected(info.ID) && !info.External {
-			pins, key, e := s.Packages.InterruptedUpgrade(info.ID)
-			if e != nil {
-				receiptErrors[info.ID] = e
-			}
-			if key != "" {
-				targets := map[string]string{}
-				for _, pin := range pins {
-					name, v, ok := strings.Cut(pin, "=")
-					if !ok || v == "" {
-						receiptErrors[info.ID] = fmt.Errorf("повреждена запись обновления %s", info.ID)
-						break
-					}
-					targets[name] = v
-				}
-				resumeVersions[info.ID], resumeKeys[info.ID] = targets, key
-			}
 			for _, p := range info.Packages {
 				installed[p] = packageState{}
 			}
 		}
 	}
-	partial := map[string]string{}
-	blocked := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) != 3 {
@@ -100,22 +77,14 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 			continue
 		}
 		switch f[1] {
-		case "iU", "iF", "iW", "it":
-			partial[f[0]] = f[2]
 		case "ii", "hi":
-			if f[1] == "hi" {
-				blocked[f[0]] = true
-			}
 			installed[f[0]] = packageState{version: f[2], held: previous.held || f[1] == "hi"}
 		case "ri", "pi":
-			blocked[f[0]] = true
 			// A same-name installed architecture already eligible for updates
 			// keeps its version and eligibility regardless of inventory order.
 			if previous.version == "" || previous.selectedForRemoval {
 				installed[f[0]] = packageState{version: f[2], selectedForRemoval: true}
 			}
-		default:
-			blocked[f[0]] = true
 		}
 	}
 	packages := map[string]bool{}
@@ -128,9 +97,6 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 			selectedForRemoval := false
 			for _, p := range info.Packages {
 				state := installed[p]
-				if state.version == "" && resumeVersions[info.ID][p] != "" && partial[p] == resumeVersions[info.ID][p] {
-					state.version = partial[p]
-				}
 				if state.version == "" {
 					all = false
 					break
@@ -172,11 +138,6 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 			continue
 		}
 		row := ComponentUpdate{}
-		if e := receiptErrors[info.ID]; e != nil {
-			row.Error = e.Error()
-			result[info.ID] = row
-			continue
-		}
 		if info.External {
 			s.Progress.Stage(info.ID, "Проверка последней версии")
 			rel, ok := externalReleases[info.ID]
@@ -207,9 +168,6 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 			for _, p := range info.Packages {
 				state := installed[p]
 				v := state.version
-				if resumeVersions[info.ID][p] != "" && v == "" {
-					v = partial[p]
-				}
 				if v == "" {
 					continue
 				}
@@ -218,14 +176,7 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 					row.Error = fmt.Sprintf("нет доступной версии пакета %s в репозитории", p)
 				}
 				pkg := PackageUpdate{Name: p, Installed: v, Available: candidate}
-				if pins := resumeVersions[info.ID]; pins != nil {
-					row.Resume = true
-					if blocked[p] || !eligible || (pins[p] != "" && pins[p] != candidate) {
-						row.Error = "Изменились версии или выбор пакетов прерванного обновления"
-					}
-					pkg.UpdateAvailable = pins[p] != ""
-					row.UpdateAvailable = row.UpdateAvailable || pkg.UpdateAvailable
-				} else if eligible && candidate != "" && candidate != v && !state.held {
+				if eligible && candidate != "" && candidate != v && !state.held {
 					cmp, checked := comparisons[p]
 					if !checked {
 						_, e := s.Runner.Run(ctx, "dpkg", "--compare-versions", candidate, "gt", v)
@@ -254,8 +205,7 @@ func (s *Subsystem) checkUpdates(ctx context.Context, refresh bool, ids ...strin
 			}
 		}
 		data, _ := json.Marshal(row)
-		row.receiptKey = resumeKeys[info.ID]
-		row.Token = fmt.Sprintf("%x", sha256.Sum256(append(data, row.receiptKey...)))
+		row.Token = fmt.Sprintf("%x", sha256.Sum256(data))
 		result[info.ID] = row
 	}
 	return result, nil
@@ -358,7 +308,7 @@ func (s *Subsystem) upgradePrepared(ctx context.Context, info config.ComponentIn
 		}
 	}
 	s.Progress.Stage(id, "Загрузка и установка пакетов")
-	installErr := s.Packages.Upgrade(ctx, id, versions, row.receiptKey)
+	installErr := s.Packages.Upgrade(ctx, versions)
 	// A failed APT transaction can still have replaced some files. Restore service
 	// execution using what is installed, while retaining the package error.
 	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)

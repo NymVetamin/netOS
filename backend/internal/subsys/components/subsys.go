@@ -420,9 +420,6 @@ func (s *Subsystem) componentStateFrom(ctx context.Context, info config.Componen
 	if info.ID == amneziaWGID && s.amneziaCapturePending() {
 		allInstalled = false
 	}
-	if allInstalled && s.Packages.InstallInterrupted(info.Packages) {
-		allInstalled = false
-	}
 	return anyInstalled, allInstalled
 }
 
