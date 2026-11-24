@@ -471,3 +471,60 @@ func TestHoldDaemonsPreservesDanglingPolicyLink(t *testing.T) {
 		}
 	}
 }
+
+func TestReleasePreservesChangedDaemonPolicy(t *testing.T) {
+	for _, mode := range []string{"edited", "replaced", "copy", "link"} {
+		t.Run(mode, func(t *testing.T) {
+			path := withTestPolicyPath(t)
+			release, err := holdDaemons()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			admin := "#!/bin/sh\nexit 0\n"
+			switch mode {
+			case "copy":
+				original, e := os.ReadFile(path)
+				if e != nil {
+					t.Fatal(e)
+				}
+				admin = string(original)
+				err = WriteFileAtomic(path, original, 0755)
+			case "edited":
+				err = os.WriteFile(path, []byte(admin), 0755)
+			case "replaced":
+				err = WriteFileAtomic(path, []byte(admin), 0755)
+			case "link":
+				target := path + ".admin"
+				// Even an exact copy behind a symlink belongs to the administrator.
+				original, e := os.ReadFile(path)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if e = os.WriteFile(target, original, 0755); e != nil {
+					t.Fatal(e)
+				}
+				if e = os.Remove(path); e != nil {
+					t.Fatal(e)
+				}
+				err = os.Symlink(target, path)
+				if err != nil && runtime.GOOS == "windows" {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				release()
+				if mode == "link" {
+					if dest, e := os.Readlink(path); e != nil || dest != path+".admin" {
+						t.Fatalf("administrative link: %q %v", dest, e)
+					}
+				} else if data, e := os.ReadFile(path); e != nil || string(data) != admin {
+					t.Fatalf("administrative policy: %q %v", data, e)
+				}
+			}
+		})
+	}
+}

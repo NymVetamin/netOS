@@ -390,8 +390,30 @@ func holdDaemons() (func(), error) {
 		"# Создано netOS на время установки пакета и удаляется сразу после неё.\n" +
 		"# Демонами управляет netOS собственными юнитами.\n" +
 		"exit 101\n"
-	if err := WriteFileAtomic(PolicyRCPath, []byte(script), 0o755); err != nil {
+	path, content := PolicyRCPath, []byte(script)
+	var original os.FileInfo
+	err := publishFileAtomic(path, content, 0755, func(staged, dest string) error {
+		// Stat the open staged file so identity is captured before publication.
+		f, err := os.Open(staged)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		original, err = f.Stat()
+		if err != nil {
+			return err
+		}
+		return os.Link(staged, dest)
+	})
+	if os.IsExist(err) {
+		return func() {}, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	return func() { _ = os.Remove(PolicyRCPath) }, nil
+	return func() {
+		if ownedFileMatches(path, content, 0755, original) {
+			_ = os.Remove(path)
+		}
+	}, nil
 }

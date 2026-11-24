@@ -121,6 +121,10 @@ func RestoreSymlinkAtomic(path, target string) error {
 // WriteFileAtomic пишет файл через временный файл и rename, чтобы демон,
 // читающий конфиг в этот момент, никогда не увидел половину.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return publishFileAtomic(path, data, perm, os.Rename)
+}
+
+func publishFileAtomic(path string, data []byte, perm os.FileMode, publish func(string, string) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -146,7 +150,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := os.Chmod(tmpName, perm); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return publish(tmpName, path)
 }
 
 // WriteFileAtomicIfChanged preserves the inode and mtime when both content
@@ -181,6 +185,10 @@ func OpenSameRegular(path string, expected os.FileInfo) (*os.File, error) {
 
 // AtomicFileMatches checks the content and mode without following symlinks.
 func AtomicFileMatches(path string, data []byte, perm os.FileMode) bool {
+	return ownedFileMatches(path, data, perm, nil)
+}
+
+func ownedFileMatches(path string, data []byte, perm os.FileMode, owner os.FileInfo) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) {
 		return false
@@ -194,7 +202,7 @@ func AtomicFileMatches(path string, data []byte, perm os.FileMode) bool {
 	}
 	defer f.Close()
 	opened, err := f.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if err != nil || !os.SameFile(info, opened) || (owner != nil && !os.SameFile(owner, opened)) {
 		return false
 	}
 	// Read one extra byte to detect growth after the size check.
