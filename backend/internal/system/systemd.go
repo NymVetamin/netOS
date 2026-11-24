@@ -381,7 +381,7 @@ var PolicyRCPath = "/usr/sbin/policy-rc.d"
 // Чужой policy-rc.d не трогаем: он принадлежит не нам, и вернуть его на место
 // после подмены надёжно нельзя. Запрет в этом случае просто не ставится.
 func holdDaemons() (func(), error) {
-	if _, err := os.Stat(PolicyRCPath); err == nil {
+	if _, err := os.Lstat(PolicyRCPath); err == nil {
 		return func() {}, nil
 	} else if !os.IsNotExist(err) {
 		return nil, err

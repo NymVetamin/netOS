@@ -447,3 +447,27 @@ func TestPackagesPreservesExistingPolicy(t *testing.T) {
 		t.Fatalf("foreign policy changed: %q err=%v", data, err)
 	}
 }
+
+func TestHoldDaemonsPreservesDanglingPolicyLink(t *testing.T) {
+	originalPath := PolicyRCPath
+	PolicyRCPath = filepath.Join(t.TempDir(), "policy-rc.d")
+	t.Cleanup(func() { PolicyRCPath = originalPath })
+	const target = "external-policy"
+	if err := os.Symlink(target, PolicyRCPath); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	for range 2 {
+		release, err := holdDaemons()
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+		got, err := os.Readlink(PolicyRCPath)
+		if err != nil || got != target {
+			t.Fatalf("foreign policy link: target=%q err=%v", got, err)
+		}
+	}
+}
