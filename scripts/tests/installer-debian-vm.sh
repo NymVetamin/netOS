@@ -112,4 +112,4 @@ GUEST
 done
 
 guest 'cat >/tmp/netos-system.test && chmod 700 /tmp/netos-system.test' < "$system_test"
-guest 'sudo env NETOS_PACKAGE_CGROUP=/sys/fs/cgroup/system.slice/netosd.service/packages /tmp/netos-system.test -test.v -test.run "^TestPackageCancellationStopsDetachedChild$"'
+guest 'sudo env NETOS_PACKAGE_CGROUP=/sys/fs/cgroup/system.slice/netosd.service/packages /tmp/netos-system.test -test.v -test.run "^Test(PackageCancellationStopsDetachedChild|CommandCancellationStopsDescendants|CommandWithoutDelegation|ExecDeadlineWhileDrainingOutput)$"'

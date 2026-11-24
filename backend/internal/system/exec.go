@@ -67,22 +67,25 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, name, args...)
-	if name == "apt-cache" || name == "apt-get" || name == "dpkg" || name == "dpkg-query" {
-		cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l")
-	}
-	if input != "" {
-		cmd.Stdin = strings.NewReader(input)
-	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	command := func() *exec.Cmd {
+		cmd := exec.CommandContext(ctx, name, args...)
+		if name == "apt-cache" || name == "apt-get" || name == "dpkg" || name == "dpkg-query" {
+			cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l")
+		}
+		if input != "" {
+			cmd.Stdin = strings.NewReader(input)
+		}
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		return cmd
+	}
 
 	var err error
-	if dir := os.Getenv("NETOS_PACKAGE_CGROUP"); packageCommand && dir != "" {
-		err = runPackageCommand(ctx, cmd, dir)
+	if dir := os.Getenv("NETOS_PACKAGE_CGROUP"); dir != "" {
+		err = runManagedCommand(ctx, command, dir, packageCommand)
 	} else {
-		err = cmd.Run()
+		err = command().Run()
 	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())

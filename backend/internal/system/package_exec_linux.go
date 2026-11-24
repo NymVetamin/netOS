@@ -33,59 +33,84 @@ func waitPackageGroup(events *os.File) error {
 	}
 }
 
-func runPackageCommand(ctx context.Context, cmd *exec.Cmd, parent string) error {
+func runManagedCommand(ctx context.Context, command func() *exec.Cmd, parent string, packageCommand bool) error {
+	started, err := runInCommandGroup(ctx, command(), parent, packageCommand)
+	// Restricted kernels can deny delegation or clone3. Preserve ordinary
+	// commands on those hosts. Never repeat a command that actually started.
+	if !started && !packageCommand && ctx.Err() == nil &&
+		(errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.EROFS) ||
+			errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) ||
+			errors.Is(err, syscall.ENOSYS) || errors.Is(err, syscall.EOPNOTSUPP)) {
+		return command().Run()
+	}
+	return err
+}
+
+func runInCommandGroup(ctx context.Context, cmd *exec.Cmd, parent string, packageCommand bool) (bool, error) {
 	dir, err := os.MkdirTemp(parent, "apt-")
 	if err != nil {
-		return fmt.Errorf("создание группы пакетной операции: %w", err)
+		return false, fmt.Errorf("создание группы команды: %w", err)
 	}
 	defer retirePackageGroup(dir)
 	group, err := os.Open(dir)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer group.Close()
 	events, err := os.Open(filepath.Join(dir, "cgroup.events"))
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer events.Close()
 	kill, err := os.OpenFile(filepath.Join(dir, "cgroup.kill"), os.O_WRONLY, 0)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer kill.Close()
 	cmd.SysProcAttr = &syscall.SysProcAttr{UseCgroupFD: true, CgroupFD: int(group.Fd())}
 	// The supervisor below also handles cancellation after the leader exits.
 	cmd.Cancel = nil
 	if err = cmd.Start(); err != nil {
-		return err
+		return false, err
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	waitForOutput := true
+	var commandErr error
 	select {
-	case err = <-done:
+	case commandErr = <-done:
 		waitForOutput = false
 		if ctx.Err() == nil {
-			return err
+			return true, commandErr
 		}
 	case <-ctx.Done():
 	}
-	_ = cmd.Process.Signal(os.Interrupt)
-	empty := make(chan error, 1)
-	go func() { empty <- waitPackageGroup(events) }()
-	timer := time.NewTimer(10 * time.Second)
-	defer timer.Stop()
-	select {
-	case err = <-empty:
-	case <-timer.C:
-		_, killErr := kill.WriteString("1")
-		err = errors.Join(killErr, <-empty)
+	if packageCommand {
+		_ = cmd.Process.Signal(os.Interrupt)
+		empty := make(chan error, 1)
+		go func() { empty <- waitPackageGroup(events) }()
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		select {
+		case err = <-empty:
+		case <-timer.C:
+			_, killErr := kill.WriteString("1")
+			err = errors.Join(killErr, <-empty)
+		}
+	} else {
+		_, err = kill.WriteString("1")
+		if err == nil {
+			err = waitPackageGroup(events)
+		}
 	}
 	if waitForOutput {
-		<-done
+		commandErr = <-done
 	}
-	return errors.Join(ctx.Err(), err)
+	if !packageCommand && commandErr == nil && err == nil {
+		// Exec reports the expired context without repeating successful stdout.
+		return true, nil
+	}
+	return true, errors.Join(ctx.Err(), err)
 }
 
 // A package can successfully start a helper. Leave its limits in place and

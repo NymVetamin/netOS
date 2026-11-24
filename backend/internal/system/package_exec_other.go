@@ -7,4 +7,6 @@ import (
 	"os/exec"
 )
 
-func runPackageCommand(_ context.Context, cmd *exec.Cmd, _ string) error { return cmd.Run() }
+func runManagedCommand(_ context.Context, command func() *exec.Cmd, _ string, _ bool) error {
+	return command().Run()
+}
