@@ -12,6 +12,9 @@ import (
 type ownershipRunner struct{ after, fail bool }
 
 func (r *ownershipRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+	if name == "dpkg" && strings.Join(args, " ") == "--configure -a" {
+		return "", nil
+	}
 	if name == "apt-get" {
 		r.after = true
 		if r.fail {
