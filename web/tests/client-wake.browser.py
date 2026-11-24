@@ -38,7 +38,7 @@ async def main():
    await page.close()
   cfg=copy.deepcopy(f.CONFIG);cfg['networks'].append({'id':'guest','name':'Guest','enabled':True,'interface':'guest'})
   page,state=await f.fixture(browser,{'role':'admin'},cfg)
-  await page.route('**/api/clients',lambda r:r.fulfill(json={'clients':[{'mac':'02:11:22:33:44:55','hostname':'Unknown PC','online':False}]}))
+  await page.route('**/api/clients?leases=1',lambda r:r.fulfill(json={'clients':[{'mac':'02:11:22:33:44:55','hostname':'Unknown PC','online':False}],'leases':[]}))
   await page.goto('http://netos.test/#clients');await page.get_by_text('Unknown PC',exact=True).click()
   button=page.get_by_role('button',name='Разбудить (Wake-on-LAN)',exact=True)
   await expect(button).to_be_disabled();await page.get_by_label('Сегмент Wake-on-LAN').select_option('guest');await expect(button).to_be_enabled()
