@@ -30,7 +30,7 @@ const (
 	StateSuperseded = "superseded"
 	// schemaVersion describes SQLite tables, not the independently versioned
 	// JSON document stored inside revisions.
-	schemaVersion = 4
+	schemaVersion = 5
 )
 
 var ErrNotFound = errors.New("не найдено")
@@ -126,6 +126,11 @@ CREATE TABLE IF NOT EXISTS revisions (
     applied_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_revisions_state ON revisions(state);
+CREATE TABLE IF NOT EXISTS pending_rollbacks (
+    revision INTEGER PRIMARY KEY REFERENCES revisions(id),
+    at_ns INTEGER NOT NULL,
+    detail TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +158,8 @@ CREATE TABLE IF NOT EXISTS audit (
     success   INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_rollback ON audit(target,at)
+    WHERE user='system' AND action='rollback' AND success=1;
 
 CREATE TABLE IF NOT EXISTS panel_access (
     username TEXT PRIMARY KEY,
@@ -292,12 +299,51 @@ func (s *Store) SetRevisionState(id int64, state string) error {
 // RecordRollback records a completed runtime rollback of a pending revision.
 // A repeated notification for the same transition must not duplicate the event.
 func (s *Store) RecordRollback(id int64, at time.Time, detail string) error {
-	tx, err := s.db.Begin()
+	// Persist the runtime outcome before updating history. On failure it must
+	// survive losing the engine, including the original reason and timestamp.
+	result, err := s.db.Exec(`INSERT INTO pending_rollbacks(revision,at_ns,detail)
+		SELECT id,?,? FROM revisions WHERE id=? AND state IN (?,?)
+		ON CONFLICT(revision) DO NOTHING`, at.UnixNano(), detail, id, StateApplying, StateRolledBack)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		var state string
+		err := s.db.QueryRow("SELECT state FROM revisions WHERE id=?", id).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if state != StateApplying && state != StateRolledBack {
+			return fmt.Errorf("ревизия %d имеет состояние %s при записи отката", id, state)
+		}
+	}
+	return s.finishRollback(context.Background(), id)
+}
+
+func (s *Store) finishRollback(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec("UPDATE revisions SET state = ? WHERE id = ? AND state = ?", StateRolledBack, id, StateApplying)
+	var nanos int64
+	var detail string
+	err = tx.QueryRowContext(ctx, "DELETE FROM pending_rollbacks WHERE revision=? RETURNING at_ns, detail", id).Scan(&nanos, &detail)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // a concurrent recovery already committed
+	}
+	if err != nil {
+		return err
+	}
+	at := time.Unix(0, nanos)
+	result, err := tx.ExecContext(ctx, "UPDATE revisions SET state = ? WHERE id = ? AND state = ?", StateRolledBack, id, StateApplying)
 	if err != nil {
 		return err
 	}
@@ -308,7 +354,7 @@ func (s *Store) RecordRollback(id int64, at time.Time, detail string) error {
 	target := strconv.FormatInt(id, 10)
 	if changed == 0 {
 		var state string
-		err := tx.QueryRow("SELECT state FROM revisions WHERE id = ?", id).Scan(&state)
+		err := tx.QueryRowContext(ctx, "SELECT state FROM revisions WHERE id = ?", id).Scan(&state)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -322,7 +368,7 @@ func (s *Store) RecordRollback(id int64, at time.Time, detail string) error {
 	entry := AuditEntry{At: at, User: "system", Action: "rollback", Target: target, Detail: detail, Success: true}
 	// Earlier versions could commit either half separately. Replaying the
 	// original event completes the pair even if the state was already repaired.
-	result, err = tx.Exec(`INSERT INTO audit (at,user,action,target,detail,source_ip,success)
+	result, err = tx.ExecContext(ctx, `INSERT INTO audit (at,user,action,target,detail,source_ip,success)
 		SELECT ?1,'system','rollback',?2,?3,'',1 WHERE NOT EXISTS
 		(SELECT 1 FROM audit WHERE at=?1 AND user='system' AND action='rollback' AND target=?2 AND success=1)`,
 		at.Unix(), target, detail)
@@ -342,6 +388,38 @@ func (s *Store) RecordRollback(id int64, at time.Time, detail string) error {
 	return nil
 }
 
+// RetryRollbacks replays history only. Close the cursor before the write
+// transactions since Store uses a single SQLite connection.
+func (s *Store) RetryRollbacks(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, "SELECT revision FROM pending_rollbacks ORDER BY revision")
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var firstErr error
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.finishRollback(ctx, id); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("ревизия %d: %w", id, err)
+		}
+	}
+	return firstErr
+}
+
 // ResolveStaleApplying закрывает ревизии, оставшиеся в состоянии applying от
 // прошлой жизни демона, и возвращает их количество.
 //
@@ -350,9 +428,11 @@ func (s *Store) RecordRollback(id int64, at time.Time, detail string) error {
 // начато до него, к системе отношения уже не имеет. Пока такие записи
 // оставались, история показывала применение, которое давно ничем не
 // закончилось, а PruneRevisions никогда их не удалял.
+// Сохранённое событие отката завершает обе записи через finishRollback.
 func (s *Store) ResolveStaleApplying(exceptID int64) (int64, error) {
 	result, err := s.db.Exec(
-		`UPDATE revisions SET state = ? WHERE state = ? AND id <> ?`,
+		`UPDATE revisions SET state = ? WHERE state = ? AND id <> ?
+		AND id NOT IN (SELECT revision FROM pending_rollbacks)`,
 		StateRolledBack, StateApplying, exceptID)
 	if err != nil {
 		return 0, err
@@ -448,6 +528,7 @@ func (s *Store) PruneRevisions(keep int) error {
 	_, err := s.db.Exec(`
         DELETE FROM revisions
         WHERE state NOT IN (?, ?)
+          AND id NOT IN (SELECT revision FROM pending_rollbacks)
           AND id NOT IN (SELECT id FROM revisions ORDER BY id DESC LIMIT ?)`,
 		StateActive, StateApplying, keep)
 	return err

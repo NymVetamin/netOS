@@ -527,11 +527,11 @@ func (s *Server) Start(ctx context.Context, cfg *config.Config, tlsDir string) e
 		}
 	}()
 
-	go s.pruneLoop(ctx)
 	go s.monitorVPNClients(ctx)
 	s.refillAudit()
 	if s.Store != nil {
 		s.Store.OnAudit = s.addAudit
+		go s.pruneLoop(ctx)
 	}
 	go s.followJournal(ctx)
 	go s.tailDNSLog(ctx)
@@ -667,6 +667,7 @@ func customTLSFingerprint(certPath, keyPath string) (string, error) {
 
 // pruneLoop убирает просроченные сессии и лишние ревизии.
 func (s *Server) pruneLoop(ctx context.Context) {
+	s.retryRollbackHistory(ctx)
 	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -674,8 +675,15 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			s.retryRollbackHistory(ctx)
 			s.pruneOnce()
 		}
+	}
+}
+
+func (s *Server) retryRollbackHistory(ctx context.Context) {
+	if err := s.Store.RetryRollbacks(ctx); err != nil && ctx.Err() == nil {
+		s.Logger.Warnf("не удалось восстановить историю откатов: %v", err)
 	}
 }
 

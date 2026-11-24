@@ -345,6 +345,87 @@ func TestRecordRollbackCompletesPartialRecord(t *testing.T) {
 	}
 }
 
+func TestPendingRollbackSurvivesRestartAndPruning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "netos.db")
+	open := func() *Store {
+		t.Helper()
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		return st
+	}
+	st := open()
+	create := func() int64 {
+		t.Helper()
+		id, err := st.CreateRevision(config.Default(), "admin", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := create()
+	if err := st.SetRevisionState(id, StateApplying); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec("DROP TABLE pending_rollbacks; UPDATE schema_version SET version=4"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open()
+	if _, err := st.db.Exec("CREATE TRIGGER fault BEFORE INSERT ON audit BEGIN SELECT RAISE(FAIL,'test'); END"); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(1700000000, 0)
+	if err := st.RecordRollback(id, at, "timeout: original"); err == nil {
+		t.Fatal("audit failure ignored")
+	}
+	st.Close()
+	st = open()
+	if err := st.RetryRollbacks(context.Background()); err == nil {
+		t.Fatal("expected continuing audit failure")
+	}
+	other := create()
+	if err := st.SetRevisionState(other, StateApplying); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.ResolveStaleApplying(0); err != nil || n != 1 {
+		t.Fatalf("stale revisions: %d %v", n, err)
+	}
+	for range 51 {
+		create()
+	}
+	if err := st.PruneRevisions(50); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Revision(other); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unrelated old revision: %v", err)
+	}
+	if _, err := st.db.Exec("DROP TRIGGER fault"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := st.RetryRollbacks(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rev, err := st.Revision(id)
+	if err != nil || rev.State != StateRolledBack {
+		t.Fatalf("recovered revision: %v %v", rev, err)
+	}
+	events, err := st.ListAudit(10)
+	if err != nil || len(events) != 1 || events[0].Detail != "timeout: original" || !events[0].At.Equal(at) {
+		t.Fatalf("recovered audit: %v %v", events, err)
+	}
+	if err := st.PruneRevisions(50); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Revision(id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("completed revision still protected: %v", err)
+	}
+}
+
 func TestAuditDevicesAndPing(t *testing.T) {
 	st := openTestStore(t)
 	entries := []AuditEntry{

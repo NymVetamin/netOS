@@ -5,6 +5,7 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/netos-router/netos/internal/certificates"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/store"
 	"github.com/netos-router/netos/internal/tlsutil"
 )
 
@@ -363,6 +365,51 @@ func TestPruneOnceRemovesExpiredSessionAndCSRFState(t *testing.T) {
 	s.pruneOnce()
 	if !strings.Contains(logger.String(), "уборка сессий") || !strings.Contains(logger.String(), "уборка ревизий") || !strings.Contains(logger.String(), "уборка журнала аудита") {
 		t.Fatalf("prune errors not logged: %s", logger.String())
+	}
+}
+
+func TestServerReplaysRollbackOnStartup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "netos.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, err := st.CreateRevision(config.Default(), "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRevisionState(id, store.StateApplying); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("CREATE TRIGGER fault BEFORE INSERT ON audit BEGIN SELECT RAISE(FAIL,'test'); END"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordRollback(id, time.Now(), "manual"); err == nil {
+		t.Fatal("fault did not interrupt history update")
+	}
+	if _, err := db.Exec("DROP TRIGGER fault"); err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, nil, nil, &lifecycleLogger{})
+	seen := make(chan store.AuditEntry, 1)
+	st.OnAudit = func(e store.AuditEntry) { seen <- e }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); s.pruneLoop(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case e := <-seen:
+		if e.Action != "rollback" || e.Detail != "manual" || e.Target != strconv.FormatInt(id, 10) {
+			t.Fatal(e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup did not deliver the pending audit event")
 	}
 }
 
