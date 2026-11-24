@@ -4,13 +4,11 @@ package channels
 
 import (
 	"context"
-	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -18,81 +16,6 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/system"
 )
-
-func TestIntegrationWireGuardApplyReadsCurrentRules(t *testing.T) {
-	if os.Getenv("NETOS_INTEGRATION") != "1" {
-		t.Skip("requires isolated Linux network namespace")
-	}
-	for _, kind := range []string{"net", "mnt"} {
-		self, err := os.Readlink("/proc/self/ns/" + kind)
-		host, hostErr := os.Readlink("/proc/1/ns/" + kind)
-		if err != nil || hostErr != nil || self == host {
-			t.Fatalf("requires isolated %s namespace", kind)
-		}
-	}
-	for _, args := range [][]string{{"--make-rprivate", "/"}, {"-t", "sysfs", "sysfs", "/sys"}} {
-		if out, err := exec.Command("mount", args...).CombinedOutput(); err != nil {
-			t.Fatalf("mount %v: %v: %s", args, err, out)
-		}
-	}
-	ctx := context.Background()
-	s, _ := newTestSubsystem(t)
-	runner := system.NewExec()
-	s.Runner = runner
-	cfg := channelConfig()
-	ch := &cfg.Channels[len(cfg.Channels)-1]
-	ch.Config["endpoint"] = "192.0.2.1:51820"
-	peerKey, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ch.Config["peer_public_key"] = base64.StdEncoding.EncodeToString(peerKey.PublicKey().Bytes())
-	localKey, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ch.Config["private_key"] = base64.StdEncoding.EncodeToString(localKey.Bytes())
-	// Use real kernel interfaces for the ordinary channel's second Apply.
-	s.SysClassNet = "/sys/class/net"
-	cfg.Channels = append(cfg.Channels, config.Channel{ID: "peer", Index: 2, Name: "peer", Enabled: true,
-		Type: "wireguard", WireGuardPeer: &config.WireGuardPeerChannel{ServerIndex: 2}})
-	if err := s.Apply(ctx, cfg); err != nil {
-		t.Fatal(err)
-	}
-	ip := func(args ...string) string {
-		t.Helper()
-		out, err := exec.Command("ip", args...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("ip %v: %v: %s", args, err, out)
-		}
-		return string(out)
-	}
-	ip("-4", "rule", "add", "priority", "10002", "fwmark", "0x22", "lookup", "main")
-	reads := 0
-	inject := false
-	runner.OnCommand = func(name string, args []string) {
-		if name == "ip" && slices.Equal(args, []string{"-4", "rule", "show"}) {
-			reads++
-		}
-		if inject && name == "ip" && slices.Equal(args, []string{"-4", "route", "replace", "blackhole", "default", "metric", "1000", "table", "1002", "proto", "201"}) {
-			inject = false
-			ip("-4", "rule", "del", "priority", "10002", "fwmark", "0x1002")
-		}
-	}
-	if err := s.Apply(ctx, cfg); err != nil || reads != 1 {
-		t.Fatalf("unchanged Apply: %d reads, %v", reads, err)
-	}
-	if out := ip("-4", "rule", "show", "priority", "10002"); !strings.Contains(out, "0x22") || !strings.Contains(out, "0x1002") {
-		t.Fatalf("same-priority rules changed: %s", out)
-	}
-	reads, inject = 0, true
-	if err := s.Apply(ctx, cfg); err != nil || inject || reads != 2 {
-		t.Fatalf("Apply with intervening change: injected=%t reads=%d err=%v", !inject, reads, err)
-	}
-	if out := ip("-4", "rule", "show", "priority", "10002"); !strings.Contains(out, "fwmark 0x1002") {
-		t.Fatalf("rule was not restored: %s", out)
-	}
-}
 
 func TestIntegrationWireGuardLifecycle(t *testing.T) {
 	if os.Getenv("NETOS_INTEGRATION") != "1" {

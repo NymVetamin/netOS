@@ -74,7 +74,7 @@ func TestFirstWireGuardFailureLeavesNoUnownedArtifacts(t *testing.T) {
 			s, runner := newTestSubsystem(t)
 			runner.failOnce = failure
 			ch := channelConfig().Channels[1]
-			if _, err := s.applyWireGuard(context.Background(), ch, false, true, nil); err == nil {
+			if _, err := s.applyWireGuard(context.Background(), ch, false, true); err == nil {
 				t.Fatal("injected failure was ignored")
 			}
 			if s.linkExists(InterfaceName(ch)) {
@@ -113,7 +113,7 @@ func TestExistingWireGuardUpdateRestoresPreviousRuntimeAndFile(t *testing.T) {
 				runner.routes = ""
 			}
 			runner.failOnce, runner.failed = failure, false
-			if _, err := s.applyWireGuard(context.Background(), updated, true, true, nil); err == nil {
+			if _, err := s.applyWireGuard(context.Background(), updated, true, true); err == nil {
 				t.Fatal("injected update failure was ignored")
 			}
 			after, err := os.ReadFile(confPath)
