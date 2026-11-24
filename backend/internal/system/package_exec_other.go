@@ -7,6 +7,6 @@ import (
 	"os/exec"
 )
 
-func runManagedCommand(_ context.Context, command func() *exec.Cmd, _ string, _ bool) error {
-	return command().Run()
-}
+func runPackageCommand(_ context.Context, cmd *exec.Cmd, _ string) error { return cmd.Run() }
+
+func stopGroupOnCancel(*exec.Cmd) {}
