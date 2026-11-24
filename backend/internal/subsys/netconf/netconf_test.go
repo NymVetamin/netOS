@@ -438,3 +438,35 @@ func TestDirectBackendKeepsNetOSBuiltMasters(t *testing.T) {
 		t.Fatalf("нет описания порта моста: %v", files)
 	}
 }
+
+func TestStaticWANDNSFollowsEnabledInterface(t *testing.T) {
+	cfg := routerConfig()
+	wan := &cfg.WANs[0]
+	wan.DNSServers = []string{"192.0.2.53", "192.0.2.54"}
+	for _, backend := range []string{"netos", "networkd", "ifupdown"} {
+		cfg.System.NetworkBackend = backend
+		wan.Proto = "static"
+		wan.Enabled = true
+		cfg.Interfaces[0].Enabled = true
+		output := render(cfg)
+		for _, ip := range wan.DNSServers {
+			if strings.Count(output, ip) != 1 {
+				t.Fatalf("%s active DNS %s: %s", backend, ip, output)
+			}
+		}
+		wan.Proto = "dhcp"
+		if strings.Contains(render(cfg), wan.DNSServers[0]) {
+			t.Errorf("%s retained static DNS on DHCP", backend)
+		}
+		wan.Proto = "static"
+		wan.Enabled = false
+		if strings.Contains(render(cfg), wan.DNSServers[0]) {
+			t.Errorf("%s retained disabled WAN DNS", backend)
+		}
+		wan.Enabled = true
+		cfg.Interfaces[0].Enabled = false
+		if strings.Contains(render(cfg), wan.DNSServers[0]) {
+			t.Errorf("%s retained disabled link DNS", backend)
+		}
+	}
+}

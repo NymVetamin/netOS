@@ -297,6 +297,10 @@ function UplinkSection({ config, patch, interfaceView }: { config: any; patch: P
                         onChange={(e) => patch((d) => (d.wans[idx].gateway = e.target.value))}
                       />
                     </Field>
+                    <Field label="DNS аплинка" hint="По одному IP-адресу в строке">
+                      <ListTextarea className="mono" values={w.dns_servers || []}
+                        onValuesChange={(items) => patch((d) => (d.wans[idx].dns_servers = items))} />
+                    </Field>
                   </div>
                 )}
 

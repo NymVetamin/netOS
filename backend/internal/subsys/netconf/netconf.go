@@ -802,7 +802,7 @@ func declarationNames(line string) []string {
 // назначает (нет ни DHCP, ни Address) и чужих не снимает (`KeepConfiguration`).
 // Так он виден как configured, загрузка не задерживается, а network-online
 // начинает означать ровно то, что нужно, — netOS настроил сеть.
-func renderPassive(iface config.Interface, suppressIPv6 bool) string {
+func renderPassive(iface config.Interface, suppressIPv6 bool, dns ...string) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	w("# Сгенерировано netOS. Правки будут перезаписаны при следующем применении.")
@@ -826,6 +826,11 @@ func renderPassive(iface config.Interface, suppressIPv6 bool) string {
 	// сообщала, что порт не включён в мост; откат чинил не больше, чем
 	// применение, потому что перечитывал те же файлы.
 	w("KeepMaster=yes")
+	if iface.Enabled {
+		for _, address := range dns {
+			w("DNS=%s", address)
+		}
+	}
 	if suppressIPv6 {
 		w("LinkLocalAddressing=no")
 	} else {
@@ -871,6 +876,7 @@ func renderPassive(iface config.Interface, suppressIPv6 bool) string {
 
 // passiveFiles собирает описания для режима прямого управления.
 func passiveFiles(cfg *config.Config) map[string]string {
+	dns := staticWANDNS(cfg)
 	files := map[string]string{}
 	seen := map[string]bool{}
 	for _, iface := range cfg.Interfaces {
@@ -878,7 +884,7 @@ func passiveFiles(cfg *config.Config) map[string]string {
 			continue
 		}
 		seen[iface.Name] = true
-		files[networkdPrefix+iface.Name+".network"] = renderPassive(iface, cfg.IPv6.Mode == "off")
+		files[networkdPrefix+iface.Name+".network"] = renderPassive(iface, cfg.IPv6.Mode == "off", dns[iface.ID]...)
 	}
 	return files
 }

@@ -65,3 +65,19 @@ func TestValidationRejectsInjectedIdentifiersAcrossObjectFamilies(t *testing.T) 
 		}
 	}
 }
+
+func TestWANDNSValidation(t *testing.T) {
+	cfg := Default()
+	cfg.WANs = []WAN{{ID: "wan", Proto: "static"}}
+	for _, tc := range []struct {
+		raw   string
+		valid bool
+	}{
+		{"192.0.2.53", true}, {"2001:db8::53", true}, {"127.0.0.53", false}, {"::", false}, {"224.0.0.1", false}, {"fe80::1%other", false}, {"192.0.2.53\nDHCP=yes", false}, {"255.255.255.255", false},
+	} {
+		cfg.WANs[0].DNSServers = []string{tc.raw}
+		if hasErrorAt(cfg.Validate(), "wans[0].dns_servers[0]") == tc.valid {
+			t.Errorf("invalid validation result for %q", tc.raw)
+		}
+	}
+}

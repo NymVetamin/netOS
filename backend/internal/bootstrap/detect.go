@@ -8,6 +8,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"os"
@@ -26,6 +27,7 @@ type Detected struct {
 	// уже получен по DHCP.
 	WANAddress string
 	WANGateway string
+	WANDNS     []string
 	// LANCandidates — интерфейсы без адреса, годящиеся под локальную сеть.
 	LANCandidates []string
 	// AllInterfaces — все физические интерфейсы, кроме петли.
@@ -104,8 +106,35 @@ func Detect(ctx context.Context, r system.Runner) (*Detected, error) {
 
 	if d.WANAddress != "" {
 		d.ManagementCIDR = subnetOf(d.WANAddress)
+		if d.WANGateway != "" {
+			// networkd omits DHCP DNS ignored by the link's UseDNS policy.
+			if data, err := r.Run(ctx, "networkctl", "--json=short", "status", "--", d.WANInterface); err == nil {
+				d.WANDNS = dhcpLinkDNS(data)
+			}
+		}
 	}
 	return d, nil
+}
+
+func dhcpLinkDNS(data string) []string {
+	var link struct {
+		DNS []struct {
+			ConfigSource string
+			Family       int
+			Address      []byte
+		}
+	}
+	if json.Unmarshal([]byte(data), &link) != nil {
+		return nil
+	}
+	var servers []string
+	for _, dns := range link.DNS {
+		ip, ok := netip.AddrFromSlice(dns.Address)
+		if dns.ConfigSource == "DHCPv4" && dns.Family == 2 && ok && ip.Is4() && config.ValidWANDNS(ip) {
+			servers = append(servers, ip.String())
+		}
+	}
+	return servers
 }
 
 // BuildInitial собирает стартовую конфигурацию.
@@ -145,6 +174,7 @@ func BuildInitial(d *Detected) (*config.Config, error) {
 			wan.Proto = "static"
 			wan.Address = d.WANAddress
 			wan.Gateway = d.WANGateway
+			wan.DNSServers = d.WANDNS
 		}
 		cfg.WANs = append(cfg.WANs, wan)
 

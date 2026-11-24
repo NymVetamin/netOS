@@ -97,6 +97,11 @@ func renderNetwork(p plan, iface config.Interface) string {
 	// аплинка, маршруты с метриками, адреса каналов. Мы описываем только то,
 	// что должно существовать с загрузки, а не полный список.
 	w("KeepConfiguration=yes")
+	if iface.Enabled {
+		for _, address := range p.WANDNS[iface.ID] {
+			w("DNS=%s", address)
+		}
+	}
 
 	for _, address := range p.Addresses[iface.Name] {
 		w("Address=%s", address)

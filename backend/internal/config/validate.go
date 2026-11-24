@@ -1035,6 +1035,11 @@ func ipv4Broadcast(prefix netip.Prefix) netip.Addr {
 	return netip.AddrFrom4(out)
 }
 
+// ValidWANDNS reports whether an address can identify an upstream on a link.
+func ValidWANDNS(ip netip.Addr) bool {
+	return ip.IsValid() && ip.Zone() == "" && !ip.IsUnspecified() && !ip.IsMulticast() && !ip.IsLoopback() && !ip.Is4In6() && ip != netip.AddrFrom4([4]byte{255, 255, 255, 255})
+}
+
 func (c *Config) validateWANs(r *ValidationResult) {
 	ifaceIDs := c.interfaceIDs()
 	enabled := 0
@@ -1091,6 +1096,12 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		}
 		if w.MTU != 0 && (w.MTU < 576 || w.MTU > 9216) {
 			r.errf(path+".mtu", "MTU вне разумного диапазона 576-9216")
+		}
+		for j, raw := range w.DNSServers {
+			ip, err := netip.ParseAddr(raw)
+			if err != nil || !ValidWANDNS(ip) {
+				r.errf(fmt.Sprintf("%s.dns_servers[%d]", path, j), "укажите IP-адрес DNS-сервера аплинка")
+			}
 		}
 		switch w.Proto {
 		case "dhcp":

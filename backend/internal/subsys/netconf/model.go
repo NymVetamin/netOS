@@ -23,12 +23,27 @@ type plan struct {
 	VLANs map[string][]config.Interface
 	// Uplink — интерфейсы аплинков: их поднимаем, но не настраиваем.
 	Uplink map[string]bool
+	WANDNS map[string][]string
 	// Names — имя интерфейса по идентификатору. Связи в конфигурации описаны
 	// идентификаторами, а генераторы оперируют именами.
 	Names   map[string]string
 	Enabled map[string]bool
 	// SuppressIPv6 повторяет политику IPv6 из конфигурации.
 	SuppressIPv6 bool
+}
+
+// staticWANDNS indexes active static uplinks by their interface ID.
+func staticWANDNS(cfg *config.Config) map[string][]string {
+	var servers map[string][]string
+	for _, w := range cfg.WANs {
+		if w.Enabled && w.Proto == "static" && len(w.DNSServers) > 0 {
+			if servers == nil {
+				servers = make(map[string][]string)
+			}
+			servers[w.Interface] = append(servers[w.Interface], w.DNSServers...)
+		}
+	}
+	return servers
 }
 
 func buildPlan(cfg *config.Config) plan {
@@ -39,6 +54,7 @@ func buildPlan(cfg *config.Config) plan {
 		Uplink:       map[string]bool{},
 		Names:        map[string]string{},
 		Enabled:      cfg.InterfaceStates(),
+		WANDNS:       staticWANDNS(cfg),
 		SuppressIPv6: cfg.IPv6.Mode == "off",
 	}
 

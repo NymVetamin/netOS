@@ -189,8 +189,9 @@ type WAN struct {
 	// Proto: dhcp | static | pppoe | l2tp
 	Proto string `json:"proto" plan:"Протокол" sensitivity:"public"`
 	// Для static.
-	Address string `json:"address,omitempty" plan:"Адрес" sensitivity:"public"`
-	Gateway string `json:"gateway,omitempty" plan:"Шлюз" sensitivity:"public"`
+	Address    string   `json:"address,omitempty" plan:"Адрес" sensitivity:"public"`
+	Gateway    string   `json:"gateway,omitempty" plan:"Шлюз" sensitivity:"public"`
+	DNSServers []string `json:"dns_servers,omitempty" plan:"DNS аплинка" sensitivity:"public"`
 	// Для pppoe и l2tp.
 	Username string `json:"username,omitempty" plan:"Логин" sensitivity:"public"`
 	Password string `json:"password,omitempty" plan:"Пароль" sensitivity:"secret"`

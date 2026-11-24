@@ -70,6 +70,10 @@ func renderIfupdownStanza(b *strings.Builder, p plan, iface config.Interface) {
 		}
 	}
 
+	if dns := p.WANDNS[iface.ID]; iface.Enabled && len(dns) > 0 {
+		w("    dns-nameservers %s", strings.Join(dns, " "))
+	}
+
 	switch iface.Type {
 	case "bridge":
 		members := p.enabledNamesOf(iface.Members)
