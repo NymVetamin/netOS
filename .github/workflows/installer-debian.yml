@@ -28,7 +28,9 @@ jobs:
           npm run build
       - name: Собрать бинарник для гостя
         working-directory: backend
-        run: go build -trimpath -ldflags "-X main.version=qa-$GITHUB_SHA" -o "$RUNNER_TEMP/netosd-linux-amd64" ./cmd/netosd
+        run: |
+          go build -trimpath -ldflags "-X main.version=qa-$GITHUB_SHA" -o "$RUNNER_TEMP/netosd-linux-amd64" ./cmd/netosd
+          go test -c -o "$RUNNER_TEMP/netos-system.test" ./internal/system
       - name: Установщик в одноразовой Debian12 VM
         env:
           NETOS_TEST_BINARY: ${{ runner.temp }}/netosd-linux-amd64

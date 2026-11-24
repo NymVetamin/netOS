@@ -57,7 +57,8 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 		e.OnCommand(name, args)
 	}
 	timeout := e.Timeout
-	if name == "apt-get" || name == "apt" || name == "dpkg" {
+	packageCommand := name == "apt-get" || name == "apt" || name == "dpkg"
+	if packageCommand {
 		timeout = e.PackageTimeout
 	}
 	if timeout == 0 {
@@ -77,7 +78,12 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	var err error
+	if dir := os.Getenv("NETOS_PACKAGE_CGROUP"); packageCommand && dir != "" {
+		err = runPackageCommand(ctx, cmd, dir)
+	} else {
+		err = cmd.Run()
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {

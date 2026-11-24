@@ -642,6 +642,10 @@ LockPersonality=true
 ProtectClock=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
+Delegate=yes
+ExecStartPre=-+/bin/sh -c 'grep -Fxq -e 0::/system.slice/%n -e 0::/system.slice/%n/.control /proc/self/cgroup && mkdir -p /sys/fs/cgroup/system.slice/%n/packages'
+ReadWritePaths=-/sys/fs/cgroup/system.slice/%n/packages
+Environment=NETOS_PACKAGE_CGROUP=/sys/fs/cgroup/system.slice/%n/packages
 RestrictRealtime=true
 UMask=0077
 LimitNOFILE=65536

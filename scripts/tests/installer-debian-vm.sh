@@ -3,6 +3,8 @@
 set -euo pipefail
 : "${RUNNER_TEMP:?GitHub runner required}"
 : "${NETOS_TEST_BINARY:?prebuilt Linux binary required}"
+system_test="$RUNNER_TEMP/netos-system.test"
+[[ -s "$system_test" ]] || { echo "Missing guest system test binary: $system_test" >&2; exit 1; }
 repo=$(pwd)
 test_root=$(mktemp -d "$RUNNER_TEMP/netos-install.XXXXXX")
 http_pid=""
@@ -108,3 +110,6 @@ test "$(curl -kfsS --max-time 10 https://127.0.0.1:8443/api/ping)" = '{"ok":true
 echo "Debian12 $MODE install: SHA, service, readiness and API PASS"
 GUEST
 done
+
+guest 'cat >/tmp/netos-system.test && chmod 700 /tmp/netos-system.test' < "$system_test"
+guest 'sudo env NETOS_PACKAGE_CGROUP=/sys/fs/cgroup/system.slice/netosd.service/packages /tmp/netos-system.test -test.v -test.run "^TestPackageCancellationStopsDetachedChild$"'
