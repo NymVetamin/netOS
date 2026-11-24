@@ -7,6 +7,7 @@ package system
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -87,17 +88,23 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 		}
 		err = cmd.Run()
 	}
+	ctxErr := ctx.Err()
+	// A successful child exit does not guarantee that copying its output
+	// finished before cancellation: a descendant may hold the pipe until
+	// WaitDelay closes it.
+	if ctxErr != nil && (err == nil || errors.Is(err, exec.ErrWaitDelay)) {
+		return stdout.String(), fmt.Errorf("%s: %w", name, ctxErr)
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())
 		}
+		if ctxErr != nil {
+			// Wait reports the kill; callers distinguish a timeout by ctx's error.
+			return stdout.String(), fmt.Errorf("%s %s: %w (%w): %s", name, strings.Join(args, " "), ctxErr, err, msg)
+		}
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
-	}
-	// A successful child exit does not guarantee that copying its output
-	// finished before cancellation. Another process may have inherited a pipe.
-	if err := ctx.Err(); err != nil {
-		return stdout.String(), fmt.Errorf("%s: %w", name, err)
 	}
 	return stdout.String(), nil
 }
