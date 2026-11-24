@@ -68,8 +68,20 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
+	var policyFile *os.File
+	if name == "apt-get" {
+		policyFile, _ = ctx.Value(daemonPolicyFileKey{}).(*os.File)
+		if policyFile != nil {
+			// Keep the shared lock in dpkg and its maintainer scripts if the
+			// calling netOS process is killed while the installation continues.
+			args = append([]string{"-o", "APT::Keep-Fds::=3"}, args...)
+		}
+	}
 	command := func() *exec.Cmd {
 		cmd := exec.CommandContext(ctx, name, args...)
+		if policyFile != nil {
+			cmd.ExtraFiles = []*os.File{policyFile}
+		}
 		if name == "apt-cache" || name == "apt-get" || name == "dpkg" || name == "dpkg-query" {
 			cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l")
 		}

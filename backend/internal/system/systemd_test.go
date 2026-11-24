@@ -377,6 +377,11 @@ func (r *packageRunner) RunInput(ctx context.Context, _ string, name string, arg
 	return r.Run(ctx, name, args...)
 }
 
+func holdDaemons() (func(), error) {
+	_, release, err := holdPackageDaemons(context.Background())
+	return release, err
+}
+
 func withTestPolicyPath(t *testing.T) string {
 	t.Helper()
 	old := PolicyRCPath

@@ -3,9 +3,7 @@ package system
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
-	"sync"
 )
 
 // Systemd управляет юнитами внешних демонов (dnsmasq, unbound, hostapd, ...).
@@ -317,7 +315,7 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 	}
 	// Демонов запускает netOS собственными юнитами, поэтому postinst пакета
 	// запускать их не должен: у него для этого нет ни конфига, ни причины.
-	release, err := holdDaemons()
+	ctx, release, err := holdPackageDaemons(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +342,7 @@ func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr er
 	if len(versions) == 0 {
 		return nil
 	}
-	release, err := holdDaemons()
+	ctx, release, err := holdPackageDaemons(ctx)
 	if err != nil {
 		return err
 	}
@@ -372,33 +370,9 @@ const daemonPolicyScript = "#!/bin/sh\n" +
 	"# Демонами управляет netOS собственными юнитами.\n" +
 	"exit 101\n"
 
-type heldDaemonPolicy struct {
-	path  string
-	file  os.FileInfo
-	users int
-}
+type daemonPolicyFileKey struct{}
 
-var daemonPolicyMu sync.Mutex
-var activeDaemonPolicy *heldDaemonPolicy
-
-// Called under daemonPolicyMu. The returned release is specific to this inode.
-func (p *heldDaemonPolicy) acquire() func() {
-	p.users++
-	return sync.OnceFunc(func() {
-		daemonPolicyMu.Lock()
-		defer daemonPolicyMu.Unlock()
-		p.users--
-		if p.users != 0 || activeDaemonPolicy != p {
-			return
-		}
-		if ownedFileMatches(p.path, []byte(daemonPolicyScript), 0755, p.file) {
-			_ = os.Remove(p.path)
-		}
-		activeDaemonPolicy = nil
-	})
-}
-
-// holdDaemons запрещает запуск демонов на время установки пакета и возвращает
+// holdPackageDaemons запрещает запуск демонов на время установки пакета и возвращает
 // функцию, снимающую запрет.
 //
 // Без этого пакет поднимает штатного демона со своим конфигом сразу после
@@ -412,38 +386,10 @@ func (p *heldDaemonPolicy) acquire() func() {
 //
 // Чужой policy-rc.d не трогаем: он принадлежит не нам, и вернуть его на место
 // после подмены надёжно нельзя. Запрет в этом случае просто не ставится.
-func holdDaemons() (func(), error) {
-	daemonPolicyMu.Lock()
-	defer daemonPolicyMu.Unlock()
-	if info, err := os.Lstat(PolicyRCPath); err == nil {
-		if p := activeDaemonPolicy; p != nil && p.path == PolicyRCPath && os.SameFile(info, p.file) {
-			return p.acquire(), nil
-		}
-		return func() {}, nil
-	} else if !os.IsNotExist(err) {
-		return nil, err
+func holdPackageDaemons(ctx context.Context) (context.Context, func(), error) {
+	file, release, err := acquireDaemonPolicy()
+	if file != nil {
+		ctx = context.WithValue(ctx, daemonPolicyFileKey{}, file)
 	}
-	path, content := PolicyRCPath, []byte(daemonPolicyScript)
-	var original os.FileInfo
-	err := publishFileAtomic(path, content, 0755, func(staged, dest string) error {
-		// Stat the open staged file so identity is captured before publication.
-		f, err := os.Open(staged)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		original, err = f.Stat()
-		if err != nil {
-			return err
-		}
-		return os.Link(staged, dest)
-	})
-	if os.IsExist(err) {
-		return func() {}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	activeDaemonPolicy = &heldDaemonPolicy{path: path, file: original}
-	return activeDaemonPolicy.acquire(), nil
+	return ctx, release, err
 }

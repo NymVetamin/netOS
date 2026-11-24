@@ -630,6 +630,7 @@ Before=network.target
 [Service]
 Type=simple
 ExecStart=$BIN_PATH
+ExecStopPost=$BIN_PATH -release-package-policy
 Environment=NETOS_INITIAL_PORT=$PORT
 Restart=always
 RestartSec=3
