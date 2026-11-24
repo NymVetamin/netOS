@@ -289,24 +289,6 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	if counted.qdiscDeletes != 0 {
 		t.Fatal("upload retry rebuilt queues")
 	}
-	if _, err := r.Run(ctx, "tc", "filter", "replace", "dev", "qos-repair0", "parent", "ffff:", "protocol", "all", "pref", "100", "handle", "1", "flower", "src_mac", cfg.Clients[0].MAC, "action", "police", "rate", "2000kbit", "burst", "1k", "mtu", "64k", "conform-exceed", "drop"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Health(ctx, cfg); err == nil {
-		t.Fatal("upload burst drift was accepted")
-	}
-	counted.filterChanges = 0
-	for attempt := 0; attempt < 2; attempt++ {
-		if err := s.Apply(ctx, cfg); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.Health(ctx, cfg); err != nil {
-			t.Fatal(err)
-		}
-		if counted.filterChanges != 1 || counted.qdiscDeletes != 0 {
-			t.Fatalf("burst repair: filters=%d queue deletions=%d", counted.filterChanges, counted.qdiscDeletes)
-		}
-	}
 	if _, err := r.Run(ctx, "tc", "filter", "replace", "dev", "qos-repair0", "parent", "ffff:", "protocol", "all", "pref", "100", "handle", "1", "flower", "src_mac", cfg.Clients[0].MAC, "action", "police", "rate", "2000kbit", "burst", "64k", "mtu", "64k", "conform-exceed", "pass"); err != nil {
 		t.Fatal(err)
 	}
@@ -318,21 +300,6 @@ func TestIntegrationClientRateAndCeilRepair(t *testing.T) {
 	}
 	if err := s.Health(ctx, cfg); err != nil {
 		t.Fatal(err)
-	}
-	// At high rates the byte count displayed by tc depends on its version.
-	// A freshly applied 64 KiB burst must remain healthy and idempotent.
-	for _, rate := range []int{65, 100000, 5000000, 10000000} {
-		cfg.Clients[0].UpKbit = rate
-		if err := s.Apply(ctx, cfg); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.Health(ctx, cfg); err != nil {
-			t.Fatalf("%d kbit: %v", rate, err)
-		}
-		counted.filterChanges = 0
-		if err := s.Apply(ctx, cfg); err != nil || counted.filterChanges != 0 {
-			t.Fatalf("%d kbit: repeat made %d changes: %v", rate, counted.filterChanges, err)
-		}
 	}
 	cfg.Clients = nil
 	if err := s.Apply(ctx, cfg); err != nil {

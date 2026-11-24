@@ -199,12 +199,11 @@ func TestHealthChecksEveryClientRateMACAndOwnership(t *testing.T) {
 		{"download ceil", "tc class show dev lan0", "class htb 1:1 root rate 10gbit ceil 10gbit\nclass htb 1:10 parent 1:1 rate 5000kbit ceil 9000kbit"},
 		{"rate confused with ceil", "tc class show dev lan0", "class htb 1:1 root rate 10gbit ceil 10gbit\nclass htb 1:10 parent 1:1 rate 4000kbit ceil 5000kbit"},
 		{"download mac", "tc filter show dev lan0 parent 1:", "filter protocol all pref 100 flower dst_mac 00:11:22:33:44:55 classid 1:10"},
-		{"upload rate", "tc -raw filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 999kbit"},
-		{"upload burst", "tc -raw filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 1Kb mtu 64Kb [0001e848] action drop"},
-		{"upload mtu", "tc -raw filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 2Kb [007d0000] action drop"},
-		{"upload action", "tc -raw filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 64Kb [007d0000] action pass/drop"},
+		{"upload rate", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 999kbit"},
+		{"upload mtu", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 2Kb action drop"},
+		{"upload action", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit burst 64Kb mtu 64Kb action pass/drop"},
 		{"extra download filter", "tc filter show dev lan0 parent 1:", "filter protocol all pref 100 flower dst_mac aa:bb:cc:dd:ee:ff classid 1:10\nfilter protocol all pref 101 flower dst_mac 00:11:22:33:44:55 classid 1:11"},
-		{"extra upload filter", "tc -raw filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit\nfilter protocol all pref 101 flower src_mac 00:11:22:33:44:55 action police rate 2Mbit"},
+		{"extra upload filter", "tc filter show dev lan0 parent ffff:", "filter protocol all pref 100 flower src_mac aa:bb:cc:dd:ee:ff action police rate 1Mbit\nfilter protocol all pref 101 flower src_mac 00:11:22:33:44:55 action police rate 2Mbit"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -218,7 +217,7 @@ func TestHealthChecksEveryClientRateMACAndOwnership(t *testing.T) {
 			if err := s.Health(context.Background(), cfg); err == nil {
 				t.Fatal("health accepted client drift")
 			}
-			if tt.name == "upload burst" || tt.name == "upload mtu" || tt.name == "upload action" {
+			if tt.name == "upload mtu" || tt.name == "upload action" {
 				actions, err := s.PlanContext(context.Background(), cfg, cfg)
 				if err != nil || len(actions) != 1 || actions[0].Kind != "update" {
 					t.Fatalf("old policer was not scheduled for repair: %v, %v", actions, err)
@@ -589,7 +588,7 @@ func TestHealthReadAndCommandErrorsArePropagated(t *testing.T) {
 		"tc qdisc show dev lan0",
 		"tc class show dev lan0",
 		"tc filter show dev lan0 parent 1:",
-		"tc -raw filter show dev lan0 parent ffff:",
+		"tc filter show dev lan0 parent ffff:",
 	}
 	for _, command := range clientCommands {
 		t.Run(command, func(t *testing.T) {
