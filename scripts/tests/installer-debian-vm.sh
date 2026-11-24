@@ -48,7 +48,7 @@ for _ in $(seq 1 90); do
     sleep 2
 done
 test "$ready" = 1
-guest 'sudo cloud-init status --wait >/dev/null; . /etc/os-release; test "$VERSION_ID" = 12; mawk -W version'
+guest 'set -e; sudo cloud-init status --wait >/dev/null; . /etc/os-release; test "$VERSION_ID" = 12; mawk -W version'
 guest 'cat > /tmp/install.sh' < "$repo/install.sh"
 mkdir served
 cp "$NETOS_TEST_BINARY" served/netosd-linux-amd64
