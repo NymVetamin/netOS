@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ func TestSecondHistoryFullWeek(t *testing.T) {
 	const base = 1700000000.0
 	started := time.Now()
 	for minute := 0; minute < 10080; minute++ {
+		h.blockID = int64(minute + 1)
 		h.tail = nil
 		for second := 0; second < 60; second++ {
 			at := base + float64(minute*60+second)
@@ -264,5 +266,145 @@ func TestSecondHistorySummaryWeightsAndPeaks(t *testing.T) {
 	merged := summarize([]realtimeSnapshot{summarize([]realtimeSnapshot{a}), summarize([]realtimeSnapshot{b})}).Values[0]
 	if *merged.RXBPS != *value.RXBPS || *merged.RXPeak != 1000 {
 		t.Fatal("overview changed weights or hid peak")
+	}
+}
+
+func TestSecondHistoryClockRewindAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clock.sqlite")
+	open := func() *secondHistory {
+		t.Helper()
+		h, err := openSecondHistory(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	write := func(h *secondHistory, at, value float64) {
+		t.Helper()
+		if err := h.append(historyFrame(at, value)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	closeHistory := func(h *secondHistory) {
+		t.Helper()
+		if err := h.close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := open()
+	write(h, 1000, 1)
+	write(h, 1001, 2)
+	write(h, 1002, 3)
+	closeHistory(h)
+	h = open()
+	write(h, 1000, 4)
+	write(h, 990, 5)
+	write(h, 1002, 6)
+	for _, stage := range []string{"live", "reopened"} {
+		if stage == "reopened" {
+			closeHistory(h)
+			h = open()
+		}
+		points, _, err := h.window(context.Background(), 980, 1010)
+		if err != nil {
+			t.Fatal(err)
+		}
+		times := []float64{990, 1000, 1000, 1001, 1002, 1002}
+		values := []float64{5, 1, 4, 2, 3, 6}
+		if len(points) != len(times) {
+			t.Errorf("%s retained %d of %d observations", stage, len(points), len(times))
+			continue
+		}
+		for i, p := range points {
+			if p.At != times[i] || *p.Values[0].RXBPS != values[i] {
+				t.Errorf("%s observation %d: %v", stage, i, p)
+			}
+		}
+	}
+	closeHistory(h)
+}
+
+func TestSecondHistoryUpgradesLegacyBoundsAtomically(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec("CREATE TABLE seconds(start REAL PRIMARY KEY, finish REAL NOT NULL, data BLOB NOT NULL, summary BLOB NOT NULL); CREATE INDEX seconds_finish ON seconds(finish)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packed, summary, err := encodeHistoryBlock([]realtimeSnapshot{historyFrame(1000, 1), historyFrame(1200, 2), historyFrame(990, 3), historyFrame(1020, 4)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("INSERT INTO seconds VALUES(?,?,?,?)", 1000, 1020, packed, summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Put the failure after a completed copy/delete batch. Rollback must
+	// restore rows whose original pages were already reused.
+	_, err = db.Exec(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<128)
+ INSERT INTO seconds SELECT 2000+i,2000+i,?,? FROM n`, packed, summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("INSERT INTO seconds VALUES(?,?,?,?)", 1500, 1500, []byte("truncated"), summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, err := openSecondHistory(path); err == nil {
+		h.close()
+		t.Fatal("accepted truncated legacy block")
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM seconds").Scan(&count); err != nil || count != 130 {
+		t.Fatalf("migration rollback: %v rows %d", err, count)
+	}
+	if _, err = db.Exec("DELETE FROM seconds WHERE start>=1500"); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		h, err := openSecondHistory(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct{ at, value float64 }{{990, 3}, {1000, 1}, {1020, 4}, {1200, 2}} {
+			points, _, err := h.window(context.Background(), tc.at, tc.at)
+			if err != nil || len(points) != 1 || *points[0].Values[0].RXBPS != tc.value {
+				t.Fatalf("migration point %v: %v %v", tc, points, err)
+			}
+		}
+		if err = h.close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSecondHistoryRepeatedClockBoundsAndOverview(t *testing.T) {
+	h, err := openSecondHistory(filepath.Join(t.TempDir(), "same.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.close()
+	// Repeated stamps must not leave an ever-growing unflushed minute.
+	for i := 0; i < 130; i++ {
+		if err := h.append(historyFrame(2000, float64(i))); err != nil {
+			t.Fatal(err)
+		}
+		if len(h.tail) > secondsPerBlock || h.pending >= 10 {
+			t.Fatalf("tail=%d pending=%d", len(h.tail), h.pending)
+		}
+	}
+	if err := h.append(historyFrame(1200, 777)); err != nil {
+		t.Fatal(err)
+	}
+	frames, _, err := h.window(context.Background(), 1000, 4000)
+	if err != nil || len(frames) != 2 {
+		t.Fatalf("overview %v, %v", frames, err)
+	}
+	if frames[0].At != 1200 || *frames[0].Values[0].RXBPS != 777 || frames[1].At != 2000 || *frames[1].Values[0].RXBPS != 64.5 || frames[1].Values[0].Seconds != 130 {
+		t.Fatalf("overview timestamps or weights: %v", frames)
 	}
 }

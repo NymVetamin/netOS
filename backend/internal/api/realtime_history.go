@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -20,12 +22,16 @@ import (
 // Keep raw seconds on disk in compressed minute blocks. Only the current
 // minute is resident. Rewriting that block every ten seconds bounds crash loss
 // without fsync or rewriting seven days of history on each measurement.
+const secondsPerBlock = 60
+
 type secondHistory struct {
 	mu      sync.Mutex
 	db      *sql.DB
 	reader  *sql.DB
 	tail    []realtimeSnapshot
 	flushed float64
+	pending int
+	blockID int64
 }
 
 func openSecondHistory(path string) (*secondHistory, error) {
@@ -37,9 +43,7 @@ func openSecondHistory(path string) (*secondHistory, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000;
- CREATE TABLE IF NOT EXISTS seconds(start REAL PRIMARY KEY, finish REAL NOT NULL, data BLOB NOT NULL, summary BLOB NOT NULL);
- CREATE INDEX IF NOT EXISTS seconds_finish ON seconds(finish);`)
+	blockID, err := prepareSecondHistory(db)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -61,24 +65,28 @@ func openSecondHistory(path string) (*secondHistory, error) {
 		db.Close()
 		return nil, err
 	}
-	return &secondHistory{db: db, reader: reader}, nil
+	return &secondHistory{db: db, reader: reader, blockID: blockID}, nil
 }
 
 func (h *secondHistory) append(s realtimeSnapshot) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.tail) > 0 && s.At-h.tail[0].At >= 60 {
+	if len(h.tail) > 0 && (len(h.tail) >= secondsPerBlock || s.At < h.tail[len(h.tail)-1].At || s.At-h.tail[0].At >= secondsPerBlock) {
 		if err := h.flushLocked(); err != nil {
 			return err
 		}
 		h.tail = nil
+		h.blockID++
 	}
 	h.tail = append(h.tail, s)
-	if s.At-h.flushed >= 10 {
+	h.pending++
+	if s.At-h.flushed >= 10 || h.pending >= 10 {
 		return h.flushLocked()
 	}
 	return nil
 }
+
+func compareHistoryTime(a, b realtimeSnapshot) int { return cmp.Compare(a.At, b.At) }
 
 func summarize(frames []realtimeSnapshot) realtimeSnapshot {
 	result := realtimeSnapshot{Values: []realtimeValue{}}
@@ -139,19 +147,38 @@ func summarize(frames []realtimeSnapshot) realtimeSnapshot {
 	return result
 }
 
+func decodeHistoryBlock[T any](data []byte) ([]T, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	var frames []T
+	err = json.NewDecoder(io.LimitReader(gz, 64<<20)).Decode(&frames)
+	return frames, err
+}
+
+func encodeHistoryBlock(frames []realtimeSnapshot) ([]byte, []byte, error) {
+	var packed bytes.Buffer
+	gz, _ := gzip.NewWriterLevel(&packed, gzip.BestSpeed)
+	if err := json.NewEncoder(gz).Encode(frames); err != nil {
+		return nil, nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, nil, err
+	}
+	summary, err := json.Marshal(summarize(frames))
+	if err != nil {
+		return nil, nil, err
+	}
+	return packed.Bytes(), summary, nil
+}
+
 func (h *secondHistory) flushLocked() error {
 	if len(h.tail) == 0 {
 		return nil
 	}
-	var packed bytes.Buffer
-	gz, _ := gzip.NewWriterLevel(&packed, gzip.BestSpeed)
-	if err := json.NewEncoder(gz).Encode(h.tail); err != nil {
-		return err
-	}
-	if err := gz.Close(); err != nil {
-		return err
-	}
-	summary, err := json.Marshal(summarize(h.tail))
+	packed, summary, err := encodeHistoryBlock(h.tail)
 	if err != nil {
 		return err
 	}
@@ -161,7 +188,7 @@ func (h *secondHistory) flushLocked() error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT OR REPLACE INTO seconds(start,finish,data,summary) VALUES(?,?,?,?)`, start, end, packed.Bytes(), summary); err != nil {
+	if _, err = tx.Exec(`INSERT INTO seconds(id,start,finish,data,summary) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET start=excluded.start,finish=excluded.finish,data=excluded.data,summary=excluded.summary`, h.blockID, start, end, packed, summary); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM seconds WHERE finish < ?`, end-7*86400); err != nil {
@@ -171,6 +198,7 @@ func (h *secondHistory) flushLocked() error {
 		return err
 	}
 	h.flushed = end
+	h.pending = 0
 	return nil
 }
 
@@ -192,28 +220,32 @@ func (h *secondHistory) close() error {
 func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtimeSnapshot, int, error) {
 	h.mu.Lock()
 	tail := append([]realtimeSnapshot(nil), h.tail...)
+	blockID := h.blockID
 	h.mu.Unlock()
 	raw := to-from <= 1800
 	// Fetch compressed seconds only when a minute straddles the requested range.
 	columns := "start < ?1 OR finish > ?2, CASE WHEN start < ?1 OR finish > ?2 THEN data ELSE summary END"
 	step := int(math.Max(1, math.Ceil((to-from)/1440/60))) * 60
+	order := "start,id"
 	if raw {
+		order = "id"
 		columns = "1, data"
 		step = 1
 	}
-	end := to
-	if len(tail) > 0 && tail[0].At <= end {
-		end = math.Nextafter(tail[0].At, math.Inf(-1))
-	}
-	rows, err := h.reader.QueryContext(ctx, `SELECT `+columns+` FROM seconds WHERE finish>=?1 AND start<=?3 ORDER BY start`, from, to, end)
+	// A later flush can persist the captured tail or start another block.
+	// The immutable IDs below this boundary belong to earlier observations.
+	rows, err := h.reader.QueryContext(ctx, `SELECT `+columns+` FROM seconds INDEXED BY seconds_start WHERE start BETWEEN ?4 AND ?2 AND finish>=?1 AND id<?3 ORDER BY `+order, from, to, blockID, from-secondsPerBlock)
 	if err != nil {
 		return nil, step, err
 	}
 	out := []realtimeSnapshot{}
-	bucket := []realtimeSnapshot{}
 	bucketKey := -1
+	var bucket []realtimeSnapshot
 	flush := func() {
 		if len(bucket) > 0 {
+			if !slices.IsSortedFunc(bucket, compareHistoryTime) {
+				slices.SortStableFunc(bucket, compareHistoryTime)
+			}
 			out = append(out, summarize(bucket))
 			bucket = nil
 		}
@@ -233,22 +265,24 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 		}
 		bucket = append(bucket, frame)
 	}
-	addBlock := func(block []realtimeSnapshot) {
-		if raw {
-			for _, frame := range block {
-				add(frame)
-			}
-			return
-		}
+	// Each overview block contributes a single weighted sample. Merge the
+	// live block by time, since a clock reset can place it before disk rows.
+	clip := func(block []realtimeSnapshot) []realtimeSnapshot {
 		for len(block) > 0 && block[0].At < from {
 			block = block[1:]
 		}
 		for len(block) > 0 && block[len(block)-1].At > to {
 			block = block[:len(block)-1]
 		}
-		if len(block) > 0 {
-			add(summarize(block))
+		return block
+	}
+	tail = clip(tail)
+	addDisk := func(frame realtimeSnapshot) {
+		if !raw && len(tail) > 0 && tail[0].At < frame.At {
+			add(summarize(tail))
+			tail = nil
 		}
+		add(frame)
 	}
 	var compressed bool
 	for rows.Next() {
@@ -258,26 +292,26 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 			return nil, step, err
 		}
 		if compressed {
-			gz, e := gzip.NewReader(bytes.NewReader(data))
+			block, e := decodeHistoryBlock[realtimeSnapshot](data)
 			if e != nil {
 				rows.Close()
 				return nil, step, e
 			}
-			var block []realtimeSnapshot
-			e = json.NewDecoder(io.LimitReader(gz, 64<<20)).Decode(&block)
-			gz.Close()
-			if e != nil {
-				rows.Close()
-				return nil, step, e
+			block = clip(block)
+			if raw {
+				for _, frame := range block {
+					add(frame)
+				}
+			} else if len(block) > 0 {
+				addDisk(summarize(block))
 			}
-			addBlock(block)
 		} else {
 			var frame realtimeSnapshot
 			if err = json.Unmarshal(data, &frame); err != nil {
 				rows.Close()
 				return nil, step, err
 			}
-			add(frame)
+			addDisk(frame)
 		}
 	}
 	err = rows.Err()
@@ -285,8 +319,17 @@ func (h *secondHistory) window(ctx context.Context, from, to float64) ([]realtim
 	if err != nil {
 		return nil, step, err
 	}
-	addBlock(tail)
-	flush()
+	if raw {
+		out = append(out, tail...)
+		if !slices.IsSortedFunc(out, compareHistoryTime) {
+			slices.SortStableFunc(out, compareHistoryTime)
+		}
+	} else {
+		if len(tail) > 0 {
+			add(summarize(tail))
+		}
+		flush()
+	}
 	return out, step, nil
 }
 
