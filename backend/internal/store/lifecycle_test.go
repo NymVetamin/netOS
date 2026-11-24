@@ -246,6 +246,105 @@ func TestRootPasswordResetRollsBackCredentialAndSessionsWhenAuditFails(t *testin
 	}
 }
 
+func TestRecordRollbackAtomicAndRetryable(t *testing.T) {
+	for _, reject := range []string{"UPDATE OF state ON revisions", "INSERT ON audit"} {
+		t.Run(reject, func(t *testing.T) {
+			st := openTestStore(t)
+			id, err := st.CreateRevision(config.Default(), "admin", "rollback")
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := time.Unix(1700000000, 0)
+			record := func() error { return st.RecordRollback(id, at, "manual: test") }
+			if err := st.RecordRollback(id+1, at, "missing"); !errors.Is(err, ErrNotFound) {
+				t.Fatal(err)
+			}
+			if err := record(); err == nil {
+				t.Fatal("draft revision accepted")
+			}
+			if err := st.SetRevisionState(id, StateApplying); err != nil {
+				t.Fatal(err)
+			}
+			var seen []AuditEntry
+			st.OnAudit = func(e AuditEntry) {
+				rev, err := st.Revision(id)
+				if err != nil || rev.State != StateRolledBack {
+					t.Fatalf("notified before commit: %v %v", rev, err)
+				}
+				seen = append(seen, e)
+			}
+			if _, err := st.db.Exec("CREATE TRIGGER reject_rollback BEFORE " + reject + " BEGIN SELECT RAISE(FAIL,'injected'); END"); err != nil {
+				t.Fatal(err)
+			}
+			if err := record(); err == nil {
+				t.Fatal("database refusal was ignored")
+			}
+			rev, err := st.Revision(id)
+			if err != nil || rev.State != StateApplying {
+				t.Fatalf("partial state: %v %v", rev, err)
+			}
+			rows, err := st.ListAudit(10)
+			if err != nil || len(rows) != 0 || len(seen) != 0 {
+				t.Fatalf("partial audit: %v %v %v", rows, seen, err)
+			}
+			if _, err := st.db.Exec("DROP TRIGGER reject_rollback"); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := record(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rows, err = st.ListAudit(10)
+			if err != nil || len(rows) != 1 || len(seen) != 1 {
+				t.Fatalf("retry audit: %v %v %v", rows, seen, err)
+			}
+			for _, e := range []AuditEntry{rows[0], seen[0]} {
+				if !e.At.Equal(at) || e.Action != "rollback" || e.User != "system" || e.Target != fmt.Sprint(id) || e.Detail != "manual: test" || !e.Success {
+					t.Fatal(e)
+				}
+			}
+		})
+	}
+}
+
+func TestRecordRollbackCompletesPartialRecord(t *testing.T) {
+	for _, state := range []string{StateApplying, StateRolledBack} {
+		t.Run(state, func(t *testing.T) {
+			st := openTestStore(t)
+			id, err := st.CreateRevision(config.Default(), "admin", "rollback")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SetRevisionState(id, state); err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now()
+			if state == StateApplying {
+				if err := st.Audit(AuditEntry{User: "system", Action: "rollback", Target: fmt.Sprint(id), Detail: "manual", Success: true}); err != nil {
+					t.Fatal(err)
+				}
+				rows, err := st.ListAudit(1)
+				if err != nil || len(rows) != 1 {
+					t.Fatal(rows, err)
+				}
+				at = rows[0].At
+			}
+			if err := st.RecordRollback(id, at, "manual"); err != nil {
+				t.Fatal(err)
+			}
+			rev, err := st.Revision(id)
+			if err != nil || rev.State != StateRolledBack {
+				t.Fatal(rev, err)
+			}
+			rows, err := st.ListAudit(10)
+			if err != nil || len(rows) != 1 {
+				t.Fatal(rows, err)
+			}
+		})
+	}
+}
+
 func TestAuditDevicesAndPing(t *testing.T) {
 	st := openTestStore(t)
 	entries := []AuditEntry{

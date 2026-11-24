@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
@@ -284,6 +285,59 @@ func (s *Store) SetRevisionState(id int64, state string) error {
 	}
 	if changed != 1 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// RecordRollback records a completed runtime rollback of a pending revision.
+// A repeated notification for the same transition must not duplicate the event.
+func (s *Store) RecordRollback(id int64, at time.Time, detail string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec("UPDATE revisions SET state = ? WHERE id = ? AND state = ?", StateRolledBack, id, StateApplying)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	target := strconv.FormatInt(id, 10)
+	if changed == 0 {
+		var state string
+		err := tx.QueryRow("SELECT state FROM revisions WHERE id = ?", id).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if state != StateRolledBack {
+			return fmt.Errorf("ревизия %d имеет состояние %s при записи отката", id, state)
+		}
+	}
+	entry := AuditEntry{At: at, User: "system", Action: "rollback", Target: target, Detail: detail, Success: true}
+	// Earlier versions could commit either half separately. Replaying the
+	// original event completes the pair even if the state was already repaired.
+	result, err = tx.Exec(`INSERT INTO audit (at,user,action,target,detail,source_ip,success)
+		SELECT ?1,'system','rollback',?2,?3,'',1 WHERE NOT EXISTS
+		(SELECT 1 FROM audit WHERE at=?1 AND user='system' AND action='rollback' AND target=?2 AND success=1)`,
+		at.Unix(), target, detail)
+	if err != nil {
+		return err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if inserted != 0 && s.OnAudit != nil {
+		s.OnAudit(entry)
 	}
 	return nil
 }

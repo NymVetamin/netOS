@@ -170,16 +170,9 @@ func main() {
 	// Откат должен оставлять след: ревизия помечается откаченной, событие
 	// попадает в журнал аудита. Иначе история конфигураций будет врать.
 	engine.OnRollback = func(info apply.RollbackInfo) {
-		if err := st.SetRevisionState(info.Revision, store.StateRolledBack); err != nil {
-			logger.Warnf("не удалось пометить ревизию %d откаченной: %v", info.Revision, err)
+		if err := st.RecordRollback(info.Revision, info.At, info.Reason+": "+info.Details); err != nil {
+			logger.Warnf("откат ревизии %d выполнен, запись в историю не удалась: %v", info.Revision, err)
 		}
-		_ = st.Audit(store.AuditEntry{
-			User:    "system",
-			Action:  "rollback",
-			Target:  strconv.FormatInt(info.Revision, 10),
-			Detail:  info.Reason + ": " + info.Details,
-			Success: true,
-		})
 	}
 
 	if *render != "" {
