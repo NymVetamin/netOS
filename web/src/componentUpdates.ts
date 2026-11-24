@@ -23,6 +23,7 @@ export type ComponentUpdates = {
       installed?: string;
       available?: string;
       update_available: boolean;
+      resume?: boolean;
       token: string;
       error?: string;
       packages?: {

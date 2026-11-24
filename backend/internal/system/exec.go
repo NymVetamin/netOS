@@ -54,6 +54,7 @@ func (e *Exec) RunInput(ctx context.Context, input string, name string, args ...
 }
 
 func (e *Exec) runInput(ctx context.Context, input string, name string, args ...string) (string, error) {
+	requestedArgs := args
 	if e.OnCommand != nil {
 		e.OnCommand(name, args)
 	}
@@ -117,7 +118,7 @@ func (e *Exec) runInput(ctx context.Context, input string, name string, args ...
 		if options != nil && name == options.name && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
 			err = errors.Join(err, ctx.Err())
 		}
-		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
+		return stdout.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(requestedArgs, " "), err, msg)
 	}
 	// A successful child exit does not guarantee that copying its output
 	// finished before cancellation. Another process may have inherited a pipe.

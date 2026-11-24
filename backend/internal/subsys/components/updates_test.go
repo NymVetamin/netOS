@@ -2,6 +2,7 @@ package components
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/system"
 )
 
 func TestLatestReleaseValidation(t *testing.T) {
@@ -66,6 +68,54 @@ type updateTestRunner struct {
 	calls     []string
 	aptErr    error
 	inventory string
+}
+
+func TestInterruptedUpdateIsActionableOnlyForSavedVersion(t *testing.T) {
+	ctx := context.Background()
+	r := &updateTestRunner{inventory: "unbound\tiF \t1.1\nunbound-anchor\tii \t1.0\n"}
+	s := New(r, testLogger{})
+	s.Packages = &system.Packages{R: system.NewExec(), OwnershipDir: t.TempDir()}
+	check := func() ComponentUpdate {
+		t.Helper()
+		rows, err := s.checkUpdates(ctx, false, "unbound")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows["unbound"]
+	}
+	if check().UpdateAvailable {
+		t.Fatal("untracked partial package offered for update")
+	}
+	key := sha256.Sum256([]byte("upgrade\x00unbound"))
+	path := filepath.Join(s.Packages.OwnershipDir, fmt.Sprintf("interrupted-%x.json", key))
+	write := func(version string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(fmt.Sprintf(`{"Targets":["unbound=%s"],"Started":[{"Name":"unbound","Arch":"all","Version":"%s"}]}`, version, version)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("1.1")
+	row := check()
+	if !row.Resume || !row.UpdateAvailable || row.Error != "" || row.Token == "" {
+		t.Fatal(row)
+	}
+	write("1.2")
+	if err := s.Upgrade(ctx, "unbound", row.Token); err == nil {
+		t.Fatal("stale token accepted")
+	}
+	write("1.1")
+	r.inventory = "unbound\thi \t1.1\nunbound-anchor\tii \t1.0\n"
+	if row := check(); row.UpdateAvailable && row.Error == "" {
+		t.Fatal("held update allowed", row)
+	}
+	r.inventory = ""
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.checkUpdates(ctx, false, "unbound", "dnsmasq")
+	if err != nil || rows["unbound"].Error == "" || rows["dnsmasq"].Installed == "" {
+		t.Fatal(rows, err)
+	}
 }
 
 func (r *updateTestRunner) Run(_ context.Context, name string, args ...string) (string, error) {

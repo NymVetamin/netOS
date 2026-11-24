@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -14,11 +15,11 @@ import (
 )
 
 func TestInterruptedMultiarchParticipants(t *testing.T) {
-	plan := "primary 1 all unpack\nlibshared 2 amd64 unpack\nlibshared 2 arm64 configure\nforeign 1 all configure\nlibshared 2 amd64 configure\nprimary 1 all configure\n"
+	plan := "primary 1 all unpack -\nlibshared 2 amd64 unpack -\nlibshared 2 arm64 configure 1\nforeign 1 all configure 1\nlibshared 2 amd64 configure 1\nprimary 1 all configure 1\n"
 	events := "processing: configure: foreign\nprocessing: configure: libshared:arm64\nprocessing: upgrade: libshared:amd64\nprocessing: configure: primary\n"
 	got, err := packageParticipants(strings.NewReader(plan), strings.NewReader(events), []string{"primary", "libshared:amd64"})
 	want := []interruptedPackage{{"libshared", "amd64", "2"}, {"primary", "all", "1"}}
-	if err != nil || !reflect.DeepEqual(got, want) {
+	if err != nil || !reflect.DeepEqual(got.Started, want) {
 		t.Fatalf("participants %v, error %v", got, err)
 	}
 }
@@ -57,21 +58,24 @@ func TestRetryInterruptedDebianInstall(t *testing.T) {
 	t.Setenv("DPKG_ADMINDIR", adm)
 	t.Setenv("DPKG_FORCE", "script-chrootless")
 	withTestPolicyPath(t)
-	unpack := func(name, version, postinst string, triggers ...string) {
+	build := func(name, version, postinst, dependencies string, triggers ...string) string {
 		t.Helper()
 		pkg := filepath.Join(dir, name+version)
 		control := filepath.Join(pkg, "DEBIAN")
 		if err := os.MkdirAll(control, 0755); err != nil {
 			t.Fatal(err)
 		}
-		write(filepath.Join(control, "control"), fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: QA <qa@example.invalid>\nDescription: retry fixture\n", name, version), 0644)
+		write(filepath.Join(control, "control"), fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: QA <qa@example.invalid>\nDescription: retry fixture\n%s", name, version, dependencies), 0644)
 		write(filepath.Join(control, "postinst"), "#!/bin/sh\nset -eu\ntest -n \"$DPKG_ROOT\" && test \"$DPKG_ROOT\" != / || exit 1\n"+postinst+"\n", 0755)
 		if len(triggers) > 0 {
 			write(filepath.Join(control, "triggers"), strings.Join(triggers, "\n")+"\n", 0644)
 		}
 		archive := pkg + ".deb"
 		command("dpkg-deb", "--build", pkg, archive)
-		command("dpkg", "--root="+root, "--unpack", archive)
+		return archive
+	}
+	unpack := func(name, version, postinst string, triggers ...string) {
+		command("dpkg", "--root="+root, "--unpack", build(name, version, postinst, "", triggers...))
 	}
 	const primary = "netos-qa-first"
 	const foreign = "netos-qa-unrelated"
@@ -164,6 +168,72 @@ echo end >>"$DPKG_ROOT/events"`
 		}
 		if status(provider) != "install ok installed" || status(foreign) != "install ok unpacked" {
 			t.Fatal("unexpected final package state")
+		}
+	})
+	t.Run("remaining archive", func(t *testing.T) {
+		const app = "qa-app"
+		const dep = "qa-prereq"
+		packages := []string{build(app, "1", `echo done >> "$DPKG_ROOT/app-runs"`, "Pre-Depends: qa-middle\n"),
+			build("qa-middle", "1", "exit 0", "Pre-Depends: qa-prereq\n"),
+			build(dep, "1", `test -e "$DPKG_ROOT/continue" || sleep 30`, "")}
+		var index strings.Builder
+		for _, path := range packages {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintf(&index, "%s\nFilename: %s\nSize: %d\nSHA256: %x\n\n", strings.TrimSpace(command("dpkg-deb", "-f", path)), filepath.Base(path), len(data), sha256.Sum256(data))
+		}
+		write(filepath.Join(dir, "Packages"), index.String(), 0644)
+		write(filepath.Join(root, "etc/apt/sources.list"), "deb [trusted=yes] file:"+dir+" ./\n", 0644)
+		command("apt-get", "update")
+		if _, err := p.Ensure(ctx, app); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
+		}
+		rec, err := readPackageReceipt(p.receiptPath("install", []string{app}))
+		if err != nil || len(rec.Remaining) != 2 {
+			t.Fatalf("remaining %v: %v", rec, err)
+		}
+		write(filepath.Join(root, "continue"), "", 0600)
+		unpack(app, "9", "exit 0")
+		for range 2 {
+			if _, err := newPackages().Ensure(ctx, app); err == nil || status(dep) != "install ok half-configured" {
+				t.Fatal("changed package accepted", err)
+			}
+		}
+		command("dpkg", "--purge", app)
+		path := p.receiptPath("install", []string{app})
+		// The repository now needs an archive absent from the approved plan.
+		narrow := rec
+		narrow.Remaining = nil
+		for _, a := range rec.Remaining {
+			if a.Name == app {
+				narrow.Remaining = append(narrow.Remaining, a)
+			}
+		}
+		if err := saveReceipt(path, narrow); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newPackages().Ensure(ctx, app); err == nil {
+			t.Fatal("unapproved archive accepted")
+		}
+		if out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", "qa-middle").Output(); err == nil && strings.Contains(string(out), "install ok") {
+			t.Fatalf("unexpected unpack: %q", out)
+		}
+		if err := saveReceipt(path, rec); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if _, err := newPackages().Ensure(ctx, app); err != nil {
+				t.Fatal(err)
+			}
+		}
+		data, err := os.ReadFile(filepath.Join(root, "app-runs"))
+		if err != nil || string(data) != "done\n" || status(app) != "install ok installed" || status(dep) != "install ok installed" {
+			t.Fatalf("retry %q: %v", data, err)
+		}
+		if out := command("apt-mark", "showauto", "qa-middle"); strings.TrimSpace(out) != "qa-middle" {
+			t.Fatalf("dependency lost auto flag: %q", out)
 		}
 	})
 }

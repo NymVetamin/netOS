@@ -346,7 +346,7 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 }
 
 // Upgrade installs explicit repository candidates and preserves package ownership.
-func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr error) {
+func (p *Packages) Upgrade(ctx context.Context, component string, versions []string, receiptKey string) (resultErr error) {
 	if len(versions) == 0 {
 		return nil
 	}
@@ -364,7 +364,12 @@ func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr er
 			resultErr = fmt.Errorf("%v; package ownership: %w", resultErr, err)
 		}
 	}()
-	_, resultErr = p.R.Run(ctx, "apt-get", append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--only-upgrade", "--no-remove", "--no-install-recommends"}, versions...)...)
+	args := append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--only-upgrade", "--no-remove", "--no-install-recommends"}, versions...)
+	if receiptKey != "" {
+		args = nil
+	}
+	ctx = context.WithValue(ctx, upgradeReceiptKey{}, receiptKey)
+	resultErr = p.changePackages(ctx, p.receiptPath("upgrade", []string{component}), versions, args)
 	return resultErr
 }
 
