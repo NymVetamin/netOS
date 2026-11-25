@@ -55,6 +55,25 @@ func TestBalanceKernelSnapshotRuleGroups(t *testing.T) {
 	}
 }
 
+// Таблица аплинка без кабеля печатается с linkdown, а iproute2 этот флаг на
+// входе отвергает: откат балансировки не возвращал маршрут.
+func TestRestoreBalanceReplaysLinkdownRoute(t *testing.T) {
+	r := &responseRunner{respond: func(cmd string) (string, error) {
+		if strings.Contains(cmd, "linkdown") {
+			return "", errors.New(`Error: either "to" is duplicate, or "linkdown" is a garbage.`)
+		}
+		return "", nil
+	}}
+	c := New(r, t.TempDir(), nil)
+	snapshot := []balanceKernelSnapshot{{index: 2, routes: "default via 192.0.2.1 dev va linkdown\n"}}
+	if err := c.restoreBalance(context.Background(), snapshot, t.TempDir()+"/owned", balanceOwnedSnapshot{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(r.commands, "ip -4 route replace default via 192.0.2.1 dev va table 3002") {
+		t.Fatal(r.commands)
+	}
+}
+
 func BenchmarkCaptureBalanceKernel(b *testing.B) {
 	for _, size := range []int{2, 128} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {

@@ -762,7 +762,7 @@ func (c *Controller) restoreBalance(ctx context.Context, kernel []balanceKernelS
 			continue
 		}
 		for _, line := range strings.Split(snapshot.routes, "\n") {
-			fields := strings.Fields(line)
+			fields := connectedRouteFields(line)
 			if len(fields) == 0 {
 				continue
 			}
