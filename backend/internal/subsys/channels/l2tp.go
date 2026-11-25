@@ -243,8 +243,9 @@ func (s *Subsystem) RenderTunnelClients(cfg *config.Config) (string, error) {
 			file(conf, []byte(renderL2TPConf(ch, l2tp, ppp)))
 			file(ppp, []byte(renderL2TPPPP(ch, l2tp)))
 			if l2tp.IPsec {
-				ipsecConf, _, _ := s.l2tpIPsecPaths(ch)
+				ipsecConf, ipsecDaemon, _ := s.l2tpIPsecPaths(ch)
 				file(ipsecConf, renderL2TPIPsec(ch, l2tp))
+				file(ipsecDaemon, renderL2TPIPsecDaemon(ch))
 			}
 		case "openconnect":
 			oc, err := ch.OpenConnectConfig()
@@ -258,7 +259,9 @@ func (s *Subsystem) RenderTunnelClients(cfg *config.Config) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			file(s.ikev2Paths(ch).conf, renderIKEv2Client(ch, ike))
+			p := s.ikev2Paths(ch)
+			file(p.conf, renderIKEv2Client(ch, ike))
+			file(p.daemon, renderIKEv2ClientDaemon(ch))
 		}
 	}
 	return b.String(), nil

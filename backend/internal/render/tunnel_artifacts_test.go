@@ -56,3 +56,25 @@ func TestTunnelArtifactsFollowEnabledInstances(t *testing.T) {
 		t.Errorf("disabled uplink rendered:\n%s", out)
 	}
 }
+
+// Apply каналов IKEv2 и L2TP/IPsec пишет и конфигурацию демона charon;
+// без неё артефакт показывал только часть применённого.
+func TestTunnelClientsRenderCharonDaemonConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.Channels = []config.Channel{
+		{ID: "l2", Index: 2, Enabled: true, Type: "l2tp", Config: map[string]any{"server": "lns.example", "username": "u", "password": "p", "ipsec": true, "preshared_key": "secret-psk"}},
+		{ID: "ike", Index: 5, Enabled: true, Type: "ikev2", Config: map[string]any{"server": "ike.example", "username": "u", "password": "p"}},
+	}
+	out, err := Render("tunnel-clients", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"netos-l2tp-ipsec-ch2-daemon.conf", "netos-ikev2-ch5", "strongswan.conf"} {
+		if !strings.Contains(out, fragment) {
+			t.Errorf("render lacks %q:\n%s", fragment, out)
+		}
+	}
+	if strings.Count(out, "charon {") != 2 {
+		t.Errorf("want two charon configs:\n%s", out)
+	}
+}
