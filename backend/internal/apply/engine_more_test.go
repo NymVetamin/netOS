@@ -408,23 +408,26 @@ func TestNeedsConfirmationVariants(t *testing.T) {
 	}
 }
 
-func TestBridgeTopologyChangeDetection(t *testing.T) {
-	old := validConfig("old")
+// Мосты netOS сходятся по STP за ~4 с (forward_delay 2 с). Прежняя отсрочка
+// до 60 с держала отрезанного администратора без сети вдвое дольше заданного.
+func TestBridgeChangeUsesConfiguredConfirmWindow(t *testing.T) {
+	ctx := context.Background()
+	e := NewEngine(&recordingLogger{}, false)
+	if err := e.Register(flexibleSubsystem{name: "interfaces", plan: disruptivePlan}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Apply(ctx, validConfig("old"), 1, false); err != nil {
+		t.Fatal(err)
+	}
 	next := validConfig("new")
-	if bridgeTopologyChanged(old, next) {
-		t.Fatal("unrelated config change was treated as bridge topology change")
-	}
+	next.System.Panel.CommitTimeout = 30
 	next.Interfaces = append(next.Interfaces, config.Interface{ID: "br-lan", Name: "br-lan", Type: "bridge", Enabled: true})
-	if !bridgeTopologyChanged(old, next) {
-		t.Fatal("new bridge was not detected")
+	res, err := e.Apply(ctx, next, 2, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	old.Interfaces = append(old.Interfaces, next.Interfaces[len(next.Interfaces)-1])
-	if bridgeTopologyChanged(old, next) {
-		t.Fatal("identical bridge topology was treated as changed")
-	}
-	next.Interfaces[len(next.Interfaces)-1].Members = []string{"lan0"}
-	if !bridgeTopologyChanged(old, next) {
-		t.Fatal("bridge member change was not detected")
+	if window := time.Until(res.Deadline); window <= 25*time.Second || window > 30*time.Second {
+		t.Fatalf("bridge change confirm window=%s, want the configured 30s", window)
 	}
 }
 
