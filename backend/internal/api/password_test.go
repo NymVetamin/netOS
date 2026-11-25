@@ -188,3 +188,32 @@ func TestPanelPasswordLimitsAreUniform(t *testing.T) {
 		t.Fatalf("minimal own password: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// v % 57 давал первым 28 символам алфавита вероятность 5/256 вместо 4/256:
+// на четверть чаще остальных. Пароль установки должен быть равномерным.
+func TestGeneratePasswordIsUniform(t *testing.T) {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	counts := map[rune]int{}
+	for range 250 {
+		password, err := GeneratePassword(maxGeneratedPasswordLength)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range password {
+			counts[c]++
+		}
+	}
+	var head, tail int
+	for i, c := range alphabet {
+		if i < 256%len(alphabet) {
+			head += counts[c]
+		} else {
+			tail += counts[c]
+		}
+	}
+	headShare := float64(head) / float64(256%len(alphabet))
+	tailShare := float64(tail) / float64(len(alphabet)-256%len(alphabet))
+	if ratio := headShare / tailShare; ratio > 1.05 || ratio < 0.95 {
+		t.Fatalf("biased alphabet: head/tail frequency ratio %.3f", ratio)
+	}
+}

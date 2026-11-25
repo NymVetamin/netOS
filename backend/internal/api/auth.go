@@ -107,13 +107,19 @@ func GeneratePassword(length int) (string, error) {
 		return "", fmt.Errorf("password length must be between 1 and %d", maxGeneratedPasswordLength)
 	}
 	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	// Bytes from 228 up would favour the first 28 letters; drop them.
+	const limit = 256 - 256%len(alphabet)
 	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	out := make([]byte, length)
-	for i, v := range b {
-		out[i] = alphabet[int(v)%len(alphabet)]
+	out := make([]byte, 0, length)
+	for len(out) < length {
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		for _, v := range b {
+			if int(v) < limit && len(out) < length {
+				out = append(out, alphabet[int(v)%len(alphabet)])
+			}
+		}
 	}
 	return string(out), nil
 }
