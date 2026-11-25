@@ -39,7 +39,7 @@ type LAN struct {
 	// already had is not news. reasons/mismatch join hostapd's neighbouring
 	// lines. All three are bounded by lanStateLimit.
 	leases   map[string]lease
-	reasons  map[[2]string]wifiNote // interface and normalized MAC
+	reasons  map[[2]string]wifiNote  // interface and normalized MAC
 	mismatch map[[2]string]time.Time // interface and normalized MAC
 }
 

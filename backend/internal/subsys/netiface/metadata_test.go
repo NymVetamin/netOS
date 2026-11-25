@@ -341,7 +341,7 @@ func TestWANHealthAcceptsCompleteDHCPPPPoEAndL2TPStates(t *testing.T) {
 		newFakeNet(t, "wan0")
 		runner := healthyWANRunner(map[string]string{
 			"ip -4 -o addr show dev ppp-ppp up": "9: ppp-ppp inet 10.0.0.2 peer 10.0.0.1/32 scope global ppp-ppp\n",
-			"ip -4 route show default":       "default dev ppp-ppp metric 200\n",
+			"ip -4 route show default":          "default dev ppp-ppp metric 200\n",
 		})
 		s := NewWAN(runner)
 		s.PPPoETimeout, s.PPPoePoll = 10*time.Millisecond, time.Millisecond
@@ -356,10 +356,10 @@ func TestWANHealthAcceptsCompleteDHCPPPPoEAndL2TPStates(t *testing.T) {
 	t.Run("l2tp-static", func(t *testing.T) {
 		newFakeNet(t, "wan0")
 		runner := healthyWANRunner(map[string]string{
-			"ip -4 -o addr show dev wan0":     "2: wan0 inet 192.0.2.2/24 scope global wan0\n",
+			"ip -4 -o addr show dev wan0":        "2: wan0 inet 192.0.2.2/24 scope global wan0\n",
 			"ip -4 -o addr show dev ppp-l2tp up": "10: ppp-l2tp inet 10.1.0.2 peer 10.1.0.1/32 scope global ppp-l2tp\n",
-			"ip -4 route show default":        "default via 192.0.2.1 dev wan0 proto netos metric 310\ndefault dev ppp-l2tp metric 300\n",
-			"ip -4 route show 203.0.113.7/32": "203.0.113.7 via 192.0.2.1 dev wan0 proto 201\n",
+			"ip -4 route show default":           "default via 192.0.2.1 dev wan0 proto netos metric 310\ndefault dev ppp-l2tp metric 300\n",
+			"ip -4 route show 203.0.113.7/32":    "203.0.113.7 via 192.0.2.1 dev wan0 proto 201\n",
 		})
 		s := NewWAN(runner)
 		s.OwnedLNSRoutePath = filepath.Join(t.TempDir(), "owned-lns.json")
@@ -380,9 +380,9 @@ func TestWANHealthAcceptsCompleteDHCPPPPoEAndL2TPStates(t *testing.T) {
 func TestWANHealthRejectsMissingOwnedLNSRoute(t *testing.T) {
 	newFakeNet(t, "wan0")
 	runner := healthyWANRunner(map[string]string{
-		"ip -4 -o addr show dev wan0":     "2: wan0 inet 192.0.2.2/24 scope global wan0\n",
+		"ip -4 -o addr show dev wan0":        "2: wan0 inet 192.0.2.2/24 scope global wan0\n",
 		"ip -4 -o addr show dev ppp-l2tp up": "10: ppp-l2tp inet 10.1.0.2 peer 10.1.0.1/32 scope global ppp-l2tp\n",
-		"ip -4 route show default":        "default dev ppp-l2tp metric 300\n",
+		"ip -4 route show default":           "default dev ppp-l2tp metric 300\n",
 	})
 	s := NewWAN(runner)
 	s.OwnedLNSRoutePath = filepath.Join(t.TempDir(), "owned-lns.json")

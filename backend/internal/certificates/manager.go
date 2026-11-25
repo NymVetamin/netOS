@@ -55,7 +55,7 @@ type Manager struct {
 	mu            sync.RWMutex
 	issuers       map[string]ACME
 	issuerEmails  map[string]string // email each issuer registered with
-	handlers     map[string]http.Handler
+	handlers      map[string]http.Handler
 	status        map[string]Status
 	httpServer    *http.Server
 	httpFallback  http.Handler
