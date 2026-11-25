@@ -145,6 +145,39 @@ func updateL2TPChap(data []byte, server config.VPNServer, add bool) ([]byte, err
 	return []byte(text), nil
 }
 
+// RemoveL2TPChapSecrets убирает при удалении netOS все блоки серверов L2TP
+// из chap-secrets: в них пароли открытым текстом. Строки вне блоков не
+// трогаются; блок без END — ошибка, чтобы не срезать чужой хвост файла.
+// Блоков не больше числа серверов, файл мал: повторный поиск не дорог.
+func RemoveL2TPChapSecrets(path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	const marker = "# BEGIN netos-l2tp-srv"
+	text := string(data)
+	for {
+		start := strings.Index(text, marker)
+		if start < 0 {
+			break
+		}
+		line, _, _ := strings.Cut(text[start:], "\n")
+		end := "# END " + strings.TrimPrefix(line, "# BEGIN ") + "\n"
+		finish := strings.Index(text[start:], end)
+		if finish < 0 {
+			return fmt.Errorf("повреждён управляемый блок %q в %s", line, path)
+		}
+		text = text[:start] + text[start+finish+len(end):]
+	}
+	if text == string(data) {
+		return nil
+	}
+	return writeFile(path, []byte(text), 0o600)
+}
+
 func (s *Subsystem) applyL2TP(ctx context.Context, server config.VPNServer, cfg *config.Config, wasOwned bool) (created bool, retErr error) {
 	confPath, pppPath, unitPath := s.l2tpPaths(server)
 	preUpPath := s.l2tpPreUpPath(server)

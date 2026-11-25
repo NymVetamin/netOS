@@ -1304,6 +1304,10 @@ func (m *Manager) removeComponentUnits(ctx context.Context) error {
 	if err := vpnservers.RemoveL2TPPreUpHooks(filepath.Join(m.StateDir, "generated"), m.sys("/etc/ppp/ip-pre-up.d")); err != nil {
 		return fmt.Errorf("удаление PPP hooks: %w", err)
 	}
+	// Повреждённый вручную файл не повод обрывать удаление на полпути.
+	if err := vpnservers.RemoveL2TPChapSecrets(m.sys("/etc/ppp/chap-secrets")); err != nil {
+		fmt.Fprintf(m.Err, "Предупреждение: пароли L2TP не убраны из /etc/ppp/chap-secrets, удалите блоки netos-l2tp-srv вручную: %v\n", err)
+	}
 	if err := channels.RemoveIKEv2ChannelAppArmor(ctx, m.sys("/etc/apparmor.d"), m.sys("/sys/kernel/security/apparmor/profiles"), m.Output); err != nil {
 		return fmt.Errorf("удаление разрешений AppArmor каналов IKEv2: %w", err)
 	}
