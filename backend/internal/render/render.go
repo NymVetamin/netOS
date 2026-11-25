@@ -22,6 +22,7 @@ import (
 	"github.com/netos-router/netos/internal/subsys/firewall"
 	"github.com/netos-router/netos/internal/subsys/monitor"
 	"github.com/netos-router/netos/internal/subsys/netconf"
+	"github.com/netos-router/netos/internal/subsys/netiface"
 	"github.com/netos-router/netos/internal/subsys/samba"
 	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/subsys/socks"
@@ -55,7 +56,31 @@ var (
 	unbound  = services.NewUnbound(nil)
 	dnsproxy = services.NewDnsproxy(nil)
 	resolv   = services.NewSystemResolver(nil)
+
+	channelFiles = channels.New(nil, "/var/lib/netos/generated")
+	serverFiles  = vpnservers.New(nil, "/var/lib/netos/generated")
 )
+
+// orEmpty подставляет пояснение, когда артефакт ничего не содержит, и
+// nonEmpty делает из той же отрисовки предикат Active: отбор у них один.
+func orEmpty(render func(*config.Config) (string, error), empty string) func(*config.Config) (string, error) {
+	return func(c *config.Config) (string, error) {
+		text, err := render(c)
+		if err == nil && text == "" {
+			text = empty
+		}
+		return text, err
+	}
+}
+
+func nonEmpty(render func(*config.Config) (string, error)) func(*config.Config) bool {
+	return func(c *config.Config) bool {
+		text, err := render(c)
+		return err != nil || text != ""
+	}
+}
+
+func renderPPP(c *config.Config) (string, error) { return netiface.RenderPPP(c), nil }
 
 func hasWireGuardChannelConfig(ch config.Channel) bool {
 	return ch.Enabled && ch.Type == "wireguard" && ch.WireGuardPeer == nil
@@ -291,6 +316,18 @@ var artifacts = []Artifact{
 	{
 		ID: "strongswan", Title: "Серверы IPsec (IKEv2, L2TP)",
 		Active: ikev2Active, Render: renderIKEv2,
+	},
+	{
+		ID: "l2tp-servers", Title: "Серверы L2TP (xl2tpd)",
+		Active: nonEmpty(serverFiles.RenderL2TP), Render: orEmpty(serverFiles.RenderL2TP, "# Нет активных серверов L2TP.\n"),
+	},
+	{
+		ID: "ppp", Title: "Аплинки PPPoE и L2TP",
+		Active: nonEmpty(renderPPP), Render: orEmpty(renderPPP, "# Нет активных аплинков PPPoE и L2TP.\n"),
+	},
+	{
+		ID: "tunnel-clients", Title: "Каналы L2TP, OpenConnect и IKEv2",
+		Active: nonEmpty(channelFiles.RenderTunnelClients), Render: orEmpty(channelFiles.RenderTunnelClients, "# Нет активных каналов L2TP, OpenConnect и IKEv2.\n"),
 	},
 	{
 		ID: "dnsmasq", Title: "Конфигурация dnsmasq",

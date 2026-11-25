@@ -314,3 +314,22 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, server config.VPNServer) er
 	}
 	return nil
 }
+
+// RenderL2TP собирает для `netos render` конфигурации включённых серверов
+// L2TP — те же, что пишет Apply.
+func (s *Subsystem) RenderL2TP(cfg *config.Config) (string, error) {
+	var b strings.Builder
+	for _, server := range cfg.VPNServers {
+		if !server.Enabled || server.Type != "l2tp" {
+			continue
+		}
+		l2tp, err := server.L2TPConfig()
+		if err != nil {
+			return "", err
+		}
+		conf, ppp, _ := s.l2tpPaths(server)
+		fmt.Fprintf(&b, "# --- %s ---\n%s\n", conf, renderL2TPConf(server, l2tp, ppp))
+		fmt.Fprintf(&b, "# --- %s ---\n%s\n", ppp, renderL2TPPPP(server, l2tp))
+	}
+	return b.String(), nil
+}

@@ -223,3 +223,43 @@ func (s *Subsystem) cleanupL2TP(ctx context.Context, ch config.Channel) {
 	// unloaded, clear only its failed state instead of leaving failed/not-found.
 	_, _ = s.Runner.Run(ctx, "systemctl", "reset-failed", unitName)
 }
+
+// RenderTunnelClients собирает для `netos render` конфигурации включённых
+// каналов L2TP, OpenConnect и IKEv2 — те же, что пишет Apply.
+func (s *Subsystem) RenderTunnelClients(cfg *config.Config) (string, error) {
+	var b strings.Builder
+	file := func(path string, data []byte) { fmt.Fprintf(&b, "# --- %s ---\n%s\n", path, data) }
+	for _, ch := range cfg.Channels {
+		if !ch.Enabled {
+			continue
+		}
+		switch ch.Type {
+		case "l2tp":
+			l2tp, err := ch.L2TPConfig()
+			if err != nil {
+				return "", err
+			}
+			conf, ppp, _ := s.l2tpPaths(ch)
+			file(conf, []byte(renderL2TPConf(ch, l2tp, ppp)))
+			file(ppp, []byte(renderL2TPPPP(ch, l2tp)))
+			if l2tp.IPsec {
+				ipsecConf, _, _ := s.l2tpIPsecPaths(ch)
+				file(ipsecConf, renderL2TPIPsec(ch, l2tp))
+			}
+		case "openconnect":
+			oc, err := ch.OpenConnectConfig()
+			if err != nil {
+				return "", err
+			}
+			conf, _, script, _ := s.openConnectPaths(ch)
+			file(conf, []byte(renderOpenConnect(ch, oc, script, cfg.IPv6.Mode == "off")))
+		case "ikev2":
+			ike, err := ch.IKEv2Config()
+			if err != nil {
+				return "", err
+			}
+			file(s.ikev2Paths(ch).conf, renderIKEv2Client(ch, ike))
+		}
+	}
+	return b.String(), nil
+}

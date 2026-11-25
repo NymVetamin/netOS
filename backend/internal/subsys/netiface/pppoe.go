@@ -298,3 +298,23 @@ func (s *WAN) waitPPPoE(ctx context.Context, w config.WAN) error {
 		"аплинк %s не поднялся за %s: проверьте логин, пароль и то, что кабель провайдера включён в нужный порт",
 		w.Name, timeout)
 }
+
+// RenderPPP собирает для `netos render` файлы аплинков PPPoE и L2TP.
+// Отбор совпадает с Apply: включённый аплинк с известным интерфейсом.
+func RenderPPP(cfg *config.Config) string {
+	var b strings.Builder
+	for _, w := range cfg.WANs {
+		iface := cfg.InterfaceName(w.Interface)
+		if !w.Enabled || iface == "" {
+			continue
+		}
+		switch w.Proto {
+		case "pppoe":
+			fmt.Fprintf(&b, "# --- %s ---\n%s\n", pppoeConfPath(w.ID), renderPPPoEConf(w, iface))
+		case "l2tp":
+			fmt.Fprintf(&b, "# --- %s ---\n%s\n", l2tpConfPath(w.ID), renderL2TPConf(w))
+			fmt.Fprintf(&b, "# --- %s ---\n%s\n", l2tpPPPPath(w.ID), renderL2TPPPP(w))
+		}
+	}
+	return b.String()
+}
