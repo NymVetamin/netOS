@@ -92,15 +92,6 @@ func TestDiagnosticPermissionsAndOwnership(t *testing.T) {
 	}
 }
 
-func TestDiagnosticLegacyProbeSharesLimit(t *testing.T) {
-	s := &Server{diagnostics: diagnosticManager{active: true}}
-	w := httptest.NewRecorder()
-	s.handleDiagnosticProbe(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"kind":"ping","host":"127.0.0.1"}`)))
-	if w.Code != 409 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-}
-
 func TestDiagnosticOutputLimitsAndStop(t *testing.T) {
 	cancelled := false
 	j := &diagnosticJob{state: "running", cancel: func() { cancelled = true }}
@@ -268,7 +259,7 @@ func TestDiagnosticDNSQueryNames(t *testing.T) {
 			t.Errorf("query %q: %v, %v", name, cmd.args, err)
 		}
 	}
-	for _, name := range []string{"", "example..org", ".example", "example.org..", longLabel+"a.example", longName+"x.", "-name", "@server", "two names"} {
+	for _, name := range []string{"", "example..org", ".example", "example.org..", longLabel + "a.example", longName + "x.", "-name", "@server", "two names"} {
 		if _, err := buildDiagnosticCommand(diagnosticInput{Kind: "dns", Host: name}); err == nil {
 			t.Errorf("accepted invalid name %q", name)
 		}

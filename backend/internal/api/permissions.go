@@ -81,7 +81,7 @@ func limitedEndpoint(r *http.Request) bool {
 		return !write && may(r, "wifi", false)
 	case "/api/routes":
 		return !write && anySection(r, false, "routing", "diagnostics")
-	case "/api/statistics", "/api/statistics/clients", "/api/statistics/clients/live", "/api/statistics/realtime", "/api/statistics/realtime/history":
+	case "/api/statistics", "/api/statistics/clients", "/api/statistics/realtime", "/api/statistics/realtime/history":
 		return !write && anySection(r, false, "dashboard", "traffic")
 	case "/api/storage/devices":
 		return !write && may(r, "storage", false)
@@ -93,12 +93,8 @@ func limitedEndpoint(r *http.Request) bool {
 		return may(r, "services", true)
 	case "/api/firewall/preview":
 		return may(r, "firewall", false) // Pure preview, including for viewers.
-	case "/api/firewall/live":
-		return !write && may(r, "firewall", false)
 	case "/api/logs":
 		return !write && may(r, "diagnostics", false)
-	case "/api/diagnostics/probe":
-		return may(r, "diagnostics", true)
 	case "/api/revisions":
 		return !write && may(r, "history", false)
 	case "/api/maintenance/status", "/api/maintenance/releases":

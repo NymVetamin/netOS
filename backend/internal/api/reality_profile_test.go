@@ -33,12 +33,12 @@ func TestRealityProfileAfterRedactedEdit(t *testing.T) {
 	json.Unmarshal(data, &reload)
 	s := &Server{draft: &reload}
 	request := func(role, id string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("GET", "/reality-profile", nil)
+		r := httptest.NewRequest("GET", "/xray-profile", nil)
 		r.SetPathValue("id", "s")
 		r.SetPathValue("peer", id)
 		r = r.WithContext(context.WithValue(r.Context(), ctxRole, role))
 		w := httptest.NewRecorder()
-		s.handleRealityClientProfile(w, r)
+		s.handleXrayClientProfile(w, r)
 		return w
 	}
 	for _, sid := range []string{"abcd", "1234567890abcdef"} {
@@ -50,9 +50,11 @@ func TestRealityProfileAfterRedactedEdit(t *testing.T) {
 				expected = "chrome"
 			}
 			w := request("admin", "p")
-			var result map[string]string
+			var result struct {
+				Link string `json:"link"`
+			}
 			json.Unmarshal(w.Body.Bytes(), &result)
-			u, err := url.Parse(result["link"])
+			u, err := url.Parse(result.Link)
 			if err != nil {
 				t.Fatal(err)
 			}

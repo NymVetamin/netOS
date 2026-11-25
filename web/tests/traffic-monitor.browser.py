@@ -44,7 +44,6 @@ async def main():
      body={'points':[frame(at) for at in range(begin,finish+1,step)],'interval_seconds':step}
     else:
      await asyncio.sleep(1);body=frame(int(time.time()))
-   elif path=='/api/statistics/clients/live':body={'enabled':cfg['traffic_monitor']['enabled'],'at':now,'clients':[{'id':'a','name':'Speaker','rx':100,'tx':50}],'points':[{'id':'a','at':now,'rx_bps':(now%60+1)*100000,'tx_bps':10000}]}
    elif path=='/api/statistics/clients':body={'enabled':True,'from':start,'to':now,'clients':[{'id':'a','name':'Speaker','rx':25000,'tx':180000,'queries':3,'connections':5},{'id':'b','name':'Laptop','rx':80000,'tx':1000,'queries':1},{'id':'zero','name':'Never used','rx':0,'tx':0,'queries':0},{'id':'short','name':'Short sessions','rx':0,'tx':0,'queries':0,'connections':4 if q.get('details')==['1'] else 0}],'points':[{'id':id,'at':now-n,'rx_bps':20000,'tx_bps':10000} for id in ['a','b'] for n in [60,30,0]],'domains':[{'client':'a','domain':'example.com','count':3,'first':now-30,'last':now},{'client':'a','domain':'deep.www.example.com','source':'xray-domain','count':2,'first':now-30,'last':now},{'client':'a','domain':'api.news.bbc.co.uk','source':'xray-dns','count':2,'first':now-30,'last':now},{'client':'a','domain':'192.0.2.5','source':'xray-ip','count':1,'first':now-30,'last':now}] if q.get('details')==['1'] else []}
    if path=='/api/statistics/clients' and q.get('details')==['1']:body['domains']+=extra_domains
    if path=='/api/statistics/clients':

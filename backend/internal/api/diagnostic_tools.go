@@ -55,6 +55,7 @@ type diagnosticCommand struct {
 	interfaces []string
 }
 
+var probeHostname = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
 var diagnosticDNSLabel = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 
 func diagnosticDNSName(name string) bool {

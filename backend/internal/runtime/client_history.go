@@ -89,9 +89,6 @@ type ClientHistory struct {
 	lastPersist         time.Time
 	pendingTraffic      []historyObservation // owned by the sampling loop
 	pendingTrafficSize  int
-	liveUntil           time.Time
-	liveBaseline        map[string]clientBaseline
-	liveSnapshot        ClientLive
 }
 
 func NewClientHistory(path string, r system.Runner, c *Collector, current func() *config.Config) (*ClientHistory, error) {
@@ -135,9 +132,9 @@ func (h *ClientHistory) Run(ctx context.Context) {
 	var sampled time.Time
 	for {
 		current := h.Current()
-		due := sampled.Add(h.sampleInterval(time.Now()))
+		due := sampled.Add(HistoryInterval)
 		// A failed counter read leaves lastPersist unchanged. Once a sample
-		// has tried that deadline, retry at the normal live or idle interval.
+		// has tried that deadline, retry at the normal interval.
 		persistDue := h.lastPersist.Add(HistoryInterval)
 		if persistDue.After(sampled) && persistDue.Before(due) {
 			due = persistDue
@@ -309,9 +306,6 @@ func (h *ClientHistory) sample(parent context.Context) {
 		h.stopDNS()
 		h.mu.Lock()
 		h.baseline = map[string]clientBaseline{}
-		h.liveBaseline = nil
-		h.liveSnapshot = ClientLive{}
-		h.liveUntil = time.Time{}
 		h.lastPersist = time.Time{}
 		h.pendingTraffic = nil
 		h.pendingTrafficSize = 0
@@ -374,7 +368,6 @@ func (h *ClientHistory) sample(parent context.Context) {
 		samples = append(samples, h.Extra(ctx, cfg)...)
 	}
 	now := time.Now().UTC()
-	h.publishLive(now, samples)
 	if !h.lastPersist.IsZero() && now.Sub(h.lastPersist) < HistoryInterval {
 		return
 	}

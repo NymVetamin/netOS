@@ -117,22 +117,8 @@ func TestClientHistoryRetryCadence(t *testing.T) {
 		if err := h.db.QueryRow("SELECT tx FROM traffic WHERE address='192.0.2.2'").Scan(&delta); err != nil || delta != 150 {
 			t.Fatalf("recovered traffic=%d err=%v", delta, err)
 		}
-		h.Live()
 		r.fail = true
 		before := r.calls
-		time.Sleep(2 * ClientLiveInterval)
-		synctest.Wait()
-		if r.calls-before != 4 {
-			t.Fatalf("live retry: %d commands", r.calls-before)
-		}
-		// Once the lease expires, the next history deadline still takes precedence.
-		before = r.calls
-		time.Sleep(HistoryInterval - 2*ClientLiveInterval)
-		synctest.Wait()
-		if r.calls-before != 2 {
-			t.Fatalf("history deadline after live lease: %d commands", r.calls-before)
-		}
-		before = r.calls
 		time.Sleep(10 * time.Minute)
 		synctest.Wait()
 		if r.calls-before != 40 {

@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/netos-router/netos/internal/config"
 )
 
 func TestLiveFirewallParser(t *testing.T) {
@@ -20,9 +17,6 @@ func TestLiveFirewallParser(t *testing.T) {
 	}
 	if tables[0].Chains[0].Policy != "DROP" || tables[0].Chains[1].Rules[1] != "-A WAN-IN -j DROP" {
 		t.Fatal("order/policy lost")
-	}
-	if liveRuleComment(tables[0].Chains[1].Rules[0]) != "VPN server" {
-		t.Fatal("comment lost")
 	}
 }
 
@@ -35,22 +29,6 @@ func (r *liveFirewallRunner) Run(_ context.Context, name string, args ...string)
 	}
 	return "*filter\n:INPUT DROP [0:0]\n-A INPUT -j DROP\nCOMMIT\n", nil
 }
-func TestLiveFirewallReadOnlyAndPartialFailure(t *testing.T) {
-	runner := &liveFirewallRunner{}
-	s := &Server{StorageRunner: runner}
-	w := httptest.NewRecorder()
-	s.handleLiveFirewall(w, httptest.NewRequest("GET", "/api/firewall/live", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "fixture failure") || !strings.Contains(w.Body.String(), "-A INPUT -j DROP") {
-		t.Fatal(w.Body.String())
-	}
-	if strings.Join(runner.commands, ",") != "iptables-save -c,ip6tables-save -c" {
-		t.Fatal(runner.commands)
-	}
-	if w.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("cached live state")
-	}
-}
-
 func (r *liveFirewallRunner) RunInput(_ context.Context, _ string, _ string, _ ...string) (string, error) {
 	return "", fmt.Errorf("unexpected write command")
 }
@@ -110,39 +88,5 @@ func TestLiveFirewallMatchesFirstDeclarationWithinEachTable(t *testing.T) {
 	first, duplicate, other := tables[0].Chains[0], tables[0].Chains[1], tables[1].Chains[0]
 	if len(first.Rules) != 1 || first.Rules[0] != "-A A -j ACCEPT" || len(duplicate.Rules) != 0 || len(other.Rules) != 1 || other.Rules[0] != "-A B -j RETURN" {
 		t.Fatalf("rules: %+v", tables)
-	}
-}
-
-func TestLiveFirewallSources(t *testing.T) {
-	cfg := &config.Config{
-		Interfaces: []config.Interface{{ID: "a", Name: "eth0"}, {ID: "a", Name: "duplicate"}},
-		WANs: []config.WAN{
-			{Interface: "a"}, {Interface: "missing"},
-			{ID: "dsl", Proto: "pppoe"}, {ID: "tun", Proto: "l2tp"},
-		},
-	}
-	cfg.Firewall.NAT = []config.NATRule{
-		{Name: "physical", Interface: "eth0", System: true},
-		{Name: "second", Interface: "duplicate", System: true},
-		{Name: "unknown", System: true},
-		{Name: "dsl", Interface: "ppp-dsl", System: true},
-		{Name: "tun", Interface: "ppp-tun", System: true},
-		{Name: "manual", Interface: "eth0"},
-		{Name: "dnat", Interface: "eth0", System: true, Direction: "destination"},
-		{Name: "limited", Interface: "eth0", System: true, Source: "10.0.0.0/8"},
-		{Name: "snat", Interface: "eth0", System: true, ToSource: "192.0.2.1"},
-		{Name: "same", Interface: "eth0", System: true}, {Name: "same"},
-	}
-	want := map[string]string{
-		"physical": "network", "second": "firewall", "unknown": "network",
-		"dsl": "network", "tun": "network", "manual": "firewall", "dnat": "firewall",
-		"limited": "firewall", "snat": "firewall", "same": "firewall",
-	}
-	if got := liveFirewallSources(cfg); !reflect.DeepEqual(got, want) {
-		t.Fatal(got)
-	}
-	cfg.Interfaces[0].Name = "renamed"
-	if got := liveFirewallSources(cfg)["physical"]; got != "firewall" {
-		t.Fatal("stale interface after rename", got)
 	}
 }

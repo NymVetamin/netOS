@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -50,34 +49,4 @@ func realityClientLink(server config.VPNServer, peer config.VPNPeer) (string, er
 	}
 	link := url.URL{Scheme: "vless", User: url.User(uuid), Host: net.JoinHostPort(host, port), RawQuery: query.Encode(), Fragment: name}
 	return link.String(), nil
-}
-
-func (s *Server) handleRealityClientProfile(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	if !may(r, "vpn-servers", true) {
-		writeError(w, http.StatusForbidden, "Доступно только администратору")
-		return
-	}
-	for _, server := range s.requestConfig(r).VPNServers {
-		if server.ID != r.PathValue("id") || server.Type != "xray" {
-			continue
-		}
-		cfg, err := server.XrayConfig()
-		if err != nil || (cfg.Protocol != "" && cfg.Protocol != "reality") {
-			continue
-		}
-		for _, peer := range server.Peers {
-			if peer.ID != r.PathValue("peer") {
-				continue
-			}
-			link, err := realityClientLink(server, peer)
-			if err != nil {
-				writeError(w, http.StatusConflict, "%s", err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"link": link})
-			return
-		}
-	}
-	writeError(w, http.StatusNotFound, "Устройство Reality не найдено")
 }

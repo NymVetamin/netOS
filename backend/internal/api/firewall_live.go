@@ -1,14 +1,11 @@
 package api
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/subsys/firewall"
-	"github.com/netos-router/netos/internal/system"
-	"net/http"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
 )
 
 type liveFirewallChain struct {
@@ -70,103 +67,6 @@ func parseLiveFirewall(raw string) []liveFirewallTable {
 		}
 	}
 	return tables
-}
-
-var firewallComment = regexp.MustCompile(`--comment\s+("(?:\\.|[^"\\])*"|\S+)`)
-
-func liveRuleComment(line string) string {
-	m := firewallComment.FindStringSubmatch(line)
-	if len(m) < 2 {
-		return ""
-	}
-	if strings.HasPrefix(m[1], `"`) {
-		v, e := strconv.Unquote(m[1])
-		if e == nil {
-			return v
-		}
-	}
-	return m[1]
-}
-func (s *Server) handleLiveFirewall(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	runner := s.StorageRunner
-	if runner == nil {
-		runner = &system.Exec{Timeout: 5 * time.Second}
-	}
-	families := []liveFirewallFamily{}
-	for _, item := range []struct{ family, command string }{{"IPv4", "iptables-save"}, {"IPv6", "ip6tables-save"}} {
-		out, err := runner.Run(r.Context(), item.command, "-c")
-		f := liveFirewallFamily{Family: item.family, Tables: []liveFirewallTable{}}
-		if err != nil {
-			f.Error = "Не удалось прочитать " + item.family + ": " + err.Error()
-		} else {
-			f.Tables = parseLiveFirewall(out)
-		}
-		families = append(families, f)
-	}
-	// Link saved rule names using the applied configuration, never the UI draft.
-	comments := map[string]string{}
-	for _, f := range families {
-		for _, t := range f.Tables {
-			for _, c := range t.Chains {
-				for _, line := range c.Rules {
-					comments[line] = liveRuleComment(line)
-				}
-			}
-		}
-	}
-	var cfg *config.Config
-	if s.Engine != nil {
-		cfg = s.Engine.Current()
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"families": families, "sources": liveFirewallSources(cfg), "comments": comments, "captured_at": time.Now().UTC().Format(time.RFC3339)})
-}
-
-func liveFirewallSources(cfg *config.Config) map[string]string {
-	sources := map[string]string{}
-	if cfg == nil {
-		return sources
-	}
-	var wanNames map[string]bool
-	for _, rule := range cfg.Firewall.Rules {
-		sources[rule.Name] = "firewall"
-	}
-	for _, rule := range cfg.Firewall.NAT {
-		sources[rule.Name] = "firewall"
-		if rule.System && rule.Direction != "destination" && rule.Source == "" && rule.ToSource == "" {
-			if wanNames == nil {
-				wanNames = liveFirewallWANNames(cfg)
-			}
-			if wanNames[rule.Interface] {
-				sources[rule.Name] = "network"
-			}
-		}
-	}
-	for _, server := range cfg.VPNServers {
-		sources["VPN-сервер «"+server.Name+"»"] = "vpn-servers"
-	}
-	return sources
-}
-
-func liveFirewallWANNames(cfg *config.Config) map[string]bool {
-	names := make(map[string]bool, len(cfg.WANs))
-	var interfaces map[string]string
-	for _, wan := range cfg.WANs {
-		if wan.Proto == "pppoe" || wan.Proto == "l2tp" {
-			names["ppp-"+wan.ID] = true
-			continue
-		}
-		if interfaces == nil {
-			interfaces = make(map[string]string, len(cfg.Interfaces))
-			for _, iface := range cfg.Interfaces {
-				if _, exists := interfaces[iface.ID]; !exists {
-					interfaces[iface.ID] = iface.Name
-				}
-			}
-		}
-		names[interfaces[wan.Interface]] = true
-	}
-	return names
 }
 
 // Preview uses the same generator as Apply, but never saves or executes anything.

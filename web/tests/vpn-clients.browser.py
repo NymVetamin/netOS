@@ -115,9 +115,6 @@ async def scenario(browser, mode):
             fp=state['config']['vpn_servers'][0]['peers'][0].get('tls_fingerprint') or 'chrome'
             body={'link':f'vless://fixture@vpn.example.test:443?fp={fp}',
                   'config':{'outbounds':[{'streamSettings':{'realitySettings':{'fingerprint':fp}}}]}}
-        elif path.endswith('/reality-profile'):
-            fp=state['config']['vpn_servers'][0]['peers'][0].get('tls_fingerprint') or 'chrome'
-            body={'link':f'vless://123e4567-e89b-12d3-a456-426614174000@vpn.example.test:443?security=reality&sni=example.com&pbk=fixture&sid=abcd&fp={fp}'}
         elif path.endswith("/profile"):
             state["profiles"] += 1
             creds = next(p for p in state["config"]["vpn_servers"][0]["peers"] if p["id"] == path.split("/")[-2])["credentials"]

@@ -70,7 +70,7 @@ func TestLimitedRoutesAndDraftIsolation(t *testing.T) {
 	s.csrfTokens["limited-token"] = "limited-csrf"
 	cookie := &http.Cookie{Name: sessionCookie, Value: "limited-token"}
 	h := s.Routes()
-	for _, path := range []string{"/api/panel-users", "/api/backups", "/api/render", "/api/firewall/live", "/api/vpn-servers/test/clients", "/api/clients"} {
+	for _, path := range []string{"/api/panel-users", "/api/backups", "/api/render", "/api/vpn-servers/test/clients", "/api/clients"} {
 		if w := serveAuthed(h, "GET", path, nil, cookie, ""); w.Code != 403 {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
