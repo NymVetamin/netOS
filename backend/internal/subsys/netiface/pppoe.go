@@ -304,8 +304,12 @@ func (s *WAN) waitPPPoE(ctx context.Context, w config.WAN) error {
 func RenderPPP(cfg *config.Config) string {
 	var b strings.Builder
 	for _, w := range cfg.WANs {
+		// Поиск интерфейса линейный: только для аплинков PPP, а не для каждого DHCP.
+		if !w.Enabled || (w.Proto != "pppoe" && w.Proto != "l2tp") {
+			continue
+		}
 		iface := cfg.InterfaceName(w.Interface)
-		if !w.Enabled || iface == "" {
+		if iface == "" {
 			continue
 		}
 		switch w.Proto {
