@@ -329,7 +329,7 @@ func (p *Packages) EnsureWithRefresh(ctx context.Context, refresh func() error, 
 	}
 	defer func() {
 		if err := finishCapture(); err != nil {
-			resultErr = fmt.Errorf("%v; сохранение списка установленных пакетов: %w", resultErr, err)
+			resultErr = withCaptureError(resultErr, fmt.Errorf("сохранение списка установленных пакетов: %w", err))
 		}
 	}()
 	if err := finishInterruptedPackages(ctx, p.R); err != nil {
@@ -358,7 +358,7 @@ func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr er
 	}
 	defer func() {
 		if err := finish(); err != nil {
-			resultErr = fmt.Errorf("%v; package ownership: %w", resultErr, err)
+			resultErr = withCaptureError(resultErr, fmt.Errorf("package ownership: %w", err))
 		}
 	}()
 	if resultErr = finishInterruptedPackages(ctx, p.R); resultErr != nil {
@@ -366,6 +366,15 @@ func (p *Packages) Upgrade(ctx context.Context, versions []string) (resultErr er
 	}
 	_, resultErr = p.R.Run(ctx, "apt-get", append([]string{"-o", "DPkg::Lock::Timeout=60", "install", "-y", "--only-upgrade", "--no-remove", "--no-install-recommends"}, versions...)...)
 	return resultErr
+}
+
+// withCaptureError adds a failed ownership record to the operation result.
+// A successful operation must not be reported as "<nil>; ...".
+func withCaptureError(result, capture error) error {
+	if result == nil {
+		return capture
+	}
+	return fmt.Errorf("%w; %w", result, capture)
 }
 
 // finishInterruptedPackages completes a dpkg run cut short by a timeout or a

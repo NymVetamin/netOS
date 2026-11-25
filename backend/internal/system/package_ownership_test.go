@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-type ownershipRunner struct{ after, fail bool }
+type ownershipRunner struct{ after, fail, inventoryFails bool }
 
 func (r *ownershipRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	if name == "dpkg" && strings.Join(args, " ") == "--configure -a" {
@@ -23,6 +23,9 @@ func (r *ownershipRunner) Run(_ context.Context, name string, args ...string) (s
 		return "", nil
 	}
 	if name == "dpkg-query" && strings.Contains(strings.Join(args, " "), "binary:Package") {
+		if r.after && r.inventoryFails {
+			return "", errors.New("dpkg-query failed")
+		}
 		out := "base:amd64\tii \nforeign\tii \n"
 		if r.after {
 			out += "unbound\tii \nlibnew:amd64\tii \noriginal-reinstalled\tii \n"
@@ -67,5 +70,24 @@ func TestPendingPackageTransactionBlocksAnotherInstall(t *testing.T) {
 	p := &Packages{R: r, OwnershipDir: dir}
 	if _, err := p.Ensure(context.Background(), "unbound"); err == nil || r.after {
 		t.Fatal("unresolved transaction ignored")
+	}
+}
+
+// Пакеты встали, а учёт не записался: ошибка должна называть только учёт,
+// без «<nil>;» от несуществующей ошибки установки.
+func TestPackageCaptureFailureAfterSuccessfulInstall(t *testing.T) {
+	withTestPolicyPath(t)
+	for _, run := range []func(*Packages) error{
+		func(p *Packages) error { _, err := p.Ensure(context.Background(), "unbound"); return err },
+		func(p *Packages) error { return p.Upgrade(context.Background(), []string{"unbound=1"}) },
+	} {
+		dir := t.TempDir()
+		if err := WritePackageNames(filepath.Join(dir, "initial.txt"), map[string]bool{"base:amd64": true}); err != nil {
+			t.Fatal(err)
+		}
+		err := run(&Packages{R: &ownershipRunner{inventoryFails: true}, OwnershipDir: dir})
+		if err == nil || strings.Contains(err.Error(), "<nil>") || !strings.Contains(err.Error(), "dpkg-query failed") {
+			t.Fatalf("err=%v", err)
+		}
 	}
 }
