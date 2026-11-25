@@ -6,6 +6,33 @@ import (
 	"time"
 )
 
+// Журналы «Система» и «Доступ» получают аудит через OnAudit; запись, вставленная
+// мимо него, появлялась там только после перезапуска netosd.
+func TestPanelUserChangesReachOnAudit(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.CreateUser("admin", "hash", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	s.OnAudit = func(e AuditEntry) { seen = append(seen, e.Action+" "+e.User+" "+e.Target+" "+e.SourceIP) }
+	u := PanelUser{Username: "operator", Role: "limited", PanelAccess: PanelAccess{Enabled: true, Permissions: map[string]string{"clients": "manage"}}}
+	if _, err := s.SavePanelUser(u, "hash", true, false, "admin", "192.0.2.5"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SavePanelUser(u, "", false, true, "admin", "192.0.2.5"); err != nil {
+		t.Fatal(err)
+	}
+	// Отказ откатывает транзакцию и записи в журнале не оставляет.
+	last := PanelUser{Username: "admin", Role: "admin", PanelAccess: PanelAccess{Enabled: true}}
+	if _, err := s.SavePanelUser(last, "", false, true, "admin", "192.0.2.5"); !errors.Is(err, ErrLastAdmin) {
+		t.Fatal(err)
+	}
+	want := []string{"panel_user_create admin operator 192.0.2.5", "panel_user_delete admin operator 192.0.2.5"}
+	if len(seen) != len(want) || seen[0] != want[0] || seen[1] != want[1] {
+		t.Fatalf("OnAudit saw %q, want %q", seen, want)
+	}
+}
+
 func TestPanelUserLastAdminAndSessionRevocation(t *testing.T) {
 	s := openTestStore(t)
 	if _, err := s.CreateUser("admin", "hash", "admin"); err != nil {

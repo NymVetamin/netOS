@@ -147,11 +147,16 @@ func (s *Store) SavePanelUser(u PanelUser, passwordHash string, create, remove b
 	if remove {
 		action = "panel_user_delete"
 	}
-	if _, err = tx.Exec(`INSERT INTO audit(at,user,action,target,detail,source_ip,success) VALUES(?,?,?,?,?,?,1)`, time.Now().Unix(), actor, action, u.Username, fmt.Sprintf("role=%s enabled=%t permissions=%s", u.Role, u.Enabled, raw), sourceIP); err != nil {
+	entry := AuditEntry{At: time.Now(), User: actor, Action: action, Target: u.Username, Detail: fmt.Sprintf("role=%s enabled=%t permissions=%s", u.Role, u.Enabled, raw), SourceIP: sourceIP, Success: true}
+	if _, err = tx.Exec(`INSERT INTO audit(at,user,action,target,detail,source_ip,success) VALUES(?,?,?,?,?,?,1)`, entry.At.Unix(), entry.User, entry.Action, entry.Target, entry.Detail, entry.SourceIP); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
+	}
+	// Журналы панели держат аудит в памяти и узнают о записи только так.
+	if s.OnAudit != nil {
+		s.OnAudit(entry)
 	}
 	return changed, nil
 }
