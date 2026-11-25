@@ -35,7 +35,7 @@ STATE_DIR="$root/state"
 CONF_DIR="$root/conf"
 LOG_DIR="$root/log"
 BASELINE_DIR="$root/baseline"
-SRC= TMP= ROLLBACK_ARMED=1 UPGRADE=1 PREVIOUS_ENABLED=0 PREVIOUS_ACTIVE=0
+SRC= TMP= ROLLBACK_ARMED=1 UPGRADE=1 FRESH_BASELINE=0 PREVIOUS_ENABLED=0 PREVIOUS_ACTIVE=0
 mkdir "$INSTALL_TXN"
 echo previous > "$INSTALL_TXN/binary"
 echo config > "$INSTALL_TXN/conf-dir"
@@ -174,8 +174,11 @@ if rollback > "$root/second.log" 2>&1; then exit 1; fi
 
 # Test rollback after a first install using the actual saved files. Use an
 # equivalent path to the executable so readlink -f also works on Git Bash.
-UPGRADE=0
+# A reinstall over data kept by uninstall --keep-data is an upgrade that still
+# captures a fresh baseline and applies for the first time: it must be undone too.
 CLI_PATH="$root/bin/../bin/netosd"
+FRESH_BASELINE=1
+for UPGRADE in 0 1; do
 for scenario in early late success copy-error; do
     mkdir -p "$INSTALL_TXN" "$BASELINE_DIR"
     for label in cli binary unit completion completion-lazy aptconf state-dir conf-dir log-dir; do
@@ -218,5 +221,21 @@ EOF
             [[ $(cat "$BASELINE_DIR/state.json") == previous ]]
         fi
     fi
-    rm -rf -- "$INSTALL_TXN" "$BASELINE_DIR"
+    rm -rf -- "$INSTALL_TXN" "$BASELINE_DIR" "$call_log"
 done
+done
+unset -f cp
+
+# A real upgrade keeps the running netOS: its rollback must not uninstall it.
+FRESH_BASELINE=0 UPGRADE=1 scenario=success call_log="$root/upgrade.called"
+printf '#!/bin/bash
+echo called > "$call_log"
+' > "$BIN_PATH"
+chmod +x "$BIN_PATH"
+export call_log
+mkdir -p "$INSTALL_TXN"
+for label in cli binary unit completion completion-lazy aptconf state-dir conf-dir log-dir baseline-dir; do
+    touch "$INSTALL_TXN/$label.absent"
+done
+if rollback > "$root/upgrade.log" 2>&1; then exit 1; fi
+[[ ! -e "$call_log" ]]

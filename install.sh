@@ -83,6 +83,7 @@ INSTALL_TXN=""
 ROLLBACK_ARMED=0
 PREVIOUS_ACTIVE=0
 PREVIOUS_ENABLED=0
+FRESH_BASELINE=0
 
 snapshot_path() {
     source_path=$1
@@ -174,7 +175,9 @@ rollback_and_cleanup() {
         # sysctl до отказа readiness. Файлового rollback недостаточно: сначала
         # штатный uninstall возвращает сохранённый системный baseline. Данные
         # пока сохраняются, чтобы rollback ниже сам удалил только новые dirs.
-        if [ "$UPGRADE" = "0" ] && [ -x "$BIN_PATH" ] && [ "$(readlink -f "$CLI_PATH" 2>/dev/null)" = "$BIN_PATH" ]; then
+        # Установка поверх данных после uninstall --keep-data тоже применяет
+        # конфигурацию впервые: захватывает resolv.conf и гасит resolved.
+        if [ "$FRESH_BASELINE" = "1" ] && [ -x "$BIN_PATH" ] && [ "$(readlink -f "$CLI_PATH" 2>/dev/null)" = "$BIN_PATH" ]; then
             # uninstall can consume the captured baseline before a later step
             # fails. The pre-install snapshot may only contain an absent marker.
             if [ -d "$BASELINE_DIR" ] && ! cp -a -- "$BASELINE_DIR" "$INSTALL_TXN/captured-baseline"; then
@@ -594,6 +597,7 @@ ok "бинарник и команда netos установлены"
 # стереть память о том, какой была машина до установки. На обновлении снимок не
 # создаём заново, иначе уже применённое состояние netOS стало бы «исходным».
 if [ "$UPGRADE" = "0" ] || [ -f "$BASELINE_DIR/.capture-required" ]; then
+    FRESH_BASELINE=1
     "$BIN_PATH" -capture-system-baseline \
         || die "не удалось сохранить состояние системы до первого применения"
     rm -f "$BASELINE_DIR/.capture-required"
