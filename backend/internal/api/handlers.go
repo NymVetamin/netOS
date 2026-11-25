@@ -927,7 +927,9 @@ func (s *Server) handleMaintenancePanel(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.draftMu.Lock()
-	if s.draft != nil || s.draftApplying {
+	// Личные черновики живут только в памяти, а смена панели перезапускает netosd.
+	own := s.privateDrafts[userOf(r)]
+	if s.draft != nil || (own != nil && own.Config != nil) || s.draftApplying {
 		s.draftMu.Unlock()
 		writeError(w, http.StatusConflict, "сначала примените или отмените текущий черновик")
 		return

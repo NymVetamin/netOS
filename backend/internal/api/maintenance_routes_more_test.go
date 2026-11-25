@@ -78,6 +78,46 @@ func TestPanelMaintenanceCreatesIsolatedRevisionAndSchedulesRollbackGuard(t *tes
 	}
 }
 
+// Личный черновик живёт только в памяти netosd, а смена адреса панели его
+// перезапускает: несохранённые изменения пропали бы молча.
+func TestPanelMaintenanceRefusesWhileOwnDraftIsUnsaved(t *testing.T) {
+	s, cookie, csrf := newAuthedServer(t)
+	current := initializeAPIEngine(t, s)
+	previousID, err := s.Store.CreateRevision(current, "system", "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Store.MarkActive(previousID); err != nil {
+		t.Fatal(err)
+	}
+	s.Maintenance = &Maintenance{Runner: &maintenanceRouteRunner{}, Binary: "/usr/local/bin/netos", Unit: "netos-maintenance"}
+	oldTimeout := panelActivationStaleAfter
+	panelActivationStaleAfter = 0
+	defer func() { panelActivationStaleAfter = oldTimeout }()
+
+	edited := *current
+	edited.System.Hostname = "unsaved-router"
+	s.draftMu.Lock()
+	s.privateDraftLocked("admin").Config = &edited
+	s.draftMu.Unlock()
+
+	body := []byte(fmt.Sprintf(`{"panel":{"port":%d,"commit_timeout":30,"tls":{"mode":"selfsigned"}},"confirm":"RESTART"}`, freeTCPPort(t)))
+	if w := serveAuthed(s.Routes(), http.MethodPost, "/api/maintenance/panel", body, cookie, csrf); w.Code != http.StatusConflict {
+		t.Fatalf("panel restart with unsaved draft: %d %s", w.Code, w.Body.String())
+	}
+	s.draftMu.Lock()
+	draft := s.privateDrafts["admin"]
+	if draft.Config == nil || draft.Config.System.Hostname != "unsaved-router" || s.draftApplying {
+		s.draftMu.Unlock()
+		t.Fatal("refusal changed the draft or kept the apply lock")
+	}
+	draft.Config = nil
+	s.draftMu.Unlock()
+	if w := serveAuthed(s.Routes(), http.MethodPost, "/api/maintenance/panel", body, cookie, csrf); w.Code != http.StatusAccepted {
+		t.Fatalf("panel restart after discard: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPanelMaintenanceRequiresAdminSessionAndCSRF(t *testing.T) {
 	s, adminCookie, adminCSRF := newAuthedServer(t)
 	h := s.Routes()
