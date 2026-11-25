@@ -45,6 +45,12 @@ jobs:
           npm ci
           npm run build
 
+      # Релиз собирается из тега, а CI проверял ветку: без своего прогона
+      # тестов тег, поставленный на непроверенный коммит, ушёл бы на роутеры.
+      - name: тесты панели
+        working-directory: web
+        run: npm test
+
       - name: панель действительно попала в сборку
         run: |
           test -s backend/internal/api/webdist/app.js
@@ -54,6 +60,13 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+
+      # Тесты бэкенда проверяют встроенную панель, поэтому идут после её сборки.
+      - name: тесты бэкенда
+        working-directory: backend
+        run: |
+          go vet ./...
+          go test ./...
 
       # CGO выключен намеренно: sqlite взят в чистой реализации на Go, поэтому
       # бинарник получается статическим и не зависит от версии libc на машине,
