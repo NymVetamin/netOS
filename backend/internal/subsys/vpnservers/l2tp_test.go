@@ -78,6 +78,35 @@ func TestL2TPChapBlockPreservesOtherEntries(t *testing.T) {
 	}
 }
 
+func TestL2TPChapBlockEndingWithoutNewline(t *testing.T) {
+	server := config.VPNServer{Index: 7}
+	edited := "bob * pass *\n# BEGIN netos-l2tp-srv7\n\"alice\" \"netos-l2tp-srv7\" \"old\" *\n# END netos-l2tp-srv7"
+	removed, err := updateL2TPChap([]byte(edited), server, false)
+	if err != nil || string(removed) != "bob * pass *\n" {
+		t.Fatalf("block at EOF without newline: %q, %v", removed, err)
+	}
+	path := filepath.Join(t.TempDir(), "chap-secrets")
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveL2TPChapSecrets(path); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "bob * pass *\n" {
+		t.Fatalf("uninstall left %q", data)
+	}
+	foreign := "bob * pass *" // без блоков netOS файл не переписывается
+	if err := os.WriteFile(path, []byte(foreign), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveL2TPChapSecrets(path); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != foreign {
+		t.Fatalf("foreign file changed: %q", data)
+	}
+}
+
 func TestL2TPChapBlockRejectsTruncatedBlock(t *testing.T) {
 	server := config.VPNServer{Index: 7}
 	if _, err := updateL2TPChap([]byte("# BEGIN netos-l2tp-srv7\n"), server, true); err == nil {

@@ -130,6 +130,10 @@ func updateL2TPChap(data []byte, server config.VPNServer, add bool) ([]byte, err
 	end := "# END " + name + "\n"
 	text := string(data)
 	if start := strings.Index(text, begin); start >= 0 {
+		// После ручной правки «# END» может остаться последней строкой без перевода.
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
 		finish := strings.Index(text[start:], end)
 		if finish < 0 {
 			return nil, fmt.Errorf("повреждён управляемый блок %s в chap-secrets", name)
@@ -163,6 +167,9 @@ func RemoveL2TPChapSecrets(path string) error {
 		start := strings.Index(text, marker)
 		if start < 0 {
 			break
+		}
+		if !strings.HasSuffix(text, "\n") { // «# END» последней строкой без перевода
+			text += "\n"
 		}
 		line, _, _ := strings.Cut(text[start:], "\n")
 		end := "# END " + strings.TrimPrefix(line, "# BEGIN ") + "\n"
