@@ -28,7 +28,7 @@ func TestPolicyDomainsValidationMatrix(t *testing.T) {
 		{"AAAA allowed", func(c *Config) { c.IPv6.FilterAAAA = false }, "policies[0].domains"},
 		{"backend port collision", func(c *Config) {
 			c.DNS.Provider = "unbound"
-			c.DNS.Port = 5355
+			c.DNS.Port = 5356
 			c.Components = append(c.Components, Component{ID: "unbound", Installed: true})
 		}, "dns.port"},
 	}

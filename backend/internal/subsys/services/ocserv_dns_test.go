@@ -34,16 +34,16 @@ func TestOcservDNSFrontendAllProviders(t *testing.T) {
 			cfg.Policies = nil
 			cfg.VPNServers = []config.VPNServer{{ID: "oc", Type: "ocserv", Index: 3, Enabled: true}}
 			front := NewDnsmasq(nil).Render(cfg)
-			if !NewDnsmasq(nil).Needed(cfg) || !strings.Contains(front, "interface=vpns3*") || !strings.Contains(front, "server=127.0.0.1#5355") {
+			if !NewDnsmasq(nil).Needed(cfg) || !strings.Contains(front, "interface=vpns3*") || !strings.Contains(front, "server=127.0.0.1#5356") {
 				t.Fatalf("VPN clients have no dynamic DNS listener: %s", front)
 			}
 			if strings.Contains(front, "ipset=/") || strings.Contains(front, "max-ttl=") {
 				t.Fatalf("VPN-only frontend enabled domain policy behavior: %s", front)
 			}
 			backend := NewUnbound(nil).Render(cfg)
-			want := "port: 5355"
+			want := "port: 5356"
 			if provider == "dnsproxy" {
-				backend, want = NewDnsproxy(nil).Render(cfg), "  - 5355"
+				backend, want = NewDnsproxy(nil).Render(cfg), "  - 5356"
 			}
 			if !strings.Contains(backend, want) || strings.Contains(backend, "192.168.50.1") {
 				t.Fatalf("backend conflicts with frontend: %s", backend)

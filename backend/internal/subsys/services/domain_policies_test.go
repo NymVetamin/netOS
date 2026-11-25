@@ -41,22 +41,22 @@ func TestDomainPolicyDNSFrontendAllProviders(t *testing.T) {
 				}
 			}
 			if provider == "dnsmasq" {
-				if strings.Contains(front, "127.0.0.1#5355") || !strings.Contains(front, "server=1.1.1.1") {
+				if strings.Contains(front, "127.0.0.1#5356") || !strings.Contains(front, "server=1.1.1.1") {
 					t.Fatalf("native dnsmasq upstreams wrong:\n%s", front)
 				}
 				return
 			}
-			if !strings.Contains(front, "server=127.0.0.1#5355") || strings.Contains(front, "server=1.1.1.1") {
+			if !strings.Contains(front, "server=127.0.0.1#5356") || strings.Contains(front, "server=1.1.1.1") {
 				t.Fatalf("frontend backend routing wrong:\n%s", front)
 			}
 			if provider == "unbound" {
 				backend := NewUnbound(nil).Render(cfg)
-				if !strings.Contains(backend, "port: 5355") || strings.Contains(backend, "interface: 192.168.50.1") || strings.Contains(backend, "log-queries: yes") {
+				if !strings.Contains(backend, "port: 5356") || strings.Contains(backend, "interface: 192.168.50.1") || strings.Contains(backend, "log-queries: yes") {
 					t.Fatalf("unbound backend exposure/logging wrong:\n%s", backend)
 				}
 			} else {
 				backend := NewDnsproxy(nil).Render(cfg)
-				if !strings.Contains(backend, "  - 5355") || strings.Contains(backend, `  - "192.168.50.1"`) || strings.Contains(backend, "verbose: true") {
+				if !strings.Contains(backend, "  - 5356") || strings.Contains(backend, `  - "192.168.50.1"`) || strings.Contains(backend, "verbose: true") {
 					t.Fatalf("dnsproxy backend exposure/logging wrong:\n%s", backend)
 				}
 			}
@@ -71,7 +71,7 @@ func TestXrayInboundDomainsDoNotEnableDNSFrontend(t *testing.T) {
 	if hasKernelDomainPolicies(cfg) {
 		t.Fatal("Xray-native domains enabled kernel DNS frontend")
 	}
-	if output := NewDnsmasq(nil).Render(cfg); strings.Contains(output, "ipset=/") || strings.Contains(output, "127.0.0.1#5355") {
+	if output := NewDnsmasq(nil).Render(cfg); strings.Contains(output, "ipset=/") || strings.Contains(output, "127.0.0.1#5356") {
 		t.Fatalf("Xray-native domain leaked into dnsmasq:\n%s", output)
 	}
 }

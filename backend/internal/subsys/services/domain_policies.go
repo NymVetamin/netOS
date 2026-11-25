@@ -8,7 +8,8 @@ import (
 	"github.com/netos-router/netos/internal/subsys/policy"
 )
 
-const policyDNSBackendPort = 5355
+// 5356, а не 5355: 5355 до захвата resolv.conf держит LLMNR systemd-resolved.
+const policyDNSBackendPort = 5356
 
 // dnsFrontendNeeded also covers ocserv's transient worker interfaces. Neither
 // unbound nor dnsproxy can bind an address that appears only after a VPN login;

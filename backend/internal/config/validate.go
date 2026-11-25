@@ -2756,8 +2756,8 @@ func (c *Config) validatePolicies(r *ValidationResult) {
 				r.errf(path+".domains", "для доменной политики включите DNS-резолвер netOS")
 			} else if !c.IPv6.FilterAAAA {
 				r.errf(path+".domains", "доменная политика каналов поддерживает IPv4: включите фильтрацию AAAA")
-			} else if c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
-				r.errf("dns.port", "порт 5355 занят внутренним DNS backend доменных политик")
+			} else if c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5356 {
+				r.errf("dns.port", "порт 5356 занят внутренним DNS backend доменных политик")
 			}
 		}
 		switch p.Protocol {
@@ -2937,8 +2937,8 @@ func (c *Config) validateVPNServers(r *ValidationResult, acmeContacts map[string
 		}
 		if s.Type == "ocserv" {
 			c.validateOcservServer(r, path, s, acmeContacts)
-			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
-				r.errf("dns.port", "порт 5355 занят внутренним DNS backend для клиентов OpenConnect")
+			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5356 {
+				r.errf("dns.port", "порт 5356 занят внутренним DNS backend для клиентов OpenConnect")
 			}
 		}
 		if s.Type == "ikev2" {
@@ -2946,8 +2946,8 @@ func (c *Config) validateVPNServers(r *ValidationResult, acmeContacts map[string
 		}
 		if s.Type == "l2tp" {
 			c.validateL2TPServer(r, path, s)
-			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5355 {
-				r.errf("dns.port", "порт 5355 занят внутренним DNS backend для клиентов L2TP")
+			if s.Enabled && c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && c.DNS.Port == 5356 {
+				r.errf("dns.port", "порт 5356 занят внутренним DNS backend для клиентов L2TP")
 			}
 		}
 
