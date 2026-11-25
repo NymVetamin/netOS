@@ -1606,6 +1606,13 @@ func (s *Server) handleRestoreRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "черновик уже изменён или применяется; обновите страницу")
 		return
 	}
+	// Подтверждение и откат стирают черновик владельца: восстановленная
+	// сейчас ревизия пропала бы молча.
+	if pending, _ := s.Engine.Pending(); pending {
+		s.draftMu.Unlock()
+		writeError(w, http.StatusConflict, "нельзя менять черновик до подтверждения или отката")
+		return
+	}
 	if personal != nil {
 		personal.Base = s.Engine.Current()
 		personal.Config = rev.Config

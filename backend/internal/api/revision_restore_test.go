@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/store"
 )
@@ -25,7 +26,7 @@ func TestRestoreRevisionReadFailureAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := config.Default()
-	s := &Server{Store: st, draft: original, draftVersion: 7}
+	s := &Server{Store: st, Engine: apply.NewEngine(&lifecycleLogger{}, false), draft: original, draftVersion: 7}
 	restore := func(revision int64, version uint64, want int) {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, "/api/revisions/restore", nil)
@@ -67,5 +68,41 @@ func TestRestoreRevisionReadFailureAndRetry(t *testing.T) {
 	restore(id, 8, http.StatusOK)
 	if s.draft.System.Hostname != cfg.System.Hostname || s.draftVersion != 9 {
 		t.Fatal("repeated restore lost the revision")
+	}
+}
+
+// Подтверждение стирает черновик владельца: ревизия, восстановленная во время
+// ожидания, пропадала бы молча.
+func TestRestoreRevisionRefusedWhileApplyAwaitsConfirmation(t *testing.T) {
+	s, cookie, csrf, _ := transactionServer(t)
+	h := s.Routes()
+	first := applyDraft(t, s, cookie, csrf, "router-one")
+	if w := serveRevisionAction(h, "confirm", first, cookie, csrf); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	second := applyDraft(t, s, cookie, csrf, "router-two")
+	restore := func() *httptest.ResponseRecorder {
+		s.draftMu.Lock()
+		version := s.privateDraftLocked("admin").Version
+		s.draftMu.Unlock()
+		req := httptest.NewRequest(http.MethodPost, "/api/revisions/"+strconv.FormatInt(first, 10)+"/restore", nil)
+		req.AddCookie(cookie)
+		req.Header.Set(csrfHeader, csrf)
+		req.Header.Set("If-Match", strconv.FormatUint(version, 10))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	if w := restore(); w.Code != http.StatusConflict {
+		t.Fatalf("restore while pending: %d %s", w.Code, w.Body.String())
+	}
+	if w := serveRevisionAction(h, "confirm", second, cookie, csrf); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if w := restore(); w.Code != http.StatusOK {
+		t.Fatalf("restore after confirm: %d %s", w.Code, w.Body.String())
+	}
+	if d := s.privateDrafts["admin"]; d.Config == nil || d.Config.System.Hostname != "router-one" {
+		t.Fatal("restored revision is not the draft")
 	}
 }
