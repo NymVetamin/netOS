@@ -8,49 +8,13 @@ import (
 	"github.com/netos-router/netos/internal/subsys/policy"
 )
 
-// 5356, а не 5355: 5355 до захвата resolv.conf держит LLMNR systemd-resolved.
-const policyDNSBackendPort = 5356
+const policyDNSBackendPort = config.PolicyDNSBackendPort
 
-// DNSFrontendNeeded also covers ocserv's transient worker interfaces. Neither
-// unbound nor dnsproxy can bind an address that appears only after a VPN login;
-// dnsmasq's bind-dynamic frontend follows those interfaces as clients connect.
-func DNSFrontendNeeded(cfg *config.Config) bool {
-	if cfg == nil || !cfg.DNS.Enabled {
-		return false
-	}
-	if hasKernelDomainPolicies(cfg) {
-		return true
-	}
-	// dnsproxy verbose output does not provide a compact per-client query event.
-	// Reuse the existing dnsmasq frontend, retaining encrypted upstream handling.
-	if cfg.TrafficMonitor.Enabled && cfg.DNS.Provider == "dnsproxy" {
-		return true
-	}
-	for _, server := range cfg.VPNServers {
-		if server.Enabled && (server.Type == "ocserv" || server.Type == "l2tp") {
-			return true
-		}
-	}
-	return false
-}
+// DNSFrontendNeeded — см. config.Config.DNSFrontendNeeded: условие общее
+// с валидатором, который по нему решает, занят ли порт 5356.
+func DNSFrontendNeeded(cfg *config.Config) bool { return cfg.DNSFrontendNeeded() }
 
-func hasKernelDomainPolicies(cfg *config.Config) bool {
-	if cfg == nil || !cfg.DNS.Enabled {
-		return false
-	}
-	xrayServers := map[string]bool{}
-	for _, server := range cfg.VPNServers {
-		if server.Type == "xray" {
-			xrayServers[server.ID] = true
-		}
-	}
-	for _, item := range cfg.Policies {
-		if item.Enabled && len(item.Domains) > 0 && !xrayServers[item.VPNServer] {
-			return true
-		}
-	}
-	return false
-}
+func hasKernelDomainPolicies(cfg *config.Config) bool { return cfg.KernelDomainPolicies() }
 
 func renderDomainPolicyIPSets(cfg *config.Config) []string {
 	type rule struct {

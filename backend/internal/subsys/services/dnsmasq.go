@@ -29,16 +29,12 @@ var (
 	// dnsmasqLocalPort — порт на loopback, куда dnsmasq уходит, когда порт 53
 	// занял другой резолвер. Имена клиентов знает только тот, кто раздал им
 	// адреса, поэтому dnsmasq продолжает отвечать за локальную зону, а
-	// выбранный резолвер направляет её сюда. 5353 не берём: его занимает mDNS.
-	dnsmasqLocalPort = 5354
+	// выбранный резолвер направляет её сюда.
+	dnsmasqLocalPort = config.LocalDNSPort
 )
 
-// localDNSNeeded сообщает, работает ли dnsmasq подчинённым резолвером
-// локальной зоны — то есть DHCP раздаёт он, а порт 53 держит кто-то другой.
-func localDNSNeeded(cfg *config.Config) bool {
-	return cfg.DHCP.Enabled && cfg.DHCP.Provider == "dnsmasq" &&
-		cfg.DNS.Enabled && cfg.DNS.Provider != "dnsmasq"
-}
+// localDNSNeeded — см. config.Config.LocalDNSNeeded.
+func localDNSNeeded(cfg *config.Config) bool { return cfg.LocalDNSNeeded() }
 
 // writeDNSInterfaces выводит интерфейсы, на которых резолвер обязан
 // принимать запросы: loopback ради самого роутера, интерфейс каждого

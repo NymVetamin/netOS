@@ -457,8 +457,8 @@ func (c *Config) validateSystem(r *ValidationResult, acmeContacts map[string]str
 	if c.DNS.Enabled && c.System.Panel.Port == c.DNS.Port {
 		r.errf("system.panel.port", "порт панели совпадает с портом DNS")
 	}
-	if internalDNSPort(c.System.Panel.Port) {
-		r.errf("system.panel.port", "порт зарезервирован внутренними DNS-службами")
+	if c.internalDNSPortBusy(c.System.Panel.Port) {
+		r.errf("system.panel.port", "порт %d занят внутренней DNS-службой", c.System.Panel.Port)
 	}
 	if c.System.Panel.CommitTimeout < 15 || c.System.Panel.CommitTimeout > 86400 {
 		r.errf("system.panel.commit_timeout",
@@ -1937,10 +1937,8 @@ func (c *Config) validateDNS(r *ValidationResult) {
 	if c.DNS.Port < 1 || c.DNS.Port > 65535 {
 		r.errf("dns.port", "порт DNS вне диапазона 1-65535")
 	}
-	// На 5354 слушает подчинённый dnsmasq, на 5356 — резолвер за фронтендом
-	// dnsmasq; оба поднимаются только при резолвере не dnsmasq.
-	if c.DNS.Enabled && c.DNS.Provider != "dnsmasq" && internalDNSPort(c.DNS.Port) {
-		r.errf("dns.port", "порт зарезервирован внутренними DNS-службами")
+	if c.internalDNSPortBusy(c.DNS.Port) {
+		r.errf("dns.port", "порт %d занят внутренней DNS-службой", c.DNS.Port)
 	}
 	if c.DNS.CacheSize < 0 || c.DNS.CacheSize > 1_000_000 {
 		r.errf("dns.cache_size", "размер кэша должен быть от 0 до 1000000 записей")
@@ -3761,7 +3759,3 @@ func (c *Config) validateVPNServerTLS(r *ValidationResult, path string, s VPNSer
 		}
 	}
 }
-
-// internalDNSPort — порты внутренних DNS-служб на loopback: подчинённый
-// dnsmasq (5354) и резолвер за фронтендом dnsmasq (5356).
-func internalDNSPort(port int) bool { return port == 5354 || port == 5356 }
