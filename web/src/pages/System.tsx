@@ -459,7 +459,7 @@ function ChangePassword({ username, onSessionEnded }: { username: string; onSess
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (busy || !current || next.length < 10 || !repeat || next !== repeat) return;
+    if (busy || !current || next.length < 12 || !repeat || next !== repeat) return;
     setBusy(true);
     setErr("");
     setMsg("");
@@ -490,7 +490,7 @@ function ChangePassword({ username, onSessionEnded }: { username: string; onSess
               onChange={(e) => setCurrent(e.target.value)}
             />
           </Field>
-          <Field label="Новый пароль" hint="Не короче 10 символов">
+          <Field label="Новый пароль" hint="Не короче 12 символов">
             <input
               type="password"
               autoComplete="new-password"
@@ -516,13 +516,13 @@ function ChangePassword({ username, onSessionEnded }: { username: string; onSess
           <button
             type="submit"
             className="btn primary"
-            disabled={busy || !current || next.length < 10 || !repeat || mismatch}
+            disabled={busy || !current || next.length < 12 || !repeat || mismatch}
           >
             Сменить пароль
           </button>
           {!busy && !mismatch && (!current || !next || !repeat
             ? <span className="reason">Заполните все три поля</span>
-            : next.length < 10 && <span className="reason">Новый пароль короче 10 символов</span>)}
+            : next.length < 12 && <span className="reason">Новый пароль короче 12 символов</span>)}
         </div>
       </form>
     </Card>

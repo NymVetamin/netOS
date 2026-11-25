@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -157,5 +158,33 @@ func TestPasswordChangeRevokesAllUserSessions(t *testing.T) {
 	setCookies := w.Result().Cookies()
 	if len(setCookies) == 0 || setCookies[0].Name != sessionCookie || setCookies[0].MaxAge >= 0 {
 		t.Fatalf("session cookie was not expired: %#v", setCookies)
+	}
+}
+
+// Пароль панели задаётся в трёх местах; все обязаны требовать одно и то же и
+// честно называть обе границы — прежде слишком длинный пароль отклонялся
+// сообщением «не короче 10 символов».
+func TestPanelPasswordLimitsAreUniform(t *testing.T) {
+	s, cookie, csrf := newAuthedServer(t)
+	initializeAPIEngine(t, s)
+	h := s.Routes()
+	want := fmt.Sprintf("от %d до %d байт", MinPasswordBytes, maxPasswordBytes)
+	for _, password := range []string{strings.Repeat("a", MinPasswordBytes-1), strings.Repeat("a", maxPasswordBytes+1)} {
+		change, _ := json.Marshal(map[string]string{"current": "initial-password-123", "new": password})
+		if w := serveAuthed(h, http.MethodPost, "/api/password", change, cookie, csrf); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("own password of %d bytes: %d %s", len(password), w.Code, w.Body.String())
+		}
+		user, _ := json.Marshal(map[string]any{"username": "operator", "role": "limited", "enabled": true, "permissions": map[string]string{}, "password": password})
+		if w := serveAuthed(h, http.MethodPost, "/api/panel-users", user, cookie, csrf); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("panel user password of %d bytes: %d %s", len(password), w.Code, w.Body.String())
+		}
+	}
+	user, _ := json.Marshal(map[string]any{"username": "operator", "role": "limited", "enabled": true, "permissions": map[string]string{}, "password": strings.Repeat("a", MinPasswordBytes)})
+	if w := serveAuthed(h, http.MethodPost, "/api/panel-users", user, cookie, csrf); w.Code != http.StatusOK {
+		t.Fatalf("minimal panel user password: %d %s", w.Code, w.Body.String())
+	}
+	change, _ := json.Marshal(map[string]string{"current": "initial-password-123", "new": strings.Repeat("b", MinPasswordBytes)})
+	if w := serveAuthed(h, http.MethodPost, "/api/password", change, cookie, csrf); w.Code != http.StatusOK {
+		t.Fatalf("minimal own password: %d %s", w.Code, w.Body.String())
 	}
 }

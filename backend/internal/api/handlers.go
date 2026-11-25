@@ -518,8 +518,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
-	if len(req.New) < 10 || len(req.New) > maxPasswordBytes {
-		writeError(w, http.StatusBadRequest, "пароль должен быть не короче 10 символов")
+	if len(req.New) < MinPasswordBytes || len(req.New) > maxPasswordBytes {
+		writeError(w, http.StatusBadRequest, "пароль должен содержать от %d до %d байт", MinPasswordBytes, maxPasswordBytes)
 		return
 	}
 
