@@ -90,10 +90,6 @@ func (s *Server) handleOCClientCertificate(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		if server == nil || peer == nil || server.OcservAuthMode() == "password" {
-			if r.Method == http.MethodGet && r.PathValue("action") == "" {
-				result = map[string]any{"pending": true}
-				return nil
-			}
 			status = http.StatusConflict
 			return fmt.Errorf("Сначала примените настройки устройства и авторизацию по сертификату")
 		}
@@ -128,7 +124,7 @@ func (s *Server) handleOCClientCertificate(w http.ResponseWriter, r *http.Reques
 			if mutationErr != nil {
 				return mutationErr
 			}
-		} else if action != "" && action != "password" && action != "download" {
+		} else if action != "password" && action != "download" {
 			status = http.StatusNotFound
 			return fmt.Errorf("неизвестное действие")
 		}
@@ -136,10 +132,6 @@ func (s *Server) handleOCClientCertificate(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			if !os.IsNotExist(err) && !errors.Is(err, vpnpki.ErrNotIssued) {
 				return fmt.Errorf("не удалось прочитать хранилище сертификатов: %w", err)
-			}
-			if r.Method == http.MethodGet && action == "" {
-				result = map[string]any{"pending": true}
-				return nil
 			}
 			status = http.StatusConflict
 			return fmt.Errorf("Сертификат недоступен; примените настройки или перевыпустите профиль")

@@ -75,7 +75,7 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &values); err != nil {
 			t.Fatal(err)
 		}
-		if len(values) != 3 || string(values["pending"]) != `{"pending":true}` || string(values["phone"]) != strings.TrimSpace(call("admin", "").Body.String()) {
+		if len(values) != 3 || string(values["pending"]) != `{"pending":true}` {
 			t.Fatal("batch differs from individual status", w.Body.String())
 		}
 
@@ -102,12 +102,15 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	}
 	applied["auth_mode"] = "certificate"
 	assertBatch()
-	for _, action := range []string{"", "password", "download"} {
+	for _, action := range []string{"password", "download"} {
 		if w := call("viewer", action); w.Code != 403 {
 			t.Fatalf("viewer read %s", action)
 		}
 	}
-	w := call("admin", "")
+	if w := call("admin", "status"); w.Code != 404 {
+		t.Fatal("unknown action accepted", w.Code)
+	}
+	w := batch("admin")
 	if w.Code != 200 || strings.Contains(w.Body.String(), client.Password) || strings.Contains(w.Body.String(), "encrypted-test-container") || strings.Contains(w.Body.String(), "PRIVATE KEY") {
 		t.Fatal("metadata leaks secrets")
 	}
@@ -138,7 +141,7 @@ func TestOCProfileExplicitAdminExportAndRedaction(t *testing.T) {
 	if err := os.WriteFile(stateFile, []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if w := call("admin", ""); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
+	if w := call("admin", "password"); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
 		t.Fatal("damaged PKI was presented as a pending draft")
 	}
 	if w := batch("admin"); w.Code != 500 || strings.Contains(w.Body.String(), `"pending":true`) {
