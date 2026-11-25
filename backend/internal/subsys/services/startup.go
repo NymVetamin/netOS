@@ -29,7 +29,7 @@ func (s *DNS) RecoverStartup(ctx context.Context, cfg *config.Config) error {
 	default:
 		return fmt.Errorf("неизвестный DNS-провайдер %q", cfg.DNS.Provider)
 	}
-	if cfg.DNS.Provider != "dnsmasq" && (dnsFrontendNeeded(cfg) || localDNSNeeded(cfg)) {
+	if cfg.DNS.Provider != "dnsmasq" && (DNSFrontendNeeded(cfg) || localDNSNeeded(cfg)) {
 		providers = append(providers, provider{dnsmasqUnit, dnsmasqConfPath, m.Dnsmasq.Render(cfg), dnsmasqUnitContent()})
 	}
 	// Validate the entire saved chain before starting any service. A stale or

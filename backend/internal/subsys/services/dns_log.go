@@ -18,7 +18,7 @@ const dnsLogLimit = 4 << 20
 func RotateDNSLog(ctx context.Context, cfg *config.Config, runner system.Runner, truncate func(*os.File, os.FileInfo, int64) error) error {
 	var reopen func() error
 	if cfg != nil && cfg.DNS.Enabled && cfg.DNS.QueryLog &&
-		(cfg.DNS.Provider == "dnsmasq" || dnsFrontendNeeded(cfg)) {
+		(cfg.DNS.Provider == "dnsmasq" || DNSFrontendNeeded(cfg)) {
 		reopen = func() error {
 			_, err := runner.Run(ctx, "systemctl", "kill", "--kill-whom=main", "--signal=SIGUSR2", "netos-dnsmasq.service")
 			return err

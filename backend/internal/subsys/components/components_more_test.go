@@ -602,6 +602,34 @@ func TestDesiredComponentStateHandlesNilAndLastDuplicate(t *testing.T) {
 	}
 }
 
+// Подсистема DNS ставит dnsmasq для клиентов L2TP и без выбранного компонента;
+// пока компоненты об этом не знали, каждое применение удаляло пакет снова.
+func TestDesiredComponentStateKeepsDNSFrontend(t *testing.T) {
+	cfg := &config.Config{
+		Components: []config.Component{{ID: "unbound", Installed: true}, {ID: "l2tp", Installed: true}},
+		DNS:        config.DNS{Enabled: true, Provider: "unbound"},
+		VPNServers: []config.VPNServer{{ID: "l2tp", Type: "l2tp", Enabled: true}},
+	}
+	if !desiredComponentState(cfg)["dnsmasq"] {
+		t.Fatal("dnsmasq frontend of an enabled L2TP server is not kept")
+	}
+	runner := &sharedPackageRunner{installed: map[string]bool{"dnsmasq": true}}
+	s := New(runner, testLogger{})
+	actions, err := s.Plan(nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range actions {
+		if action.Kind == "delete" && action.Target == "dnsmasq" {
+			t.Fatalf("plan removes the DNS frontend: %+v", actions)
+		}
+	}
+	cfg.VPNServers[0].Enabled = false
+	if desiredComponentState(cfg)["dnsmasq"] {
+		t.Fatal("dnsmasq is kept without a selection or a frontend")
+	}
+}
+
 func TestExternalCurrentAndUnknownInstallerFailureBranches(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "tool")
 	rel := externalRelease{Version: "v1.0.0", Target: target, VersionArgs: []string{"version"}}

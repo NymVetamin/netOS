@@ -49,7 +49,7 @@ func TestOcservDNSFrontendAllProviders(t *testing.T) {
 				t.Fatalf("backend conflicts with frontend: %s", backend)
 			}
 			cfg.VPNServers[0].Enabled = false
-			if dnsFrontendNeeded(cfg) || NewDnsmasq(nil).Needed(cfg) {
+			if DNSFrontendNeeded(cfg) || NewDnsmasq(nil).Needed(cfg) {
 				t.Fatal("disabled VPN retained an unnecessary frontend")
 			}
 		})

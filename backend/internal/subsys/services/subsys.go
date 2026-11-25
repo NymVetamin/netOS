@@ -60,7 +60,7 @@ func NewManager(r system.Runner) *Manager {
 // выбора в панели.
 func (m *Manager) ensurePackages(ctx context.Context, cfg *config.Config) error {
 	need := map[string]bool{}
-	if dnsFrontendNeeded(cfg) {
+	if DNSFrontendNeeded(cfg) {
 		need["dnsmasq"] = true
 	}
 	if hasKernelDomainPolicies(cfg) {
@@ -208,7 +208,7 @@ func (m *Manager) preflightDNS(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("dnsproxy выбран резолвером, но не установлен")
 		}
 	}
-	if dnsFrontendNeeded(cfg) && cfg.DNS.Provider != "dnsmasq" {
+	if DNSFrontendNeeded(cfg) && cfg.DNS.Provider != "dnsmasq" {
 		return m.preflightDnsmasq(ctx, cfg)
 	}
 	return nil
@@ -359,7 +359,7 @@ func (s *DHCP) Apply(ctx context.Context, cfg *config.Config) (retErr error) {
 	if err := s.M.stopUnused(ctx, cfg); err != nil {
 		return err
 	}
-	if dnsFrontendNeeded(cfg) && cfg.DNS.Provider != "dnsmasq" {
+	if DNSFrontendNeeded(cfg) && cfg.DNS.Provider != "dnsmasq" {
 		// Move the selected resolver to its loopback backend port before
 		// dnsmasq claims port 53. This also removes the old dnsmasq DHCP role
 		// before starting ISC/Kea below when both providers change together.

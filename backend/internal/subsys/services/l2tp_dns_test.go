@@ -16,7 +16,7 @@ func TestL2TPDynamicDNSListener(t *testing.T) {
 	}
 	for _, provider := range []string{"unbound", "dnsproxy"} {
 		c.DNS.Provider = provider
-		if !dnsFrontendNeeded(c) {
+		if !DNSFrontendNeeded(c) {
 			t.Fatalf("missing dynamic frontend for %s", provider)
 		}
 		for _, n := range dnsListenNetworks(c) {

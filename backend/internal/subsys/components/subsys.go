@@ -23,6 +23,7 @@ import (
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
+	"github.com/netos-router/netos/internal/subsys/services"
 	"github.com/netos-router/netos/internal/system"
 )
 
@@ -317,6 +318,12 @@ func desiredComponentState(cfg *config.Config) map[string]bool {
 			desired["ipset"] = true
 			break
 		}
+	}
+	// Внутренний DNS для VPN-клиентов и доменных политик — это dnsmasq, даже
+	// когда он не выбран в «Компонентах». Иначе каждое применение удаляло бы
+	// пакет, а подсистема DNS ставила его обратно.
+	if services.DNSFrontendNeeded(cfg) {
+		desired["dnsmasq"] = true
 	}
 	return desired
 }

@@ -26,7 +26,7 @@ type dnsTransition struct {
 }
 
 func snapshotDNSDomainTransition(ctx context.Context, m *Manager, cfg *config.Config) (*dnsTransition, error) {
-	if !dnsFrontendNeeded(cfg) || cfg.DNS.Provider == "dnsmasq" {
+	if !DNSFrontendNeeded(cfg) || cfg.DNS.Provider == "dnsmasq" {
 		return nil, nil
 	}
 	backendConf, backendUnit := unboundConfPath, unboundUnit

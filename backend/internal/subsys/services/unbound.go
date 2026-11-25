@@ -64,7 +64,7 @@ func (u *Unbound) Render(cfg *config.Config) string {
 	w("    use-syslog: no")
 	w("    logfile: \"\"")
 
-	policyBackend := dnsFrontendNeeded(cfg) && cfg.DNS.Provider == "unbound"
+	policyBackend := DNSFrontendNeeded(cfg) && cfg.DNS.Provider == "unbound"
 	port := cfg.DNS.Port
 	if policyBackend {
 		port = policyDNSBackendPort
