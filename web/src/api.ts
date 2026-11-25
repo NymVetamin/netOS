@@ -419,11 +419,8 @@ export const api = {
     return res.artifacts || [];
   },
 
-  async render(kind: string): Promise<string> {
-    const res = await fetch(`/api/render/${kind}`, { credentials: "same-origin" });
-    if (!res.ok) throw new ApiError(res.status, `Ошибка ${res.status}`);
-    return res.text();
-  },
+  // Артефакт приходит как text/plain, и request возвращает его строкой.
+  render: (kind: string) => request<string>("GET", `/api/render/${encodeURIComponent(kind)}`),
 };
 
 // --- форматирование ---

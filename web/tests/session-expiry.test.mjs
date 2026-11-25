@@ -74,3 +74,22 @@ test("late 401 from an older request cannot log out a new session", async () => 
   assert.equal(ended, 0);
   assert.equal(api.hasToken(), true);
 });
+
+test("rendered artifacts share session expiry, server errors and escaping", async () => {
+  const paths = [];
+  const api = client(async (path) => {
+    paths.push(path);
+    if (path === "/api/login") return response(200, { csrf_token: "old" });
+    if (path === "/api/render/dns%2Fx") return response(404, { error: "неизвестный артефакт" });
+    if (path === "/api/render/sysctl") return new Response("net.ipv4.ip_forward = 1\n", { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
+    return response(401, { error: "requires login" });
+  });
+  await api.login("admin", "fixture");
+  assert.equal(await api.render("sysctl"), "net.ipv4.ip_forward = 1\n");
+  await assert.rejects(api.render("dns/x"), { status: 404, message: "неизвестный артефакт" });
+  let ended = 0;
+  api.onUnauthorized(() => ended++);
+  await assert.rejects(api.render("nftables"), { status: 401 });
+  assert.equal(ended, 1);
+  assert.equal(paths.includes("/api/render/dns%2Fx"), true);
+});
