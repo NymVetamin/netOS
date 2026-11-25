@@ -201,21 +201,11 @@ export type LogPage = { epoch: string; latest: number; reset: boolean; events: L
 
 export const api = {
   connections: (query: string, signal?: AbortSignal) => request<{rows:ConnectionRow[];total:number;scanned:number;unparsed:number;page:number;updated:string}>("GET", `/api/diagnostics/connections?${query}`, undefined, undefined, signal),
-  async diagnosticCapture(id: string): Promise<Blob> {
-    const response = await fetch(`/api/diagnostics/jobs/${encodeURIComponent(id)}/capture`, {credentials:"same-origin", cache:"no-store"});
-    if (response.status === 401) invalidateSession(csrfToken);
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      throw new ApiError(response.status, body?.error || `Ошибка ${response.status}`);
-    }
-    return response.blob();
-  },
   diagnosticCurrent: (kind: string) => request<DiagnosticJob | null>("GET", `/api/diagnostics/current?kind=${encodeURIComponent(kind)}`),
   diagnosticTools: () => request<{available: Record<string, boolean>; interfaces: {name: string; addresses: string[]}[]}>("GET", "/api/diagnostics/tools"),
   diagnosticStart: (input: Record<string, unknown>) => request<{id: string}>("POST", "/api/diagnostics/jobs", input),
   diagnosticJob: (id: string, signal?: AbortSignal, page = 0) => request<DiagnosticJob>("GET", `/api/diagnostics/jobs/${encodeURIComponent(id)}?page=${page}`, undefined, undefined, signal),
   diagnosticStop: (id: string) => request<{ok: boolean}>("DELETE", `/api/diagnostics/jobs/${encodeURIComponent(id)}`),
-  ocCertificate: (id: string, peer: string) => request<any>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate`),
   ocCertificates: (id: string, signal?: AbortSignal) => request<Record<string, any>>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/certificates`, undefined, undefined, signal),
   ocCertificatePassword: (id: string, peer: string) => request<{password: string}>("GET", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate/password`),
   ocCertificateAction: (id: string, peer: string, action: "revoke" | "reissue") => request<any>("POST", `/api/vpn-servers/${encodeURIComponent(id)}/peers/${encodeURIComponent(peer)}/certificate/${action}`, {}),
@@ -269,8 +259,6 @@ export const api = {
       "POST", "/api/wireguard/keypair", privateKey ? { private_key: privateKey } : undefined,
     ),
 
-  realityClientProfile: (serverID: string, peerID: string) =>
-    request<{ link: string }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/reality-profile`),
   xrayClientProfile: (serverID: string, peerID: string) =>
     request<{ link: string; config: Record<string, unknown> }>("GET", `/api/vpn-servers/${encodeURIComponent(serverID)}/peers/${encodeURIComponent(peerID)}/xray-profile`),
   vpnClientProfile: (serverID: string, peerID: string) =>
@@ -295,7 +283,6 @@ export const api = {
   portModes: (name: string) => request<any>("GET", `/api/interfaces/${encodeURIComponent(name)}/modes`),
   logs: (topic: string, after: number, epoch: string, signal?: AbortSignal) => request<LogPage>("GET", `/api/logs?topic=${encodeURIComponent(topic)}&after=${after}&epoch=${encodeURIComponent(epoch)}`, undefined, undefined, signal),
   firewallPreview: (config: any) => request<any>("POST", "/api/firewall/preview", config),
-  firewallLive: () => request<any>("GET", "/api/firewall/live"),
 
   async getConfig() {
     const res = await request<ConfigResponse>("GET", "/api/config");
@@ -371,13 +358,9 @@ export const api = {
 	storageDevices: (signal?: AbortSignal) => request<{ devices: any[] }>("GET", "/api/storage/devices", undefined, undefined, signal),
   status: (overview = false, signal?: AbortSignal) => request<any>("GET", overview ? "/api/status?overview=1" : "/api/status", undefined, undefined, signal),
   ddnsStatus: (signal?: AbortSignal) => request<any>("GET", "/api/ddns/status", undefined, undefined, signal),
-  trafficWindow: (query: string, interfaces: string[], signal?: AbortSignal) => request<any>("GET", `/api/statistics?${query}&interfaces=${encodeURIComponent(interfaces.join(","))}`, undefined, undefined, signal),
-  clientTrafficLive: () => request<any>("GET", "/api/statistics/clients/live"),
   realtime: (after: number, signal?: AbortSignal) => request<any>("GET", `/api/statistics/realtime?after=${after}`,undefined,undefined,signal),
   secondHistory: (query:string, signal?:AbortSignal) => request<any>("GET", `/api/statistics/realtime/history?${query}`,undefined,undefined,signal),
   clientStatistics: (query: string, clients: string[], details: boolean, signal?: AbortSignal) => request<any>("GET", `/api/statistics/clients?${query}&clients=${encodeURIComponent(clients.join(","))}&details=${details?1:0}&points=0`, undefined, undefined, signal),
-  statistics: (hours = 24, interfaces: string[] = []) =>
-    request<any>("GET", `/api/statistics?hours=${hours}&interfaces=${encodeURIComponent(interfaces.join(","))}`),
   backups: (signal?: AbortSignal) => request<{ backups: any[] }>("GET", "/api/backups", undefined, undefined, signal),
   createBackup: () => request<{ scheduled: boolean }>("POST", "/api/backups"),
   deleteBackup: (name: string) => request<{ ok: boolean }>("DELETE", `/api/backups/${encodeURIComponent(name)}`),
@@ -400,8 +383,6 @@ export const api = {
   arp: () => request<{ arp: any[] }>("GET", "/api/arp"),
   routes: (table = "") =>
     request<{ routes: string; rules: string; parsed: RouteEntry[] }>("GET", `/api/routes${table ? `?table=${encodeURIComponent(table)}` : ""}`),
-  diagnosticProbe: (kind: "ping" | "traceroute", host: string) =>
-    request<{ output: string; success: boolean; error?: string }>("POST", "/api/diagnostics/probe", { kind, host }),
   blocklistStatus: () => request<{ sources: Record<string, { source: string; error?: string }> }>("GET", "/api/dns/blocklists/status"),
   revisions: (limit = 50) => request<{ revisions: any[] }>("GET", `/api/revisions?limit=${limit}`),
   async restoreRevision(id: number) {
