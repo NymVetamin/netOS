@@ -195,7 +195,9 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 			}
 			for _, line := range strings.Split(out, "\n") {
 				line = strings.TrimSpace(line)
-				if line == "" {
+				// Строки nexthop продолжают многопутевой маршрут: его целиком
+				// снимает del по первой строке, а сами они для del не годятся.
+				if line == "" || strings.HasPrefix(line, "nexthop ") {
 					continue
 				}
 				key := routeLineKey(line).configuredKey(wanted[family])
@@ -206,7 +208,7 @@ func (s *Subsystem) applyRoutes(ctx context.Context, cfg *config.Config) error {
 					}
 					continue
 				}
-				args := append([]string{family, "route", "del"}, strings.Fields(line)...)
+				args := append([]string{family, "route", "del"}, deletableRouteFields(line)...)
 				if _, err := s.Runner.Run(ctx, "ip", args...); err != nil {
 					return fmt.Errorf("удаление старого маршрута %q: %w", line, err)
 				}
@@ -323,6 +325,21 @@ func staticRouteKey(r config.StaticRoute) routeIdentity {
 		r.Gateway = ""
 	}
 	return routeKey(r.Table, r.Destination, r.Type, r.Gateway, r.Interface, metric)
+}
+
+// deletableRouteFields убирает флаги состояния, которые `ip route show`
+// печатает (маршрут через порт без линка), а `ip route del` отвергает:
+// «"linkdown" is garbage». Без этого удаление такого маршрута откатывало
+// всё применение, пока линк не вернётся.
+func deletableRouteFields(line string) []string {
+	fields := strings.Fields(line)
+	result := fields[:0]
+	for _, field := range fields {
+		if field != "linkdown" && field != "dead" {
+			result = append(result, field)
+		}
+	}
+	return result
 }
 
 func routeLineKey(line string) routeIdentity {

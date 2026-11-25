@@ -226,6 +226,26 @@ func TestApplyRoutesDeletesUnconfiguredStaticRoutes(t *testing.T) {
 	}
 }
 
+// Вывод снят с iproute2 6.15: маршруты через порт без линка и многопутевой.
+func TestApplyRoutesDeletesLinkdownAndMultipathRoutes(t *testing.T) {
+	runner := &recordingRunner{responses: map[string]runnerResponse{
+		"ip -4 route show table all proto static": {out: "10.1.0.0/24 via 192.0.2.2 dev va linkdown \n10.2.0.0/24 linkdown \n\tnexthop via 192.0.2.2 dev va weight 1 linkdown \n\tnexthop via 192.0.2.3 dev va weight 1 dead linkdown \n"},
+	}}
+	if err := New(runner).applyRoutes(context.Background(), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	var deletes []string
+	for _, command := range runner.commands {
+		if line := commandKey(command.name, command.args...); strings.Contains(line, " route del ") {
+			deletes = append(deletes, line)
+		}
+	}
+	want := []string{"ip -4 route del 10.1.0.0/24 via 192.0.2.2 dev va", "ip -4 route del 10.2.0.0/24"}
+	if !reflect.DeepEqual(deletes, want) {
+		t.Fatalf("deletes = %q, want %q", deletes, want)
+	}
+}
+
 func TestApplyRoutesPreservesConfiguredStaticRoute(t *testing.T) {
 	runner := &recordingRunner{responses: map[string]runnerResponse{
 		"ip -4 route show table all proto static": {out: "203.0.113.0/24 via 192.0.2.1 dev eth0 proto static\n"},
