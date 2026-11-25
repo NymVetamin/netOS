@@ -580,7 +580,7 @@ func (c *Controller) defaultRoute(ctx context.Context, iface string) (string, er
 		if strings.TrimSpace(line) != "" {
 			// Строку повторяют в del/replace и таблицах аплинка, а linkdown
 			// (аплинк без кабеля) iproute2 на входе отвергает.
-			line = strings.Join(connectedRouteFields(line), " ")
+			line = strings.Join(system.ReplayableRouteFields(line), " ")
 			// При фильтре `route show ... dev X` iproute2 опускает `dev X`
 			// из вывода. Для последующего восстановления возвращаем его явно.
 			if !strings.Contains(" "+line+" ", " dev ") {
@@ -597,7 +597,7 @@ func (c *Controller) restore(ctx context.Context, line string) error {
 		return nil
 	}
 	// Сохранённая прежней версией строка может нести linkdown.
-	_, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "replace"}, connectedRouteFields(line)...)...)
+	_, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "replace"}, system.ReplayableRouteFields(line)...)...)
 	return err
 }
 
@@ -762,7 +762,7 @@ func (c *Controller) restoreBalance(ctx context.Context, kernel []balanceKernelS
 			continue
 		}
 		for _, line := range strings.Split(snapshot.routes, "\n") {
-			fields := connectedRouteFields(line)
+			fields := system.ReplayableRouteFields(line)
 			if len(fields) == 0 {
 				continue
 			}
@@ -1064,7 +1064,7 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 		return fmt.Errorf("связные маршруты таблицы аплинка %s: %w", wan.Name, err)
 	}
 	for _, line := range strings.Split(connected, "\n") {
-		fields := connectedRouteFields(line)
+		fields := system.ReplayableRouteFields(line)
 		if len(fields) == 0 || fields[0] == "default" || containsField(fields, "table") {
 			continue
 		}
@@ -1153,22 +1153,6 @@ func (c *Controller) ensureBalanceTable(ctx context.Context, wan config.WAN, rou
 		}
 	}
 	return nil
-}
-
-func connectedRouteFields(route string) []string {
-	// `ip route show` reports link state as the informational `linkdown` flag,
-	// but iproute2 does not accept that flag when the same route is replayed.
-	// A bridge can legitimately be down for a moment while an apply transaction
-	// is still bringing its members up, so keep the route and drop only the
-	// non-replayable state marker.
-	fields := strings.Fields(route)
-	result := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if field != "linkdown" {
-			result = append(result, field)
-		}
-	}
-	return result
 }
 
 func (c *Controller) deleteRuleGroup(ctx context.Context, rules, priority string) error {
