@@ -33,7 +33,7 @@ func (c *Config) validateSocks(r *ValidationResult) {
 	if s.Port < 1024 || s.Port > 65535 {
 		r.errf("socks.port", "порт SOCKS5: от 1024 до 65535")
 	}
-	if s.Port == 5354 || s.Port == 5356 {
+	if internalDNSPort(s.Port) {
 		r.errf("socks.port", "порт зарезервирован внутренними DNS-службами")
 	}
 	if s.AllowWAN && !s.Auth {
