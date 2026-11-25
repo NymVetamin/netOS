@@ -150,6 +150,36 @@ func TestFailoverSuppressesAndRestoresRouteAtThresholds(t *testing.T) {
 	}
 }
 
+// Аплинк без кабеля: ядро оставляет маршрут с флагом linkdown, а iproute2
+// отвергает его в del и replace.
+func TestFailoverSuppressesAndRestoresLinkdownRoute(t *testing.T) {
+	r := &fakeRunner{route: "default via 192.0.2.1 proto dhcp metric 100 linkdown \n"}
+	c := New(r, t.TempDir(), testLogger{})
+	c.suppressed = map[string]string{}
+	w := config.WAN{ID: "primary", Name: "Primary", Probe: config.Probe{FailThreshold: 1, RiseThreshold: 1}}
+	state := &linkState{}
+	if !c.record(context.Background(), w, "wan0", state, false, true) || !state.Down {
+		t.Fatalf("linkdown route was not suppressed: %v", r.commands)
+	}
+	// Строка, сохранённая прежней версией, восстанавливается без флага.
+	c.suppressed[w.ID] = "default via 192.0.2.1 dev wan0 proto dhcp metric 100 linkdown"
+	if err := c.restore(context.Background(), c.suppressed[w.ID]); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(r.commands, "\n")
+	for _, want := range []string{
+		"ip -4 route del default via 192.0.2.1 proto dhcp metric 100 dev wan0",
+		"ip -4 route replace default via 192.0.2.1 dev wan0 proto dhcp metric 100",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "linkdown") {
+		t.Fatalf("linkdown replayed to ip:\n%s", got)
+	}
+}
+
 func TestFailoverRestoresRouteLostByCarrierTransition(t *testing.T) {
 	r := &fakeRunner{}
 	c := New(r, t.TempDir(), testLogger{})

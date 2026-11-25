@@ -578,7 +578,9 @@ func (c *Controller) defaultRoute(ctx context.Context, iface string) (string, er
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if strings.TrimSpace(line) != "" {
-			line = strings.TrimSpace(line)
+			// Строку повторяют в del/replace и таблицах аплинка, а linkdown
+			// (аплинк без кабеля) iproute2 на входе отвергает.
+			line = strings.Join(connectedRouteFields(line), " ")
 			// При фильтре `route show ... dev X` iproute2 опускает `dev X`
 			// из вывода. Для последующего восстановления возвращаем его явно.
 			if !strings.Contains(" "+line+" ", " dev ") {
@@ -594,7 +596,8 @@ func (c *Controller) restore(ctx context.Context, line string) error {
 	if line == "" {
 		return nil
 	}
-	_, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "replace"}, strings.Fields(line)...)...)
+	// Сохранённая прежней версией строка может нести linkdown.
+	_, err := c.Runner.Run(ctx, "ip", append([]string{"-4", "route", "replace"}, connectedRouteFields(line)...)...)
 	return err
 }
 
