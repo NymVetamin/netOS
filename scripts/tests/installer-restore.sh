@@ -239,3 +239,40 @@ for label in cli binary unit completion completion-lazy aptconf state-dir conf-d
 done
 if rollback > "$root/upgrade.log" 2>&1; then exit 1; fi
 [[ ! -e "$call_log" ]]
+
+# The baseline capture runs before netosd ever starts. If it fails there is
+# nothing to undo in the live system, and uninstall without a baseline would
+# reset the machine's firewall to an empty ACCEPT: rollback must stay file-only.
+# Once the capture succeeded, a later failure must still undo the first apply.
+ok() { :; }
+die() { exit 1; }
+export capture call_log="$root/capture.called"
+for UPGRADE in 0 1; do
+for capture in fail ok; do
+    # The file rollback of the previous pass removed the new binary.
+    mkdir -p "$(dirname "$BIN_PATH")"
+    cat > "$BIN_PATH" <<'SCRIPT'
+#!/bin/bash
+if [[ "$1" == -capture-system-baseline ]]; then [[ "$capture" == ok ]]; exit; fi
+echo "$*" > "$call_log"
+SCRIPT
+    chmod +x "$BIN_PATH"
+    mkdir -p "$INSTALL_TXN" "$BASELINE_DIR"
+    for label in cli binary unit completion completion-lazy aptconf state-dir conf-dir log-dir baseline-dir; do
+        touch "$INSTALL_TXN/$label.absent"
+    done
+    touch "$BASELINE_DIR/.capture-required"
+    (
+        FRESH_BASELINE=0 ROLLBACK_ARMED=1
+        trap rollback_and_cleanup EXIT
+        source <(sed -n '/^if \[ "\$UPGRADE" = "0" \] || \[ -f "\$BASELINE_DIR\/.capture-required" \]; then$/,/^fi$/p' "$installer")
+        exit 1 # a step after the capture fails
+    ) > "$root/capture-$capture.log" 2>&1 || true
+    if [[ $capture == fail ]]; then
+        [[ ! -e "$call_log" ]] || { echo "UPGRADE=$UPGRADE: uninstall ran after a failed baseline capture" >&2; exit 1; }
+    else
+        [[ $(cat "$call_log") == 'uninstall --keep-data --yes' ]] || { echo "UPGRADE=$UPGRADE: first apply was not undone" >&2; exit 1; }
+    fi
+    rm -rf -- "$INSTALL_TXN" "$BASELINE_DIR" "$call_log"
+done
+done
