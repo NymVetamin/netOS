@@ -160,3 +160,19 @@ func TestParsedRoutesPreservesTablesFromAllTablesDump(t *testing.T) {
 		t.Fatalf("commands=%v", runner.calls)
 	}
 }
+
+// Вывод ip без -o разносит пути многопутевого маршрута по строкам nexthop;
+// прежде каждая становилась ложным маршрутом с назначением «nexthop».
+func TestParsedRoutesFoldsMultipathNexthops(t *testing.T) {
+	runner := &observationRunner{output: "default proto bgp metric 20 \n\tnexthop via 192.0.2.1 dev eth0 weight 1 \n\tnexthop via 198.51.100.1 dev eth1 weight 1 \n10.0.0.0/8 dev eth2 scope link\n"}
+	routes, err := NewCollector(runner, "").ParsedRoutes(context.Background(), "main")
+	if err != nil || len(routes) != 2 {
+		t.Fatalf("routes=%+v err=%v", routes, err)
+	}
+	if r := routes[0]; r.Destination != "default" || r.Gateway != "192.0.2.1" || r.Interface != "eth0" || r.Metric != 20 || r.Origin != "bgp" || strings.Count(r.Raw, "nexthop") != 2 {
+		t.Fatalf("multipath route=%+v", r)
+	}
+	if routes[1].Destination != "10.0.0.0/8" || routes[1].Interface != "eth2" {
+		t.Fatalf("next route=%+v", routes[1])
+	}
+}

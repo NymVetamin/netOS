@@ -512,6 +512,23 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 		if len(fields) == 0 {
 			continue
 		}
+		// Строки nexthop продолжают многопутевой маршрут, а не задают новый:
+		// первый путь становится шлюзом маршрута, все остаются в Raw.
+		if fields[0] == "nexthop" {
+			if len(out) > 0 {
+				prev := &out[len(out)-1]
+				prev.Raw += "\n" + line
+				for i := 1; i+1 < len(fields); i++ {
+					if fields[i] == "via" && prev.Gateway == "" {
+						prev.Gateway = fields[i+1]
+					}
+					if fields[i] == "dev" && prev.Interface == "" {
+						prev.Interface = fields[i+1]
+					}
+				}
+			}
+			continue
+		}
 		destinationIndex := 0
 		routeType := "unicast"
 		switch fields[0] {
