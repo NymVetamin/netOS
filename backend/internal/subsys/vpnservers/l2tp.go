@@ -124,21 +124,60 @@ func l2tpChapBlock(server config.VPNServer) string {
 	return out.String()
 }
 
+// removeL2TPChapBlocks вырезает блоки netOS: целые строки «# BEGIN
+// netos-l2tp-srv<N>» до «# END» с тем же именем; only ограничивает одним
+// именем. Остальное копируется побайтно — файл общий с другими потребителями
+// ppp. «# END» может стоять последней строкой без перевода после ручной правки.
+// Один проход по файлу; блок без END — ошибка, чтобы не срезать чужой хвост.
+func removeL2TPChapBlocks(text, only string) (string, error) {
+	var out strings.Builder
+	for pos := 0; pos < len(text); {
+		line, next := chapLine(text, pos)
+		name, ok := strings.CutPrefix(line, "# BEGIN ")
+		if !ok || !managedL2TPChapName(name) || (only != "" && name != only) {
+			out.WriteString(text[pos:next])
+			pos = next
+			continue
+		}
+		for pos = next; ; pos = next {
+			if pos >= len(text) {
+				return "", fmt.Errorf("повреждён управляемый блок %s: нет строки «# END %s»", name, name)
+			}
+			line, next = chapLine(text, pos)
+			if line == "# END "+name {
+				pos = next
+				break
+			}
+		}
+	}
+	return out.String(), nil
+}
+
+// chapLine возвращает строку, начинающуюся с pos, без перевода и начало следующей.
+func chapLine(text string, pos int) (string, int) {
+	if end := strings.IndexByte(text[pos:], '\n'); end >= 0 {
+		return text[pos : pos+end], pos + end + 1
+	}
+	return text[pos:], len(text)
+}
+
+func managedL2TPChapName(name string) bool {
+	index, ok := strings.CutPrefix(name, "netos-l2tp-srv")
+	if !ok || index == "" {
+		return false
+	}
+	for _, r := range index {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func updateL2TPChap(data []byte, server config.VPNServer, add bool) ([]byte, error) {
-	name := l2tpAuthName(server)
-	begin := "# BEGIN " + name + "\n"
-	end := "# END " + name + "\n"
-	text := string(data)
-	if start := strings.Index(text, begin); start >= 0 {
-		// После ручной правки «# END» может остаться последней строкой без перевода.
-		if !strings.HasSuffix(text, "\n") {
-			text += "\n"
-		}
-		finish := strings.Index(text[start:], end)
-		if finish < 0 {
-			return nil, fmt.Errorf("повреждён управляемый блок %s в chap-secrets", name)
-		}
-		text = text[:start] + text[start+finish+len(end):]
+	text, err := removeL2TPChapBlocks(string(data), l2tpAuthName(server))
+	if err != nil {
+		return nil, fmt.Errorf("chap-secrets: %w", err)
 	}
 	if add {
 		if text != "" && !strings.HasSuffix(text, "\n") {
@@ -152,7 +191,6 @@ func updateL2TPChap(data []byte, server config.VPNServer, add bool) ([]byte, err
 // RemoveL2TPChapSecrets убирает при удалении netOS все блоки серверов L2TP
 // из chap-secrets: в них пароли открытым текстом. Строки вне блоков не
 // трогаются; блок без END — ошибка, чтобы не срезать чужой хвост файла.
-// Блоков не больше числа серверов, файл мал: повторный поиск не дорог.
 func RemoveL2TPChapSecrets(path string) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -161,23 +199,9 @@ func RemoveL2TPChapSecrets(path string) error {
 	if err != nil {
 		return err
 	}
-	const marker = "# BEGIN netos-l2tp-srv"
-	text := string(data)
-	for {
-		start := strings.Index(text, marker)
-		if start < 0 {
-			break
-		}
-		if !strings.HasSuffix(text, "\n") { // «# END» последней строкой без перевода
-			text += "\n"
-		}
-		line, _, _ := strings.Cut(text[start:], "\n")
-		end := "# END " + strings.TrimPrefix(line, "# BEGIN ") + "\n"
-		finish := strings.Index(text[start:], end)
-		if finish < 0 {
-			return fmt.Errorf("повреждён управляемый блок %q в %s", line, path)
-		}
-		text = text[:start] + text[start+finish+len(end):]
+	text, err := removeL2TPChapBlocks(string(data), "")
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	if text == string(data) {
 		return nil
