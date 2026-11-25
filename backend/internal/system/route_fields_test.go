@@ -16,3 +16,13 @@ func TestReplayableRouteFieldsDropsEveryPrintedStateFlag(t *testing.T) {
 		t.Fatalf("empty line produced %q", fields)
 	}
 }
+
+// Имя интерфейса задаёт администратор, и мост может называться trap или dead:
+// значение после dev (а также имена таблиц и протоколов) — не флаг.
+func TestReplayableRouteFieldsKeepsNamesEqualToFlags(t *testing.T) {
+	line := "192.0.2.0/24 dev trap table dead proto notify scope link linkdown"
+	got := strings.Join(ReplayableRouteFields(line), " ")
+	if want := "192.0.2.0/24 dev trap table dead proto notify scope link"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

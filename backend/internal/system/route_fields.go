@@ -16,10 +16,14 @@ var routeStateFlags = map[string]bool{
 func ReplayableRouteFields(line string) []string {
 	fields := strings.Fields(line)
 	result := fields[:0]
+	prev := ""
 	for _, field := range fields {
-		if !routeStateFlags[field] {
+		// Имена после dev, table и proto задаёт администратор: мост trap — не флаг.
+		named := prev == "dev" || prev == "table" || prev == "proto"
+		if named || !routeStateFlags[field] {
 			result = append(result, field)
 		}
+		prev = field
 	}
 	return result
 }
