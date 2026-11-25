@@ -176,3 +176,16 @@ func TestParsedRoutesFoldsMultipathNexthops(t *testing.T) {
 		t.Fatalf("next route=%+v", routes[1])
 	}
 }
+
+// Шлюз и интерфейс — из одного пути: первый путь через ppp0 без шлюза не
+// должен получить шлюз второго пути, которого у него нет.
+func TestParsedRoutesTakesGatewayAndInterfaceFromOneNexthop(t *testing.T) {
+	runner := &observationRunner{output: "default proto static metric 5 \n\tnexthop dev ppp0 weight 1 \n\tnexthop via 192.0.2.1 dev eth1 weight 1 \n"}
+	routes, err := NewCollector(runner, "").ParsedRoutes(context.Background(), "main")
+	if err != nil || len(routes) != 1 {
+		t.Fatalf("routes=%+v err=%v", routes, err)
+	}
+	if r := routes[0]; r.Gateway != "" || r.Interface != "ppp0" {
+		t.Fatalf("gateway %q via %q: pair from different paths", r.Gateway, r.Interface)
+	}
+}

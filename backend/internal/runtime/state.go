@@ -501,6 +501,7 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 	}
 
 	var out []Route
+	nexthops := 0 // путей, уже свёрнутых в последний маршрут
 	scanner := bufio.NewScanner(strings.NewReader(raw))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -513,12 +514,13 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 			continue
 		}
 		// Строки nexthop продолжают многопутевой маршрут, а не задают новый:
-		// первый путь становится шлюзом маршрута, все остаются в Raw.
+		// первый путь даёт маршруту шлюз и интерфейс — оба из одной строки,
+		// иначе получилась бы пара из разных путей; все остаются в Raw.
 		if fields[0] == "nexthop" {
 			if len(out) > 0 {
 				prev := &out[len(out)-1]
 				prev.Raw += "\n" + line
-				for i := 1; i+1 < len(fields); i++ {
+				for i := 1; nexthops == 0 && i+1 < len(fields); i++ {
 					if fields[i] == "via" && prev.Gateway == "" {
 						prev.Gateway = fields[i+1]
 					}
@@ -526,9 +528,11 @@ func (c *Collector) ParsedRoutes(ctx context.Context, table string) ([]Route, er
 						prev.Interface = fields[i+1]
 					}
 				}
+				nexthops++
 			}
 			continue
 		}
+		nexthops = 0
 		destinationIndex := 0
 		routeType := "unicast"
 		switch fields[0] {
