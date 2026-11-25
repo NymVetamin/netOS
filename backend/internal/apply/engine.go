@@ -262,7 +262,6 @@ func (e *Engine) ClearRollback() {
 	e.lastRollback = nil
 }
 
-// Current возвращает применённую сейчас конфигурацию.
 // Maintain serializes background managed-file updates with Apply and rollback.
 // The callback must not call an operation that acquires opMu again.
 func (e *Engine) Maintain(ctx context.Context, fn func(*config.Config) error) error {
@@ -274,6 +273,7 @@ func (e *Engine) Maintain(ctx context.Context, fn func(*config.Config) error) er
 	return fn(e.Current())
 }
 
+// Current возвращает применённую сейчас конфигурацию.
 func (e *Engine) Current() *config.Config {
 	e.mu.Lock()
 	defer e.mu.Unlock()
