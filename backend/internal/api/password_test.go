@@ -168,8 +168,8 @@ func TestPanelPasswordLimitsAreUniform(t *testing.T) {
 	s, cookie, csrf := newAuthedServer(t)
 	initializeAPIEngine(t, s)
 	h := s.Routes()
-	want := fmt.Sprintf("от %d до %d байт", MinPasswordBytes, maxPasswordBytes)
-	for _, password := range []string{strings.Repeat("a", MinPasswordBytes-1), strings.Repeat("a", maxPasswordBytes+1)} {
+	want := fmt.Sprintf("от %d до %d байт", MinPasswordBytes, MaxPasswordBytes)
+	for _, password := range []string{strings.Repeat("a", MinPasswordBytes-1), strings.Repeat("a", MaxPasswordBytes+1)} {
 		change, _ := json.Marshal(map[string]string{"current": "initial-password-123", "new": password})
 		if w := serveAuthed(h, http.MethodPost, "/api/password", change, cookie, csrf); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("own password of %d bytes: %d %s", len(password), w.Code, w.Body.String())

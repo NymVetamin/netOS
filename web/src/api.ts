@@ -423,6 +423,10 @@ export const api = {
   render: (kind: string) => request<string>("GET", `/api/render/${encodeURIComponent(kind)}`),
 };
 
+// Сервер меряет пароль в байтах UTF-8 (api.MinPasswordBytes): русская буква — два байта.
+export const MIN_PASSWORD_BYTES = 12;
+export const passwordBytes = (password: string) => new TextEncoder().encode(password).length;
+
 // --- форматирование ---
 
 export function formatBytes(n: number): string {

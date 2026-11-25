@@ -24,7 +24,7 @@ func TestLoginFailuresExpire(t *testing.T) {
 
 func TestLoginRejectsOversizedPasswordBeforeHashing(t *testing.T) {
 	s, _, _ := newAuthedServer(t)
-	body := `{"username":"admin","password":"` + strings.Repeat("x", maxPasswordBytes+1) + `"}`
+	body := `{"username":"admin","password":"` + strings.Repeat("x", MaxPasswordBytes+1) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	s.handleLogin(w, req)
@@ -87,7 +87,7 @@ func TestLoginBodyIsBounded(t *testing.T) {
 	s, _, _ := newAuthedServer(t)
 	// Самый длинный допустимый запрос: каждый байт логина и пароля
 	// экранирован как \u00XX.
-	longest := `{"username":"` + strings.Repeat(`\u0001`, 64) + `","password":"` + strings.Repeat(`\u0001`, maxPasswordBytes) + `"}`
+	longest := `{"username":"` + strings.Repeat(`\u0001`, 64) + `","password":"` + strings.Repeat(`\u0001`, MaxPasswordBytes) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(longest))
 	w := httptest.NewRecorder()
 	s.handleLogin(w, req)

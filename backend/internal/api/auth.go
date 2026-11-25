@@ -19,7 +19,7 @@ const (
 	argonThreads               = 2
 	argonKeyLen                = 32
 	saltLen                    = 16
-	maxPasswordBytes           = 1024
+	MaxPasswordBytes           = 1024
 	maxArgonMemory             = 128 * 1024
 	maxGeneratedPasswordLength = 4096
 
@@ -49,7 +49,7 @@ func HashPassword(password string) (string, error) {
 
 // VerifyPassword сравнивает пароль с сохранённым хэшем за постоянное время.
 func VerifyPassword(password, encoded string) bool {
-	if len(password) > maxPasswordBytes {
+	if len(password) > MaxPasswordBytes {
 		return false
 	}
 	parts := strings.Split(encoded, "$")

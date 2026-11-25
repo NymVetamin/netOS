@@ -64,8 +64,8 @@ func (s *Server) handlePanelUsers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if req.Password != "" && (len(req.Password) < MinPasswordBytes || len(req.Password) > maxPasswordBytes) {
-		writeError(w, 400, "пароль должен содержать от %d до %d байт", MinPasswordBytes, maxPasswordBytes)
+	if req.Password != "" && (len(req.Password) < MinPasswordBytes || len(req.Password) > MaxPasswordBytes) {
+		writeError(w, 400, "пароль должен содержать от %d до %d байт", MinPasswordBytes, MaxPasswordBytes)
 		return
 	}
 	var hash string

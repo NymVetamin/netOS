@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, MIN_PASSWORD_BYTES, passwordBytes } from "./api";
 import { PANEL_SECTIONS } from "./permissions";
 import { Badge, Card, Field, Notice } from "./ui";
 import { confirmAction } from "./confirm";
@@ -61,7 +61,7 @@ export function PanelUsers() {
     {form && <fieldset disabled={busy} className="panel-user-form">
       <div className="form-grid">
         <Field label="Логин"><input aria-label="Логин пользователя панели" autoComplete="off" disabled={!creating} value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} /></Field>
-        <Field label={creating ? "Пароль" : "Новый пароль"} hint={creating ? "Не менее 12 символов" : "Оставьте пустым, чтобы сохранить текущий пароль"}><input aria-label="Пароль пользователя панели" type="password" autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></Field>
+        <Field label={creating ? "Пароль" : "Новый пароль"} hint={creating ? `Не короче ${MIN_PASSWORD_BYTES} байт: латинская буква или цифра — 1 байт, русская буква — 2` : "Оставьте пустым, чтобы сохранить текущий пароль"}><input aria-label="Пароль пользователя панели" type="password" autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></Field>
         <Field label="Права"><select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="limited">По разделам</option><option value="admin">Администратор</option></select></Field>
         <label><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} /> Пользователь включён</label>
       </div>
@@ -78,7 +78,7 @@ export function PanelUsers() {
         })}</tbody>
       </table>}
       <p className="hint">Изменение прав или пароля завершит все сессии этого пользователя. Управление пользователями, резервные копии и обновление доступны только администратору.</p>
-      <div className="row-actions"><button className="btn" onClick={() => setForm(null)}>Отмена</button><button className="btn primary" disabled={!form.username || (creating && form.password.length < 12)} onClick={() => void save()}>Сохранить пользователя</button></div>
+      <div className="row-actions"><button className="btn" onClick={() => setForm(null)}>Отмена</button><button className="btn primary" disabled={!form.username || ((creating || form.password !== "") && passwordBytes(form.password) < MIN_PASSWORD_BYTES)} onClick={() => void save()}>Сохранить пользователя</button></div>
     </fieldset>}
   </Card>;
 }

@@ -345,7 +345,7 @@ type loginResponse struct {
 }
 
 // Самый длинный допустимый запрос входа — логин 64 байта и пароль
-// maxPasswordBytes, где каждый байт экранирован в JSON как \u00XX: около 6,6 КиБ.
+// MaxPasswordBytes, где каждый байт экранирован в JSON как \u00XX: около 6,6 КиБ.
 const maxLoginBodyBytes = 8 << 10
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +365,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
-	if len(req.Username) == 0 || len(req.Username) > 64 || len(req.Password) == 0 || len(req.Password) > maxPasswordBytes {
+	if len(req.Username) == 0 || len(req.Username) > 64 || len(req.Password) == 0 || len(req.Password) > MaxPasswordBytes {
 		s.recordLoginFailure(ip)
 		writeError(w, http.StatusUnauthorized, "неверное имя пользователя или пароль")
 		return
@@ -518,8 +518,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
-	if len(req.New) < MinPasswordBytes || len(req.New) > maxPasswordBytes {
-		writeError(w, http.StatusBadRequest, "пароль должен содержать от %d до %d байт", MinPasswordBytes, maxPasswordBytes)
+	if len(req.New) < MinPasswordBytes || len(req.New) > MaxPasswordBytes {
+		writeError(w, http.StatusBadRequest, "пароль должен содержать от %d до %d байт", MinPasswordBytes, MaxPasswordBytes)
 		return
 	}
 

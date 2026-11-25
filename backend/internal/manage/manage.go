@@ -552,8 +552,8 @@ func (m *Manager) resetPasswordFromStdin(username string) error {
 		return fmt.Errorf("чтение пароля: %w", err)
 	}
 	password := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-	if len(password) < api.MinPasswordBytes || len(password) > 1024 || strings.IndexByte(password, 0) >= 0 {
-		return fmt.Errorf("пароль должен содержать от %d до 1024 байт без NUL", api.MinPasswordBytes)
+	if len(password) < api.MinPasswordBytes || len(password) > api.MaxPasswordBytes || strings.IndexByte(password, 0) >= 0 {
+		return fmt.Errorf("пароль должен содержать от %d до %d байт без NUL", api.MinPasswordBytes, api.MaxPasswordBytes)
 	}
 	hash, err := api.HashPassword(password)
 	if err != nil {
