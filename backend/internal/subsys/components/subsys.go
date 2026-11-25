@@ -304,6 +304,20 @@ func desiredComponentState(cfg *config.Config) map[string]bool {
 	for _, component := range cfg.Components {
 		desired[component.ID] = component.Installed
 	}
+	for id := range Dependencies(cfg) {
+		desired[id] = true
+	}
+	return desired
+}
+
+// Dependencies — компоненты, которые конфигурация держит установленными, даже
+// когда они не выбраны в «Компонентах», с объяснением для панели: иначе снятая
+// галочка обещала бы удаление, которого не будет.
+func Dependencies(cfg *config.Config) map[string]string {
+	required := map[string]string{}
+	if cfg == nil {
+		return required
+	}
 	// Domain policies create kernel ipsets even when the optional ipset
 	// component was not selected in the UI. Keep that package for as long as
 	// one of those policies is active, including the final cleanup phase.
@@ -315,7 +329,7 @@ func desiredComponentState(cfg *config.Config) map[string]bool {
 	}
 	for _, policy := range cfg.Policies {
 		if policy.Enabled && len(policy.Domains) > 0 && !xrayServers[policy.VPNServer] {
-			desired["ipset"] = true
+			required["ipset"] = "доменным политикам"
 			break
 		}
 	}
@@ -323,9 +337,9 @@ func desiredComponentState(cfg *config.Config) map[string]bool {
 	// когда он не выбран в «Компонентах». Иначе каждое применение удаляло бы
 	// пакет, а подсистема DNS ставила его обратно.
 	if services.DNSFrontendNeeded(cfg) {
-		desired["dnsmasq"] = true
+		required["dnsmasq"] = "внутреннему DNS для VPN-клиентов, доменных политик или мониторинга трафика"
 	}
-	return desired
+	return required
 }
 
 func protectedComponentPackages(desired map[string]bool) map[string]bool {

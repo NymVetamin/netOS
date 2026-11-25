@@ -204,6 +204,35 @@ func TestCatalogInstalledSelectionKeepsFullAPIAndAuthentication(t *testing.T) {
 	}
 }
 
+// dnsmasq без галочки держит внутренний DNS L2TP-сервера: панель не должна
+// обещать его удаление, и решает это черновик пользователя, а не применённое.
+func TestCatalogReportsComponentsRequiredByDraft(t *testing.T) {
+	s, cookie, _ := newAuthedServer(t)
+	base := initializeAPIEngine(t, s)
+	draft := config.Default()
+	draft.DNS.Enabled, draft.DNS.Provider = true, "unbound"
+	draft.VPNServers = []config.VPNServer{{ID: "l2tp", Type: "l2tp", Enabled: true}}
+	s.privateDrafts = map[string]*privateDraft{"admin": {Base: base, Config: draft, Version: 2}}
+	required := func() map[string]string {
+		t.Helper()
+		w := serveAuthed(s.Routes(), http.MethodGet, "/api/catalog", nil, cookie, "")
+		var response struct {
+			Required map[string]string `json:"required"`
+		}
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &response) != nil {
+			t.Fatalf("catalog status=%d body=%s", w.Code, w.Body.String())
+		}
+		return response.Required
+	}
+	if got := required(); got["dnsmasq"] == "" || len(got) != 1 {
+		t.Fatalf("dnsmasq dependency of the draft missing: %v", got)
+	}
+	draft.VPNServers[0].Enabled = false
+	if got := required(); len(got) != 0 {
+		t.Fatalf("dependency without a reason: %v", got)
+	}
+}
+
 func TestCatalogReturnsMetadataAndIndependentLiveStates(t *testing.T) {
 	s, cookie, _ := newAuthedServer(t)
 	initializeAPIEngine(t, s)

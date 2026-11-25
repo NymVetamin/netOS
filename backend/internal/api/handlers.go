@@ -24,6 +24,7 @@ import (
 	"github.com/netos-router/netos/internal/config"
 	"github.com/netos-router/netos/internal/render"
 	"github.com/netos-router/netos/internal/store"
+	"github.com/netos-router/netos/internal/subsys/components"
 )
 
 var panelActivationStaleAfter = 2 * time.Minute
@@ -1692,6 +1693,10 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{"components": config.Catalog}
+	if s.Engine != nil {
+		// Что черновик держит установленным без галочки: панель не обещает удаление.
+		resp["required"] = components.Dependencies(s.requestConfig(r))
+	}
 	if s.Components != nil {
 		// installed — полностью ли готов компонент (весь payload на диске,
 		// закреплённая external-версия актуальна, штатные конфликтующие unit

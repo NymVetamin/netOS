@@ -84,6 +84,8 @@ export type CatalogResponse = {
   running?: Record<string, boolean>;
   // Why a component cannot be installed on this machine right now.
   unavailable?: Record<string, string>;
+  // Кому черновик оставляет компонент установленным без галочки.
+  required?: Record<string, string>;
 };
 
 // RouteEntry — разобранная запись таблицы маршрутизации.

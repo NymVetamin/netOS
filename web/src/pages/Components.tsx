@@ -262,6 +262,7 @@ export function ComponentsPage({
           <div className="stack">
             {items.map((c) => {
               const on = wanted.get(c.id) === true;
+              const requiredBy = catalog.required?.[c.id];
               const isReady = ready[c.id] === true;
               const atWork = running[c.id] === true;
               const update = updates.state?.components?.[c.id];
@@ -287,15 +288,18 @@ export function ComponentsPage({
                       {/* Желаемое состояние сравнивается с живой машиной. Essential
                           пакет остаётся частью базовой системы даже при выключенной
                           функции; обычный установленный компонент будет удалён. */}
-                      {on && !isReady && (
+                      {(on || requiredBy) && !isReady && (
                         <Badge tone="warn">
                           будет установлен или исправлен
                         </Badge>
                       )}
-                      {!on && isReady && !c.essential && (
+                      {!on && requiredBy && (
+                        <Badge tone="neutral">нужен {requiredBy}</Badge>
+                      )}
+                      {!on && !requiredBy && isReady && !c.essential && (
                         <Badge tone="warn">будет удалён</Badge>
                       )}
-                      {!on && isReady && c.essential && (
+                      {!on && !requiredBy && isReady && c.essential && (
                         <Badge tone="neutral">базовый пакет останется</Badge>
                       )}
                       {c.external && (
