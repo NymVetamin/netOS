@@ -1516,8 +1516,19 @@ func (c *Config) validateFirewall(r *ValidationResult) {
 		return name
 	}
 	ids := map[string]bool{}
+	var lanAllow *FirewallRule
 	for i, rule := range c.Firewall.Rules {
 		path := fmt.Sprintf("firewall.rules[%d]", i)
+		if c.Firewall.Enabled && rule.Enabled && rule.Zone == "lan" && rule.Flow == "forward" && rule.DstZone == "wan" {
+			if rule.ID == RuleLANOut && rule.Action == "accept" && rule.Interface == "" && rule.OutInterface == "" &&
+				(rule.Protocol == "" || rule.Protocol == "any") && rule.SrcIP == "" && rule.DstIP == "" &&
+				rule.SrcIPSet == "" && rule.DstIPSet == "" && rule.SrcMAC == "" && rule.SrcPort == "" &&
+				rule.DstPort == "" && rule.ConnState == "" && rule.Schedule == nil {
+				lanAllow = &c.Firewall.Rules[i]
+			} else if lanAllow != nil && (rule.Action == "drop" || rule.Action == "reject") {
+				r.warnf(path, "правило %q не сработает: выше стоит %q, разрешающее весь трафик из LAN в WAN. Переместите запрет выше разрешения", rule.Name, lanAllow.Name)
+			}
+		}
 		if ids[rule.ID] {
 			r.errf(path+".id", "дубликат идентификатора правила %q", rule.ID)
 		}
