@@ -95,7 +95,10 @@ func TestComponentPurgePreservesOriginalAutomaticDependencies(t *testing.T) {
 	if err := system.WritePackageNames(filepath.Join(s.Packages.OwnershipDir, "initial.txt"), map[string]bool{"liboriginal:amd64": true}); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.removeProtected(context.Background(), config.ComponentInfo{ID: "dummy", Packages: []string{"dummy"}}, nil)
+	_ = s.removeProtected(context.Background(), config.ComponentInfo{ID: "dummy", Packages: []string{"liboriginal", "dummy"}}, nil)
+	if containsArgument(r.aptArgs, "liboriginal") {
+		t.Fatal("explicit purge of original package")
+	}
 	if !containsArgument(r.aptArgs, "APT::NeverAutoRemove::=^liboriginal$") {
 		t.Fatalf("original dependency unprotected: %v", r.aptArgs)
 	}
@@ -120,6 +123,27 @@ func TestCorruptOriginalComponentStopsPurge(t *testing.T) {
 	}
 	if len(r.aptArgs) != 0 {
 		t.Fatal("purge ran without recovery")
+	}
+}
+
+func TestInvalidInitialInventoryStopsComponentRemoval(t *testing.T) {
+	r := &removalFailureRunner{}
+	s := New(r, testLogger{})
+	s.Packages.OwnershipDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(s.Packages.OwnershipDir, "initial.txt"), []byte("broken/name\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	cfg := &config.Config{}
+	cleanup := &Cleanup{Components: s}
+	if _, err := s.PlanContext(ctx, cfg, cfg); err == nil {
+		t.Fatal("preview ignored invalid inventory")
+	}
+	if s.Apply(ctx, cfg) == nil || cleanup.Apply(ctx, cfg) == nil || cleanup.Health(ctx, cfg) == nil {
+		t.Fatal("invalid inventory accepted")
+	}
+	if len(r.aptArgs) != 0 {
+		t.Fatal("package transaction with invalid inventory")
 	}
 }
 

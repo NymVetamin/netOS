@@ -71,7 +71,10 @@ func (s *Subsystem) Plan(old, new *config.Config) ([]apply.Action, error) {
 func (s *Subsystem) PlanContext(ctx context.Context, old, new *config.Config) ([]apply.Action, error) {
 	var actions []apply.Action
 	desired := desiredComponentState(new)
-	protected := protectedComponentPackages(desired)
+	protected, err := s.removalProtection(desired)
+	if err != nil {
+		return nil, err
+	}
 	snapshot, snapshotErr := s.liveSnapshot(ctx)
 	if snapshotErr != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -159,7 +162,10 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	aptRefreshed := false
 	var aptRefreshErr error
 	desired := desiredComponentState(cfg)
-	protected := protectedComponentPackages(desired)
+	protected, err := s.removalProtection(desired)
+	if err != nil {
+		return err
+	}
 	if err := s.migrateLegacyExternalOwnership(ctx, desired); err != nil {
 		return fmt.Errorf("миграция владения внешними компонентами: %w", err)
 	}
@@ -167,11 +173,12 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	// Save every component this Apply will touch before changing any package.
 	// Purging a shared dependency can also purge a later component (ppp in
 	// L2TP removes pppoe), so capturing only just before each purge is too late.
+	selectedPackages := protectedComponentPackages(desired)
 	for _, info := range config.Catalog {
 		if info.Essential || info.External {
 			continue
 		}
-		if desired[info.ID] || s.componentRemovable(ctx, info, protected) {
+		if desired[info.ID] || s.componentRemovable(ctx, info, selectedPackages) {
 			if err := s.captureOriginalComponent(ctx, info); err != nil {
 				return err
 			}
@@ -361,6 +368,21 @@ func protectedComponentPackages(desired map[string]bool) map[string]bool {
 	return protected
 }
 
+func (s *Subsystem) removalProtection(desired map[string]bool) (map[string]bool, error) {
+	protected := protectedComponentPackages(desired)
+	if dir := s.Packages.OwnershipDir; dir != "" {
+		initial, err := system.ReadPackageNames(filepath.Join(dir, "initial.txt"))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for name := range initial {
+			pkg, _, _ := strings.Cut(name, ":")
+			protected[pkg] = true
+		}
+	}
+	return protected, nil
+}
+
 func (s *Subsystem) componentRemovable(ctx context.Context, info config.ComponentInfo, protected map[string]bool) bool {
 	return s.componentRemovableFrom(ctx, info, protected, componentLiveSnapshot{}, false)
 }
@@ -390,11 +412,14 @@ func (s *Subsystem) componentRemovableFrom(ctx context.Context, info config.Comp
 		}
 	}
 	for _, pkg := range info.Packages {
+		if protected[pkg] {
+			continue
+		}
 		installed := snapshot.packages[pkg]
 		if !useSnapshot {
 			installed = s.Packages.Installed(ctx, pkg)
 		}
-		if !protected[pkg] && installed {
+		if installed {
 			return true
 		}
 	}
@@ -616,21 +641,17 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 		defer s.OnChange(info.ID)
 	}
 	if protected == nil {
-		protected = protectedComponentPackages(nil)
+		var err error
+		protected, err = s.removalProtection(nil)
+		if err != nil {
+			return err
+		}
 	}
 	if err := s.captureOriginalComponent(ctx, info); err != nil {
 		return err
 	}
-	// Never purge an original component if its recovery copy is damaged.
-	// Initial dependencies must also survive autoremove; unlike an explicitly
-	// deselected component they do not have a reason to disappear.
-	original := map[string]bool{}
+	// Check the recovery copy before changing packages or units.
 	if dir := s.Packages.OwnershipDir; dir != "" {
-		var err error
-		original, err = system.ReadPackageNames(filepath.Join(dir, "initial.txt"))
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
 		if _, err := system.ReadComponentBaseline(dir); err != nil {
 			return err
 		}
@@ -706,17 +727,10 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 	// top-level package leaves those binaries behind, so the component does not
 	// really disappear and the attack surface remains. Let apt remove automatic
 	// packages that are no longer needed by anything else.
-	neverAutoRemove := map[string]bool{}
-	for pkg := range protected {
-		neverAutoRemove[pkg] = true
-	}
-	for pkg := range original {
-		neverAutoRemove[strings.Split(pkg, ":")[0]] = true
-	}
 	if len(present) > 0 {
 		args := []string{"-o", "DPkg::Lock::Timeout=60"}
 		var names []string
-		for pkg := range neverAutoRemove {
+		for pkg := range protected {
 			names = append(names, pkg)
 		}
 		sort.Strings(names)
@@ -737,7 +751,7 @@ func (s *Subsystem) removeProtected(ctx context.Context, info config.ComponentIn
 		amneziaPresent = nil // dpkg state changed; leftovers need a fresh snapshot.
 	}
 	if info.ID == amneziaWGID {
-		if err := s.removeAmneziaLeftovers(ctx, recorded, neverAutoRemove, amneziaPresent); err != nil {
+		if err := s.removeAmneziaLeftovers(ctx, recorded, protected, amneziaPresent); err != nil {
 			return fmt.Errorf("удаление пакетов сборки модуля: %w", err)
 		}
 		if err := os.Remove(s.amneziaRecord()); err != nil && !os.IsNotExist(err) {

@@ -285,9 +285,6 @@ export function ComponentsPage({
                       </span>}
                       {isReady && <Badge tone="ok">готов</Badge>}
                       {atWork && <Badge tone="ok">используется</Badge>}
-                      {/* Желаемое состояние сравнивается с живой машиной. Essential
-                          пакет остаётся частью базовой системы даже при выключенной
-                          функции; обычный установленный компонент будет удалён. */}
                       {(on || requiredBy) && !isReady && (
                         <Badge tone="warn">
                           будет установлен или исправлен
@@ -297,7 +294,8 @@ export function ComponentsPage({
                         <Badge tone="neutral">нужен {requiredBy}</Badge>
                       )}
                       {!on && !requiredBy && isReady && !c.essential && (
-                        <Badge tone="warn">будет удалён</Badge>
+                        c.external ? <Badge tone="warn">будет удалён</Badge> :
+                          <Badge tone="neutral">отключён · удаляются только пакеты netOS</Badge>
                       )}
                       {!on && !requiredBy && isReady && c.essential && (
                         <Badge tone="neutral">базовый пакет останется</Badge>

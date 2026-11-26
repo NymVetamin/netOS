@@ -14,7 +14,10 @@ func (s *Cleanup) Name() string                                     { return "co
 func (s *Cleanup) Plan(_, _ *config.Config) ([]apply.Action, error) { return nil, nil }
 func (s *Cleanup) Apply(ctx context.Context, cfg *config.Config) error {
 	desired := desiredComponentState(cfg)
-	protected := protectedComponentPackages(desired)
+	protected, err := s.Components.removalProtection(desired)
+	if err != nil {
+		return err
+	}
 	for _, id := range []string{"ipset", "samba"} {
 		if desired[id] {
 			continue
@@ -30,12 +33,16 @@ func (s *Cleanup) Apply(ctx context.Context, cfg *config.Config) error {
 }
 func (s *Cleanup) Health(ctx context.Context, cfg *config.Config) error {
 	desired := desiredComponentState(cfg)
+	protected, err := s.Components.removalProtection(desired)
+	if err != nil {
+		return err
+	}
 	for _, id := range []string{"ipset", "samba"} {
 		if desired[id] {
 			continue
 		}
 		info, _ := config.ComponentByID(id)
-		if s.Components.componentRemovable(ctx, info, protectedComponentPackages(desired)) {
+		if s.Components.componentRemovable(ctx, info, protected) {
 			return fmt.Errorf("пакет %s остался после удаления компонента", id)
 		}
 	}

@@ -53,7 +53,7 @@ async def scenario(browser, mode):
     box = page.get_by_role("checkbox", name="Компонент dnsmasq включён")
     await expect(box).to_be_attached()
     await expect(box).not_to_be_checked()
-    removal = page.get_by_text("будет удалён", exact=True)
+    removal = page.get_by_text("отключён · удаляются только пакеты netOS", exact=True)
     need = page.get_by_text("нужен " + REASON, exact=True)
     install = page.get_by_text("будет установлен или исправлен", exact=True)
     if mode == "required":
