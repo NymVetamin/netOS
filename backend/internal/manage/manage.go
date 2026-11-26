@@ -457,6 +457,7 @@ func (m *Manager) help() {
   netos update [версия] [-f|--force] [--backup]
                                обновить до latest или указанной версии;
                                без --force ничего не делает, если версия та же
+                               для перехода между несравнимыми версиями нужен --force
   netos reinstall [версия]     развернуть версию заново, даже если она уже стоит
   netos reset [--backup|--no-backup] [-y|--yes]
                                сбросить настройки и пользователей к заводским
@@ -587,15 +588,15 @@ func (m *Manager) install(ctx context.Context, version string, force bool, backu
 			return fmt.Errorf("не удалось определить тег последнего релиза; повторите позже или укажите версию явно")
 		}
 	}
-	if cmp, known := releaseversion.Compare(resolvedVersion, m.Version); known && cmp < 0 {
+	cmp, known := releaseversion.Compare(resolvedVersion, m.Version)
+	if known && cmp < 0 {
 		return fmt.Errorf("установка старой версии доступна только после удаления netOS")
 	}
 	name := resolvedVersion
 
 	// Обновление до версии, которая уже стоит, — это несколько минут загрузки,
 	// перезапуск службы и разрыв связности ради нулевого результата. Проверяем
-	// заранее, но только когда есть с чем сравнивать: у сборки из исходников
-	// версия «dev» и она не сопоставима с тегом релиза.
+	// заранее, пока не начались загрузка и остановка службы.
 	if !force && m.Version != "" && m.Version != "dev" {
 		target := resolvedVersion
 		if target != "" && sameVersion(target, m.Version) {
@@ -604,6 +605,9 @@ func (m *Manager) install(ctx context.Context, version string, force bool, backu
 			fmt.Fprintln(m.Out, "Развернуть её заново: netos update --force (или netos reinstall).")
 			return nil
 		}
+	}
+	if !force && !known {
+		return fmt.Errorf("невозможно сравнить установленную версию %q с %q; для установки укажите --force", m.Version, resolvedVersion)
 	}
 
 	// Наличие релиза проверяется до всего остального. Иначе первым, что видит

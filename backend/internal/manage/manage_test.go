@@ -1115,6 +1115,30 @@ func TestUpdateRejectsDowngradeEvenWithForce(t *testing.T) {
 	}
 }
 
+func TestUpdateFromDevelopmentBuildRequiresForce(t *testing.T) {
+	for _, version := range []string{"dev", "qa-899e7de"} {
+		t.Run(version, func(t *testing.T) {
+			m, _ := testManager()
+			m.Version = version
+			m.Output = func(context.Context, string, ...string) (string, error) {
+				return "https://github.com/NymVetamin/netOS/releases/tag/v0.1", nil
+			}
+			var commands []string
+			m.Run = func(_ context.Context, c command) error {
+				commands = append(commands, c.name)
+				return nil
+			}
+			err := m.Execute(context.Background(), []string{"update"})
+			if err == nil || !strings.Contains(err.Error(), "--force") || len(commands) != 0 {
+				t.Fatalf("unforced update: err=%v commands=%v", err, commands)
+			}
+			if err := m.Execute(context.Background(), []string{"update", "--force"}); err != nil || !contains(commands, "bash") {
+				t.Fatalf("forced update: err=%v commands=%v", err, commands)
+			}
+		})
+	}
+}
+
 func TestUpdateWithBackupArchivesBeforeInstaller(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
