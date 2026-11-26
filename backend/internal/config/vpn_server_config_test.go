@@ -75,6 +75,22 @@ func TestXrayServerValidation(t *testing.T) {
 	if result := cfg.Validate(); result.HasErrors() {
 		t.Fatalf("valid Xray server rejected: %+v", result.Problems)
 	}
+	s := &cfg.VPNServers[0]
+	s.Config["protocol"] = "vless"
+	result := cfg.Validate()
+	warned := false
+	for _, p := range result.Problems {
+		if p.Path == "vpn_servers[0].config.protocol" && p.Severity == "warning" {
+			warned = true
+			if strings.Contains(p.Message, key) || strings.Contains(p.Message, "0123456789abcdef") {
+				t.Fatal("warning contains a credential")
+			}
+		}
+	}
+	if !warned || result.HasErrors() {
+		t.Fatalf("VLESS with old Reality settings: %+v", result.Problems)
+	}
+	delete(s.Config, "protocol")
 	for _, fp := range []string{"", "chrome", "firefox", "safari", "ios", "edge", "random", "randomized"} {
 		cfg.VPNServers[0].Peers[0].TLSFingerprint = fp
 		if result := cfg.Validate(); result.HasErrors() {

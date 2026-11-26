@@ -3294,6 +3294,9 @@ func (c *Config) validateXrayServer(r *ValidationResult, path string, s VPNServe
 		if xr.Flow != "" && xr.Flow != "xtls-rprx-vision" {
 			r.errf(path+".config.flow", "поддерживается только поток xtls-rprx-vision")
 		}
+	} else if protocol == "vless" && (xr.PrivateKey != "" || xr.Destination != "" || len(xr.ServerNames) > 0 ||
+		len(xr.ShortIDs) > 0 || xr.Flow != "" || xr.Show) {
+		r.warnf(path+".config.protocol", "выбран VLESS с TLS. Сохранённые настройки REALITY в этом режиме не используются")
 	}
 	if protocol == "shadowsocks" {
 		if xr.Method != "aes-128-gcm" && xr.Method != "aes-256-gcm" && xr.Method != "chacha20-poly1305" {

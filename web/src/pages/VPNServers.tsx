@@ -211,7 +211,14 @@ export function VPNServersPage({ config, patch, beforeRead }: Props) {
         } : type === "xray" ? {
           ...common, name: `${XRAY_NAMES[protocol]} ${index}`,
           port: protocol === "reality" ? 443 : 18000 + index,
-          config: { protocol, listen: protocol === "socks" || protocol === "http" ? "127.0.0.1" : "", method: "aes-256-gcm", private_key: "", wg_private_key: "", mtu: 1420, public_endpoint: "", destination: "www.cloudflare.com:443", server_names: ["www.cloudflare.com"], short_ids: [randomHex(8)], flow: protocol === "reality" ? "xtls-rprx-vision" : "" },
+          config: {
+            protocol, listen: protocol === "socks" || protocol === "http" ? "127.0.0.1" : "",
+            method: "aes-256-gcm", wg_private_key: "", mtu: 1420, public_endpoint: "",
+            ...(protocol === "reality" ? {
+              private_key: "", destination: "www.cloudflare.com:443", server_names: ["www.cloudflare.com"],
+              short_ids: [randomHex(8)], flow: "xtls-rprx-vision",
+            } : {}),
+          },
         } : type === "ocserv" ? {
           ...common, name: `OpenConnect ${index}`, port: 443,
           config: { public_endpoint: "", dns: [], use_router_dns: true, routes: [], mtu: 1380, banner: "netOS VPN" },
