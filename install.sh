@@ -408,9 +408,8 @@ package_inventory() {
 package_inventory > "$PACKAGE_STATE/before.txt" || die "не удалось снять список пакетов"
 if [ ! -f "$PACKAGE_STATE/initial.txt" ]; then
     cp "$PACKAGE_STATE/before.txt" "$PACKAGE_STATE/initial.txt"
-    # Only fresh installations can record true pre-netOS component state.
-    # Never adopt already modified component files on an upgrade.
-    if [ "$UPGRADE" = 0 ]; then
+    # uninstall --keep-data has restored the OS even though the database remains.
+    if [ "$UPGRADE" = 0 ] || [ -f "$BASELINE_DIR/.capture-required" ]; then
         : > "$PACKAGE_STATE/restore-components"
         chmod 0600 "$PACKAGE_STATE/restore-components"
     fi

@@ -4,20 +4,24 @@ installer=$(cd "$(dirname "$0")/../.." && pwd)/install.sh
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 
-for initial_upgrade in 0 1; do
-    PACKAGE_STATE="$root/packages-$initial_upgrade"
-    mkdir "$PACKAGE_STATE"
-    UPGRADE=$initial_upgrade
+for installation in fresh upgrade kept-data; do
+    PACKAGE_STATE="$root/packages-$installation"
+    BASELINE_DIR="$root/baseline-$installation"
+    mkdir "$PACKAGE_STATE" "$BASELINE_DIR"
+    UPGRADE=1
+    if [[ $installation == fresh ]]; then UPGRADE=0; fi
+    if [[ $installation == kept-data ]]; then touch "$BASELINE_DIR/.capture-required"; fi
     echo first > "$PACKAGE_STATE/before.txt"
     for attempt in 1 2; do
         source <(sed -n '/^if \[ ! -f "\$PACKAGE_STATE\/initial.txt" \]; then$/,/^fi$/p' "$installer")
         [[ $(cat "$PACKAGE_STATE/initial.txt") == first ]]
-        if [[ $initial_upgrade == 0 ]]; then
+        if [[ $installation != upgrade ]]; then
             [[ -f "$PACKAGE_STATE/restore-components" ]]
         else
             [[ ! -e "$PACKAGE_STATE/restore-components" ]]
         fi
         UPGRADE=1
+        rm -f "$BASELINE_DIR/.capture-required"
         echo changed > "$PACKAGE_STATE/before.txt"
     done
 done
