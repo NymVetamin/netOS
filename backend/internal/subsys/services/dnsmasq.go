@@ -193,6 +193,7 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config, ifaceByID ma
 	// один loopback. Unbound и dnsproxy всегда слушают адрес роутера в каждом
 	// сегменте, dnsmasq теперь тоже.
 	writeDNSInterfaces(b, cfg, ifaceByID, listening)
+	w("no-hosts") // В /etc/hosts имя роутера может указывать на 127.0.1.1.
 	w("domain-needed") // не пересылать наверх имена без домена
 	// bogus-priv would claim the whole RFC6303 reverse range, including PTRs
 	// outside a narrower LAN such as 192.0.2.0/25. Keep only our exact LAN
@@ -219,8 +220,8 @@ func (d *Dnsmasq) renderDNS(b *strings.Builder, cfg *config.Config, ifaceByID ma
 		w("local=/%s/", cfg.DNS.LocalDomain)
 		w("domain=%s", cfg.DNS.LocalDomain)
 		w("expand-hosts")
-		renderRouterHostname(b, cfg)
 	}
+	renderRouterHostname(b, cfg)
 	if cfg.DNS.RebindProtection {
 		w("stop-dns-rebind")
 		w("rebind-localhost-ok")
@@ -351,14 +352,18 @@ func (d *Dnsmasq) renderLocalDNS(b *strings.Builder, cfg *config.Config) {
 }
 
 func renderRouterHostname(b *strings.Builder, cfg *config.Config) {
-	if cfg.System.Hostname == "" || cfg.DNS.LocalDomain == "" {
+	names := cfg.System.Hostname
+	if names == "" {
 		return
+	}
+	if cfg.DNS.LocalDomain != "" {
+		names = names + "." + cfg.DNS.LocalDomain + "," + names
 	}
 	for _, network := range cfg.Networks {
 		if !network.Enabled || network.RouterAddress == "" {
 			continue
 		}
-		fmt.Fprintf(b, "host-record=%s.%s,%s\n", cfg.System.Hostname, cfg.DNS.LocalDomain, addressOf(network.RouterAddress))
+		fmt.Fprintf(b, "host-record=%s,%s\n", names, addressOf(network.RouterAddress))
 	}
 }
 
