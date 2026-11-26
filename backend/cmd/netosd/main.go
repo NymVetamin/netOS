@@ -618,6 +618,7 @@ func registerSubsystems(engine *apply.Engine, runner system.Runner, logger apply
 		&services.IPTVPreparation{S: iptvSubsystem},
 		iptvSubsystem,
 		firewallSubsystem,
+		sysctl.RouterDiscovery{},
 		&monitor.Subsystem{Runner: runner},
 		socks.AfterPreparation{Subsystem: socksSubsystem},
 		policy.NewCleanup(runner, stateDir),

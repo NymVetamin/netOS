@@ -98,6 +98,7 @@ var Order = []string{
 	"tunnel-routes",
 	"policy",
 	"firewall",
+	"ipv6-discovery",
 	"traffic-monitor",
 	"socks",
 	"iptv",
@@ -118,7 +119,7 @@ var Order = []string{
 var startupConnectivityOrder = []string{
 	"iptv-prepare",
 	"socks-prepare",
-	"netconf", "interfaces", "ipv6", "networks", "wan", "multiwan", "routing", "firewall",
+	"netconf", "interfaces", "ipv6", "networks", "wan", "multiwan", "routing", "firewall", "ipv6-discovery",
 }
 
 // connectivitySubsystems — подсистемы, изменение которых способно оборвать
