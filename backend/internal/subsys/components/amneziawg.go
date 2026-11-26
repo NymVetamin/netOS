@@ -122,6 +122,15 @@ func (s *Subsystem) amneziaKernelProblem(ctx context.Context) string {
 	return s.amneziaKernelProblemFrom(ctx, nil)
 }
 
+// AmneziaInstallProblem checks just the component being selected in a draft.
+func (s *Subsystem) AmneziaInstallProblem(ctx context.Context) string {
+	info, _ := config.ComponentByID(amneziaWGID)
+	if _, installed := s.componentState(ctx, info); installed {
+		return ""
+	}
+	return s.amneziaKernelProblem(ctx)
+}
+
 func (s *Subsystem) amneziaKernelProblemFrom(ctx context.Context, snapshot *componentLiveSnapshot) string {
 	release := ""
 	if snapshot != nil {

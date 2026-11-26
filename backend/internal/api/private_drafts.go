@@ -106,9 +106,20 @@ func (s *Server) privateConfigResponse(r *http.Request) (int, any) {
 		// A client can stall while uploading. Revalidate the snapshot after
 		// reading without the global draft lock, just as the planner does.
 		s.draftMu.Unlock()
+		var next *config.Config
+		var mergeErr error
+		var result *config.ValidationResult
 		readErr := func() error {
 			defer s.draftMu.Lock()
-			return readJSON(r, &incoming)
+			if err := readJSON(r, &incoming); err != nil {
+				return err
+			}
+			next, mergeErr = mergeScopedConfig(r, cfg, &incoming)
+			if mergeErr == nil {
+				result = next.Validate()
+				s.checkComponentSelection(r.Context(), cfg, next, result)
+			}
+			return nil
 		}()
 		if readErr != nil {
 			return 400, errorResponse{Error: "некорректная конфигурация"}
@@ -117,11 +128,9 @@ func (s *Server) privateConfigResponse(r *http.Request) (int, any) {
 		if s.draftApplying || pending || s.privateDrafts[userOf(r)] != d || d.Version != version || s.Engine.Current() != base {
 			return 409, errorResponse{Error: "черновик или применённая конфигурация изменились; обновите страницу и повторите изменения"}
 		}
-		next, err := mergeScopedConfig(r, cfg, &incoming)
-		if err != nil {
-			return 403, errorResponse{Error: err.Error()}
+		if mergeErr != nil {
+			return 403, errorResponse{Error: mergeErr.Error()}
 		}
-		result := next.Validate()
 		validation = result
 		if p == "/api/config/validate" {
 			return 200, result

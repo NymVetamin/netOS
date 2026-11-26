@@ -178,6 +178,57 @@ func (p catalogComponentProbe) CatalogStatus(_ context.Context) (map[string]bool
 	}
 	return p.installed, p.unavailable
 }
+func (p catalogComponentProbe) AmneziaInstallProblem(context.Context) string {
+	return p.unavailable["amneziawg"]
+}
+
+func TestValidateUnavailableAmneziaSelection(t *testing.T) {
+	s, cookie, csrf := newAuthedServer(t)
+	base := initializeAPIEngine(t, s)
+	s.Components = catalogComponentProbe{unavailable: map[string]string{"amneziawg": "нет заголовков ядра"}}
+	cfg := *base
+	cfg.Components = append(append([]config.Component(nil), base.Components...), config.Component{ID: "amneziawg", Installed: true})
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := serveAuthed(s.Routes(), "POST", "/api/config/validate", body, cookie, csrf)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "нет заголовков ядра") {
+		t.Fatalf("validation: %d %s", w.Code, w.Body.String())
+	}
+	// A saved draft can outlive the locally available headers.
+	h := s.Routes()
+	s.Components = catalogComponentProbe{}
+	state := serveAuthed(h, "GET", "/api/config", nil, cookie, "")
+	var saved configResponse
+	if err := json.Unmarshal(state.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("PUT", "/api/config", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	req.Header.Set(csrfHeader, csrf)
+	req.Header.Set("If-Match", strconv.FormatUint(saved.DraftVersion, 10))
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("available: %d %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	s.Components = catalogComponentProbe{unavailable: map[string]string{"amneziawg": "нет заголовков ядра"}}
+	payload, _ := json.Marshal(applyRequest{DraftVersion: saved.DraftVersion})
+	for i := 0; i < 2; i++ {
+		w = serveAuthed(h, "POST", "/api/config/apply", payload, cookie, csrf)
+		if w.Code != 422 || !strings.Contains(w.Body.String(), "нет заголовков ядра") {
+			t.Fatalf("apply: %d %s", w.Code, w.Body.String())
+		}
+	}
+	revisions, err := s.Store.ListRevisions(10)
+	if err != nil || len(revisions) != 0 || s.Engine.Current().HasComponent("amneziawg") {
+		t.Fatalf("unexpected revision after failed preflight: %v %v", revisions, err)
+	}
+}
 func (p catalogComponentProbe) Running(context.Context) map[string]bool {
 	if p.forbidRunning {
 		panic("installed-only request must not query running services")

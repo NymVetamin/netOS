@@ -45,6 +45,7 @@ type ComponentProbe interface {
 	Status(ctx context.Context, ids ...string) map[string]bool
 	Running(ctx context.Context) map[string]bool
 	CatalogStatus(ctx context.Context) (map[string]bool, map[string]string)
+	AmneziaInstallProblem(context.Context) string
 }
 
 // Server — веб-панель.

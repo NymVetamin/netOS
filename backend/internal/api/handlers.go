@@ -1084,12 +1084,14 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Normalize()
+	var previous *config.Config
 	if s.Engine != nil {
-		previous, _, _ := s.draftSnapshot()
+		previous, _, _ = s.draftSnapshot()
 		mergeRedactedSecrets(&cfg, previous)
 	}
 
 	result := cfg.Validate()
+	s.checkComponentSelection(r.Context(), previous, &cfg, result)
 	if result.HasErrors() {
 		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{
 			Error:    "конфигурация содержит ошибки",
@@ -1201,11 +1203,23 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Normalize()
+	var previous *config.Config
 	if s.Engine != nil {
-		previous, _, _ := s.draftSnapshot()
+		previous, _, _ = s.draftSnapshot()
 		mergeRedactedSecrets(&cfg, previous)
 	}
-	writeJSON(w, http.StatusOK, cfg.Validate())
+	result := cfg.Validate()
+	s.checkComponentSelection(r.Context(), previous, &cfg, result)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) checkComponentSelection(ctx context.Context, previous, next *config.Config, result *config.ValidationResult) {
+	if s.Components == nil || previous == nil || !next.HasComponent("amneziawg") || previous.HasComponent("amneziawg") || result.HasErrors() {
+		return
+	}
+	if reason := s.Components.AmneziaInstallProblem(ctx); reason != "" {
+		result.Problems = append(result.Problems, config.Problem{Path: "components", Severity: "error", Message: reason})
+	}
 }
 
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
@@ -1349,6 +1363,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var selection config.ValidationResult
+	s.checkComponentSelection(r.Context(), base, cfg, &selection)
+	if selection.HasErrors() {
+		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: "компонент недоступен", Problems: selection.Problems})
+		return
+	}
 	username := userOf(r)
 	revID, err := s.Store.CreateRevision(cfg, username, req.Comment)
 	if err != nil {
