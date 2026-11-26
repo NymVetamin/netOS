@@ -151,6 +151,14 @@ func (s *Subsystem) Apply(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("чтение предыдущего ruleset IPv6: %w", err)
 	}
+	// DHCP/DNS applies after firewall. Close the old listener before lifting its
+	// restriction, including when a previous transition failed partway through.
+	const chain = "\n:" + localDNSChain + " "
+	if !strings.Contains(rs.IPv4, chain) && (strings.Contains(previousLive.ipv4, chain) || strings.Contains(previousLive.ipv6, chain)) {
+		if err := system.NewSystemd(s.Runner).StopIfPresent(ctx, "netos-dnsmasq.service"); err != nil {
+			return fmt.Errorf("остановка служебного DNS перед освобождением порта: %w", err)
+		}
+	}
 	if err := system.WriteFileAtomic(path, []byte(rs.IPv4), 0o600); err != nil {
 		return fmt.Errorf("сохранение ruleset: %w", err)
 	}

@@ -62,12 +62,13 @@ var hooks = []hook{
 func Build(cfg *config.Config) (*Ruleset, error) {
 	zones := buildZoneMap(cfg)
 
-	var b builder
+	b := builder{localDNS: cfg.UsesLocalDNSPort()}
 	b.mangle(cfg, zones)
 	b.nat(cfg, zones)
 	b.filter(cfg, zones)
 
-	return &Ruleset{IPv4: b.String(), IPv6: buildIPv6(cfg), RuleIDs: b.ruleIDs}, nil
+	v6 := builder{localDNS: b.localDNS}
+	return &Ruleset{IPv4: b.String(), IPv6: v6.buildIPv6(cfg), RuleIDs: b.ruleIDs}, nil
 }
 
 // buildZoneMap раскладывает интерфейсы по зонам.
@@ -176,9 +177,10 @@ func serverInterface(s config.VPNServer) string {
 }
 
 type builder struct {
-	sb      strings.Builder
-	ruleIDs map[string][]string
-	ruleID  string
+	localDNS bool
+	sb       strings.Builder
+	ruleIDs  map[string][]string
+	ruleID   string
 	// Classification in mangle determines whether filter needs the block chain.
 	internetBlock bool
 	portChains    int
@@ -254,6 +256,18 @@ func liveChains(cfg *config.Config, zones zoneMap) []liveChain {
 // filter
 // ---------------------------------------------------------------------------
 
+const localDNSChain = "NETOS-LOCAL-DNS"
+
+func (b *builder) restrictLocalDNS() {
+	if b.localDNS {
+		b.line(":%s - [0:0]", localDNSChain)
+		for _, protocol := range []string{"tcp", "udp"} {
+			b.line("-A INPUT ! -i lo -p %s --dport %d -j %s", protocol, config.LocalDNSPort, localDNSChain)
+		}
+		b.line("-A %s -j DROP", localDNSChain)
+	}
+}
+
 func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	b.line("*filter")
 
@@ -264,6 +278,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 		b.line(":INPUT ACCEPT [0:0]")
 		b.line(":FORWARD ACCEPT [0:0]")
 		b.line(":OUTPUT ACCEPT [0:0]")
+		b.restrictLocalDNS()
 		b.internetBlockedClients(cfg, false)
 		b.line("COMMIT")
 		return
@@ -290,6 +305,7 @@ func (b *builder) filter(cfg *config.Config, zones zoneMap) {
 	// Заблокированный клиент не должен сохранить доступ по уже установленному
 	// соединению или обойти запрет статическим IP. Поэтому эти правила стоят
 	// раньше системного ESTABLISHED и дополняют отказ DHCP-сервера в аренде.
+	b.restrictLocalDNS()
 	b.isolation(cfg)
 	b.blockedClients(cfg)
 	b.internetBlockedClients(cfg, false)
@@ -1508,8 +1524,7 @@ func trimListItems(value string) string {
 // IPv6
 // ---------------------------------------------------------------------------
 
-func buildIPv6(cfg *config.Config) string {
-	var b builder
+func (b *builder) buildIPv6(cfg *config.Config) string {
 	// Replace mangle even when blocking is removed or IPv6 is disabled.
 	b.line("*mangle")
 	for _, chain := range []string{"PREROUTING", "INPUT", "FORWARD", "OUTPUT", "POSTROUTING"} {
@@ -1527,6 +1542,7 @@ func buildIPv6(cfg *config.Config) string {
 			b.line(":INPUT ACCEPT [0:0]")
 			b.line(":FORWARD ACCEPT [0:0]")
 			b.line(":OUTPUT ACCEPT [0:0]")
+			b.restrictLocalDNS()
 			b.internetBlockedClients(cfg, true)
 			b.ipv6SocksDrop(cfg)
 			b.line("COMMIT")
@@ -1564,6 +1580,7 @@ func (b *builder) ipv6Filter(cfg *config.Config) {
 	b.line(":FORWARD DROP [0:0]")
 	b.line(":OUTPUT ACCEPT [0:0]")
 	// Запреты стоят раньше любого разрешения, как и в IPv4.
+	b.restrictLocalDNS()
 	b.blockedClients(cfg)
 	b.internetBlockedClients(cfg, true)
 	b.ipv6SocksDrop(cfg)

@@ -333,7 +333,8 @@ func (d *Dnsmasq) renderLocalDNS(b *strings.Builder, cfg *config.Config) {
 	// dnsmasq отказывается запускаться («cannot set --bind-interfaces and
 	// --bind-dynamic»). Проверка dnsmasq --test этого не ловит: конфликт
 	// вскрывается на привязке сокетов, то есть уже после успешного применения.
-	// bind-dynamic делает то же самое: с interface=lo слушается только loopback.
+	// DHCP добавляет LAN в тот же список интерфейсов. Firewall ограничивает
+	// вход на этот служебный порт локальной петлёй.
 	w("no-resolv")
 	w("no-poll")
 	// Пустой список апстримов: на неизвестное имя честно отвечаем отказом,

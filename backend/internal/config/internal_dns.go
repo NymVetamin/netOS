@@ -60,6 +60,11 @@ func (c *Config) LocalDNSNeeded() bool {
 		c.DNS.Enabled && c.DNS.Provider != "dnsmasq"
 }
 
+// UsesLocalDNSPort excludes the frontend that already serves leases on the public DNS port.
+func (c *Config) UsesLocalDNSPort() bool {
+	return c.LocalDNSNeeded() && !c.DNSFrontendNeeded()
+}
+
 // internalDNSPortBusy сообщает, занимает ли порт внутренняя DNS-служба именно
 // в этой конфигурации. Запрещать порт всегда нельзя: панель или SOCKS на нём
 // законно работали без этих служб, а ошибка валидации останавливает netosd
@@ -68,7 +73,7 @@ func (c *Config) internalDNSPortBusy(port int) bool {
 	switch port {
 	case LocalDNSPort:
 		// При фронтенде локальную зону обслуживает он сам, на порту DNS.
-		return c.LocalDNSNeeded() && !c.DNSFrontendNeeded()
+		return c.UsesLocalDNSPort()
 	case PolicyDNSBackendPort:
 		return c.DNS.Provider != "dnsmasq" && c.DNSFrontendNeeded()
 	}

@@ -2,8 +2,10 @@ package system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 )
@@ -26,6 +28,13 @@ func (s *Systemd) Start(ctx context.Context, unit string) error {
 
 func (s *Systemd) Stop(ctx context.Context, unit string) error {
 	return s.systemctl(ctx, "stop", unit)
+}
+
+func (s *Systemd) StopIfPresent(ctx context.Context, unit string) error {
+	if err := s.Stop(ctx, unit); err != nil && (errors.Is(err, exec.ErrNotFound) || !unitMissing(err)) {
+		return err
+	}
+	return nil
 }
 
 // ResetFailed forgets a stopped service's diagnostic state. An already
