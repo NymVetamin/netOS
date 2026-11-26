@@ -347,7 +347,7 @@ func protectedComponentPackages(desired map[string]bool) map[string]bool {
 	// These are dependencies of netOS itself, including OpenSSL used by the
 	// system CA bundle. A partially installed optional component must never
 	// claim them as exclusively its own and purge the router's TLS trust.
-	for _, pkg := range []string{"iptables", "iproute2", "conntrack", "ca-certificates", "openssl", "curl", "busybox", "procps", "kmod", "bash-completion", "systemd-timesyncd"} {
+	for _, pkg := range []string{"iptables", "iproute2", "iputils-ping", "conntrack", "ca-certificates", "openssl", "curl", "busybox", "procps", "kmod", "bash-completion", "systemd-timesyncd"} {
 		protected[pkg] = true
 	}
 	for _, info := range config.Catalog {

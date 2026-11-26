@@ -81,7 +81,7 @@ func TestComponentPurgeProtectsRuntimeAndEnabledDependencies(t *testing.T) {
 	s := New(r, testLogger{})
 	protected := protectedComponentPackages(map[string]bool{"ocserv": true})
 	_ = s.removeProtected(context.Background(), config.ComponentInfo{ID: "dummy", Packages: []string{"dummy"}}, protected)
-	for _, pkg := range []string{"openssl", "ca-certificates", "ocserv", "iproute2"} {
+	for _, pkg := range []string{"openssl", "ca-certificates", "ocserv", "iproute2", "iputils-ping"} {
 		if !containsArgument(r.aptArgs, "APT::NeverAutoRemove::=^"+pkg+"$") {
 			t.Errorf("autoremove can delete %s", pkg)
 		}
