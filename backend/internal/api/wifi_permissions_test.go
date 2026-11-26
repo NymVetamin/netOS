@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,18 @@ func TestWiFiHardwarePermissions(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestWiFiDiscoveryWithoutIW(t *testing.T) {
+	s, cookie, _ := newAuthedServer(t)
+	t.Setenv("PATH", t.TempDir())
+	if _, err := exec.LookPath("iw"); !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("expected missing iw: %v", err)
+	}
+	w := serveAuthed(s.Routes(), "GET", "/api/wifi/hardware", nil, cookie, "")
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "Установите компонент Wi-Fi") || strings.Contains(w.Body.String(), "exec:") {
+		t.Fatalf("missing iw: %d %s", w.Code, w.Body.String())
 	}
 }
 

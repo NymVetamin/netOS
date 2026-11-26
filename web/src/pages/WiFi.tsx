@@ -29,7 +29,14 @@ export function WiFiPage({ config, patch }: Props) {
   useEffect(() => {
     const controller = new AbortController();
     setError("");
-    api.wifiHardware("", controller.signal).then(setHardware).catch(e => { if (!controller.signal.aborted) setError(e.message); });
+    api.wifiHardware("", controller.signal).then(result => {
+      if (!controller.signal.aborted) setHardware(result);
+    }).catch(e => {
+      if (!controller.signal.aborted) {
+        setHardware(null);
+        setError(e.message);
+      }
+    });
     return () => controller.abort();
   }, [refresh]);
   const saved = config.wifi || [];
@@ -50,8 +57,9 @@ export function WiFiPage({ config, patch }: Props) {
   return <>
     <div className="page-head"><h1><Icon name="wifi" />Wi-Fi</h1><p>Точки доступа, защита сети и привязка к сегментам роутера</p></div>
     {!installed && <NeedComponent name="Точка доступа Wi-Fi (hostapd)" effect="без неё сети не выйдут в эфир" />}
-    {error && <Notice tone="warn" title="Не удалось определить радиоустройства">{error}</Notice>}
+    {installed && error && <Notice tone="warn" title="Не удалось определить радиоустройства">{error}</Notice>}
     <Card tight title="Радиоустройства" subtitle="Одно радио может транслировать несколько сетей" actions={<button className="btn" onClick={() => setRefresh(v => v + 1)}>Обновить</button>}>
+      {!installed && error && <Empty>{error}</Empty>}
       {!hardware && !error ? <Empty>Определяем радиоустройства…</Empty> : entries.length === 0 ? error ? null : <Empty>{hardware?.radios.length ? "Обнаруженные адаптеры не поддерживают режим точки доступа или не имеют сетевого интерфейса." : "Wi-Fi-адаптеры не обнаружены."}</Empty> :
         <Rows cols={["Радио", "Диапазон", "Канал", "Сети", "Состояние"]}>{entries.map(({ radio, hw }: any) =>
           <RadioEditor key={radio.id} radio={radio} hardware={hw} countries={countries || []} countryChoices={countryChoices} initialCountry={hardware?.country} requestHardware={requestHardware} networks={networks} installed={installed} patch={patch} />)}</Rows>}
