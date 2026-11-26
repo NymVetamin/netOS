@@ -144,7 +144,7 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	m, _ := testManager()
 	sandbox(t, m)
 	seedBackupDatabase(t, m)
-	for _, name := range []string{"br-netos", "wg-ch7", "ifb-netos-3", "br-foreign", "bond-user", "d-container"} {
+	for _, name := range []string{"eth3", "br-netos", "wg-ch7", "ifb-netos-3", "br-foreign", "bond-user", "d-container"} {
 		if err := os.MkdirAll(filepath.Join(m.Root, "sys/class/net", name), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -197,8 +197,16 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	}
 
 	var commands []command
+	// A previous uninstall attempt may already have removed eth3's .network file.
+	var originalLANAddress bool
 	m.Run = func(_ context.Context, spec command) error {
 		commands = append(commands, spec)
+		switch spec.name + " " + strings.Join(spec.args, " ") {
+		case "networkctl reconfigure eth3":
+			originalLANAddress = true
+		case "ip -4 addr del 192.0.2.1/24 dev eth3":
+			originalLANAddress = false
+		}
 		if spec.name == "tar" {
 			for i, arg := range spec.args {
 				if arg == "-czf" && i+1 < len(spec.args) {
@@ -216,6 +224,9 @@ func TestUninstallRestoresBaselineAndDeletesOnlyOwnedLinks(t *testing.T) {
 	}
 	if err := m.uninstall(context.Background(), true, false, true, false); err != nil {
 		t.Fatal(err)
+	}
+	if !originalLANAddress {
+		t.Fatal("original networkd address on eth3 missing after uninstall")
 	}
 
 	deleted := map[string]bool{}

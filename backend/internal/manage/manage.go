@@ -771,7 +771,7 @@ func (m *Manager) reset(ctx context.Context, yes, withBackup, noBackup bool) err
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return m.recoverReset(err)
 	}
-	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
+	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address, nil); err != nil {
 		return m.recoverReset(err)
 	}
 	if err := m.removeCompetingDefaultRoutes(ctx, uplink); err != nil {
@@ -1067,7 +1067,7 @@ func (m *Manager) restore(ctx context.Context, choice string, yes bool) error {
 	if err := m.removeOwnedQoS(ctx); err != nil {
 		return m.rollbackRestore(ctx, safety, err, uplink)
 	}
-	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
+	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address, nil); err != nil {
 		return m.rollbackRestore(ctx, safety, err, uplink)
 	}
 	m.removeVirtualInterfaces(ctx)
@@ -1124,7 +1124,7 @@ func (m *Manager) rollbackRestore(_ context.Context, safety string, cause error,
 	if err := m.protectManagementUplink(rollbackCtx, uplink); err != nil {
 		return fmt.Errorf("%v; сохранение management uplink перед rollback: %w", cause, err)
 	}
-	if err := m.removeOwnedAddressesExcept(rollbackCtx, uplink.device, uplink.address); err != nil {
+	if err := m.removeOwnedAddressesExcept(rollbackCtx, uplink.device, uplink.address, nil); err != nil {
 		return fmt.Errorf("%v; очистка адресов перед rollback: %w", cause, err)
 	}
 	m.removeOwnedPolicySets(rollbackCtx)
@@ -1594,10 +1594,17 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 	_ = os.Remove(m.sys("/etc/systemd/system/netosd.service.d"))
 	networkd, _ := filepath.Glob(m.sys("/etc/systemd/network/05-netos-*"))
 	var links []string
+	seenLinks := make(map[string]bool, len(networkd))
+	recordLink := func(name string) {
+		if !seenLinks[name] {
+			links = append(links, name)
+			seenLinks[name] = true
+		}
+	}
 	for _, path := range networkd {
 		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "05-netos-"), ".network")
 		if name != "" {
-			links = append(links, name)
+			recordLink(name)
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			_ = m.run(ctx, "systemctl", "start", "netosd")
@@ -1611,6 +1618,12 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		for _, unit := range []string{"tuned.service"} {
 			m.quiet(ctx, "systemctl", "enable", "--now", unit)
 		}
+	}
+	// Штатный менеджер может назначить тот же адрес LAN при возврате порта.
+	// Убираем адреса netOS до передачи управления, сохраняя управляющий адрес.
+	// После прерванного удаления список адресов переживает файлы .network.
+	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address, recordLink); err != nil {
+		return fmt.Errorf("удаление адресов netOS: %w", err)
 	}
 	// NetworkManager должен узнать, что интерфейсы снова его.
 	m.quiet(ctx, "systemctl", "reload", "NetworkManager.service")
@@ -1628,11 +1641,6 @@ func (m *Manager) uninstallRun(ctx context.Context, keepData, takeBackup bool) (
 		}
 	}
 	m.removeOwnedPolicySets(ctx)
-	// Persistent backends have now released their files and links. Delete exact
-	// owned addresses while ownership records still exist, keeping management.
-	if err := m.removeOwnedAddressesExcept(ctx, uplink.device, uplink.address); err != nil {
-		return fmt.Errorf("удаление адресов netOS: %w", err)
-	}
 	if err := m.recordUninstallFirewallRestored(baseline); err != nil {
 		return fmt.Errorf("сохранение этапа восстановления firewall: %w", err)
 	}
