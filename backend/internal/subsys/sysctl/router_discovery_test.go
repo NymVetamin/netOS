@@ -24,6 +24,10 @@ func TestRouterDiscoveryUsesOnlyUnconfiguredWANLinks(t *testing.T) {
 	if got := routerDiscoveryTargets(cfg, state); !reflect.DeepEqual(got, []int{10, 13}) {
 		t.Fatalf("initial solicitation targets: %v", got)
 	}
+	// Freshly enabled IPv6: the link-local is still in DAD (tentative, c0).
+	if got := routerDiscoveryTargets(cfg, "fe80 0a 40 20 c0 eth0\nfe80 0b 40 20 c4 eth1\n"); !reflect.DeepEqual(got, []int{11}) {
+		t.Fatalf("tentative link-local must be skipped, optimistic kept: %v", got)
+	}
 	state += "2001 0a 40 00 00 eth0\n2001 0d 40 00 00 ppp-isp\n"
 	if got := routerDiscoveryTargets(cfg, state); len(got) != 0 {
 		t.Fatalf("solicitation repeated after address assignment: %v", got)

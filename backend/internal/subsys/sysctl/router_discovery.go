@@ -76,6 +76,11 @@ func routerDiscoveryTargets(cfg *config.Config, state string) []int {
 		case "00":
 			indexByName[f[5]] = -1
 		case "20":
+			// A tentative link-local cannot source the RS (EADDRNOTAVAIL); the
+			// kernel solicits by itself once DAD completes.
+			if flags&0x40 != 0 && flags&0x04 == 0 { // IFA_F_TENTATIVE without IFA_F_OPTIMISTIC
+				continue
+			}
 			if indexByName[f[5]] == 0 {
 				index, err := strconv.ParseUint(f[1], 16, 31)
 				if err == nil {
