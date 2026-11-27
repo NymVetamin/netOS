@@ -1100,6 +1100,10 @@ func (c *Config) validateWANs(r *ValidationResult) {
 		if w.MTU != 0 && (w.MTU < 576 || w.MTU > 9216) {
 			r.errf(path+".mtu", "MTU вне разумного диапазона 576-9216")
 		}
+		if pppName := map[string]string{"pppoe": "PPPoE", "l2tp": "L2TP"}[w.Proto]; w.Enabled && c.IPv6.Mode == "passthrough" && pppName != "" {
+			// pppd runs with noipv6: the session has no IPv6CP and no link-local.
+			r.warnf(path+".proto", "IPv6 через %s не поддерживается: аплинк «%s» не получит IPv6-адрес и маршрут", pppName, w.Name)
+		}
 		for j, raw := range w.DNSServers {
 			ip, err := netip.ParseAddr(raw)
 			if err != nil || !ValidWANDNS(ip) {
