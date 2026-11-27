@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/netos-router/netos/internal/apply"
 	"github.com/netos-router/netos/internal/config"
@@ -261,6 +262,11 @@ func (s *IPv6) Plan(old, new *config.Config) ([]apply.Action, error) {
 	desired := renderSysctl(s.values(new))
 	current, _ := os.ReadFile(ipv6ConfPath)
 	if string(current) == desired {
+		// networkd resets accept_ra on every (re)configure of its links.
+		// Three /proc reads per interface; the file alone cannot show this.
+		if err := checkInterfaceValues(new); err != nil {
+			return []apply.Action{{Kind: "update", Target: "IPv6 на интерфейсах", Detail: err.Error(), Disruptive: true}}, nil
+		}
 		return nil, nil
 	}
 	detail := "IPv6 отключается на всех интерфейсах"
@@ -303,6 +309,10 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	// networkd itself writes accept_ra=0 when it starts configuring a link
+	// (new links, reload). A value written before that is silently lost.
+	s.waitNetworkdLinks(ctx)
+
 	// Параметры all/default действуют на интерфейсы, созданные позже, но уже
 	// поднятые интерфейсы их не всегда подхватывают — проходим по ним отдельно.
 	names, err := interfaceNames()
@@ -331,11 +341,52 @@ func (s *IPv6) Apply(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+// networkdLinkWait bounds the wait; Health still reports a value lost later.
+var networkdLinkWait = 10 * time.Second
+
+// waitNetworkdLinks waits until networkd has taken every link past the moment
+// it writes its sysctls. That happens synchronously on entering "configuring",
+// so only links not yet there are waited for: a link without carrier stays
+// "configuring" indefinitely. Without networkd the command fails and nothing waits.
+func (s *IPv6) waitNetworkdLinks(ctx context.Context) {
+	if s.Runner == nil {
+		return
+	}
+	deadline := time.Now().Add(networkdLinkWait)
+	for {
+		out, err := s.Runner.Run(ctx, "networkctl", "list", "--no-legend", "--no-pager")
+		if err != nil || !networkdLinksPending(out) || time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// networkdLinksPending parses `networkctl list` rows: IDX LINK TYPE OPERATIONAL SETUP.
+func networkdLinksPending(out string) bool {
+	for line := range strings.Lines(out) {
+		f := strings.Fields(line)
+		if len(f) >= 5 && (f[4] == "pending" || f[4] == "initialized" || f[4] == "n/a") {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *IPv6) Health(ctx context.Context, cfg *config.Config) error {
 	required := cfg.IPv6.Mode != "off"
 	if err := checkValues(s.values(cfg), required); err != nil {
 		return err
 	}
+	return checkInterfaceValues(cfg)
+}
+
+func checkInterfaceValues(cfg *config.Config) error {
+	required := cfg.IPv6.Mode != "off"
 	names, err := interfaceNames()
 	if err != nil {
 		// Ядро может быть собрано вовсе без IPv6 — тогда и подавлять нечего.
